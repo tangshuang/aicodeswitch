@@ -224,10 +224,24 @@ const update = async () => {
 
   // 检查是否需要 sudo
   const needSudo = needsSudo();
+
+  // 如果需要 sudo，显示提示让用户手动执行
   if (needSudo) {
-    console.log(chalk.yellow.bold('⚠️  Note: '));
-    console.log(chalk.white('This operation may require ') + chalk.yellow.bold('sudo') + chalk.white(' privileges.'));
-    console.log(chalk.gray('If prompted, please enter your password.\n'));
+    console.log(boxen(
+      chalk.yellow.bold('⚠️  Sudo privileges required\n\n') +
+      chalk.white('This operation requires ') + chalk.yellow.bold('sudo') + chalk.white(' privileges.\n\n') +
+      chalk.white('Please run the following command to update:\n\n') +
+      chalk.cyan.bold('  sudo npm install -g ' + PACKAGE_NAME + '@latest\n\n') +
+      chalk.gray('After updating, run ') + chalk.cyan('aicos restart') + chalk.gray(' to restart the server.'),
+      {
+        padding: 1,
+        margin: 1,
+        borderStyle: 'round',
+        borderColor: 'yellow'
+      }
+    ));
+    console.log('');
+    process.exit(0);
   }
 
   // 执行更新
@@ -236,17 +250,14 @@ const update = async () => {
     color: 'cyan'
   }).start();
 
-  const npmCommand = needSudo ? 'sudo' : 'npm';
-  const npmArgs = needSudo ? ['npm', 'install', '-g', `${PACKAGE_NAME}@latest`] : ['install', '-g', `${PACKAGE_NAME}@latest`];
-
   try {
-    await execCommand(npmCommand, npmArgs);
+    await execCommand('npm', ['install', '-g', `${PACKAGE_NAME}@latest`]);
     updateSpinner.succeed(chalk.green('Update successful!'));
   } catch (err) {
     updateSpinner.fail(chalk.red('Update failed'));
     console.log(chalk.yellow(`\nUpdate failed with error code ${err.code || 'unknown'}\n`));
     console.log(chalk.white('You can try manually updating:\n'));
-    console.log(chalk.cyan(`  ${npmCommand} ${npmArgs.join(' ')}\n`));
+    console.log(chalk.cyan(`  npm install -g ${PACKAGE_NAME}@latest\n`));
     process.exit(1);
   }
 
