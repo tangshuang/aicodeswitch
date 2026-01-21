@@ -31,6 +31,7 @@
   --bg-route-item-hover: rgba(230, 244, 234, 0.95);
   --bg-route-item-selected: rgba(161, 233, 199, 0.25);
   --text-route-muted: #6c757d;
+  --text-info: #2faeee;
 }
 
 [data-theme="dark"] {

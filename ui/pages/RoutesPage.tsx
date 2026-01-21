@@ -8,7 +8,7 @@ const CONTENT_TYPE_OPTIONS = [
   { value: 'thinking', label: '思考' },
   { value: 'long-context', label: '长上下文' },
   { value: 'image-understanding', label: '图像理解' },
-  { value: 'model-mapping', label: '模型映射' },
+  { value: 'model-mapping', label: '模型顶替' },
 ];
 
 const TARGET_TYPE_OPTIONS = [
@@ -33,6 +33,7 @@ export default function RoutesPage() {
   const [selectedReplacedModel, setSelectedReplacedModel] = useState<string>('');
   const [selectedSortOrder, setSelectedSortOrder] = useState<number>(0);
   const [selectedContentType, setSelectedContentType] = useState<string>(editingRule?.contentType || '');
+  const [hoveredRuleId, setHoveredRuleId] = useState<string | null>(null);
 
   useEffect(() => {
     loadRoutes();
@@ -154,7 +155,7 @@ export default function RoutesPage() {
   };
 
   const getAvailableContentTypes = () => {
-    // 对于模型映射类型，允许添加多个规则（通过 sort_order 区分优先级）
+    // 对于模型顶替类型，允许添加多个规则（通过 sort_order 区分优先级）
     // 对于其他类型，保持唯一性
     if (editingRule && editingRule.contentType === 'model-mapping') {
       return CONTENT_TYPE_OPTIONS;
@@ -163,7 +164,7 @@ export default function RoutesPage() {
     const usedTypes = new Set(rules.map(rule => rule.contentType));
     return CONTENT_TYPE_OPTIONS.filter(option => {
       if (option.value === 'model-mapping') {
-        return true; // 模型映射类型允许添加多个
+        return true; // 模型顶替类型允许添加多个
       }
       return !usedTypes.has(option.value as ContentType);
     });
@@ -312,8 +313,7 @@ export default function RoutesPage() {
               <thead>
                 <tr>
                   <th>排序</th>
-                  <th>对象请求类型</th>
-                  <th>被顶替模型</th>
+                  <th>请求类型</th>
                   <th>供应商</th>
                   <th>API服务</th>
                   <th>模型</th>
@@ -328,8 +328,62 @@ export default function RoutesPage() {
                   return (
                     <tr key={rule.id}>
                       <td>{rule.sortOrder || 0}</td>
-                      <td>{contentTypeLabel}</td>
-                      <td>{rule.replacedModel || '-'}</td>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span>{contentTypeLabel}</span>
+                          {rule.contentType === 'model-mapping' && rule.replacedModel && (
+                            <div
+                              style={{ position: 'relative', display: 'inline-block' }}
+                              onMouseEnter={() => setHoveredRuleId(rule.id)}
+                              onMouseLeave={() => setHoveredRuleId(null)}
+                            >
+                              <span
+                                style={{
+                                  cursor: 'help',
+                                  fontSize: '14px',
+                                  color: 'var(--text-info)',
+                                  fontWeight: 'bold',
+                                }}
+                              >
+                                ⓘ
+                              </span>
+                              {hoveredRuleId === rule.id && (
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    left: '50%',
+                                    transform: 'translateX(-50%)',
+                                    bottom: 'calc(100% + 8px)',
+                                    backgroundColor: 'var(--bg-popover, #333)',
+                                    color: 'var(--text-popover, #fff)',
+                                    padding: '6px 10px',
+                                    borderRadius: '4px',
+                                    fontSize: '12px',
+                                    whiteSpace: 'nowrap',
+                                    zIndex: 1000,
+                                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                                  }}
+                                >
+                                  被顶替的模型是: {rule.replacedModel}
+                                  <div
+                                    style={{
+                                      position: 'absolute',
+                                      left: '50%',
+                                      transform: 'translateX(-50%)',
+                                      bottom: '-4px',
+                                      width: '0',
+                                      height: '0',
+                                      borderLeft: '4px solid transparent',
+                                      borderRight: '4px solid transparent',
+                                      borderTop: '4px solid var(--bg-popover, #333)',
+                                    }}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </td>
                       <td>{vendor ? vendor.name : 'Unknown'}</td>
                       <td>{service ? service.name : 'Unknown'}</td>
                       <td>{rule.targetModel || '-'}</td>
@@ -405,10 +459,10 @@ export default function RoutesPage() {
                 </select>
               </div>
 
-              {/* 新增：被顶替模型字段，仅在选择模型映射时显示 */}
+              {/* 新增：被顶替模型字段，仅在选择模型顶替时显示 */}
               {selectedContentType === 'model-mapping' && (
                 <div className="form-group">
-                  <label>被顶替模型</label>
+                  <label>被顶替模型 <small>（可在日志中找出想要顶替的模型名）</small></label>
                   <input
                     type="text"
                     value={selectedReplacedModel}
