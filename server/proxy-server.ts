@@ -961,7 +961,26 @@ export class ProxyServer {
     } catch (error: any) {
       console.error('Proxy error:', error);
       await finalizeLog(500, error.message);
-      res.status(500).json({ error: error.message });
+
+      // 根据请求类型返回适当格式的错误响应
+      const streamRequested = this.isStreamRequested(req, req.body || {});
+      if (streamRequested && route.targetType === 'claude-code') {
+        // 对于 Claude Code 的流式请求，返回 SSE 格式的错误响应
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.status(500);
+
+        // 发送错误事件
+        const errorEvent = `event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`;
+        const doneEvent = `data: [DONE]\n\n`;
+        res.write(errorEvent);
+        res.write(doneEvent);
+        res.end();
+      } else {
+        // 对于非流式请求，返回 JSON 格式的错误响应
+        res.status(500).json({ error: error.message });
+      }
     }
   }
 

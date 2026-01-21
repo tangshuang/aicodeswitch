@@ -3,13 +3,9 @@ import { api } from '../api/client';
 import type { RequestLog, AccessLog, ErrorLog, Vendor, APIService } from '../../types';
 import dayjs from 'dayjs';
 import JSONViewer from '../components/JSONViewer';
+import { TARGET_TYPE } from '../constants';
 
 type LogTab = 'request' | 'access' | 'error';
-
-const TARGET_TYPE_LABEL = {
-  'claude-code': 'Claude Code',
-  'codex': 'Codex',
-};
 
 function LogsPage() {
   const [activeTab, setActiveTab] = useState<LogTab>('request');
@@ -143,9 +139,9 @@ function LogsPage() {
           {filteredRequestLogs.map((log) => (
             <tr key={log.id}>
               <td>
-                {TARGET_TYPE_LABEL[log.targetType!] ? (
+                {TARGET_TYPE[log.targetType!] ? (
                   <span className="badge badge-info">
-                    {TARGET_TYPE_LABEL[log.targetType!]}
+                    {TARGET_TYPE[log.targetType!]}
                   </span>
                 ) : '-'}
               </td>
@@ -159,8 +155,7 @@ function LogsPage() {
               <td>
                 {log.usage ? (
                   <span>
-                    {log.usage.inputTokens + log.usage.outputTokens} tokens
-                    {log.usage.totalTokens ? ` (${log.usage.totalTokens} total)` : ''}
+                    {log.usage.totalTokens ? log.usage.totalTokens : log.usage.inputTokens + log.usage.outputTokens} tokens
                   </span>
                 ) : '-'}
               </td>
@@ -475,7 +470,13 @@ function LogsPage() {
               {selectedRequestLog.targetType && (
                 <div className="form-group">
                   <label>来源对象类型</label>
-                  <input type="text" value={selectedRequestLog.targetType} readOnly />
+                  <input type="text" value={TARGET_TYPE[selectedRequestLog.targetType] || '-'} readOnly />
+                </div>
+              )}
+              {selectedRequestLog.requestModel && (
+                <div className="form-group">
+                  <label>请求模型</label>
+                  <input type="text" value={selectedRequestLog.requestModel} readOnly />
                 </div>
               )}
               {selectedRequestLog.vendorName && (
@@ -486,20 +487,14 @@ function LogsPage() {
               )}
               {selectedRequestLog.targetServiceName && (
                 <div className="form-group">
-                  <label>API服务名</label>
+                  <label>供应商API服务</label>
                   <input type="text" value={selectedRequestLog.targetServiceName} readOnly />
                 </div>
               )}
               {selectedRequestLog.targetModel && (
                 <div className="form-group">
-                  <label>替代模型名</label>
+                  <label>供应商模型</label>
                   <input type="text" value={selectedRequestLog.targetModel} readOnly />
-                </div>
-              )}
-              {selectedRequestLog.requestModel && (
-                <div className="form-group">
-                  <label>请求模型</label>
-                  <input type="text" value={selectedRequestLog.requestModel} readOnly />
                 </div>
               )}
               <div className="form-group">
@@ -510,6 +505,12 @@ function LogsPage() {
                 <label>请求路径</label>
                 <input type="text" value={selectedRequestLog.path} readOnly />
               </div>
+              {selectedRequestLog.body && (
+                <div className="form-group">
+                  <label>请求体</label>
+                  <JSONViewer data={selectedRequestLog.body} />
+                </div>
+              )}
               <div className="form-group">
                 <label>状态码</label>
                 <input type="text" value={selectedRequestLog.statusCode || 'Error'} readOnly />
@@ -518,16 +519,10 @@ function LogsPage() {
                 <label>响应时间</label>
                 <input type="text" value={selectedRequestLog.responseTime ? `${selectedRequestLog.responseTime}ms` : '-'} readOnly />
               </div>
-              {selectedRequestLog.body && (
-                <div className="form-group">
-                  <label>请求体</label>
-                  <JSONViewer data={selectedRequestLog.body} />
-                </div>
-              )}
               {selectedRequestLog.responseHeaders && (
                 <div className="form-group">
                   <label>响应头</label>
-                  <JSONViewer data={selectedRequestLog.responseHeaders} />
+                  <JSONViewer data={selectedRequestLog.responseHeaders} collapsed />
                 </div>
               )}
               {selectedRequestLog.responseBody && (
@@ -562,12 +557,6 @@ function LogsPage() {
                   )}
                 </div>
               )}
-              {selectedRequestLog.error && (
-                <div className="form-group">
-                  <label>错误信息</label>
-                  <textarea rows={4} value={selectedRequestLog.error} readOnly style={{ color: 'red' }} />
-                </div>
-              )}
               {selectedRequestLog.usage && (
                 <div className="form-group">
                   <label>Token 使用</label>
@@ -581,6 +570,12 @@ function LogsPage() {
                     }
                     readOnly
                   />
+                </div>
+              )}
+              {selectedRequestLog.error && (
+                <div className="form-group">
+                  <label>错误信息</label>
+                  <textarea rows={4} value={selectedRequestLog.error} readOnly style={{ color: 'red' }} />
                 </div>
               )}
             </div>
