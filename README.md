@@ -21,6 +21,12 @@ npm install -g aicodeswitch
 aicos start
 ```
 
+**停止服务**
+
+```
+aicos stop
+```
+
 **进入管理界面**
 
 ```
