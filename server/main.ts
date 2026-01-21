@@ -53,8 +53,7 @@ const writeClaudeConfig = async (dbManager: DatabaseManager): Promise<boolean> =
         ANTHROPIC_AUTH_TOKEN: config.apiKey || "api_key",
         ANTHROPIC_BASE_URL: `http://${host}:${port}/claude-code`,
         API_TIMEOUT_MS: "3000000"
-      },
-      hasCompletedOnboarding: true
+      }
     };
 
     fs.writeFileSync(claudeSettingsPath, JSON.stringify(claudeSettings, null, 2));
@@ -67,9 +66,11 @@ const writeClaudeConfig = async (dbManager: DatabaseManager): Promise<boolean> =
       fs.renameSync(claudeJsonPath, claudeJsonBakPath);
     }
 
-    const claudeJson = {
-      hasCompletedOnboarding: true
-    };
+    let claudeJson: any = {};
+    if (fs.existsSync(claudeJsonPath)) {
+      claudeJson = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8'));
+    }
+    claudeJson.hasCompletedOnboarding = true;
 
     fs.writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2));
 
