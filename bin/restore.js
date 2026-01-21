@@ -220,7 +220,7 @@ const restore = async () => {
 
   console.log('');
   console.log(chalk.cyan('💡 Tips:\n'));
-  console.log(chalk.white('  • Write config:  ') + chalk.cyan('aicos write-config [target]'));
+  console.log(chalk.white('  • Restart server:   ') + chalk.cyan('aicos restart'));
   console.log(chalk.white('  • Start server:   ') + chalk.cyan('aicos start'));
   console.log('\n');
 };
