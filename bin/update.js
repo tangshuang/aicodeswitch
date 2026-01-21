@@ -130,29 +130,6 @@ const needsSudo = () => {
   return false;
 };
 
-// 停止服务器
-const stopServer = async () => {
-  const stopPath = path.join(__dirname, 'stop.js');
-  try {
-    await execCommand('node', [stopPath], { silent: true });
-    return true;
-  } catch (err) {
-    // 停止失败可能是因为服务未运行，这不是致命错误
-    return false;
-  }
-};
-
-// 启动服务器
-const startServer = async () => {
-  const startPath = path.join(__dirname, 'start.js');
-  try {
-    await execCommand('node', [startPath], { silent: true });
-    return true;
-  } catch (err) {
-    return false;
-  }
-};
-
 // 比较版本号
 const compareVersions = (v1, v2) => {
   const parts1 = v1.split('.').map(Number);
@@ -253,38 +230,23 @@ const update = async () => {
     console.log(chalk.gray('If prompted, please enter your password.\n'));
   }
 
-  // 停止服务器
-  const stopSpinner = ora({
-    text: chalk.cyan('Stopping server...'),
-    color: 'cyan'
-  }).start();
-
-  await stopServer();
-  stopSpinner.succeed(chalk.green('Server stopped'));
-
   // 执行更新
   const updateSpinner = ora({
     text: chalk.cyan('Updating to latest version...'),
     color: 'cyan'
   }).start();
 
-  const npmArgs = ['npm', 'install', '-g', `${PACKAGE_NAME}@latest`];
-  if (needSudo) {
-    npmArgs.unshift('sudo');
-  }
+  const npmCommand = needSudo ? 'sudo' : 'npm';
+  const npmArgs = needSudo ? ['npm', 'install', '-g', `${PACKAGE_NAME}@latest`] : ['install', '-g', `${PACKAGE_NAME}@latest`];
 
   try {
-    await execCommand(npmArgs);
+    await execCommand(npmCommand, npmArgs);
     updateSpinner.succeed(chalk.green('Update successful!'));
   } catch (err) {
     updateSpinner.fail(chalk.red('Update failed'));
     console.log(chalk.yellow(`\nUpdate failed with error code ${err.code || 'unknown'}\n`));
     console.log(chalk.white('You can try manually updating:\n'));
-    console.log(chalk.cyan(`  ${npmArgs.join(' ')}\n`));
-
-    // 尝试重新启动服务器
-    console.log(chalk.yellow('Attempting to restart server...\n'));
-    await startServer();
+    console.log(chalk.cyan(`  ${npmCommand} ${npmArgs.join(' ')}\n`));
     process.exit(1);
   }
 
@@ -292,8 +254,7 @@ const update = async () => {
   console.log(boxen(
     chalk.green.bold('✓ Successfully updated!\n\n') +
     chalk.white('Previous version: ') + chalk.gray(currentVersion) + '\n' +
-    chalk.white('New version:     ') + chalk.green.bold(latestVersion) + '\n\n' +
-    chalk.gray('Starting server...'),
+    chalk.white('New version:     ') + chalk.green.bold(latestVersion),
     {
       padding: 1,
       margin: 1,
@@ -302,14 +263,9 @@ const update = async () => {
     }
   ));
   console.log('');
-
-  // 启动服务器
-  await startServer();
-
-  console.log('');
   console.log(chalk.cyan('💡 Tips:\n'));
+  console.log(chalk.white('  • Restart server: ') + chalk.cyan('aicos restart'));
   console.log(chalk.white('  • Check version: ') + chalk.cyan('aicos version'));
-  console.log(chalk.white('  • View logs:     ') + chalk.gray('tail -f ~/.aicodeswitch/server.log'));
   console.log('\n');
 };
 
