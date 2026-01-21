@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:ui\"",
     "dev:ui": "vite",
-    "dev:server": "cross-env DATA_DIR=data tsx watch --env-file=.env --tsconfig=tsconfig.server.json server/main.ts",
+    "dev:server": "tsx watch --env-file=.env --tsconfig=tsconfig.server.json server/main.ts",
     "build": "npm run build:ui && npm run build:server",
     "build:ui": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
