@@ -328,16 +328,14 @@ export class DatabaseManager {
   }
 
   async getLogs(limit: number = 100, offset: number = 0): Promise<RequestLog[]> {
-    const logs: RequestLog[] = [];
-    let count = 0;
-    for await (const [, value] of this.logDb.iterator({ reverse: true })) {
-      if (count >= offset && logs.length < limit) {
-        logs.push(JSON.parse(value));
-      }
-      count++;
-      if (logs.length >= limit) break;
+    const allLogs: RequestLog[] = [];
+    for await (const [, value] of this.logDb.iterator()) {
+      allLogs.push(JSON.parse(value));
     }
-    return logs;
+    // Sort by timestamp in descending order (newest first)
+    allLogs.sort((a, b) => b.timestamp - a.timestamp);
+    // Apply offset and limit
+    return allLogs.slice(offset, offset + limit);
   }
 
   async clearLogs(): Promise<void> {
@@ -358,16 +356,14 @@ export class DatabaseManager {
   }
 
   async getAccessLogs(limit: number = 100, offset: number = 0): Promise<AccessLog[]> {
-    const logs: AccessLog[] = [];
-    let count = 0;
-    for await (const [, value] of this.accessLogDb.iterator({ reverse: true })) {
-      if (count >= offset && logs.length < limit) {
-        logs.push(JSON.parse(value));
-      }
-      count++;
-      if (logs.length >= limit) break;
+    const allLogs: AccessLog[] = [];
+    for await (const [, value] of this.accessLogDb.iterator()) {
+      allLogs.push(JSON.parse(value));
     }
-    return logs;
+    // Sort by timestamp in descending order (newest first)
+    allLogs.sort((a, b) => b.timestamp - a.timestamp);
+    // Apply offset and limit
+    return allLogs.slice(offset, offset + limit);
   }
 
   async clearAccessLogs(): Promise<void> {
@@ -381,16 +377,14 @@ export class DatabaseManager {
   }
 
   async getErrorLogs(limit: number = 100, offset: number = 0): Promise<ErrorLog[]> {
-    const logs: ErrorLog[] = [];
-    let count = 0;
-    for await (const [, value] of this.errorLogDb.iterator({ reverse: true })) {
-      if (count >= offset && logs.length < limit) {
-        logs.push(JSON.parse(value));
-      }
-      count++;
-      if (logs.length >= limit) break;
+    const allLogs: ErrorLog[] = [];
+    for await (const [, value] of this.errorLogDb.iterator()) {
+      allLogs.push(JSON.parse(value));
     }
-    return logs;
+    // Sort by timestamp in descending order (newest first)
+    allLogs.sort((a, b) => b.timestamp - a.timestamp);
+    // Apply offset and limit
+    return allLogs.slice(offset, offset + limit);
   }
 
   async clearErrorLogs(): Promise<void> {

@@ -127,6 +127,7 @@ function LogsPage() {
       <table>
         <thead>
           <tr>
+            <th>时间</th>
             <th>来源对象类型</th>
             <th>路径</th>
             <th>状态</th>
@@ -138,6 +139,7 @@ function LogsPage() {
         <tbody>
           {filteredRequestLogs.map((log) => (
             <tr key={log.id}>
+              <td>{dayjs(log.timestamp).format('YYYY-MM-DD HH:mm:ss')}</td>
               <td>
                 {TARGET_TYPE[log.targetType!] ? (
                   <span className="badge badge-info">
