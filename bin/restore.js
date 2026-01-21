@@ -160,7 +160,15 @@ const showRestoreResult = (target, results) => {
 // 主恢复逻辑
 const restore = async () => {
   const args = process.argv.slice(2);
-  const target = args[0]; // claude-code, codex, or undefined (all)
+  // 处理两种情况：
+  // 1. 直接执行: node bin/restore.js claude-code => args[0]
+  // 2. 通过 aicos: aicos restore claude-code => args[1] (因为 args[0] 是 'restore')
+  let target;
+  if (args[0] === 'restore') {
+    target = args[1];
+  } else {
+    target = args[0];
+  }
 
   console.log('\n');
 
