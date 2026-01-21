@@ -234,6 +234,7 @@
   position: relative;
   overflow: hidden;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  white-space: nowrap;
 }
 
 .btn::before {
@@ -320,6 +321,10 @@
 
 .btn-secondary:hover {
   background: var(--accent-primary);
+}
+
+.btn-sm {
+  padding: 4px 8px;
 }
 
 table {

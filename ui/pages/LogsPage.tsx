@@ -511,6 +511,7 @@ function LogsPage() {
                     <button
                       onClick={() => setChunksExpanded(!chunksExpanded)}
                       style={{ marginLeft: '10px', padding: '2px 8px', fontSize: '12px' }}
+                      className='btn btn-sm btn-primary'
                     >
                       {chunksExpanded ? '折叠' : '展开'}
                     </button>

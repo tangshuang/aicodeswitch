@@ -303,7 +303,7 @@ function VendorsPage() {
             <table style={{ fontSize: 'smaller' }}>
               <thead>
                 <tr>
-                  <th>服务名称</th>
+                  <th style={{ whiteSpace: 'nowrap' }}>服务名称</th>
                   <th>源类型</th>
                   <th>API地址</th>
                   <th>模型列表</th>
@@ -319,8 +319,8 @@ function VendorsPage() {
                     <td>{service.supportedModels?.join(', ') || '-'}</td>
                     <td>
                       <div className="action-buttons">
-                        <button className="btn btn-secondary" onClick={() => handleEditService(service)}>编辑</button>
-                        <button className="btn btn-danger" onClick={() => handleDeleteService(service.id)}>删除</button>
+                        <button className="btn btn-sm btn-secondary" onClick={() => handleEditService(service)}>编辑</button>
+                        <button className="btn btn-sm btn-danger" onClick={() => handleDeleteService(service.id)}>删除</button>
                       </div>
                     </td>
                   </tr>
