@@ -155,19 +155,9 @@ export default function RoutesPage() {
   };
 
   const getAvailableContentTypes = () => {
-    // 对于模型顶替类型，允许添加多个规则（通过 sort_order 区分优先级）
-    // 对于其他类型，保持唯一性
-    if (editingRule && editingRule.contentType === 'model-mapping') {
-      return CONTENT_TYPE_OPTIONS;
-    }
-
-    const usedTypes = new Set(rules.map(rule => rule.contentType));
-    return CONTENT_TYPE_OPTIONS.filter(option => {
-      if (option.value === 'model-mapping') {
-        return true; // 模型顶替类型允许添加多个
-      }
-      return !usedTypes.has(option.value as ContentType);
-    });
+    // 取消对象请求类型的互斥限制，允许添加多个相同类型的规则
+    // 通过 sort_order 字段区分优先级
+    return CONTENT_TYPE_OPTIONS;
   };
 
   const handleEditRule = (rule: Rule) => {
