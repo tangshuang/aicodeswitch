@@ -79,12 +79,11 @@ export interface AccessLog {
   timestamp: number;
   method: string;
   path: string;
-  headers: Record<string, string>;
-  body?: string;
   clientIp?: string;
   userAgent?: string;
   statusCode?: number;
   responseTime?: number;
+  error?: string;
 }
 
 export interface ErrorLog {

@@ -5,6 +5,11 @@ import dayjs from 'dayjs';
 
 type LogTab = 'request' | 'access' | 'error';
 
+const TARGET_TYPE_LABEL = {
+  'claude-code': 'Claude Code',
+  'codex': 'Codex',
+};
+
 function LogsPage() {
   const [activeTab, setActiveTab] = useState<LogTab>('request');
   const [requestLogs, setRequestLogs] = useState<RequestLog[]>([]);
@@ -124,19 +129,24 @@ function LogsPage() {
       <table>
         <thead>
           <tr>
-            <th>时间</th>
-            <th>方法</th>
+            <th>来源对象类型</th>
             <th>路径</th>
             <th>状态</th>
             <th>响应时间</th>
+            <th>Tokens信息</th>
             <th>操作</th>
           </tr>
         </thead>
         <tbody>
           {filteredRequestLogs.map((log) => (
             <tr key={log.id}>
-              <td>{dayjs(log.timestamp).format('YYYY-MM-DD HH:mm:ss')}</td>
-              <td><span className="badge badge-success">{log.method}</span></td>
+              <td>
+                {TARGET_TYPE_LABEL[log.targetType!] ? (
+                  <span className="badge badge-info">
+                    {TARGET_TYPE_LABEL[log.targetType!]}
+                  </span>
+                ) : '-'}
+              </td>
               <td>{log.path}</td>
               <td>
                 <span className={`badge ${getStatusBadge(log.statusCode)}`}>
@@ -144,6 +154,14 @@ function LogsPage() {
                 </span>
               </td>
               <td>{log.responseTime ? `${log.responseTime}ms` : '-'}</td>
+              <td>
+                {log.usage ? (
+                  <span>
+                    {log.usage.inputTokens + log.usage.outputTokens} tokens
+                    {log.usage.totalTokens ? ` (${log.usage.totalTokens} total)` : ''}
+                  </span>
+                ) : '-'}
+              </td>
               <td>
                 <button className="btn btn-secondary" onClick={() => setSelectedRequestLog(log)}>详情</button>
               </td>
@@ -599,16 +617,12 @@ function LogsPage() {
                 <label>User Agent</label>
                 <textarea rows={2} value={selectedAccessLog.userAgent || '-'} readOnly />
               </div>
-              {selectedAccessLog.body && (
+              {selectedAccessLog.error && (
                 <div className="form-group">
-                  <label>请求体</label>
-                  <textarea rows={6} value={selectedAccessLog.body} readOnly />
+                  <label>错误信息</label>
+                  <textarea rows={6} value={selectedAccessLog.error} readOnly style={{ color: '#e74c3c' }} />
                 </div>
               )}
-              <div className="form-group">
-                <label>请求头</label>
-                <textarea rows={6} value={JSON.stringify(selectedAccessLog.headers, null, 2)} readOnly />
-              </div>
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setSelectedAccessLog(null)}>关闭</button>

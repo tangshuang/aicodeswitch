@@ -338,9 +338,16 @@ export class DatabaseManager {
   }
 
   // Access log operations
-  async addAccessLog(log: Omit<AccessLog, 'id'>): Promise<void> {
+  async addAccessLog(log: Omit<AccessLog, 'id'>): Promise<string> {
     const id = crypto.randomUUID();
     await this.accessLogDb.put(id, JSON.stringify({ ...log, id }));
+    return id;
+  }
+
+  async updateAccessLog(id: string, data: Partial<AccessLog>): Promise<void> {
+    const log = await this.accessLogDb.get(id);
+    const updatedLog = { ...JSON.parse(log), ...data };
+    await this.accessLogDb.put(id, JSON.stringify(updatedLog));
   }
 
   async getAccessLogs(limit: number = 100, offset: number = 0): Promise<AccessLog[]> {

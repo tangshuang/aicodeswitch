@@ -31,6 +31,8 @@ type ContentTypeDetector = {
   match: (req: Request, body: any) => boolean;
 };
 
+const SUPPORTED_TARGETS = ['claude-code', 'codex'];
+
 export class ProxyServer {
   private app: express.Application;
   private dbManager: DatabaseManager;
@@ -52,15 +54,49 @@ export class ProxyServer {
       const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '';
       const userAgent = req.headers['user-agent'] || '';
 
-      this.dbManager.addAccessLog({
+      const startTime = Date.now();
+      const originalSend = res.send.bind(res);
+      const originalJson = res.json.bind(res);
+
+      const accessLog = this.dbManager.addAccessLog({
         timestamp: Date.now(),
         method: req.method,
         path: req.path,
-        headers: this.normalizeHeaders(req.headers),
-        body: req.body ? JSON.stringify(req.body) : undefined,
         clientIp,
         userAgent,
-        statusCode: res.statusCode,
+      });
+
+      res.send = (data: any) => {
+        res.send = originalSend;
+        const responseTime = Date.now() - startTime;
+        accessLog.then((accessLogId) => {
+          this.dbManager.updateAccessLog(accessLogId, {
+            responseTime,
+            statusCode: res.statusCode,
+          });
+        });
+        return originalSend(data);
+      };
+
+      res.json = (data: any) => {
+        res.json = originalJson;
+        const responseTime = Date.now() - startTime;
+        accessLog.then((accessLogId) => {
+          this.dbManager.updateAccessLog(accessLogId, {
+            responseTime,
+            statusCode: res.statusCode,
+          });
+        });
+        return originalJson(data);
+      };
+
+      res.on('error', (err) => {
+        accessLog.then((accessLogId) => {
+          this.dbManager.updateAccessLog(accessLogId, {
+            statusCode: res.statusCode,
+            error: err.message,
+          });
+        });
       });
 
       next();
@@ -71,23 +107,25 @@ export class ProxyServer {
       const startTime = Date.now();
       const originalSend = res.send.bind(res);
 
-      res.send = (data: any) => {
-        res.send = originalSend;
-        if (!res.locals.skipLog && this.config?.enableLogging) {
-          const responseTime = Date.now() - startTime;
-          this.dbManager.addLog({
-            timestamp: Date.now(),
-            method: req.method,
-            path: req.path,
-            headers: this.normalizeHeaders(req.headers),
-            body: req.body ? JSON.stringify(req.body) : undefined,
-            statusCode: res.statusCode,
-            responseTime,
-          });
-        }
+      if (SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
+        res.send = (data: any) => {
+          res.send = originalSend;
+          if (!res.locals.skipLog && this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
+            const responseTime = Date.now() - startTime;
+            this.dbManager.addLog({
+              timestamp: Date.now(),
+              method: req.method,
+              path: req.path,
+              headers: this.normalizeHeaders(req.headers),
+              body: req.body ? JSON.stringify(req.body) : undefined,
+              statusCode: res.statusCode,
+              responseTime,
+            });
+          }
 
-        return res.send(data);
-      };
+          return res.send(data);
+        };
+      }
 
       next();
     });
@@ -99,7 +137,12 @@ export class ProxyServer {
     this.app.use('/codex', this.createFixedRouteHandler('codex'));
 
     // Dynamic proxy middleware
-    this.app.use(async (req: Request, res: Response, _next: NextFunction) => {
+    this.app.use(async (req: Request, res: Response, next: NextFunction) => {
+      // 根路径 / 不应该被代理中间件处理，应该传递给静态文件服务
+      if (req.path === '/') {
+        return next();
+      }
+
       try {
         const route = this.findMatchingRoute(req);
         if (!route) {
@@ -119,7 +162,7 @@ export class ProxyServer {
         await this.proxyRequest(req, res, route, rule, service);
       } catch (error: any) {
         console.error('Proxy error:', error);
-        if (this.config?.enableLogging) {
+        if (this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
           await this.dbManager.addLog({
             timestamp: Date.now(),
             method: req.method,
@@ -175,7 +218,7 @@ export class ProxyServer {
         await this.proxyRequest(req, res, route, rule, service);
       } catch (error: any) {
         console.error(`Fixed route error for ${targetType}:`, error);
-        if (this.config?.enableLogging) {
+        if (this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
           await this.dbManager.addLog({
             timestamp: Date.now(),
             method: req.method,
