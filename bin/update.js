@@ -268,19 +268,19 @@ const update = async () => {
     color: 'cyan'
   }).start();
 
-  try {
-    const npmArgs = ['install', '-g', `${PACKAGE_NAME}@latest`];
-    if (needSudo) {
-      npmArgs.unshift('sudo');
-    }
+  const npmArgs = ['npm', 'install', '-g', `${PACKAGE_NAME}@latest`];
+  if (needSudo) {
+    npmArgs.unshift('sudo');
+  }
 
-    await execCommand(needSudo ? 'sudo' : 'npm', npmArgs);
+  try {
+    await execCommand(npmArgs);
     updateSpinner.succeed(chalk.green('Update successful!'));
   } catch (err) {
     updateSpinner.fail(chalk.red('Update failed'));
     console.log(chalk.yellow(`\nUpdate failed with error code ${err.code || 'unknown'}\n`));
     console.log(chalk.white('You can try manually updating:\n'));
-    console.log(chalk.cyan(`  ${needSudo ? 'sudo ' : ''}npm install -g ${PACKAGE_NAME}@latest\n`));
+    console.log(chalk.cyan(`  ${npmArgs.join(' ')}\n`));
 
     // 尝试重新启动服务器
     console.log(chalk.yellow('Attempting to restart server...\n'));
