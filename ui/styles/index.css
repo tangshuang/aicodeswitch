@@ -10,6 +10,7 @@
   --bg-secondary: rgba(255, 255, 255, 0.95);
   --bg-sidebar: linear-gradient(135deg, #0F5132 0%, #065F46 100%);
   --bg-card: rgba(255, 255, 255, 0.98);
+  --bg-code: #f4fff7;
   --bg-table-header: linear-gradient(135deg, #A7F3D0 0%, #6EE7B7 100%);
   --text-primary: #14532D;
   --text-secondary: #064E3B;
@@ -38,6 +39,7 @@
   --bg-secondary: rgba(15, 36, 21, 0.9);
   --bg-sidebar: linear-gradient(135deg, #0F5132 0%, #065F46 100%);
   --bg-card: rgba(25, 51, 31, 0.95);
+  --bg-code: #0f172a;
   --bg-table-header: linear-gradient(135deg, #0F5132 0%, #047857 100%);
   --text-primary: #ECFEF5;
   --text-secondary: #A7F3D0;

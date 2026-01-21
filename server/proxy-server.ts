@@ -657,6 +657,14 @@ export class ProxyServer {
     const finalizeLog = async (statusCode: number, error?: string) => {
       if (logged || !this.config?.enableLogging) return;
       logged = true;
+
+      // 获取供应商信息
+      const vendors = this.dbManager.getVendors();
+      const vendor = vendors.find(v => v.id === service.vendorId);
+
+      // 从请求体中提取模型信息
+      const requestModel = req.body?.model;
+
       await this.dbManager.addLog({
         timestamp: Date.now(),
         method: req.method,
@@ -674,6 +682,9 @@ export class ProxyServer {
         targetServiceId: service.id,
         targetServiceName: service.name,
         targetModel: rule.targetModel,
+        vendorId: service.vendorId,
+        vendorName: vendor?.name,
+        requestModel,
         responseHeaders: responseHeadersForLog,
         responseBody: responseBodyForLog,
         streamChunks: streamChunksForLog,
@@ -860,6 +871,25 @@ export class ProxyServer {
         this.copyResponseHeaders(responseHeaders, res);
         res.on('finish', () => {
           streamChunksForLog = chunkCollector.getChunks();
+          // 尝试从stream chunks中解析usage信息
+          if (streamChunksForLog && streamChunksForLog.length > 0) {
+            // 合并所有chunks并尝试解析usage
+            const allChunks = streamChunksForLog.join('');
+            // 查找包含usage信息的部分
+            const usageMatch = allChunks.match(/usage[\s\S]*?\{[\s\S]*?\}/);
+            if (usageMatch) {
+              try {
+                // 尝试解析usage信息
+                const usageStr = usageMatch[0];
+                const jsonStart = usageStr.indexOf('{');
+                const jsonEnd = usageStr.lastIndexOf('}') + 1;
+                const usageJson = JSON.parse(usageStr.slice(jsonStart, jsonEnd));
+                usageForLog = this.extractTokenUsage(usageJson);
+              } catch (e) {
+                console.error('Failed to parse usage from stream chunks:', e);
+              }
+            }
+          }
           void finalizeLog(res.statusCode);
         });
         pipeline(response.data, chunkCollector, res, (error) => {

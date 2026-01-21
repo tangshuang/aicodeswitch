@@ -68,6 +68,9 @@ export interface RequestLog {
   targetServiceId?: string;                        // API服务ID
   targetServiceName?: string;                      // API服务名
   targetModel?: string;                            // 模型名
+  vendorId?: string;                               // 供应商ID
+  vendorName?: string;                             // 供应商名称
+  requestModel?: string;                           // 请求模型名（从请求体中读取）
 
   responseHeaders?: Record<string, string>;        // 响应头
   responseBody?: string;                           // 响应体(非stream)

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import type { RequestLog, AccessLog, ErrorLog, Vendor, APIService } from '../../types';
 import dayjs from 'dayjs';
+import JSONViewer from '../components/JSONViewer';
 
 type LogTab = 'request' | 'access' | 'error';
 
@@ -112,6 +113,7 @@ function LogsPage() {
   const filterRequestLogs = (logs: RequestLog[]) => {
     return logs.filter(log => {
       if (filterTargetType && log.targetType !== filterTargetType) return false;
+      if (filterVendorId && log.vendorId !== filterVendorId) return false;
       if (filterServiceId && log.targetServiceId !== filterServiceId) return false;
       if (filterModel && log.targetModel !== filterModel) return false;
       return true;
@@ -476,6 +478,12 @@ function LogsPage() {
                   <input type="text" value={selectedRequestLog.targetType} readOnly />
                 </div>
               )}
+              {selectedRequestLog.vendorName && (
+                <div className="form-group">
+                  <label>供应商</label>
+                  <input type="text" value={selectedRequestLog.vendorName} readOnly />
+                </div>
+              )}
               {selectedRequestLog.targetServiceName && (
                 <div className="form-group">
                   <label>API服务名</label>
@@ -484,8 +492,14 @@ function LogsPage() {
               )}
               {selectedRequestLog.targetModel && (
                 <div className="form-group">
-                  <label>模型名</label>
+                  <label>替代模型名</label>
                   <input type="text" value={selectedRequestLog.targetModel} readOnly />
+                </div>
+              )}
+              {selectedRequestLog.requestModel && (
+                <div className="form-group">
+                  <label>请求模型</label>
+                  <input type="text" value={selectedRequestLog.requestModel} readOnly />
                 </div>
               )}
               <div className="form-group">
@@ -507,19 +521,19 @@ function LogsPage() {
               {selectedRequestLog.body && (
                 <div className="form-group">
                   <label>请求体</label>
-                  <textarea rows={6} value={selectedRequestLog.body} readOnly />
+                  <JSONViewer data={selectedRequestLog.body} />
                 </div>
               )}
               {selectedRequestLog.responseHeaders && (
                 <div className="form-group">
                   <label>响应头</label>
-                  <textarea rows={6} value={JSON.stringify(selectedRequestLog.responseHeaders, null, 2)} readOnly />
+                  <JSONViewer data={selectedRequestLog.responseHeaders} />
                 </div>
               )}
               {selectedRequestLog.responseBody && (
                 <div className="form-group">
                   <label>响应体</label>
-                  <textarea rows={8} value={selectedRequestLog.responseBody} readOnly />
+                  <JSONViewer data={selectedRequestLog.responseBody} />
                 </div>
               )}
               {selectedRequestLog.streamChunks && selectedRequestLog.streamChunks.length > 0 && (
@@ -541,12 +555,7 @@ function LogsPage() {
                           <div style={{ fontWeight: 'bold', fontSize: '12px', color: '#7f8c8d', marginBottom: '4px' }}>
                             Chunk #{index + 1}
                           </div>
-                          <textarea
-                            rows={3}
-                            value={chunk}
-                            readOnly
-                            style={{ fontSize: '12px', width: '100%' }}
-                          />
+                          <JSONViewer data={chunk} collapsed={true} />
                         </div>
                       ))}
                     </div>
@@ -667,13 +676,13 @@ function LogsPage() {
               {selectedErrorLog.requestBody && (
                 <div className="form-group">
                   <label>请求体</label>
-                  <textarea rows={6} value={selectedErrorLog.requestBody} readOnly />
+                  <JSONViewer data={selectedErrorLog.requestBody} />
                 </div>
               )}
               {selectedErrorLog.requestHeaders && (
                 <div className="form-group">
                   <label>请求头</label>
-                  <textarea rows={6} value={JSON.stringify(selectedErrorLog.requestHeaders, null, 2)} readOnly />
+                  <JSONViewer data={selectedErrorLog.requestHeaders} />
                 </div>
               )}
             </div>
