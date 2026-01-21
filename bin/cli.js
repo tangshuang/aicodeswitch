@@ -34,6 +34,7 @@ const commands = {
   stop: () => require(path.join(binDir, 'stop')),
   restart: () => require(path.join(binDir, 'restart')),
   update: () => require(path.join(binDir, 'update')),
+  restore: () => require(path.join(binDir, 'restore')),
   version: () => require(path.join(binDir, 'version')),
 };
 
@@ -46,6 +47,7 @@ Commands:
   stop       Stop the AI Code Switch server
   restart    Restart the AI Code Switch server
   update     Update to the latest version and restart
+  restore    Restore original configuration files
   version    Show current version information
 
 Example:
@@ -53,6 +55,9 @@ Example:
   aicos stop
   aicos restart
   aicos update
+  aicos restore
+  aicos restore claude-code
+  aicos restore codex
   aicos version
   `);
   process.exit(1);
