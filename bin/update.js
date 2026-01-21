@@ -161,6 +161,29 @@ const extractTarball = (tarballPath, destDir) => {
   });
 };
 
+// 安装 npm 依赖
+const installDependencies = (dir) => {
+  return new Promise((resolve, reject) => {
+    console.log(chalk.cyan('Installing dependencies...'));
+
+    const installProcess = spawn('npm', ['install', '--production'], {
+      cwd: dir,
+      stdio: 'inherit'
+    });
+
+    installProcess.on('close', (code) => {
+      if (code === 0) {
+        console.log(chalk.green('Dependencies installed successfully'));
+        resolve();
+      } else {
+        reject(new Error(`npm install failed with exit code ${code}`));
+      }
+    });
+
+    installProcess.on('error', reject);
+  });
+};
+
 // 更新 current 文件
 const updateCurrentFile = (versionPath) => {
   fs.writeFileSync(CURRENT_FILE, versionPath);
@@ -287,6 +310,21 @@ const update = async () => {
       if (fs.existsSync(tarballPath)) {
         fs.unlinkSync(tarballPath);
       }
+    }
+
+    // 安装依赖
+    const installSpinner = ora({
+      text: chalk.cyan('Installing dependencies...'),
+      color: 'cyan'
+    }).start();
+
+    try {
+      await installDependencies(versionDir);
+      installSpinner.succeed(chalk.green('Dependencies installed'));
+    } catch (err) {
+      installSpinner.fail(chalk.red('Dependencies installation failed'));
+      console.log(chalk.red(`Error: ${err.message}\n`));
+      process.exit(1);
     }
 
     // 更新 current 文件
