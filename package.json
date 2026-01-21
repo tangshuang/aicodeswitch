@@ -1,6 +1,6 @@
 {
   "name": "aicodeswitch",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "AI Code Switch",
   "author": "tangshuang",
   "main": "dist/server/main.js",
