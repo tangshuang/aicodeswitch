@@ -2,16 +2,17 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const https = require('https');
+const http = require('http');
 const { spawn } = require('child_process');
 const chalk = require('chalk');
 const ora = require('ora');
 const boxen = require('boxen');
+const tar = require('tar');
 
 const AICOSWITCH_DIR = path.join(os.homedir(), '.aicodeswitch');
 const RELEASES_DIR = path.join(AICOSWITCH_DIR, 'releases');
 const CURRENT_FILE = path.join(AICOSWITCH_DIR, 'current');
 const PACKAGE_NAME = 'aicodeswitch';
-const NPM_REGISTRY = 'https://registry.npmjs.org';
 
 // 确保目录存在
 const ensureDir = (dirPath) => {
@@ -96,40 +97,67 @@ const getLatestVersion = () => {
   });
 };
 
-// 使用 npm 安装指定版本到指定目录
-const installPackage = (version, targetDir) => {
+// 下载 tarball 文件
+const downloadTarball = (url, destPath) => {
   return new Promise((resolve, reject) => {
-    const npmProcess = spawn('npm', [
-      'install',
-      `${PACKAGE_NAME}@${version}`,
-      '--prefix',
-      targetDir,
-      '--no-save',
-      '--no-package-lock',
-      '--no-bin-links'
-    ]);
+    const urlObj = new URL(url);
+    const protocol = urlObj.protocol === 'http:' ? http : https;
 
-    let stderr = '';
-
-    npmProcess.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    npmProcess.on('close', (code) => {
-      if (code === 0) {
-        // npm install 会把包安装到 targetDir/node_modules/ 目录下
-        const packageDir = path.join(targetDir, 'node_modules', PACKAGE_NAME);
-        if (fs.existsSync(packageDir)) {
-          resolve(packageDir);
-        } else {
-          reject(new Error('Package installation directory not found'));
-        }
-      } else {
-        reject(new Error(`npm install failed: ${stderr}`));
+    const requestOptions = {
+      hostname: urlObj.hostname,
+      port: urlObj.port,
+      path: urlObj.pathname + urlObj.search,
+      method: 'GET',
+      headers: {
+        'User-Agent': 'aicodeswitch'
       }
+    };
+
+    const req = protocol.request(requestOptions, (res) => {
+      if (res.statusCode !== 200) {
+        reject(new Error(`Failed to download: HTTP ${res.statusCode}`));
+        return;
+      }
+
+      const fileStream = fs.createWriteStream(destPath);
+      res.pipe(fileStream);
+
+      fileStream.on('finish', () => {
+        fileStream.close();
+        resolve(destPath);
+      });
+
+      fileStream.on('error', (err) => {
+        fs.unlink(destPath, () => {});
+        reject(err);
+      });
     });
 
-    npmProcess.on('error', reject);
+    req.on('error', (err) => {
+      if (fs.existsSync(destPath)) {
+        fs.unlink(destPath, () => {});
+      }
+      reject(err);
+    });
+
+    req.setTimeout(60000, () => {
+      req.destroy();
+      if (fs.existsSync(destPath)) {
+        fs.unlink(destPath, () => {});
+      }
+      reject(new Error('Download timeout'));
+    });
+
+    req.end();
+  });
+};
+
+// 解压 tarball 到指定目录
+const extractTarball = (tarballPath, destDir) => {
+  return tar.x({
+    file: tarballPath,
+    cwd: destDir,
+    strip: 1, // 去掉 package 目录层级
   });
 };
 
@@ -159,6 +187,37 @@ const restart = () => {
   });
 };
 
+// 清理旧版本的下载文件（保留最近 3 个版本）
+const cleanupOldVersions = () => {
+  try {
+    if (!fs.existsSync(RELEASES_DIR)) {
+      return;
+    }
+
+    const versions = fs.readdirSync(RELEASES_DIR)
+      .filter(item => {
+        const itemPath = path.join(RELEASES_DIR, item);
+        return fs.statSync(itemPath).isDirectory();
+      })
+      .sort((a, b) => {
+        // 按版本号降序排序
+        return compareVersions(b, a);
+      });
+
+    // 保留最近 3 个版本，删除其他版本
+    if (versions.length > 3) {
+      const versionsToDelete = versions.slice(3);
+      versionsToDelete.forEach(version => {
+        const versionPath = path.join(RELEASES_DIR, version);
+        fs.rmSync(versionPath, { recursive: true, force: true });
+      });
+    }
+  } catch (err) {
+    // 清理失败不影响更新流程
+    console.error(chalk.yellow(`Warning: Failed to cleanup old versions: ${err.message}`));
+  }
+};
+
 // 主更新逻辑
 const update = async () => {
   console.log('\n');
@@ -182,7 +241,6 @@ const update = async () => {
     if (comparison <= 0) {
       console.log(chalk.yellow(`\n✓ You are already on the latest version (${chalk.bold(currentVersion)})\n`));
       process.exit(0);
-      return;
     }
 
     console.log(chalk.cyan(`\n📦 Update available: ${chalk.bold(currentVersion)} → ${chalk.bold(latestVersion)}\n`));
@@ -190,34 +248,58 @@ const update = async () => {
     // 确保目录存在
     ensureDir(RELEASES_DIR);
 
-    // 安装新版本
-    const installSpinner = ora({
-      text: chalk.cyan('Downloading and installing from npm...'),
-      color: 'cyan'
-    }).start();
-
+    // 创建版本目录
     const versionDir = path.join(RELEASES_DIR, latestVersion);
     ensureDir(versionDir);
 
+    // 下载 tarball
+    const downloadSpinner = ora({
+      text: chalk.cyan('Downloading from npm...'),
+      color: 'cyan'
+    }).start();
+
+    const tarballPath = path.join(versionDir, 'package.tgz');
+
     try {
-      const packageDir = await installPackage(latestVersion, versionDir);
-      installSpinner.succeed(chalk.green('Package installed'));
+      await downloadTarball(latestInfo.tarball, tarballPath);
+      downloadSpinner.succeed(chalk.green('Download completed'));
     } catch (err) {
-      installSpinner.fail(chalk.red('Installation failed'));
+      downloadSpinner.fail(chalk.red('Download failed'));
       console.log(chalk.red(`Error: ${err.message}\n`));
       process.exit(1);
-      return;
     }
 
-    // 实际的包在 node_modules/aicodeswitch 目录下
-    const actualPackageDir = path.join(versionDir, 'node_modules', PACKAGE_NAME);
-    updateCurrentFile(actualPackageDir);
+    // 解压 tarball
+    const extractSpinner = ora({
+      text: chalk.cyan('Extracting package...'),
+      color: 'cyan'
+    }).start();
+
+    try {
+      await extractTarball(tarballPath, versionDir);
+      extractSpinner.succeed(chalk.green('Package extracted'));
+    } catch (err) {
+      extractSpinner.fail(chalk.red('Extraction failed'));
+      console.log(chalk.red(`Error: ${err.message}\n`));
+      process.exit(1);
+    } finally {
+      // 删除 tarball 文件
+      if (fs.existsSync(tarballPath)) {
+        fs.unlinkSync(tarballPath);
+      }
+    }
+
+    // 更新 current 文件
+    updateCurrentFile(versionDir);
+
+    // 清理旧版本
+    cleanupOldVersions();
 
     // 显示更新成功信息
     console.log(boxen(
       chalk.green.bold('✨ Update Successful!\n\n') +
       chalk.white('Version:  ') + chalk.cyan.bold(latestVersion) + '\n' +
-      chalk.white('Location: ') + chalk.gray(actualPackageDir) + '\n\n' +
+      chalk.white('Location: ') + chalk.gray(versionDir) + '\n\n' +
       chalk.gray('Restarting server with the new version...'),
       {
         padding: 1,
@@ -234,7 +316,6 @@ const update = async () => {
       console.log(chalk.yellow(`\n⚠️  Update completed, but restart failed: ${err.message}`));
       console.log(chalk.cyan('Please manually run: ') + chalk.yellow('aicos restart\n'));
       process.exit(1);
-      return;
     }
 
     process.exit(0);
