@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { api } from '../api/client';
 import type { Vendor, APIService, SourceType } from '../../types';
+import recommendMd from '../docs/vendors-recommand.md?raw';
 
 // TagInput 组件
 function TagInput({ value = [], onChange, placeholder }: {
@@ -107,6 +109,7 @@ function VendorsPage() {
   const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null);
   const [showVendorModal, setShowVendorModal] = useState(false);
   const [showServiceModal, setShowServiceModal] = useState(false);
+  const [showRecommendModal, setShowRecommendModal] = useState(false);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
   const [editingService, setEditingService] = useState<APIService | null>(null);
   const [supportedModels, setSupportedModels] = useState<string[]>([]);
@@ -137,6 +140,10 @@ function VendorsPage() {
   const handleCreateVendor = () => {
     setEditingVendor(null);
     setShowVendorModal(true);
+  };
+
+  const handleRecommend = () => {
+    setShowRecommendModal(true);
   };
 
   const handleEditVendor = (vendor: Vendor) => {
@@ -234,7 +241,40 @@ function VendorsPage() {
         <div className="card" style={{ flex: '0 0 33%' }}>
           <div className="toolbar">
             <h3>供应商列表</h3>
-            <button className="btn btn-primary" onClick={handleCreateVendor}>新增</button>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                className="btn btn-secondary"
+                style={{
+                  background: 'linear-gradient(135deg, #2563EB 0%, #F97316 100%)',
+                  color: '#FFFFFF',
+                  boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)',
+                  border: 'none',
+                  transition: 'all 0.3s ease',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                  letterSpacing: '0.5px'
+                }}
+                onClick={handleRecommend}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 8px 20px rgba(37, 99, 235, 0.4)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(37, 99, 235, 0.3)';
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.outline = '2px solid #2563EB';
+                  e.currentTarget.style.outlineOffset = '2px';
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.outline = 'none';
+                }}
+              >
+                推荐
+              </button>
+              <button className="btn btn-primary" onClick={handleCreateVendor}>新增</button>
+            </div>
           </div>
           {vendors.length === 0 ? (
             <div className="empty-state"><p>暂无供应商</p></div>
@@ -289,12 +329,12 @@ function VendorsPage() {
         </div>
 
         <div className="card" style={{ flex: 1 }}>
-          <div className="toolbar">
-            <h3>供应商API服务</h3>
-            {selectedVendor && (
-              <button className="btn btn-primary" onClick={handleCreateService}>新增服务</button>
-            )}
-          </div>
+           <div className="toolbar">
+             <h3>供应商API服务{selectedVendor && ` - ${selectedVendor.name}`}</h3>
+             {selectedVendor && (
+               <button className="btn btn-primary" onClick={handleCreateService}>新增服务</button>
+             )}
+           </div>
           {!selectedVendor ? (
             <div className="empty-state"><p>请先选择一个供应商</p></div>
           ) : services.length === 0 ? (
@@ -404,6 +444,42 @@ function VendorsPage() {
                 <button type="submit" className="btn btn-primary">保存</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {showRecommendModal && (
+        <div className="modal-overlay">
+          <div className="modal" style={{ maxWidth: '800px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>供应商推荐</h2>
+            </div>
+            <div className="modal-body">
+              <div className="markdown-content">
+                <ReactMarkdown
+                  components={{
+                    a: ({ href, children }) => (
+                      <a
+                        href={href}
+                        style={{
+                          color: '#2563EB',
+                          borderBottom: 'solid 1px #2563EB'
+                        }}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {children}
+                      </a>
+                    )
+                  }}
+                >
+                  {recommendMd}
+                </ReactMarkdown>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => setShowRecommendModal(false)}>关闭</button>
+            </div>
           </div>
         </div>
       )}
