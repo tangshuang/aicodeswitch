@@ -70,14 +70,15 @@ export class DatabaseManager {
       CREATE TABLE IF NOT EXISTS rules (
         id TEXT PRIMARY KEY,
         route_id TEXT NOT NULL,
-        content_type TEXT NOT NULL CHECK(content_type IN ('default', 'background', 'thinking', 'long-context', 'image-understanding')),
+        content_type TEXT NOT NULL CHECK(content_type IN ('default', 'background', 'thinking', 'long-context', 'image-understanding', 'model-mapping')),
         target_service_id TEXT NOT NULL,
         target_model TEXT,
+        replaced_model TEXT,
+        sort_order INTEGER DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE CASCADE,
-        FOREIGN KEY (target_service_id) REFERENCES api_services(id) ON DELETE CASCADE,
-        UNIQUE(route_id, content_type)
+        FOREIGN KEY (target_service_id) REFERENCES api_services(id) ON DELETE CASCADE
       );
 
       CREATE TABLE IF NOT EXISTS config (
@@ -259,8 +260,8 @@ export class DatabaseManager {
   // Rule operations
   getRules(routeId?: string): Rule[] {
     const query = routeId
-      ? 'SELECT * FROM rules WHERE route_id = ? ORDER BY created_at DESC'
-      : 'SELECT * FROM rules ORDER BY created_at DESC';
+      ? 'SELECT * FROM rules WHERE route_id = ? ORDER BY sort_order DESC, created_at DESC'
+      : 'SELECT * FROM rules ORDER BY sort_order DESC, created_at DESC';
     const stmt = routeId ? this.db.prepare(query).bind(routeId) : this.db.prepare(query);
     const rows = stmt.all();
     return rows.map((row: any) => ({
@@ -269,6 +270,8 @@ export class DatabaseManager {
       contentType: row.content_type,
       targetServiceId: row.target_service_id,
       targetModel: row.target_model,
+      replacedModel: row.replaced_model,
+      sortOrder: row.sort_order,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -279,7 +282,7 @@ export class DatabaseManager {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         id,
@@ -287,6 +290,8 @@ export class DatabaseManager {
         route.contentType,
         route.targetServiceId,
         route.targetModel || null,
+        route.replacedModel || null,
+        route.sortOrder || 0,
         now,
         now
       );
@@ -297,12 +302,14 @@ export class DatabaseManager {
     const now = Date.now();
     const result = this.db
       .prepare(
-        'UPDATE rules SET content_type = ?, target_service_id = ?, target_model = ?, updated_at = ? WHERE id = ?'
+        'UPDATE rules SET content_type = ?, target_service_id = ?, target_model = ?, replaced_model = ?, sort_order = ?, updated_at = ? WHERE id = ?'
       )
       .run(
         route.contentType,
         route.targetServiceId,
         route.targetModel || null,
+        route.replacedModel || null,
+        route.sortOrder || 0,
         now,
         id
       );
@@ -470,13 +477,16 @@ export class DatabaseManager {
       for (const rule of importData.rules) {
         this.db
           .prepare(
-            'INSERT INTO rules (id, route_id, content_type, target_service_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+            'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
           )
           .run(
             rule.id,
             rule.routeId,
             rule.contentType || 'default',
             rule.targetServiceId,
+            rule.targetModel || null,
+            rule.replacedModel || null,
+            rule.sortOrder || 0,
             rule.createdAt,
             rule.updatedAt
           );

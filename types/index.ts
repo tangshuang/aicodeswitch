@@ -44,11 +44,13 @@ export interface Rule {
   contentType: ContentType;
   targetServiceId: string;
   targetModel?: string;
+  replacedModel?: string;
+  sortOrder?: number;
   createdAt: number;
   updatedAt: number;
 }
 
-export type ContentType = 'default' | 'background' | 'thinking' | 'long-context' | 'image-understanding';
+export type ContentType = 'default' | 'background' | 'thinking' | 'long-context' | 'image-understanding' | 'model-mapping';
 
 export interface RequestLog {
   id: string;

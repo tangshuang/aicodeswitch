@@ -258,9 +258,35 @@ export class ProxyServer {
     const rules = this.rules.get(routeId);
     if (!rules) return undefined;
 
-    // Determine content type from request
+    const body = req.body;
+    const requestModel = body?.model;
+
+    // 1. 首先查找 model-mapping 类型的规则，按 sortOrder 降序匹配
+    if (requestModel) {
+      const modelMappingRules = rules.filter(rule =>
+        rule.contentType === 'model-mapping' &&
+        rule.replacedModel &&
+        requestModel.includes(rule.replacedModel)
+      );
+      if (modelMappingRules.length > 0) {
+        return modelMappingRules[0]; // 已按 sortOrder 降序排序
+      }
+    }
+
+    // 2. 查找其他内容类型的规则
     const contentType = this.determineContentType(req);
-    return rules.find(rule => rule.contentType === contentType) || rules.find(rule => rule.contentType === 'default');
+    const contentTypeRules = rules.filter(rule => rule.contentType === contentType);
+    if (contentTypeRules.length > 0) {
+      return contentTypeRules[0]; // 已按 sortOrder 降序排序
+    }
+
+    // 3. 最后返回 default 规则
+    const defaultRules = rules.filter(rule => rule.contentType === 'default');
+    if (defaultRules.length > 0) {
+      return defaultRules[0]; // 已按 sortOrder 降序排序
+    }
+
+    return undefined;
   }
 
   private determineContentType(req: Request): ContentType {
@@ -990,7 +1016,9 @@ export class ProxyServer {
 
     for (const route of this.routes) {
       const routeRules = this.dbManager.getRules(route.id);
-      this.rules.set(route.id, routeRules);
+      // 确保按 sortOrder 降序排序（database 层已处理，但再次确保）
+      const sortedRules = [...routeRules].sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0));
+      this.rules.set(route.id, sortedRules);
     }
 
     // Load all services

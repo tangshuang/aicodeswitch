@@ -8,6 +8,7 @@ const CONTENT_TYPE_OPTIONS = [
   { value: 'thinking', label: '思考' },
   { value: 'long-context', label: '长上下文' },
   { value: 'image-understanding', label: '图像理解' },
+  { value: 'model-mapping', label: '模型映射' },
 ];
 
 const TARGET_TYPE_OPTIONS = [
@@ -29,6 +30,9 @@ export default function RoutesPage() {
   const [selectedVendor, setSelectedVendor] = useState<string>('');
   const [selectedService, setSelectedService] = useState<string>('');
   const [selectedModel, setSelectedModel] = useState<string>('');
+  const [selectedReplacedModel, setSelectedReplacedModel] = useState<string>('');
+  const [selectedSortOrder, setSelectedSortOrder] = useState<number>(0);
+  const [selectedContentType, setSelectedContentType] = useState<string>(editingRule?.contentType || '');
 
   useEffect(() => {
     loadRoutes();
@@ -124,6 +128,8 @@ export default function RoutesPage() {
       contentType: formData.get('contentType') as ContentType,
       targetServiceId: selectedService,
       targetModel: selectedModel || undefined,
+      replacedModel: selectedReplacedModel || undefined,
+      sortOrder: selectedSortOrder,
     };
 
     if (editingRule) {
@@ -148,12 +154,24 @@ export default function RoutesPage() {
   };
 
   const getAvailableContentTypes = () => {
-    const usedTypes = new Set(rules.map(route => route.contentType));
-    return CONTENT_TYPE_OPTIONS.filter(option => !usedTypes.has(option.value as ContentType));
+    // 对于模型映射类型，允许添加多个规则（通过 sort_order 区分优先级）
+    // 对于其他类型，保持唯一性
+    if (editingRule && editingRule.contentType === 'model-mapping') {
+      return CONTENT_TYPE_OPTIONS;
+    }
+
+    const usedTypes = new Set(rules.map(rule => rule.contentType));
+    return CONTENT_TYPE_OPTIONS.filter(option => {
+      if (option.value === 'model-mapping') {
+        return true; // 模型映射类型允许添加多个
+      }
+      return !usedTypes.has(option.value as ContentType);
+    });
   };
 
   const handleEditRule = (rule: Rule) => {
     setEditingRule(rule);
+    setSelectedContentType(rule.contentType);
     const service = allServices.find(s => s.id === rule.targetServiceId);
     if (service) {
       setSelectedVendor(service.vendorId);
@@ -163,6 +181,8 @@ export default function RoutesPage() {
       setTimeout(() => {
         setSelectedService(service.id);
         setSelectedModel(rule.targetModel || '');
+        setSelectedReplacedModel(rule.replacedModel || '');
+        setSelectedSortOrder(rule.sortOrder || 0);
       }, 0);
     }
     setShowRuleModal(true);
@@ -170,9 +190,12 @@ export default function RoutesPage() {
 
   const handleNewRule = () => {
     setEditingRule(null);
+    setSelectedContentType('');
     setSelectedVendor('');
     setSelectedService('');
     setSelectedModel('');
+    setSelectedReplacedModel('');
+    setSelectedSortOrder(0);
     setShowRuleModal(true);
   };
 
@@ -288,7 +311,9 @@ export default function RoutesPage() {
             <table>
               <thead>
                 <tr>
+                  <th>排序</th>
                   <th>对象请求类型</th>
+                  <th>被顶替模型</th>
                   <th>供应商</th>
                   <th>API服务</th>
                   <th>模型</th>
@@ -302,7 +327,9 @@ export default function RoutesPage() {
                   const contentTypeLabel = CONTENT_TYPE_OPTIONS.find(opt => opt.value === rule.contentType)?.label;
                   return (
                     <tr key={rule.id}>
+                      <td>{rule.sortOrder || 0}</td>
                       <td>{contentTypeLabel}</td>
+                      <td>{rule.replacedModel || '-'}</td>
                       <td>{vendor ? vendor.name : 'Unknown'}</td>
                       <td>{service ? service.name : 'Unknown'}</td>
                       <td>{rule.targetModel || '-'}</td>
@@ -365,8 +392,11 @@ export default function RoutesPage() {
                 <label>对象请求类型</label>
                 <select
                   name="contentType"
-                  defaultValue={editingRule ? editingRule.contentType : ''}
+                  value={selectedContentType}
                   required
+                  onChange={(e) => {
+                    setSelectedContentType(e.target.value);
+                  }}
                 >
                   <option value="" disabled>请选择对象请求类型</option>
                   {getAvailableContentTypes().map(opt => (
@@ -374,6 +404,32 @@ export default function RoutesPage() {
                   ))}
                 </select>
               </div>
+
+              {/* 新增：被顶替模型字段，仅在选择模型映射时显示 */}
+              {selectedContentType === 'model-mapping' && (
+                <div className="form-group">
+                  <label>被顶替模型</label>
+                  <input
+                    type="text"
+                    value={selectedReplacedModel}
+                    onChange={(e) => setSelectedReplacedModel(e.target.value)}
+                    placeholder="例如：gpt-4"
+                  />
+                </div>
+              )}
+
+              {/* 新增：排序字段 */}
+              <div className="form-group">
+                <label>排序（值越大优先级越高）</label>
+                <input
+                  type="number"
+                  value={selectedSortOrder}
+                  onChange={(e) => setSelectedSortOrder(parseInt(e.target.value) || 0)}
+                  min="0"
+                  max="1000"
+                />
+              </div>
+
               <div className="form-group">
                 <label>供应商</label>
                 <select
