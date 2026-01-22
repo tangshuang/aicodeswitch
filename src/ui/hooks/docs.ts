@@ -1,4 +1,4 @@
-import recommendMd from '../../../docs/vendors-recommand.md?raw';
+import recommendMd from '../../../public/vendors-recommand.md?raw';
 import readMeMd from '../../../README.md?raw';
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
@@ -7,12 +7,25 @@ function createDocHookFunc(markdown: string, apiFunc: Function) {
     let cacheRecommendMdPromise: Promise<any>;
     let cacheRecommendMd: string;
 
+    const replaceImgSrc = (md: string) => {
+        return md.replace(/!\[.*?\]\(.*?\)/g, (match) => {
+            const src = match.match(/\((.*?)\)/)?.[1];
+            if (src?.indexOf('public/') === 0) {
+                const url = src.replace('public/', '/');
+                return match.replace(src, url);
+            }
+            else {
+                return match;
+            }
+        });
+    }
+
     return function() {
-        const [vendors, setVendors] = useState<string>(markdown);
+        const [vendors, setVendors] = useState<string>(replaceImgSrc(markdown));
 
         useEffect(() => {
             if (cacheRecommendMd) {
-                setVendors(cacheRecommendMd);
+                setVendors(replaceImgSrc(cacheRecommendMd));
                 return;
             }
 
@@ -21,7 +34,7 @@ function createDocHookFunc(markdown: string, apiFunc: Function) {
                     return;
                 }
                 cacheRecommendMd = result;
-                setVendors(result);
+                setVendors(replaceImgSrc(result));
             };
 
             if (cacheRecommendMdPromise) {

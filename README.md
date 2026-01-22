@@ -201,7 +201,7 @@ PORT=4567
 
 ## 支持我
 
-![](donate-to-me.png)
+![](public/donate-to-me.png)
 
 你的支持是我前进的动力！
 

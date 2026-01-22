@@ -781,13 +781,12 @@ table th {
 .markdown-content a {
   color: var(--accent-primary);
   text-decoration: none;
-  border-bottom: 1px solid transparent;
+  border-bottom: 1px solid var(--accent-secondary);
   transition: all 0.2s ease;
 }
 
 .markdown-content a:hover {
   color: var(--accent-secondary);
-  border-bottom-color: var(--accent-secondary);
 }
 
 .markdown-content table {
