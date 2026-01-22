@@ -256,10 +256,14 @@ function AppContent() {
                 <div className="update-versions">
                   {currentVersion} → {latestVersion}
                 </div>
+                <div className="update-message">
+                  命令行执行如下更新到最新版本<br />
+                  <code>npm i -g aicodeswitch</code>
+                </div>
               </div>
             </div>
             <a
-              href="https://github.com/tangshuang/aicodeswitch#更新"
+              href="https://npmjs.com/package/aicodeswitch"
               target="_blank"
               rel="noopener noreferrer"
               className="update-link"

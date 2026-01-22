@@ -570,6 +570,7 @@ table th {
   backdrop-filter: blur(10px);
   animation: slideUp 0.3s ease-out;
   box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+  margin-bottom: 12px;
 }
 
 @keyframes slideUp {
@@ -619,6 +620,21 @@ table th {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.7);
   font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.update-message {
+  font-size: 10px;
+  color: var(--text-sidebar);
+  margin-bottom: 2px;
+}
+
+.update-message code {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-family: 'Monaco', 'Menlo', monospace;
+  margin-top: 2px;
+  display: inline-block;
 }
 
 .update-link {
