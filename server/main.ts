@@ -39,6 +39,13 @@ const writeClaudeConfig = async (dbManager: DatabaseManager): Promise<boolean> =
     const claudeDir = path.join(homeDir, '.claude');
     const claudeSettingsPath = path.join(claudeDir, 'settings.json');
     const claudeSettingsBakPath = path.join(claudeDir, 'settings.json.bak');
+    const claudeJsonBakPath = path.join(homeDir, '.claude.json.bak');
+
+    // Check if any backup file already exists
+    if (fs.existsSync(claudeSettingsBakPath) || fs.existsSync(claudeJsonBakPath)) {
+      console.error('Claude backup files already exist, refusing to overwrite');
+      return false;
+    }
 
     if (fs.existsSync(claudeSettingsPath)) {
       fs.renameSync(claudeSettingsPath, claudeSettingsBakPath);
@@ -60,7 +67,6 @@ const writeClaudeConfig = async (dbManager: DatabaseManager): Promise<boolean> =
 
     // Claude Code .claude.json
     const claudeJsonPath = path.join(homeDir, '.claude.json');
-    const claudeJsonBakPath = path.join(homeDir, '.claude.json.bak');
 
     if (fs.existsSync(claudeJsonPath)) {
       fs.renameSync(claudeJsonPath, claudeJsonBakPath);
@@ -91,6 +97,13 @@ const writeCodexConfig = async (dbManager: DatabaseManager): Promise<boolean> =>
     const codexDir = path.join(homeDir, '.codex');
     const codexConfigPath = path.join(codexDir, 'config.toml');
     const codexConfigBakPath = path.join(codexDir, 'config.toml.bak');
+    const codexAuthBakPath = path.join(codexDir, 'auth.json.bak');
+
+    // Check if any backup file already exists
+    if (fs.existsSync(codexConfigBakPath) || fs.existsSync(codexAuthBakPath)) {
+      console.error('Codex backup files already exist, refusing to overwrite');
+      return false;
+    }
 
     if (fs.existsSync(codexConfigPath)) {
       fs.renameSync(codexConfigPath, codexConfigBakPath);
@@ -117,7 +130,6 @@ requires_openai_auth = true
 
     // Codex auth.json
     const codexAuthPath = path.join(codexDir, 'auth.json');
-    const codexAuthBakPath = path.join(codexDir, 'auth.json.bak');
 
     if (fs.existsSync(codexAuthPath)) {
       fs.renameSync(codexAuthPath, codexAuthBakPath);

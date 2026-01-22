@@ -107,7 +107,7 @@ function WriteConfigPage() {
           <button
             className="btn btn-primary"
             onClick={() => handleWriteConfig('claude')}
-            disabled={isWriting.claude}
+            disabled={isWriting.claude || hasBackup.claude}
           >
             {isWriting.claude ? '写入中...' : '写入Claude Code配置'}
           </button>
@@ -124,6 +124,12 @@ function WriteConfigPage() {
         {!hasBackup.claude && (
           <p style={{ color: '#95a5a6', fontSize: '12px', marginTop: '10px' }}>
             没有找到备份文件,恢复功能不可用
+          </p>
+        )}
+
+        {hasBackup.claude && (
+          <p style={{ color: '#e74c3c', fontSize: '12px', marginTop: '10px' }}>
+            ⚠️ 备份文件已存在,为避免覆盖原始备份,请先恢复或手动删除备份文件后再写入
           </p>
         )}
       </div>
@@ -146,7 +152,7 @@ function WriteConfigPage() {
           <button
             className="btn btn-primary"
             onClick={() => handleWriteConfig('codex')}
-            disabled={isWriting.codex}
+            disabled={isWriting.codex || hasBackup.codex}
           >
             {isWriting.codex ? '写入中...' : '写入Codex配置'}
           </button>
@@ -163,6 +169,12 @@ function WriteConfigPage() {
         {!hasBackup.codex && (
           <p style={{ color: '#95a5a6', fontSize: '12px', marginTop: '10px' }}>
             没有找到备份文件,恢复功能不可用
+          </p>
+        )}
+
+        {hasBackup.codex && (
+          <p style={{ color: '#e74c3c', fontSize: '12px', marginTop: '10px' }}>
+            ⚠️ 备份文件已存在,为避免覆盖原始备份,请先恢复或手动删除备份文件后再写入
           </p>
         )}
       </div>
