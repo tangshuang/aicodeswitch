@@ -4,6 +4,7 @@
     "module": "CommonJS",
     "useDefineForClassFields": true,
     "noEmit": false,
+    "rootDir": "src",
     "outDir": "dist",
     "skipLibCheck": true,
     "moduleResolution": "node",
@@ -17,6 +18,6 @@
     "noFallthroughCasesInSwitch": true,
     "allowSyntheticDefaultImports": true
   },
-  "include": ["server/**/*", "types/**/*"],
+  "include": ["src/server/**/*"],
   "exclude": ["node_modules", "dist"]
 }

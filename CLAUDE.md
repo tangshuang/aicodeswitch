@@ -190,3 +190,4 @@ aicos version            # Show current version information
 * 使用yarn作为包管理器，请使用yarn安装依赖。
 * 前端依赖库安装在devDependencies中，请使用yarn install --dev安装。
 * 所有对话请使用中文。生成代码中的文案及相关注释根据代码原本的语言生成。
+* 在服务端，直接使用 __dirname 来获取当前目录，不要使用 process.cwd()

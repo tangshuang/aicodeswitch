@@ -20,11 +20,7 @@ export const compareVersions = (v1: string, v2: string): number => {
 // 获取当前版本
 export const getCurrentVersion = (): string | null => {
   try {
-    // 在构建环境中，__dirname 可能不可用
-    const packageJsonPath = path.resolve(
-      process.cwd(),
-      'package.json'
-    );
+    const packageJsonPath = path.resolve(__dirname, '../../package.json');
     const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
     return packageJson.version;
   } catch (err) {
