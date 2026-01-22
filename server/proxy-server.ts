@@ -9,7 +9,7 @@ import {
   SSEParserTransform,
   SSESerializerTransform,
 } from './transformers/streaming';
-import { ChunkCollectorTransform } from './transformers/chunk-collector';
+import { SSEEventCollectorTransform } from './transformers/chunk-collector';
 import {
   extractTokenUsageFromClaudeUsage,
   extractTokenUsageFromOpenAIUsage,
@@ -785,7 +785,7 @@ export class ProxyServer {
           res.setHeader('Connection', 'keep-alive');
 
           const parser = new SSEParserTransform();
-          const chunkCollector = new ChunkCollectorTransform();
+          const eventCollector = new SSEEventCollectorTransform();
           const converter = new OpenAIToClaudeEventTransform({ model: requestBody?.model });
           const serializer = new SSESerializerTransform();
 
@@ -796,13 +796,19 @@ export class ProxyServer {
             const usage = converter.getUsage();
             if (usage) {
               usageForLog = extractTokenUsageFromClaudeUsage(usage);
+            } else {
+              // 尝试从event collector中提取usage
+              const extractedUsage = eventCollector.extractUsage();
+              if (extractedUsage) {
+                usageForLog = this.extractTokenUsage(extractedUsage);
+              }
             }
-            // 收集stream chunks
-            streamChunksForLog = chunkCollector.getChunks();
+            // 收集stream chunks（每个chunk是一个完整的SSE事件）
+            streamChunksForLog = eventCollector.getChunks();
             void finalizeLog(res.statusCode);
           });
 
-          pipeline(response.data, parser, chunkCollector, converter, serializer, res, (error) => {
+          pipeline(response.data, parser, eventCollector, converter, serializer, res, (error) => {
             if (error) {
               void finalizeLog(500, error.message);
             }
@@ -816,7 +822,7 @@ export class ProxyServer {
           res.setHeader('Connection', 'keep-alive');
 
           const parser = new SSEParserTransform();
-          const chunkCollector = new ChunkCollectorTransform();
+          const eventCollector = new SSEEventCollectorTransform();
           const converter = new OpenAIResponsesToClaudeEventTransform({ model: requestBody?.model });
           const serializer = new SSESerializerTransform();
 
@@ -826,12 +832,18 @@ export class ProxyServer {
             const usage = converter.getUsage();
             if (usage) {
               usageForLog = extractTokenUsageFromClaudeUsage(usage);
+            } else {
+              // 尝试从event collector中提取usage
+              const extractedUsage = eventCollector.extractUsage();
+              if (extractedUsage) {
+                usageForLog = this.extractTokenUsage(extractedUsage);
+              }
             }
-            streamChunksForLog = chunkCollector.getChunks();
+            streamChunksForLog = eventCollector.getChunks();
             void finalizeLog(res.statusCode);
           });
 
-          pipeline(response.data, parser, chunkCollector, converter, serializer, res, (error) => {
+          pipeline(response.data, parser, eventCollector, converter, serializer, res, (error) => {
             if (error) {
               void finalizeLog(500, error.message);
             }
@@ -845,7 +857,7 @@ export class ProxyServer {
           res.setHeader('Connection', 'keep-alive');
 
           const parser = new SSEParserTransform();
-          const chunkCollector = new ChunkCollectorTransform();
+          const eventCollector = new SSEEventCollectorTransform();
           const converter = new ClaudeToOpenAIResponsesEventTransform({ model: requestBody?.model });
           const serializer = new SSESerializerTransform();
 
@@ -855,12 +867,18 @@ export class ProxyServer {
             const usage = converter.getUsage();
             if (usage) {
               usageForLog = extractTokenUsageFromClaudeUsage(usage);
+            } else {
+              // 尝试从event collector中提取usage
+              const extractedUsage = eventCollector.extractUsage();
+              if (extractedUsage) {
+                usageForLog = this.extractTokenUsage(extractedUsage);
+              }
             }
-            streamChunksForLog = chunkCollector.getChunks();
+            streamChunksForLog = eventCollector.getChunks();
             void finalizeLog(res.statusCode);
           });
 
-          pipeline(response.data, parser, chunkCollector, converter, serializer, res, (error) => {
+          pipeline(response.data, parser, eventCollector, converter, serializer, res, (error) => {
             if (error) {
               void finalizeLog(500, error.message);
             }
@@ -874,7 +892,7 @@ export class ProxyServer {
           res.setHeader('Connection', 'keep-alive');
 
           const parser = new SSEParserTransform();
-          const chunkCollector = new ChunkCollectorTransform();
+          const eventCollector = new SSEEventCollectorTransform();
           const toClaude = new OpenAIToClaudeEventTransform({ model: requestBody?.model });
           const toResponses = new ClaudeToOpenAIResponsesEventTransform({ model: requestBody?.model });
           const serializer = new SSESerializerTransform();
@@ -885,12 +903,18 @@ export class ProxyServer {
             const usage = toResponses.getUsage();
             if (usage) {
               usageForLog = extractTokenUsageFromClaudeUsage(usage);
+            } else {
+              // 尝试从event collector中提取usage
+              const extractedUsage = eventCollector.extractUsage();
+              if (extractedUsage) {
+                usageForLog = this.extractTokenUsage(extractedUsage);
+              }
             }
-            streamChunksForLog = chunkCollector.getChunks();
+            streamChunksForLog = eventCollector.getChunks();
             void finalizeLog(res.statusCode);
           });
 
-          pipeline(response.data, parser, chunkCollector, toClaude, toResponses, serializer, res, (error) => {
+          pipeline(response.data, parser, eventCollector, toClaude, toResponses, serializer, res, (error) => {
             if (error) {
               void finalizeLog(500, error.message);
             }
@@ -899,34 +923,20 @@ export class ProxyServer {
         }
 
         // 默认stream处理(无转换)
-        const chunkCollector = new ChunkCollectorTransform();
+        const eventCollector = new SSEEventCollectorTransform();
         responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
 
         this.copyResponseHeaders(responseHeaders, res);
         res.on('finish', () => {
-          streamChunksForLog = chunkCollector.getChunks();
-          // 尝试从stream chunks中解析usage信息
-          if (streamChunksForLog && streamChunksForLog.length > 0) {
-            // 合并所有chunks并尝试解析usage
-            const allChunks = streamChunksForLog.join('');
-            // 查找包含usage信息的部分
-            const usageMatch = allChunks.match(/usage[\s\S]*?\{[\s\S]*?\}/);
-            if (usageMatch) {
-              try {
-                // 尝试解析usage信息
-                const usageStr = usageMatch[0];
-                const jsonStart = usageStr.indexOf('{');
-                const jsonEnd = usageStr.lastIndexOf('}') + 1;
-                const usageJson = JSON.parse(usageStr.slice(jsonStart, jsonEnd));
-                usageForLog = this.extractTokenUsage(usageJson);
-              } catch (e) {
-                console.error('Failed to parse usage from stream chunks:', e);
-              }
-            }
+          streamChunksForLog = eventCollector.getChunks();
+          // 尝试从event collector中提取usage信息
+          const extractedUsage = eventCollector.extractUsage();
+          if (extractedUsage) {
+            usageForLog = this.extractTokenUsage(extractedUsage);
           }
           void finalizeLog(res.statusCode);
         });
-        pipeline(response.data, chunkCollector, res, (error) => {
+        pipeline(response.data, eventCollector, res, (error) => {
           if (error) {
             void finalizeLog(500, error.message);
           }
