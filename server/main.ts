@@ -463,6 +463,15 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     })
   );
 
+  app.get(
+    '/api/statistics',
+    asyncHandler(async (req, res) => {
+      const days = typeof req.query.days === 'string' ? parseInt(req.query.days, 10) : 30;
+      const stats = await dbManager.getStatistics(days);
+      res.json(stats);
+    })
+  );
+
   app.use(express.static(path.resolve(__dirname, '../ui')));
 };
 

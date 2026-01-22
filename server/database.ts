@@ -13,6 +13,7 @@ import type {
   ErrorLog,
   AppConfig,
   ExportData,
+  Statistics,
 } from '../types';
 
 export class DatabaseManager {
@@ -494,6 +495,217 @@ export class DatabaseManager {
       console.error('Import error:', error);
       return false;
     }
+  }
+
+  // Statistics operations
+  async getStatistics(days: number = 30): Promise<Statistics> {
+    const now = Date.now();
+    const startTime = now - days * 24 * 60 * 60 * 1000;
+
+    // Get all logs within the time period
+    const allLogs: RequestLog[] = [];
+    for await (const [, value] of this.logDb.iterator()) {
+      const log = JSON.parse(value) as RequestLog;
+      if (log.timestamp >= startTime) {
+        allLogs.push(log);
+      }
+    }
+
+    // Get all error logs
+    const errorLogs: ErrorLog[] = [];
+    const recentErrorLogs: ErrorLog[] = [];
+    const recentTime = now - 24 * 60 * 60 * 1000; // 24 hours ago
+    for await (const [, value] of this.errorLogDb.iterator()) {
+      const log = JSON.parse(value) as ErrorLog;
+      errorLogs.push(log);
+      if (log.timestamp >= recentTime) {
+        recentErrorLogs.push(log);
+      }
+    }
+
+    // Get vendors and services for mapping
+    const vendors = this.getVendors();
+    const vendorMap = new Map(vendors.map(v => [v.id, v.name]));
+    const services = this.getAPIServices();
+    const serviceMap = new Map(services.map(s => [s.id, { name: s.name, vendorId: s.vendorId }]));
+
+    // Calculate overview
+    const totalRequests = allLogs.length;
+    const successRequests = allLogs.filter(log => log.statusCode && log.statusCode >= 200 && log.statusCode < 400).length;
+    const totalInputTokens = allLogs.reduce((sum, log) => sum + (log.usage?.inputTokens || 0), 0);
+    const totalOutputTokens = allLogs.reduce((sum, log) => sum + (log.usage?.outputTokens || 0), 0);
+    const totalCacheReadTokens = allLogs.reduce((sum, log) => sum + (log.usage?.cacheReadInputTokens || 0), 0);
+    const totalTokens = allLogs.reduce((sum, log) => {
+      if (log.usage?.totalTokens) return sum + log.usage.totalTokens;
+      return sum + (log.usage?.inputTokens || 0) + (log.usage?.outputTokens || 0);
+    }, 0);
+    const avgResponseTime = allLogs.length > 0
+      ? allLogs.reduce((sum, log) => sum + (log.responseTime || 0), 0) / allLogs.length
+      : 0;
+    const successRate = totalRequests > 0 ? (successRequests / totalRequests) * 100 : 0;
+
+    // Calculate coding time (estimate based on tokens and requests)
+    // Assume average reading speed: 250 tokens/minute, coding speed: 100 tokens/minute
+    const totalCodingTime = Math.round(totalInputTokens / 250 + totalOutputTokens / 100);
+
+    // Group by target type
+    const byTargetTypeMap = new Map<string, { requests: number; tokens: number; responseTime: number }>();
+    for (const log of allLogs) {
+      const key = log.targetType || 'unknown';
+      if (!byTargetTypeMap.has(key)) {
+        byTargetTypeMap.set(key, { requests: 0, tokens: 0, responseTime: 0 });
+      }
+      const stats = byTargetTypeMap.get(key)!;
+      stats.requests++;
+      stats.tokens += log.usage?.totalTokens || (log.usage?.inputTokens || 0) + (log.usage?.outputTokens || 0);
+      stats.responseTime += log.responseTime || 0;
+    }
+
+    const byTargetType = Array.from(byTargetTypeMap.entries()).map(([targetType, stats]) => ({
+      targetType: targetType as any,
+      totalRequests: stats.requests,
+      totalTokens: stats.tokens,
+      avgResponseTime: stats.requests > 0 ? Math.round(stats.responseTime / stats.requests) : 0,
+    }));
+
+    // Group by vendor
+    const byVendorMap = new Map<string, { requests: number; tokens: number; responseTime: number }>();
+    for (const log of allLogs) {
+      const key = log.vendorId || 'unknown';
+      if (!byVendorMap.has(key)) {
+        byVendorMap.set(key, { requests: 0, tokens: 0, responseTime: 0 });
+      }
+      const stats = byVendorMap.get(key)!;
+      stats.requests++;
+      stats.tokens += log.usage?.totalTokens || (log.usage?.inputTokens || 0) + (log.usage?.outputTokens || 0);
+      stats.responseTime += log.responseTime || 0;
+    }
+
+    const byVendor = Array.from(byVendorMap.entries()).map(([vendorId, stats]) => ({
+      vendorId,
+      vendorName: vendorMap.get(vendorId) || 'Unknown',
+      totalRequests: stats.requests,
+      totalTokens: stats.tokens,
+      avgResponseTime: stats.requests > 0 ? Math.round(stats.responseTime / stats.requests) : 0,
+    }));
+
+    // Group by service
+    const byServiceMap = new Map<string, { requests: number; tokens: number; responseTime: number }>();
+    for (const log of allLogs) {
+      const key = log.targetServiceId || 'unknown';
+      if (!byServiceMap.has(key)) {
+        byServiceMap.set(key, { requests: 0, tokens: 0, responseTime: 0 });
+      }
+      const stats = byServiceMap.get(key)!;
+      stats.requests++;
+      stats.tokens += log.usage?.totalTokens || (log.usage?.inputTokens || 0) + (log.usage?.outputTokens || 0);
+      stats.responseTime += log.responseTime || 0;
+    }
+
+    const byService = Array.from(byServiceMap.entries()).map(([serviceId, stats]) => {
+      const serviceInfo = serviceMap.get(serviceId);
+      return {
+        serviceId,
+        serviceName: serviceInfo?.name || 'Unknown',
+        vendorName: serviceInfo ? vendorMap.get(serviceInfo.vendorId) || 'Unknown' : 'Unknown',
+        totalRequests: stats.requests,
+        totalTokens: stats.tokens,
+        avgResponseTime: stats.requests > 0 ? Math.round(stats.responseTime / stats.requests) : 0,
+      };
+    });
+
+    // Group by model
+    const byModelMap = new Map<string, { requests: number; tokens: number; responseTime: number }>();
+    for (const log of allLogs) {
+      const key = log.targetModel || 'unknown';
+      if (!byModelMap.has(key)) {
+        byModelMap.set(key, { requests: 0, tokens: 0, responseTime: 0 });
+      }
+      const stats = byModelMap.get(key)!;
+      stats.requests++;
+      stats.tokens += log.usage?.totalTokens || (log.usage?.inputTokens || 0) + (log.usage?.outputTokens || 0);
+      stats.responseTime += log.responseTime || 0;
+    }
+
+    const byModel = Array.from(byModelMap.entries()).map(([modelName, stats]) => ({
+      modelName,
+      totalRequests: stats.requests,
+      totalTokens: stats.tokens,
+      avgResponseTime: stats.requests > 0 ? Math.round(stats.responseTime / stats.requests) : 0,
+    }));
+
+    // Timeline data (by day)
+    const timelineMap = new Map<string, { requests: number; tokens: number; inputTokens: number; outputTokens: number }>();
+    for (const log of allLogs) {
+      const date = new Date(log.timestamp).toISOString().split('T')[0];
+      if (!timelineMap.has(date)) {
+        timelineMap.set(date, { requests: 0, tokens: 0, inputTokens: 0, outputTokens: 0 });
+      }
+      const stats = timelineMap.get(date)!;
+      stats.requests++;
+      stats.inputTokens += log.usage?.inputTokens || 0;
+      stats.outputTokens += log.usage?.outputTokens || 0;
+      stats.tokens += log.usage?.totalTokens || (log.usage?.inputTokens || 0) + (log.usage?.outputTokens || 0);
+    }
+
+    const timeline = Array.from(timelineMap.entries())
+      .map(([date, stats]) => ({
+        date,
+        totalRequests: stats.requests,
+        totalTokens: stats.tokens,
+        totalInputTokens: stats.inputTokens,
+        totalOutputTokens: stats.outputTokens,
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    // Content type distribution (infer from request patterns)
+    const contentTypeMap = new Map<string, number>();
+    for (const log of allLogs) {
+      // Infer content type from request characteristics
+      let contentType = 'default';
+      if (log.body && (log.body.includes('image') || log.body.includes('base64'))) {
+        contentType = 'image-understanding';
+      } else if (log.requestModel && log.requestModel.toLowerCase().includes('think')) {
+        contentType = 'thinking';
+      } else if (log.usage && log.usage.inputTokens > 12000) {
+        contentType = 'long-context';
+      }
+
+      contentTypeMap.set(contentType, (contentTypeMap.get(contentType) || 0) + 1);
+    }
+
+    const contentTypeDistribution = Array.from(contentTypeMap.entries()).map(([contentType, count]) => ({
+      contentType,
+      count,
+      percentage: totalRequests > 0 ? Math.round((count / totalRequests) * 100) : 0,
+    }));
+
+    return {
+      overview: {
+        totalRequests,
+        totalTokens,
+        totalInputTokens,
+        totalOutputTokens,
+        totalCacheReadTokens,
+        totalVendors: vendors.length,
+        totalServices: services.length,
+        totalRoutes: this.getRoutes().length,
+        totalRules: this.getRules().length,
+        avgResponseTime: Math.round(avgResponseTime),
+        successRate: Math.round(successRate * 10) / 10,
+        totalCodingTime,
+      },
+      byTargetType,
+      byVendor,
+      byService,
+      byModel,
+      timeline,
+      contentTypeDistribution,
+      errors: {
+        totalErrors: errorLogs.length,
+        recentErrors: recentErrorLogs.length,
+      },
+    };
   }
 
   close() {

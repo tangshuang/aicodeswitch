@@ -7,6 +7,7 @@ import LogsPage from './pages/LogsPage';
 import SettingsPage from './pages/SettingsPage';
 import WriteConfigPage from './pages/WriteConfigPage';
 import UsagePage from './pages/UsagePage';
+import StatisticsPage from './pages/StatisticsPage';
 import './styles/App.css';
 
 function AppContent() {
@@ -228,7 +229,10 @@ function AppContent() {
         </div>
          <ul className="nav-menu">
           <li>
-            <NavLink to="/">路由管理</NavLink>
+            <NavLink to="/">📊 数据统计</NavLink>
+          </li>
+          <li>
+            <NavLink to="/routes">路由管理</NavLink>
           </li>
           <li>
             <NavLink to="/vendors">供应商管理</NavLink>
@@ -292,7 +296,8 @@ function AppContent() {
       </nav>
       <main className="main-content">
           <Routes>
-            <Route path="/" element={<RouteGroupsPage />} />
+            <Route path="/" element={<StatisticsPage />} />
+            <Route path="/routes" element={<RouteGroupsPage />} />
             <Route path="/vendors" element={<VendorsPage />} />
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/write-config" element={<WriteConfigPage />} />

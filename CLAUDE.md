@@ -180,3 +180,8 @@ aicos restart            # Restart the proxy server
 - **HTTP Client**: Axios
 - **Encryption**: CryptoJS (AES)
 - **CLI**: Yargs-like custom implementation
+
+## Development
+
+* 使用yarn作为包管理器，请使用yarn安装依赖。
+* 前端依赖库安装在devDependencies中，请使用yarn install --dev安装。

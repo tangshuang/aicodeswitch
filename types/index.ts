@@ -141,3 +141,64 @@ export interface LoginRequest {
 export interface LoginResponse {
   token: string;
 }
+
+/** 统计数据 */
+export interface Statistics {
+  overview: {
+    totalRequests: number;
+    totalTokens: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalCacheReadTokens: number;
+    totalVendors: number;
+    totalServices: number;
+    totalRoutes: number;
+    totalRules: number;
+    avgResponseTime: number;
+    successRate: number;
+    totalCodingTime: number; // 编程时长(分钟)
+  };
+  byTargetType: {
+    targetType: TargetType;
+    totalRequests: number;
+    totalTokens: number;
+    avgResponseTime: number;
+  }[];
+  byVendor: {
+    vendorId: string;
+    vendorName: string;
+    totalRequests: number;
+    totalTokens: number;
+    avgResponseTime: number;
+  }[];
+  byService: {
+    serviceId: string;
+    serviceName: string;
+    vendorName: string;
+    totalRequests: number;
+    totalTokens: number;
+    avgResponseTime: number;
+  }[];
+  byModel: {
+    modelName: string;
+    totalRequests: number;
+    totalTokens: number;
+    avgResponseTime: number;
+  }[];
+  timeline: {
+    date: string; // YYYY-MM-DD
+    totalRequests: number;
+    totalTokens: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+  }[];
+  contentTypeDistribution: {
+    contentType: string;
+    count: number;
+    percentage: number;
+  }[];
+  errors: {
+    totalErrors: number;
+    recentErrors: number; // 最近24小时
+  };
+}

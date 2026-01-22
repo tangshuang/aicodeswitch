@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, AccessLog, ErrorLog, AppConfig, AuthStatus, LoginResponse } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, AccessLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -51,6 +51,8 @@ interface BackendAPI {
   restoreCodexConfig: () => Promise<boolean>;
   checkClaudeBackup: () => Promise<{ exists: boolean }>;
   checkCodexBackup: () => Promise<{ exists: boolean }>;
+
+  getStatistics: (days?: number) => Promise<Statistics>;
 }
 
 const buildUrl = (
@@ -172,4 +174,6 @@ export const api: BackendAPI = {
   restoreCodexConfig: () => requestJson(buildUrl('/api/restore-config/codex'), { method: 'POST' }),
   checkClaudeBackup: () => requestJson(buildUrl('/api/check-backup/claude')),
   checkCodexBackup: () => requestJson(buildUrl('/api/check-backup/codex')),
+
+  getStatistics: (days) => requestJson(buildUrl('/api/statistics', days ? { days } : undefined)),
 };
