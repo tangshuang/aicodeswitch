@@ -302,7 +302,7 @@ export default function RoutesPage() {
             <table>
               <thead>
                 <tr>
-                  <th>排序</th>
+                  <th>优先级</th>
                   <th>请求类型</th>
                   <th>供应商</th>
                   <th>API服务</th>
@@ -376,7 +376,7 @@ export default function RoutesPage() {
                       </td>
                       <td>{vendor ? vendor.name : 'Unknown'}</td>
                       <td>{service ? service.name : 'Unknown'}</td>
-                      <td>{rule.targetModel || '*'}</td>
+                      <td>{rule.targetModel || '透传'}</td>
                       <td>
                         <div className="action-buttons">
                           <button className="btn btn-secondary" onClick={() => handleEditRule(rule)}>编辑</button>
@@ -533,7 +533,7 @@ export default function RoutesPage() {
                   onChange={(e) => setSelectedModel(e.target.value)}
                   disabled={!selectedService}
                 >
-                  <option value="" disabled>请选择模型</option>
+                  <option value="">透传模型名</option>
                   {allServices.find(s => s.id === selectedService)?.supportedModels?.map(model => (
                     <option key={model} value={model}>{model}</option>
                   ))}

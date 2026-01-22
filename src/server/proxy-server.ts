@@ -793,7 +793,9 @@ export class ProxyServer {
   }
 
   private applyModelOverride(body: any, rule: Rule) {
+    // 如果 targetModel 为空或不存在,保留原始 model(透传)
     if (!rule.targetModel) return body;
+
     if (body && typeof body === 'object') {
       return { ...body, model: rule.targetModel };
     }
