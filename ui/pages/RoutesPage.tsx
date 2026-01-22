@@ -389,6 +389,28 @@ export default function RoutesPage() {
               </tbody>
             </table>
           )}
+          {selectedRoute && rules.length > 0 && (
+            <div style={{
+              fontSize: '12px',
+              color: '#666',
+              marginTop: '16px',
+              padding: '12px',
+              backgroundColor: '#f8f9fa',
+              borderRadius: '6px',
+              border: '1px solid #e0e0e0',
+              lineHeight: '1.6'
+            }}>
+              <strong>💡 智能故障切换机制</strong>
+              <div style={{ marginTop: '6px' }}>
+                • 当同一请求类型配置多个规则时,系统会按排序优先使用第一个<br/>
+                • 如果某个服务报错(4xx/5xx),将自动切换到下一个可用服务<br/>
+                • 报错的服务会被标记为不可用,有效期10分钟<br/>
+                • 10分钟后自动解除标记,如果再次报错则重新标记<br/>
+                • 确保您的请求始终路由到稳定可用的服务<br/>
+                • 如不需要此功能,可在<strong>设置</strong>页面关闭"启用智能故障切换"选项
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

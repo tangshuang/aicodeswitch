@@ -138,7 +138,7 @@ export class ProxyServer {
 
     // Dynamic proxy middleware
     this.app.use(async (req: Request, res: Response, next: NextFunction) => {
-      // 根路径 / 不应该被代理中间件处理，应该传递给静态文件服务
+      // 根路径 / 不应该被代理中间件处理,应该传递给静态文件服务
       if (req.path === '/') {
         return next();
       }
@@ -149,17 +149,109 @@ export class ProxyServer {
           return res.status(404).json({ error: 'No matching route found' });
         }
 
-        const rule = this.findMatchingRule(route.id, req);
-        if (!rule) {
+        // 检查是否启用故障切换
+        const enableFailover = this.config?.enableFailover !== false; // 默认为 true
+
+        if (!enableFailover) {
+          // 故障切换已禁用,使用传统的单一规则匹配
+          const rule = await this.findMatchingRule(route.id, req);
+          if (!rule) {
+            return res.status(404).json({ error: 'No matching rule found' });
+          }
+
+          const service = this.services.get(rule.targetServiceId);
+          if (!service) {
+            return res.status(500).json({ error: 'Target service not configured' });
+          }
+
+          await this.proxyRequest(req, res, route, rule, service);
+          return;
+        }
+
+        // 启用故障切换:获取所有候选规则
+        const allRules = this.getAllMatchingRules(route.id, req);
+        if (allRules.length === 0) {
           return res.status(404).json({ error: 'No matching rule found' });
         }
 
-        const service = this.services.get(rule.targetServiceId);
-        if (!service) {
-          return res.status(500).json({ error: 'Target service not configured' });
+        // 尝试每个规则,直到成功或全部失败
+        let lastError: Error | null = null;
+
+        for (const rule of allRules) {
+          const service = this.services.get(rule.targetServiceId);
+          if (!service) continue;
+
+          // 检查黑名单
+          const isBlacklisted = await this.dbManager.isServiceBlacklisted(
+            service.id,
+            route.id,
+            rule.contentType
+          );
+
+          if (isBlacklisted) {
+            console.log(`Service ${service.name} is blacklisted, skipping...`);
+            continue;
+          }
+
+          try {
+            // 尝试代理请求
+            await this.proxyRequest(req, res, route, rule, service);
+            return; // 成功,直接返回
+          } catch (error: any) {
+            console.error(`Service ${service.name} failed:`, error.message);
+            lastError = error;
+
+            // 判断是否应该加入黑名单 (4xx + 5xx)
+            const statusCode = error.response?.status || 500;
+            if (statusCode >= 400) {
+              await this.dbManager.addToBlacklist(
+                service.id,
+                route.id,
+                rule.contentType,
+                error.message,
+                statusCode
+              );
+              console.log(
+                `Service ${service.name} added to blacklist (${route.id}:${rule.contentType}:${service.id})`
+              );
+            }
+
+            // 继续尝试下一个服务
+            continue;
+          }
         }
 
-        await this.proxyRequest(req, res, route, rule, service);
+        // 所有服务都失败了
+        console.error('All services failed');
+
+        // 记录日志
+        if (this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
+          await this.dbManager.addLog({
+            timestamp: Date.now(),
+            method: req.method,
+            path: req.path,
+            headers: this.normalizeHeaders(req.headers),
+            body: req.body ? JSON.stringify(req.body) : undefined,
+            error: lastError?.message || 'All services failed',
+          });
+        }
+
+        // 记录错误日志
+        await this.dbManager.addErrorLog({
+          timestamp: Date.now(),
+          method: req.method,
+          path: req.path,
+          statusCode: 503,
+          errorMessage: 'All services failed',
+          errorStack: lastError?.stack,
+          requestHeaders: this.normalizeHeaders(req.headers),
+          requestBody: req.body ? JSON.stringify(req.body) : undefined,
+        });
+
+        res.status(503).json({
+          error: 'All services failed',
+          details: lastError?.message
+        });
       } catch (error: any) {
         console.error('Proxy error:', error);
         if (this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
@@ -205,17 +297,109 @@ export class ProxyServer {
           return res.status(404).json({ error: `No active route found for target type: ${targetType}` });
         }
 
-        const rule = this.findMatchingRule(route.id, req);
-        if (!rule) {
+        // 检查是否启用故障切换
+        const enableFailover = this.config?.enableFailover !== false; // 默认为 true
+
+        if (!enableFailover) {
+          // 故障切换已禁用,使用传统的单一规则匹配
+          const rule = await this.findMatchingRule(route.id, req);
+          if (!rule) {
+            return res.status(404).json({ error: 'No matching rule found' });
+          }
+
+          const service = this.services.get(rule.targetServiceId);
+          if (!service) {
+            return res.status(500).json({ error: 'Target service not configured' });
+          }
+
+          await this.proxyRequest(req, res, route, rule, service);
+          return;
+        }
+
+        // 启用故障切换:获取所有候选规则
+        const allRules = this.getAllMatchingRules(route.id, req);
+        if (allRules.length === 0) {
           return res.status(404).json({ error: 'No matching rule found' });
         }
 
-        const service = this.services.get(rule.targetServiceId);
-        if (!service) {
-          return res.status(500).json({ error: 'Target service not configured' });
+        // 尝试每个规则,直到成功或全部失败
+        let lastError: Error | null = null;
+
+        for (const rule of allRules) {
+          const service = this.services.get(rule.targetServiceId);
+          if (!service) continue;
+
+          // 检查黑名单
+          const isBlacklisted = await this.dbManager.isServiceBlacklisted(
+            service.id,
+            route.id,
+            rule.contentType
+          );
+
+          if (isBlacklisted) {
+            console.log(`Service ${service.name} is blacklisted, skipping...`);
+            continue;
+          }
+
+          try {
+            // 尝试代理请求
+            await this.proxyRequest(req, res, route, rule, service);
+            return; // 成功,直接返回
+          } catch (error: any) {
+            console.error(`Service ${service.name} failed:`, error.message);
+            lastError = error;
+
+            // 判断是否应该加入黑名单 (4xx + 5xx)
+            const statusCode = error.response?.status || 500;
+            if (statusCode >= 400) {
+              await this.dbManager.addToBlacklist(
+                service.id,
+                route.id,
+                rule.contentType,
+                error.message,
+                statusCode
+              );
+              console.log(
+                `Service ${service.name} added to blacklist (${route.id}:${rule.contentType}:${service.id})`
+              );
+            }
+
+            // 继续尝试下一个服务
+            continue;
+          }
         }
 
-        await this.proxyRequest(req, res, route, rule, service);
+        // 所有服务都失败了
+        console.error('All services failed');
+
+        // 记录日志
+        if (this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
+          await this.dbManager.addLog({
+            timestamp: Date.now(),
+            method: req.method,
+            path: req.path,
+            headers: this.normalizeHeaders(req.headers),
+            body: req.body ? JSON.stringify(req.body) : undefined,
+            error: lastError?.message || 'All services failed',
+          });
+        }
+
+        // 记录错误日志
+        await this.dbManager.addErrorLog({
+          timestamp: Date.now(),
+          method: req.method,
+          path: req.path,
+          statusCode: 503,
+          errorMessage: 'All services failed',
+          errorStack: lastError?.stack,
+          requestHeaders: this.normalizeHeaders(req.headers),
+          requestBody: req.body ? JSON.stringify(req.body) : undefined,
+        });
+
+        res.status(503).json({
+          error: 'All services failed',
+          details: lastError?.message
+        });
       } catch (error: any) {
         console.error(`Fixed route error for ${targetType}:`, error);
         if (this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
@@ -254,7 +438,7 @@ export class ProxyServer {
     return this.routes.find(route => route.targetType === targetType && route.isActive);
   }
 
-  private findMatchingRule(routeId: string, req: Request): Rule | undefined {
+  private async findMatchingRule(routeId: string, req: Request): Promise<Rule | undefined> {
     const rules = this.rules.get(routeId);
     if (!rules) return undefined;
 
@@ -268,25 +452,82 @@ export class ProxyServer {
         rule.replacedModel &&
         requestModel.includes(rule.replacedModel)
       );
-      if (modelMappingRules.length > 0) {
-        return modelMappingRules[0]; // 已按 sortOrder 降序排序
+
+      // 过滤黑名单
+      for (const rule of modelMappingRules) {
+        const isBlacklisted = await this.dbManager.isServiceBlacklisted(
+          rule.targetServiceId,
+          routeId,
+          rule.contentType
+        );
+        if (!isBlacklisted) {
+          return rule;
+        }
       }
     }
 
     // 2. 查找其他内容类型的规则
     const contentType = this.determineContentType(req);
     const contentTypeRules = rules.filter(rule => rule.contentType === contentType);
-    if (contentTypeRules.length > 0) {
-      return contentTypeRules[0]; // 已按 sortOrder 降序排序
+
+    // 过滤黑名单
+    for (const rule of contentTypeRules) {
+      const isBlacklisted = await this.dbManager.isServiceBlacklisted(
+        rule.targetServiceId,
+        routeId,
+        contentType
+      );
+      if (!isBlacklisted) {
+        return rule;
+      }
     }
 
     // 3. 最后返回 default 规则
     const defaultRules = rules.filter(rule => rule.contentType === 'default');
-    if (defaultRules.length > 0) {
-      return defaultRules[0]; // 已按 sortOrder 降序排序
+
+    // 过滤黑名单
+    for (const rule of defaultRules) {
+      const isBlacklisted = await this.dbManager.isServiceBlacklisted(
+        rule.targetServiceId,
+        routeId,
+        'default'
+      );
+      if (!isBlacklisted) {
+        return rule;
+      }
     }
 
     return undefined;
+  }
+
+  private getAllMatchingRules(routeId: string, req: Request): Rule[] {
+    const rules = this.rules.get(routeId);
+    if (!rules) return [];
+
+    const body = req.body;
+    const requestModel = body?.model;
+    const candidates: Rule[] = [];
+
+    // 1. Model mapping rules
+    if (requestModel) {
+      const modelMappingRules = rules.filter(rule =>
+        rule.contentType === 'model-mapping' &&
+        rule.replacedModel &&
+        requestModel.includes(rule.replacedModel)
+      );
+      candidates.push(...modelMappingRules);
+    }
+
+    // 2. Content type specific rules
+    const contentType = this.determineContentType(req);
+    const contentTypeRules = rules.filter(rule => rule.contentType === contentType);
+    candidates.push(...contentTypeRules);
+
+    // 3. Default rules
+    const defaultRules = rules.filter(rule => rule.contentType === 'default');
+    candidates.push(...defaultRules);
+
+    return candidates;
   }
 
   private determineContentType(req: Request): ContentType {

@@ -14,6 +14,8 @@ import type {
   AppConfig,
   ExportData,
   Statistics,
+  ContentType,
+  ServiceBlacklistEntry,
 } from '../types';
 
 export class DatabaseManager {
@@ -21,12 +23,14 @@ export class DatabaseManager {
   private logDb: Level<string, string>;
   private accessLogDb: Level<string, string>;
   private errorLogDb: Level<string, string>;
+  private blacklistDb: Level<string, string>;
 
   constructor(dataPath: string) {
     this.db = new Database(path.join(dataPath, 'app.db'));
     this.logDb = new Level(path.join(dataPath, 'logs'), { valueEncoding: 'json' });
     this.accessLogDb = new Level(path.join(dataPath, 'access-logs'), { valueEncoding: 'json' });
     this.errorLogDb = new Level(path.join(dataPath, 'error-logs'), { valueEncoding: 'json' });
+    this.blacklistDb = new Level(path.join(dataPath, 'service-blacklist'), { valueEncoding: 'json' });
   }
 
   async initialize() {
@@ -97,6 +101,7 @@ export class DatabaseManager {
         logRetentionDays: 7,
         maxLogSize: 1000,
         apiKey: '',
+        enableFailover: true,  // 默认启用智能故障切换
       };
       this.db.prepare('INSERT INTO config (key, value) VALUES (?, ?)').run(
         'app_config',
@@ -390,6 +395,92 @@ export class DatabaseManager {
 
   async clearErrorLogs(): Promise<void> {
     await this.errorLogDb.clear();
+  }
+
+  // Service blacklist operations
+  async isServiceBlacklisted(
+    serviceId: string,
+    routeId: string,
+    contentType: ContentType
+  ): Promise<boolean> {
+    const key = `${routeId}:${contentType}:${serviceId}`;
+    try {
+      const value = await this.blacklistDb.get(key);
+      const entry: ServiceBlacklistEntry = JSON.parse(value);
+
+      // 检查是否过期
+      if (Date.now() > entry.expiresAt) {
+        // 已过期,删除记录
+        await this.blacklistDb.del(key);
+        return false;
+      }
+
+      return true;
+    } catch (error: any) {
+      if (error.code === 'LEVEL_NOT_FOUND') {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  async addToBlacklist(
+    serviceId: string,
+    routeId: string,
+    contentType: ContentType,
+    errorMessage?: string,
+    statusCode?: number
+  ): Promise<void> {
+    const key = `${routeId}:${contentType}:${serviceId}`;
+    const now = Date.now();
+
+    try {
+      // 尝试读取现有记录
+      const existing = await this.blacklistDb.get(key);
+      const entry: ServiceBlacklistEntry = JSON.parse(existing);
+
+      // 更新现有记录
+      entry.blacklistedAt = now;
+      entry.expiresAt = now + 10 * 60 * 1000; // 10分钟
+      entry.errorCount++;
+      entry.lastError = errorMessage;
+      entry.lastStatusCode = statusCode;
+
+      await this.blacklistDb.put(key, JSON.stringify(entry));
+    } catch (error: any) {
+      if (error.code === 'LEVEL_NOT_FOUND') {
+        // 创建新记录
+        const entry: ServiceBlacklistEntry = {
+          serviceId,
+          routeId,
+          contentType,
+          blacklistedAt: now,
+          expiresAt: now + 10 * 60 * 1000,
+          errorCount: 1,
+          lastError: errorMessage,
+          lastStatusCode: statusCode,
+        };
+
+        await this.blacklistDb.put(key, JSON.stringify(entry));
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  async cleanupExpiredBlacklist(): Promise<number> {
+    const now = Date.now();
+    let count = 0;
+
+    for await (const [key, value] of this.blacklistDb.iterator()) {
+      const entry: ServiceBlacklistEntry = JSON.parse(value);
+      if (now > entry.expiresAt) {
+        await this.blacklistDb.del(key);
+        count++;
+      }
+    }
+
+    return count;
   }
 
   // Config operations
@@ -711,5 +802,8 @@ export class DatabaseManager {
   close() {
     this.db.close();
     this.logDb.close();
+    this.accessLogDb.close();
+    this.errorLogDb.close();
+    this.blacklistDb.close();
   }
 }

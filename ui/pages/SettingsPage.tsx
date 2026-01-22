@@ -25,6 +25,7 @@ function SettingsPage() {
       logRetentionDays: parseInt(formData.get('logRetentionDays') as string),
       maxLogSize: parseInt(formData.get('maxLogSize') as string),
       apiKey: formData.get('apiKey') as string,
+      enableFailover: formData.get('enableFailover') === 'true',
     };
 
     const success = await api.updateConfig(newConfig);
@@ -100,6 +101,16 @@ function SettingsPage() {
               <option value="true">是</option>
               <option value="false">否</option>
             </select>
+          </div>
+          <div className="form-group">
+            <label>启用智能故障切换</label>
+            <select name="enableFailover" defaultValue={config.enableFailover !== false ? 'true' : 'false'}>
+              <option value="true">是</option>
+              <option value="false">否</option>
+            </select>
+            <small style={{ display: 'block', marginTop: '4px', color: '#666', fontSize: '12px' }}>
+              启用后,当某个服务报错时会自动切换到备用服务,并将报错服务标记为不可用10分钟
+            </small>
           </div>
           <div className="form-group">
             <label>日志保留天数</label>
