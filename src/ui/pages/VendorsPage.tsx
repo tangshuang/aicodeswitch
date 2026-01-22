@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { api } from '../api/client';
 import type { Vendor, APIService, SourceType } from '../../types';
 import recommendMd from '../docs/vendors-recommand.md?raw';
+import vendorsConfig from '../constants/vendors';
 
 // TagInput 组件
 function TagInput({ value = [], onChange, placeholder, inputValue, onInputChange }: {
@@ -110,10 +111,16 @@ function VendorsPage() {
   const [showVendorModal, setShowVendorModal] = useState(false);
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [showRecommendModal, setShowRecommendModal] = useState(false);
+  const [showQuickSetupModal, setShowQuickSetupModal] = useState(false);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
   const [editingService, setEditingService] = useState<APIService | null>(null);
   const [supportedModels, setSupportedModels] = useState<string[]>([]);
   const [tagInputValue, setTagInputValue] = useState('');
+
+  // 一键配置相关状态
+  const [quickSetupVendorKey, setQuickSetupVendorKey] = useState<string>('');
+  const [quickSetupSourceTypes, setQuickSetupSourceTypes] = useState<SourceType[]>([]);
+  const [quickSetupApiKey, setQuickSetupApiKey] = useState('');
 
   useEffect(() => {
     loadVendors();
@@ -247,6 +254,87 @@ function VendorsPage() {
     }
   };
 
+  // 打开一键配置弹层
+  const handleQuickSetup = (vendorKey?: string) => {
+    if (vendorKey) {
+      // 从链接点击进入，自动填充供应商信息
+      setQuickSetupVendorKey(vendorKey);
+      const vendorConfig = vendorsConfig[vendorKey as keyof typeof vendorsConfig];
+      if (vendorConfig && vendorConfig.services.length > 0) {
+        // 预选所有可用的源类型
+        setQuickSetupSourceTypes(vendorConfig.services.map(s => s.sourceType as SourceType));
+      }
+    } else {
+      // 从按钮点击进入，清空表单
+      setQuickSetupVendorKey('');
+      setQuickSetupSourceTypes([]);
+    }
+    setQuickSetupApiKey('');
+    setShowQuickSetupModal(true);
+  };
+
+  // 处理一键配置提交
+  const handleQuickSetupSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+
+    const vendorKey = formData.get('vendorKey') as string;
+    const apiKey = formData.get('apiKey') as string;
+
+    if (!vendorKey || !apiKey) {
+      alert('请填写完整信息');
+      return;
+    }
+
+    if (quickSetupSourceTypes.length === 0) {
+      alert('请至少选择一个源类型');
+      return;
+    }
+
+    const vendorConfig = vendorsConfig[vendorKey as keyof typeof vendorsConfig];
+    if (!vendorConfig) {
+      alert('未找到对应的供应商配置');
+      return;
+    }
+
+    try {
+      // 1. 创建供应商
+      const vendorResult = await api.createVendor({
+        name: vendorConfig.name,
+        description: vendorConfig.description,
+      });
+
+      // 2. 批量创建API服务
+      const servicePromises = quickSetupSourceTypes.map(async (sourceType) => {
+        const serviceConfig = vendorConfig.services.find(s => s.sourceType === sourceType);
+        if (!serviceConfig) {
+          console.warn(`未找到源类型 ${sourceType} 的配置`);
+          return null;
+        }
+
+        return api.createAPIService({
+          vendorId: vendorResult.id,
+          name: serviceConfig.name,
+          apiUrl: serviceConfig.apiUrl,
+          apiKey: apiKey,
+          timeout: 30000,
+          sourceType: sourceType,
+          supportedModels: serviceConfig.models ? serviceConfig.models.split(',').map(m => m.trim()) : undefined,
+        });
+      });
+
+      await Promise.all(servicePromises);
+
+      // 3. 刷新列表并关闭弹层
+      await loadVendors();
+      setShowQuickSetupModal(false);
+      alert(`配置成功! 已创建 ${quickSetupSourceTypes.length} 个API服务`);
+    } catch (error) {
+      console.error('一键配置失败:', error);
+      alert('配置失败，请检查输入信息');
+    }
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -259,6 +347,7 @@ function VendorsPage() {
           <div className="toolbar">
             <h3>供应商列表</h3>
             <div style={{ display: 'flex', gap: '10px' }}>
+
               <button
                 className="btn btn-secondary"
                 style={{
@@ -290,6 +379,7 @@ function VendorsPage() {
               >
                 推荐
               </button>
+              <button className="btn btn-primary" onClick={() => handleQuickSetup()}>一键配置</button>
               <button className="btn btn-primary" onClick={handleCreateVendor}>新增</button>
             </div>
           </div>
@@ -480,19 +570,42 @@ function VendorsPage() {
               <div className="markdown-content">
                 <ReactMarkdown
                   components={{
-                    a: ({ href, children }) => (
-                      <a
-                        href={href}
-                        style={{
-                          color: '#2563EB',
-                          borderBottom: 'solid 1px #2563EB'
-                        }}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {children}
-                      </a>
-                    )
+                    a: ({ href, children, title }) => {
+                      // 检查是否有特殊标记(通过title属性)
+                      if (title && vendorsConfig[title as keyof typeof vendorsConfig]) {
+                        return (
+                          <a
+                            href="#"
+                            style={{
+                              color: '#2563EB',
+                              borderBottom: 'solid 1px #2563EB',
+                              cursor: 'pointer'
+                            }}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              setShowRecommendModal(false);
+                              handleQuickSetup(title);
+                            }}
+                          >
+                            {children}
+                          </a>
+                        );
+                      }
+                      // 普通链接
+                      return (
+                        <a
+                          href={href}
+                          style={{
+                            color: '#2563EB',
+                            borderBottom: 'solid 1px #2563EB'
+                          }}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {children}
+                        </a>
+                      );
+                    }
                   }}
                 >
                   {recommendMd}
@@ -502,6 +615,151 @@ function VendorsPage() {
             <div className="modal-footer">
               <button type="button" className="btn btn-secondary" onClick={() => setShowRecommendModal(false)}>关闭</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showQuickSetupModal && (
+        <div className="modal-overlay">
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>一键配置供应商</h2>
+            </div>
+            <form onSubmit={handleQuickSetupSubmit}>
+              <div className="form-group">
+                <label>供应商</label>
+                <select
+                  name="vendorKey"
+                  value={quickSetupVendorKey}
+                  onChange={(e) => {
+                    const key = e.target.value;
+                    setQuickSetupVendorKey(key);
+                    // 自动选择所有可用的服务类型
+                    if (key) {
+                      const vendorConfig = vendorsConfig[key as keyof typeof vendorsConfig];
+                      if (vendorConfig && vendorConfig.services.length > 0) {
+                        setQuickSetupSourceTypes(vendorConfig.services.map(s => s.sourceType as SourceType));
+                      }
+                    } else {
+                      setQuickSetupSourceTypes([]);
+                    }
+                  }}
+                  required
+                >
+                  <option value="">请选择供应商</option>
+                  {Object.entries(vendorsConfig).map(([key, config]) => (
+                    <option key={key} value={key}>{config.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>源类型 <small style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}>可选择多个</small></label>
+                <div style={{
+                  border: '1px solid var(--border-primary)',
+                  borderRadius: '8px',
+                  padding: '16px',
+                  background: 'var(--bg-secondary)',
+                  minHeight: '100px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px'
+                }}>
+                  {quickSetupVendorKey ? (
+                    vendorsConfig[quickSetupVendorKey as keyof typeof vendorsConfig]?.services.map((service, index) => {
+                      const isChecked = quickSetupSourceTypes.includes(service.sourceType as SourceType);
+                      return (
+                        <label
+                          key={index}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            cursor: 'pointer',
+                            padding: '10px 14px',
+                            borderRadius: '6px',
+                            background: isChecked ? 'var(--accent-light)' : 'transparent',
+                            border: `2px solid ${isChecked ? 'var(--accent-primary)' : 'transparent'}`,
+                            transition: 'all 0.2s ease',
+                            position: 'relative',
+                            overflow: 'hidden'
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isChecked) {
+                              e.currentTarget.style.background = 'var(--bg-hover)';
+                              e.currentTarget.style.borderColor = 'var(--border-secondary)';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isChecked) {
+                              e.currentTarget.style.background = 'transparent';
+                              e.currentTarget.style.borderColor = 'transparent';
+                            }
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              const sourceType = service.sourceType as SourceType;
+                              if (e.target.checked) {
+                                setQuickSetupSourceTypes([...quickSetupSourceTypes, sourceType]);
+                              } else {
+                                setQuickSetupSourceTypes(quickSetupSourceTypes.filter(st => st !== sourceType));
+                              }
+                            }}
+                            style={{
+                              width: '18px',
+                              height: '18px',
+                              marginRight: '12px',
+                              cursor: 'pointer',
+                              accentColor: 'var(--accent-primary)'
+                            }}
+                          />
+                          <span style={{
+                            fontSize: '14px',
+                            fontWeight: isChecked ? '600' : '400',
+                            color: isChecked ? 'var(--accent-primary)' : 'var(--text-primary)',
+                            transition: 'all 0.2s ease'
+                          }}>
+                            {SOURCE_TYPE[service.sourceType as keyof typeof SOURCE_TYPE]}
+                          </span>
+                          {isChecked && (
+                            <span style={{
+                              marginLeft: 'auto',
+                              fontSize: '16px',
+                              color: 'var(--accent-primary)'
+                            }}>✓</span>
+                          )}
+                        </label>
+                      );
+                    })
+                  ) : (
+                    <div style={{
+                      color: 'var(--text-muted)',
+                      textAlign: 'center',
+                      padding: '30px 20px',
+                      fontSize: '14px'
+                    }}>
+                      请先选择供应商
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="form-group">
+                <label>API Key</label>
+                <input
+                  type="password"
+                  name="apiKey"
+                  value={quickSetupApiKey}
+                  onChange={(e) => setQuickSetupApiKey(e.target.value)}
+                  placeholder="请输入API密钥"
+                  required
+                />
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowQuickSetupModal(false)}>取消</button>
+                <button type="submit" className="btn btn-primary">确认配置</button>
+              </div>
+            </form>
           </div>
         </div>
       )}
