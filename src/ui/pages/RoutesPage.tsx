@@ -376,7 +376,7 @@ export default function RoutesPage() {
                       </td>
                       <td>{vendor ? vendor.name : 'Unknown'}</td>
                       <td>{service ? service.name : 'Unknown'}</td>
-                      <td>{rule.targetModel || '-'}</td>
+                      <td>{rule.targetModel || '*'}</td>
                       <td>
                         <div className="action-buttons">
                           <button className="btn btn-secondary" onClick={() => handleEditRule(rule)}>编辑</button>

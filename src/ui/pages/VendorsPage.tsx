@@ -5,20 +5,20 @@ import type { Vendor, APIService, SourceType } from '../../types';
 import recommendMd from '../docs/vendors-recommand.md?raw';
 
 // TagInput 组件
-function TagInput({ value = [], onChange, placeholder }: {
+function TagInput({ value = [], onChange, placeholder, inputValue, onInputChange }: {
   value: string[];
   onChange: (tags: string[]) => void;
   placeholder?: string;
+  inputValue: string;
+  onInputChange: (value: string) => void;
 }) {
-  const [inputValue, setInputValue] = useState('');
-
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault();
       const newTag = inputValue.trim();
       if (newTag && !value.includes(newTag)) {
         onChange([...value, newTag]);
-        setInputValue('');
+        onInputChange('');
       }
     } else if (e.key === 'Backspace' && !inputValue && value.length > 0) {
       onChange(value.slice(0, -1));
@@ -78,7 +78,7 @@ function TagInput({ value = [], onChange, placeholder }: {
         <input
           type="text"
           value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
+          onChange={(e) => onInputChange(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           style={{
@@ -113,6 +113,7 @@ function VendorsPage() {
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
   const [editingService, setEditingService] = useState<APIService | null>(null);
   const [supportedModels, setSupportedModels] = useState<string[]>([]);
+  const [tagInputValue, setTagInputValue] = useState('');
 
   useEffect(() => {
     loadVendors();
@@ -183,12 +184,14 @@ function VendorsPage() {
   const handleCreateService = () => {
     setEditingService(null);
     setSupportedModels([]);
+    setTagInputValue('');
     setShowServiceModal(true);
   };
 
   const handleEditService = (service: APIService) => {
     setEditingService(service);
     setSupportedModels(service.supportedModels || []);
+    setTagInputValue('');
     setShowServiceModal(true);
   };
 
@@ -205,6 +208,19 @@ function VendorsPage() {
 
   const handleSaveService = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+
+    // 处理输入框中未提交的内容
+    let finalModels = [...supportedModels];
+    if (tagInputValue.trim()) {
+      // 按英文逗号分隔,处理多个模型名
+      const newTags = tagInputValue
+        .split(',')
+        .map(tag => tag.trim())
+        .filter(tag => tag && !finalModels.includes(tag));
+
+      finalModels = [...finalModels, ...newTags];
+    }
+
     const formData = new FormData(e.currentTarget);
 
     const service = {
@@ -214,7 +230,7 @@ function VendorsPage() {
       apiKey: formData.get('apiKey') as string,
       timeout: parseInt(formData.get('timeout') as string) || 30000,
       sourceType: formData.get('sourceType') as SourceType,
-      supportedModels: supportedModels.length > 0 ? supportedModels : undefined,
+      supportedModels: finalModels.length > 0 ? finalModels : undefined,
     };
 
     if (editingService) {
@@ -225,6 +241,7 @@ function VendorsPage() {
 
     setShowServiceModal(false);
     setSupportedModels([]);
+    setTagInputValue('');
     if (selectedVendor) {
       loadServices(selectedVendor.id);
     }
@@ -356,7 +373,7 @@ function VendorsPage() {
                     <td>{service.name}</td>
                     <td>{service.sourceType ? SOURCE_TYPE[service.sourceType] : '-'}</td>
                      <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={service.apiUrl}>{service.apiUrl}</td>
-                    <td>{service.supportedModels?.join(', ') || '-'}</td>
+                    <td>{service.supportedModels?.join(', ') || '*'}</td>
                     <td>
                       <div className="action-buttons">
                         <button className="btn btn-sm btn-secondary" onClick={() => handleEditService(service)}>编辑</button>
@@ -436,7 +453,9 @@ function VendorsPage() {
                     key={editingService?.id || 'new'}
                     value={supportedModels}
                     onChange={setSupportedModels}
-                    placeholder="输入模型名，按Enter或逗号添加"
+                    inputValue={tagInputValue}
+                    onInputChange={setTagInputValue}
+                    placeholder="输入模型名,按Enter或逗号添加"
                   />
                </div>
                <div className="modal-footer">
