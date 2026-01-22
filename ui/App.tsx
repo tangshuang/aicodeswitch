@@ -15,6 +15,11 @@ function AppContent() {
   const [showVendorModal, setShowVendorModal] = useState(false);
   const [hasCheckedVendors, setHasCheckedVendors] = useState(false);
 
+  // 版本更新相关状态
+  const [hasUpdate, setHasUpdate] = useState(false);
+  const [latestVersion, setLatestVersion] = useState<string | null>(null);
+  const [currentVersion, setCurrentVersion] = useState<string | null>(null);
+
   // 鉴权相关状态
   const [authEnabled, setAuthEnabled] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -26,6 +31,28 @@ function AppContent() {
     const savedTheme = localStorage.getItem('theme') || 'light';
     setTheme(savedTheme);
     document.documentElement.setAttribute('data-theme', savedTheme);
+  }, []);
+
+  // 版本检查 - 每1分钟检查一次
+  useEffect(() => {
+    const checkVersion = async () => {
+      try {
+        const versionInfo = await api.checkVersion();
+        setHasUpdate(versionInfo.hasUpdate);
+        setLatestVersion(versionInfo.latestVersion);
+        setCurrentVersion(versionInfo.currentVersion);
+      } catch (error) {
+        console.error('Failed to check version:', error);
+      }
+    };
+
+    // 立即检查一次
+    checkVersion();
+
+    // 每1分钟检查一次
+    const intervalId = setInterval(checkVersion, 60000);
+
+    return () => clearInterval(intervalId);
   }, []);
 
   // 检查鉴权状态
@@ -219,6 +246,29 @@ function AppContent() {
             <NavLink to="/usage">使用说明</NavLink>
           </li>
         </ul>
+
+        {hasUpdate && (
+          <div className="update-notification">
+            <div className="update-notification-content">
+              <span className="update-icon">⬆️</span>
+              <div className="update-text">
+                <div className="update-title">新版本可用</div>
+                <div className="update-versions">
+                  {currentVersion} → {latestVersion}
+                </div>
+              </div>
+            </div>
+            <a
+              href="https://github.com/tangshuang/aicodeswitch#更新"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="update-link"
+            >
+              查看详情
+            </a>
+          </div>
+        )}
+
         <div className="theme-toggle">
           <button
             onClick={toggleTheme}

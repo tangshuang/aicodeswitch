@@ -8,6 +8,7 @@ import { ProxyServer } from './proxy-server';
 import type { AppConfig, LoginRequest, LoginResponse, AuthStatus } from '../types';
 import os from 'os';
 import { isAuthEnabled, verifyAuthCode, generateToken, authMiddleware } from './auth';
+import { checkVersionUpdate } from './version-check';
 
 const dotenvPath = path.resolve(os.homedir(), '.aicodeswitch/aicodeswitch.conf');
 if (fs.existsSync(dotenvPath)) {
@@ -451,6 +452,14 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
         await proxyServer.reloadRoutes();
       }
       res.json(result);
+    })
+  );
+
+  app.get(
+    '/api/version/check',
+    asyncHandler(async (_req, res) => {
+      const versionInfo = await checkVersionUpdate();
+      res.json(versionInfo);
     })
   );
 

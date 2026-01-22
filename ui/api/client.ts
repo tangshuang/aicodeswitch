@@ -5,6 +5,9 @@ interface BackendAPI {
   getAuthStatus: () => Promise<AuthStatus>;
   login: (authCode: string) => Promise<LoginResponse>;
 
+  // 版本检查
+  checkVersion: () => Promise<{ hasUpdate: boolean; currentVersion: string | null; latestVersion: string | null }>;
+
   getVendors: () => Promise<Vendor[]>;
   createVendor: (vendor: Omit<Vendor, 'id' | 'createdAt' | 'updatedAt'>) => Promise<Vendor>;
   updateVendor: (id: string, vendor: Partial<Vendor>) => Promise<boolean>;
@@ -112,6 +115,9 @@ export const api: BackendAPI = {
     method: 'POST',
     body: JSON.stringify({ authCode })
   }),
+
+  // 版本检查
+  checkVersion: () => requestJson(buildUrl('/api/version/check')),
 
   getVendors: () => requestJson(buildUrl('/api/vendors')),
   createVendor: (vendor) => requestJson(buildUrl('/api/vendors'), { method: 'POST', body: JSON.stringify(vendor) }),
