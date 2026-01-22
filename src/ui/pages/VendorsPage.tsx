@@ -457,6 +457,9 @@ function VendorsPage() {
                     onInputChange={setTagInputValue}
                     placeholder="输入模型名,按Enter或逗号添加"
                   />
+                  <div style={{ display:'block', width: '100%' }}>
+                    <small style={{fontSize:'10px'}}>留空表示支持所有模型，路由配置中，可直接将模型透传给该供应商服务接口。</small>
+                  </div>
                </div>
                <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowServiceModal(false)}>取消</button>
