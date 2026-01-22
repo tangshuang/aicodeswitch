@@ -472,6 +472,26 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     })
   );
 
+  app.get('/api/docs/recommend-vendors', asyncHandler(async (_req, res) => {
+    const resp = await fetch('https://unpkg.com/aicodeswitch/docs/vendors-recommand.md');
+    if (!resp.ok) {
+      res.status(500).send('');
+      return;
+    }
+    const text = await resp.text();
+    res.type('text/plain').send(text);
+  }));
+
+  app.get('/api/docs/readme', asyncHandler(async (_req, res) => {
+    const resp = await fetch('https://unpkg.com/aicodeswitch/README.md');
+    if (!resp.ok) {
+      res.status(500).send('');
+      return;
+    }
+    const text = await resp.text();
+    res.type('text/plain').send(text);
+  }));
+
   app.use(express.static(path.resolve(__dirname, '../ui')));
 };
 

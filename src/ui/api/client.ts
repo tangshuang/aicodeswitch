@@ -53,6 +53,9 @@ interface BackendAPI {
   checkCodexBackup: () => Promise<{ exists: boolean }>;
 
   getStatistics: (days?: number) => Promise<Statistics>;
+
+  getRecommendVendorsMarkdown: () => Promise<string>;
+  getReadmeMarkdown: () => Promise<string>;
 }
 
 const buildUrl = (
@@ -176,4 +179,8 @@ export const api: BackendAPI = {
   checkCodexBackup: () => requestJson(buildUrl('/api/check-backup/codex')),
 
   getStatistics: (days) => requestJson(buildUrl('/api/statistics', days ? { days } : undefined)),
+
+  getRecommendVendorsMarkdown: () => requestJson(buildUrl('/api/docs/recommend-vendors')),
+
+  getReadmeMarkdown: () => requestJson(buildUrl('/api/docs/readme')),
 };

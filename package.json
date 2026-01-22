@@ -31,7 +31,8 @@
   },
   "main": "dist/server/main.js",
   "bin": {
-    "aicos": "./bin/cli.js"
+    "aicos": "./bin/cli.js",
+    "aicodeswitch": "./bin/cli.js"
   },
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:ui\"",

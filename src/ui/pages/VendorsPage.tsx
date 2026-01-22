@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api } from '../api/client';
 import type { Vendor, APIService, SourceType } from '../../types';
-import recommendMd from '../docs/vendors-recommand.md?raw';
 import vendorsConfig from '../constants/vendors';
+import { useRecomandVendors } from '../hooks/docs';
 
 // TagInput 组件
 function TagInput({ value = [], onChange, placeholder, inputValue, onInputChange }: {
@@ -121,6 +121,8 @@ function VendorsPage() {
   const [quickSetupVendorKey, setQuickSetupVendorKey] = useState<string>('');
   const [quickSetupSourceTypes, setQuickSetupSourceTypes] = useState<SourceType[]>([]);
   const [quickSetupApiKey, setQuickSetupApiKey] = useState('');
+
+  const recommendMd = useRecomandVendors();
 
   useEffect(() => {
     loadVendors();

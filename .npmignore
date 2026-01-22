@@ -58,7 +58,6 @@ PRD.md
 tsconfig.json
 tsconfig.*.json
 vite.config.ts
-/docs/
 .env
 .env.*
 /src/
