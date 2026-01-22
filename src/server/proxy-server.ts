@@ -24,7 +24,7 @@ import {
   transformOpenAIResponsesRequestToOpenAIChat,
   transformOpenAIResponsesToClaude,
 } from './transformers/openai-responses';
-import type { AppConfig, Rule, APIService, Route, SourceType, TokenUsage, ContentType } from '../types';
+import type { AppConfig, Rule, APIService, Route, SourceType, TargetType, TokenUsage, ContentType } from '../types';
 
 type ContentTypeDetector = {
   type: ContentType;
@@ -909,6 +909,48 @@ export class ProxyServer {
     return undefined;
   }
 
+  /**
+   * 根据源工具类型和目标API类型,映射请求路径
+   * @param sourceTool 源工具类型 (claude-code 或 codex)
+   * @param targetSourceType 目标API的数据格式类型
+   * @param originalPath 原始请求路径(已去除工具前缀)
+   * @returns 映射后的目标路径
+   */
+  private mapRequestPath(sourceTool: TargetType, targetSourceType: SourceType, originalPath: string): string {
+    // Claude Code 发起的请求
+    if (sourceTool === 'claude-code') {
+      // Claude Code 默认使用 Claude API 格式
+      if (this.isClaudeSource(targetSourceType)) {
+        // Claude → Claude: 直接透传路径
+        return originalPath;
+      } else if (this.isOpenAIChatSource(targetSourceType)) {
+        // Claude → OpenAI Chat: /v1/messages → /v1/chat/completions
+        return originalPath.replace(/\/v1\/messages\b/, '/v1/chat/completions');
+      } else if (this.isOpenAIResponsesSource(targetSourceType)) {
+        // Claude → OpenAI Responses: /v1/messages → /v1/responses/completions
+        return originalPath.replace(/\/v1\/messages\b/, '/v1/responses/completions');
+      }
+    }
+
+    // Codex 发起的请求
+    if (sourceTool === 'codex') {
+      // Codex 默认使用 OpenAI Responses API 格式
+      if (this.isOpenAIResponsesSource(targetSourceType)) {
+        // OpenAI Responses → OpenAI Responses: 直接透传路径
+        return originalPath;
+      } else if (this.isOpenAIChatSource(targetSourceType)) {
+        // OpenAI Responses → OpenAI Chat: /v1/responses/completions → /v1/chat/completions
+        return originalPath.replace(/\/v1\/responses\/completions\b/, '/v1/chat/completions');
+      } else if (this.isClaudeSource(targetSourceType)) {
+        // OpenAI Responses → Claude: /v1/responses/completions → /v1/messages
+        return originalPath.replace(/\/v1\/responses\/completions\b/, '/v1/messages');
+      }
+    }
+
+    // 默认:直接返回原始路径
+    return originalPath;
+  }
+
   private async proxyRequest(req: Request, res: Response, route: Route, rule: Rule, service: APIService) {
     res.locals.skipLog = true;
     const startTime = Date.now();
@@ -991,22 +1033,25 @@ export class ProxyServer {
 
       const streamRequested = this.isStreamRequested(req, requestBody);
 
-       // Build the full URL by appending the request path to the service API URL
-       let pathToAppend = req.path;
-       if (route.targetType === 'claude-code' && req.path.startsWith('/claude-code')) {
-         pathToAppend = req.path.slice('/claude-code'.length);
-       } else if (route.targetType === 'codex' && req.path.startsWith('/codex')) {
-         pathToAppend = req.path.slice('/codex'.length);
-       }
+      // Build the full URL by appending the request path to the service API URL
+      let pathToAppend = req.path;
+      if (route.targetType === 'claude-code' && req.path.startsWith('/claude-code')) {
+        pathToAppend = req.path.slice('/claude-code'.length);
+      } else if (route.targetType === 'codex' && req.path.startsWith('/codex')) {
+        pathToAppend = req.path.slice('/codex'.length);
+      }
 
-       const config: AxiosRequestConfig = {
-         method: req.method as any,
-         url: `${service.apiUrl}${pathToAppend}`,
-         headers: this.buildUpstreamHeaders(req, service, sourceType, streamRequested),
-         timeout: service.timeout || 30000,
-         validateStatus: () => true,
-         responseType: streamRequested ? 'stream' : 'json',
-       };
+      // 根据源工具类型和目标API类型,映射请求路径
+      const mappedPath = this.mapRequestPath(route.targetType, sourceType, pathToAppend);
+
+      const config: AxiosRequestConfig = {
+        method: req.method as any,
+        url: `${service.apiUrl}${mappedPath}`,
+        headers: this.buildUpstreamHeaders(req, service, sourceType, streamRequested),
+        timeout: service.timeout || 30000,
+        validateStatus: () => true,
+        responseType: streamRequested ? 'stream' : 'json',
+      };
 
       if (Object.keys(req.query).length > 0) {
         config.params = req.query;
@@ -1018,7 +1063,7 @@ export class ProxyServer {
 
       // 记录实际发出的请求信息作为日志的一部分
       upstreamRequestForLog = {
-        url: `${service.apiUrl}${pathToAppend}`,
+        url: `${service.apiUrl}${mappedPath}`,
         model: requestBody?.model || '',
       };
 
