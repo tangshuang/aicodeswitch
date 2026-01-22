@@ -61,3 +61,4 @@ vite.config.ts
 /docs/
 .env
 .env.*
+/src/
