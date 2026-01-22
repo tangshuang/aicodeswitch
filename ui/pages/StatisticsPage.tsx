@@ -286,7 +286,7 @@ function StatisticsPage() {
                 fontSize={12}
                 tickFormatter={(date) => dayjs(date).format('MM/DD')}
               />
-              <YAxis stroke="var(--text-muted)" fontSize={12} tickFormatter={formatNumber} />
+              <YAxis stroke="var(--text-muted)" fontSize={12} tickFormatter={(value) => value ? formatNumber(Number(value)) : ''} />
               <Tooltip
                 contentStyle={{
                   background: 'var(--bg-card)',
@@ -295,7 +295,7 @@ function StatisticsPage() {
                   color: 'var(--text-primary)',
                 }}
                 labelFormatter={(date) => dayjs(date).format('YYYY-MM-DD')}
-                formatter={(value: number) => formatNumber(value)}
+                formatter={(value) => value ? formatNumber(Number(value)) : ''}
               />
               <Legend />
               <Line type="monotone" dataKey="totalInputTokens" name="输入 Tokens" stroke="#10b981" strokeWidth={2} dot={false} />
@@ -332,7 +332,7 @@ function StatisticsPage() {
               <YAxis
                 stroke="var(--text-muted)"
                 fontSize={12}
-                tickFormatter={(value) => value >= 60 ? `${Math.round(value / 60)}h` : `${value}m`}
+                tickFormatter={(value) => value !== undefined && value !== null ? (value >= 60 ? `${Math.round(Number(value) / 60)}h` : `${Number(value)}m`) : ''}
               />
               <Tooltip
                 contentStyle={{
@@ -342,7 +342,7 @@ function StatisticsPage() {
                   color: 'var(--text-primary)',
                 }}
                 labelFormatter={(date) => dayjs(date).format('YYYY-MM-DD')}
-                formatter={(value: number) => formatTime(value)}
+                formatter={(value) => value !== undefined && value !== null ? formatTime(Number(value)) : ''}
               />
               <Legend />
               <Area
@@ -430,12 +430,12 @@ function StatisticsPage() {
                 cx="50%"
                 cy="50%"
                 labelLine={true}
-                label={({ contentType, percentage }) => `${contentTypeLabels[contentType] || contentType} (${percentage}%)`}
+                label={(props: any) => `${contentTypeLabels[props.contentType] || props.contentType} (${props.percentage}%)`}
                 outerRadius={80}
                 fill="#8884d8"
                 dataKey="count"
               >
-                {statistics.contentTypeDistribution.map((entry, index) => (
+                {statistics.contentTypeDistribution.map((_entry, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
@@ -446,10 +446,13 @@ function StatisticsPage() {
                   borderRadius: '8px',
                   color: 'var(--text-primary)',
                 }}
-                formatter={(value: number, name: string, props: any) => [
-                  `${value} (${props.payload.percentage}%)`,
-                  contentTypeLabels[props.payload.contentType] || props.payload.contentType,
-                ]}
+                formatter={(value: any, _name: any, props: any) => {
+                  const count = value ?? 0;
+                  const pct = props.payload?.percentage ?? 0;
+                  const type = props.payload?.contentType || '';
+                  const label = contentTypeLabels[type] || type;
+                  return `${count} (${pct}%) - ${label}`;
+                }}
               />
             </PieChart>
           </ResponsiveContainer>
