@@ -746,14 +746,22 @@ export class ProxyServer {
 
       const streamRequested = this.isStreamRequested(req, requestBody);
 
-      const config: AxiosRequestConfig = {
-        method: req.method as any,
-        url: service.apiUrl,
-        headers: this.buildUpstreamHeaders(req, service, sourceType, streamRequested),
-        timeout: service.timeout || 30000,
-        validateStatus: () => true,
-        responseType: streamRequested ? 'stream' : 'json',
-      };
+       // Build the full URL by appending the request path to the service API URL
+       let pathToAppend = req.path;
+       if (route.targetType === 'claude-code' && req.path.startsWith('/claude-code')) {
+         pathToAppend = req.path.slice('/claude-code'.length);
+       } else if (route.targetType === 'codex' && req.path.startsWith('/codex')) {
+         pathToAppend = req.path.slice('/codex'.length);
+       }
+
+       const config: AxiosRequestConfig = {
+         method: req.method as any,
+         url: `${service.apiUrl}${pathToAppend}`,
+         headers: this.buildUpstreamHeaders(req, service, sourceType, streamRequested),
+         timeout: service.timeout || 30000,
+         validateStatus: () => true,
+         responseType: streamRequested ? 'stream' : 'json',
+       };
 
       if (Object.keys(req.query).length > 0) {
         config.params = req.query;

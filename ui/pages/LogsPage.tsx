@@ -507,6 +507,12 @@ function LogsPage() {
                 <label>请求路径</label>
                 <input type="text" value={selectedRequestLog.path} readOnly />
               </div>
+              {selectedRequestLog.headers && (
+                <div className="form-group">
+                  <label>请求头</label>
+                  <JSONViewer data={selectedRequestLog.headers} collapsed />
+                </div>
+              )}
               {selectedRequestLog.body && (
                 <div className="form-group">
                   <label>请求体</label>
