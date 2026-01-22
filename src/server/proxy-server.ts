@@ -922,6 +922,7 @@ export class ProxyServer {
     let responseHeadersForLog: Record<string, string> | undefined;
     let responseBodyForLog: string | undefined;
     let streamChunksForLog: string[] | undefined;
+    let upstreamRequestForLog: { url: string; model: string } | undefined;
 
     const finalizeLog = async (statusCode: number, error?: string) => {
       if (logged || !this.config?.enableLogging) return;
@@ -957,6 +958,7 @@ export class ProxyServer {
         responseHeaders: responseHeadersForLog,
         responseBody: responseBodyForLog,
         streamChunks: streamChunksForLog,
+        upstreamRequest: upstreamRequestForLog,
       });
     };
 
@@ -1013,6 +1015,12 @@ export class ProxyServer {
       if (['POST', 'PUT', 'PATCH'].includes(req.method.toUpperCase())) {
         config.data = requestBody;
       }
+
+      // 记录实际发出的请求信息作为日志的一部分
+      upstreamRequestForLog = {
+        url: `${service.apiUrl}${pathToAppend}`,
+        model: requestBody?.model || '',
+      };
 
       const response = await axios(config);
       const responseHeaders = response.headers || {};

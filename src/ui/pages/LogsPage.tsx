@@ -456,7 +456,7 @@ function LogsPage() {
 
       {selectedRequestLog && (
         <div className="modal-overlay" onClick={() => setSelectedRequestLog(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ minWidth: '600px', maxHeight: '90vh', overflowY: 'auto' }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: '800px', maxWidth: '90%', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-header">
               <h2>请求详情</h2>
             </div>
@@ -517,6 +517,12 @@ function LogsPage() {
                 <div className="form-group">
                   <label>请求体</label>
                   <JSONViewer data={selectedRequestLog.body} />
+                </div>
+              )}
+              {selectedRequestLog.upstreamRequest && (
+                <div className="form-group">
+                  <label>实际转发信息</label>
+                  <JSONViewer data={selectedRequestLog.upstreamRequest} />
                 </div>
               )}
               <div className="form-group">

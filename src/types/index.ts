@@ -77,6 +77,10 @@ export interface RequestLog {
   responseHeaders?: Record<string, string>;        // 响应头
   responseBody?: string;                           // 响应体(非stream)
   streamChunks?: string[];                         // stream chunks数组
+  upstreamRequest?: {                              // 实际发送给后端的请求信息
+    url: string;                                   // 实际请求的URL路径
+    model: string;                                 // 实际请求的模型名
+  };
 }
 
 export interface AccessLog {
