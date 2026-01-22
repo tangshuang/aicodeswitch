@@ -12,6 +12,7 @@ const commands = {
   update: () => require(path.join(__dirname, 'update')),
   restore: () => require(path.join(__dirname, 'restore')),
   version: () => require(path.join(__dirname, 'version')),
+  ui: () => require(path.join(__dirname, 'ui')),
 };
 
 if (!command || !commands[command]) {
@@ -22,6 +23,7 @@ Commands:
   start      Start the AI Code Switch server
   stop       Stop the AI Code Switch server
   restart    Restart the AI Code Switch server
+  ui         Open the web UI in browser (starts server if needed)
   update     Update to the latest version and restart
   restore    Restore original configuration files
   version    Show current version information
@@ -30,6 +32,7 @@ Example:
   aicos start
   aicos stop
   aicos restart
+  aicos ui
   aicos update
   aicos restore
   aicos restore claude-code

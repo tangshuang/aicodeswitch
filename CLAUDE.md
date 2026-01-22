@@ -40,6 +40,10 @@ npm link                 # Link local package for CLI testing
 aicos start              # Start the proxy server
 aicos stop               # Stop the proxy server
 aicos restart            # Restart the proxy server
+aicos ui                 # Open web UI in browser (starts server if needed)
+aicos update             # Update to the latest version and restart
+aicos restore            # Restore original configuration files
+aicos version            # Show current version information
 ```
 
 ## Architecture
