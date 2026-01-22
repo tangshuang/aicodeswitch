@@ -7,6 +7,8 @@ AI Code Switch 是帮助你在本地管理 AI 编程工具接入大模型的工�
 
 **而且它尽可能简单的帮你解决这件事。**
 
+视频演示：[https://www.bilibili.com/video/BV1uEznBuEJd/](https://www.bilibili.com/video/BV1uEznBuEJd/?from=github)
+
 ## 安装
 
 ```
