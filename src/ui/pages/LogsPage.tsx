@@ -137,7 +137,7 @@ function LogsPage() {
         <thead>
           <tr>
             <th>时间</th>
-            <th>来源对象类型</th>
+            <th>客户端类型</th>
             <th>路径</th>
             <th>状态</th>
             <th>响应时间</th>
@@ -480,7 +480,7 @@ function LogsPage() {
               </div>
               {selectedRequestLog.targetType && (
                 <div className="form-group">
-                  <label>来源对象类型</label>
+                  <label>客户端类型</label>
                   <input type="text" value={TARGET_TYPE[selectedRequestLog.targetType] || '-'} readOnly />
                 </div>
               )}

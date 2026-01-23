@@ -66,7 +66,7 @@ export interface RequestLog {
   error?: string;
 
   // 新增字段 - 用于日志筛选和详情展示
-  targetType?: TargetType;                         // 来源对象类型
+  targetType?: TargetType;                         // 客户端类型
   targetServiceId?: string;                        // API服务ID
   targetServiceName?: string;                      // API服务名
   targetModel?: string;                            // 模型名

@@ -24,7 +24,7 @@ export default {
             {
                 name: 'codex',
                 sourceType: 'openai-chat',
-                apiUrl: 'https://api.aicodewith.com/chatgpt/v1',
+                apiUrl: 'https://api.aicodewith.com/chatgpt',
                 models: '',
             },
         ],

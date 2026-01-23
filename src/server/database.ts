@@ -27,6 +27,17 @@ export class DatabaseManager {
 
   constructor(dataPath: string) {
     this.db = new Database(path.join(dataPath, 'app.db'));
+
+    // 配置数据库以确保实时读取最新数据
+    // WAL 模式 + normal 同步模式: 提供最佳的并发性和实时性
+    this.db.pragma('journal_mode = WAL');
+    this.db.pragma('synchronous = NORMAL');
+
+    // 确保读取操作不会看到旧的数据快照
+    // 在 WAL 模式下,默认情况下读取操作不会阻塞写入操作
+    // 设置 read_uncommitted = 0 确保读取最新提交的数据
+    this.db.pragma('read_uncommitted = 0');
+
     this.logDb = new Level(path.join(dataPath, 'logs'), { valueEncoding: 'json' });
     this.accessLogDb = new Level(path.join(dataPath, 'access-logs'), { valueEncoding: 'json' });
     this.errorLogDb = new Level(path.join(dataPath, 'error-logs'), { valueEncoding: 'json' });
@@ -146,24 +157,34 @@ export class DatabaseManager {
 
   // API Service operations
   getAPIServices(vendorId?: string): APIService[] {
+    // 每次都重新准备语句以确保获取最新数据
     const query = vendorId
       ? 'SELECT * FROM api_services WHERE vendor_id = ? ORDER BY created_at DESC'
       : 'SELECT * FROM api_services ORDER BY created_at DESC';
-    const stmt = vendorId ? this.db.prepare(query).bind(vendorId) : this.db.prepare(query);
-    const rows = stmt.all();
-    return rows.map((row: any) => ({
+
+    // 不缓存 prepared statement,每次重新创建以确保读取最新数据
+    const stmt = this.db.prepare(query);
+    const rows = vendorId ? stmt.all(vendorId) : stmt.all();
+
+    const services = rows.map((row: any) => ({
       id: row.id,
       vendorId: row.vendor_id,
       name: row.name,
       apiUrl: row.api_url,
       apiKey: row.api_key,
-
       timeout: row.timeout,
       sourceType: row.source_type,
       supportedModels: row.supported_models ? row.supported_models.split(',').map((model: string) => model.trim()).filter((model: string) => model.length > 0) : undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
+
+    // 调试日志: 记录读取的服务信息
+    if (process.env.NODE_ENV === 'development' && services.length > 0) {
+      console.log(`[DB] Read ${services.length} services from database, first service: ${services[0].name} -> ${services[0].apiUrl}`);
+    }
+
+    return services;
   }
 
   createAPIService(service: Omit<APIService, 'id' | 'createdAt' | 'updatedAt'>): APIService {
@@ -204,6 +225,12 @@ export class DatabaseManager {
         now,
         id
       );
+
+    // 调试日志: 记录更新操作
+    if (result.changes > 0 && process.env.NODE_ENV === 'development') {
+      console.log(`[DB] Updated service ${id}: ${service.name} -> ${service.apiUrl} (timeout: ${service.timeout})`);
+    }
+
     return result.changes > 0;
   }
 

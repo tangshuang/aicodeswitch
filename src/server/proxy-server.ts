@@ -499,7 +499,14 @@ export class ProxyServer {
    */
   private getServiceById(serviceId: string): APIService | undefined {
     const allServices = this.dbManager.getAPIServices();
-    return allServices.find(service => service.id === serviceId);
+    const service = allServices.find(s => s.id === serviceId);
+
+    // 调试日志: 记录获取的服务信息
+    if (process.env.NODE_ENV === 'development' && service) {
+      console.log(`[Proxy] getServiceById(${serviceId}): ${service.name} -> ${service.apiUrl}`);
+    }
+
+    return service;
   }
 
   private async findMatchingRule(routeId: string, req: Request): Promise<Rule | undefined> {
