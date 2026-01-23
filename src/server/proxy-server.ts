@@ -242,10 +242,23 @@ export class ProxyServer {
           requestBody: req.body ? JSON.stringify(req.body) : undefined,
         });
 
-        res.status(503).json({
-          error: 'All services failed',
-          details: lastError?.message
-        });
+        // 根据路径判断目标类型并返回适当的错误格式
+        const isClaudeCode = req.path.startsWith('/claude-code/');
+        if (isClaudeCode) {
+          const claudeError = {
+            type: 'error',
+            error: {
+              type: 'api_error',
+              message: 'All API services failed. Please try again later.'
+            }
+          };
+          res.status(503).json(claudeError);
+        } else {
+          res.status(503).json({
+            error: 'All services failed',
+            details: lastError?.message
+          });
+        }
       } catch (error: any) {
         console.error('Proxy error:', error);
         if (this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
@@ -269,7 +282,21 @@ export class ProxyServer {
           requestHeaders: this.normalizeHeaders(req.headers),
           requestBody: req.body ? JSON.stringify(req.body) : undefined,
         });
-        res.status(500).json({ error: error.message });
+
+        // 根据路径判断目标类型并返回适当的错误格式
+        const isClaudeCode = req.path.startsWith('/claude-code/');
+        if (isClaudeCode) {
+          const claudeError = {
+            type: 'error',
+            error: {
+              type: 'api_error',
+              message: error.message || 'Internal server error'
+            }
+          };
+          res.status(500).json(claudeError);
+        } else {
+          res.status(500).json({ error: error.message });
+        }
       }
     });
   }
@@ -390,10 +417,23 @@ export class ProxyServer {
           requestBody: req.body ? JSON.stringify(req.body) : undefined,
         });
 
-        res.status(503).json({
-          error: 'All services failed',
-          details: lastError?.message
-        });
+        // 根据路径判断目标类型并返回适当的错误格式
+        const isClaudeCode = req.path.startsWith('/claude-code/');
+        if (isClaudeCode) {
+          const claudeError = {
+            type: 'error',
+            error: {
+              type: 'api_error',
+              message: 'All API services failed. Please try again later.'
+            }
+          };
+          res.status(503).json(claudeError);
+        } else {
+          res.status(503).json({
+            error: 'All services failed',
+            details: lastError?.message
+          });
+        }
       } catch (error: any) {
         console.error(`Fixed route error for ${targetType}:`, error);
         if (this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
@@ -1225,26 +1265,49 @@ export class ProxyServer {
       await finalizeLog(res.statusCode);
     } catch (error: any) {
       console.error('Proxy error:', error);
-      await finalizeLog(500, error.message);
+
+      // 检测是否是 timeout 错误
+      const isTimeout = error.code === 'ECONNABORTED' ||
+                        error.message?.toLowerCase().includes('timeout') ||
+                        (error.errno && error.errno === 'ETIMEDOUT');
+
+      const errorMessage = isTimeout
+        ? 'Request timeout - the upstream API took too long to respond'
+        : (error.message || 'Internal server error');
+
+      await finalizeLog(500, errorMessage);
 
       // 根据请求类型返回适当格式的错误响应
       const streamRequested = this.isStreamRequested(req, req.body || {});
-      if (streamRequested && route.targetType === 'claude-code') {
-        // 对于 Claude Code 的流式请求，返回 SSE 格式的错误响应
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-        res.status(500);
 
-        // 发送错误事件
-        const errorEvent = `event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`;
-        const doneEvent = `data: [DONE]\n\n`;
-        res.write(errorEvent);
-        res.write(doneEvent);
-        res.end();
+      if (route.targetType === 'claude-code') {
+        // 对于 Claude Code，返回符合 Claude API 标准的错误响应
+        const claudeError = {
+          type: 'error',
+          error: {
+            type: isTimeout ? 'api_error' : 'api_error',
+            message: errorMessage
+          }
+        };
+
+        if (streamRequested) {
+          // 流式请求：使用 SSE 格式
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache');
+          res.setHeader('Connection', 'keep-alive');
+          res.status(200);
+
+          // 发送错误事件（使用 Claude API 的标准格式）
+          const errorEvent = `event: error\ndata: ${JSON.stringify(claudeError)}\n\n`;
+          res.write(errorEvent);
+          res.end();
+        } else {
+          // 非流式请求：返回 JSON 格式
+          res.status(500).json(claudeError);
+        }
       } else {
-        // 对于非流式请求，返回 JSON 格式的错误响应
-        res.status(500).json({ error: error.message });
+        // 对于 Codex，返回 JSON 格式的错误响应
+        res.status(500).json({ error: errorMessage });
       }
     }
   }
