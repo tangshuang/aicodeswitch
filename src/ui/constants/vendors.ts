@@ -45,7 +45,7 @@ export default {
         description: 'OpenAI 官方 API https://platform.openai.com',
         services: [
             {
-                name: 'codex',
+                name: 'gpt',
                 sourceType: 'openai-chat',
                 apiUrl: 'https://api.openai.com',
             },
@@ -56,7 +56,7 @@ export default {
         description: 'Anthropic 官方 API https://www.anthropic.com',
         services: [
             {
-                name: 'claudecode',
+                name: 'claude',
                 sourceType: 'claude-chat',
                 apiUrl: 'https://api.anthropic.com',
             },
@@ -67,13 +67,13 @@ export default {
         description: '一站式 AI 模型路由平台 https://openrouter.ai',
         services: [
             {
-                name: 'claudecode',
+                name: 'claude',
                 sourceType: 'claude-chat',
                 apiUrl: 'https://openrouter.ai/api',
                 models: 'anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5',
             },
             {
-                name: 'codex',
+                name: 'gpt',
                 sourceType: 'openai-chat',
                 apiUrl: 'https://openrouter.ai/api',
                 models: 'openai/gpt-5.2-codex, openai/gpt-5.2-chat, openai/gpt-5.2-pro, openai/gpt-5.2, openai/gpt-5.1-codex-max',
