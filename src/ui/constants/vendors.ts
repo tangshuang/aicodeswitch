@@ -69,14 +69,14 @@ export default {
             {
                 name: 'claudecode',
                 sourceType: 'claude-chat',
-                apiUrl: 'https://openrouter.ai/api/v1',
-                models: 'anthropic/claude-3.5-sonnet, anthropic/claude-3.5-haiku',
+                apiUrl: 'https://openrouter.ai/api',
+                models: 'anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5',
             },
             {
                 name: 'codex',
                 sourceType: 'openai-chat',
-                apiUrl: 'https://openrouter.ai/api/v1',
-                models: 'openai/gpt-4o',
+                apiUrl: 'https://openrouter.ai/api',
+                models: 'openai/gpt-5.2-codex, openai/gpt-5.2-chat, openai/gpt-5.2-pro, openai/gpt-5.2, openai/gpt-5.1-codex-max',
             },
         ],
     },

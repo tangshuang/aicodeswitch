@@ -28,6 +28,9 @@ export class DatabaseManager {
   constructor(dataPath: string) {
     this.db = new Database(path.join(dataPath, 'app.db'));
 
+    // 启用外键约束（SQLite 默认禁用，必须手动启用才能使 ON DELETE CASCADE 生效）
+    this.db.pragma('foreign_keys = ON');
+
     // 配置数据库以确保实时读取最新数据
     // WAL 模式 + normal 同步模式: 提供最佳的并发性和实时性
     this.db.pragma('journal_mode = WAL');
