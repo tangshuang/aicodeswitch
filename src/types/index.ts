@@ -8,7 +8,7 @@ export interface Vendor {
 }
 
 /** 供应商API接口的数据结构标准类型 */
-export type SourceType = 'openai-chat' | 'openai-code' | 'openai-responses' | 'claude-chat' | 'claude-code' | 'deepseek-chat';
+export type SourceType = 'openai-chat' | 'claude-chat' | 'deepseek-chat';
 /** 路由的目标对象类型，目前，仅支持claude-code和codex */
 export type TargetType = 'claude-code' | 'codex';
 

@@ -237,6 +237,55 @@ export const transformOpenAIChatResponseToClaude = (body: any) => {
   };
 };
 
+export const transformClaudeResponseToOpenAIChat = (body: any) => {
+  const content = body?.content || [];
+  let textContent = '';
+  const toolCalls: any[] = [];
+
+  for (const block of content) {
+    if (block?.type === 'text') {
+      textContent += block.text || '';
+    } else if (block?.type === 'tool_use') {
+      toolCalls.push({
+        id: block.id,
+        type: 'function',
+        function: {
+          name: block.name || 'tool',
+          arguments: typeof block.input === 'string' ? block.input : JSON.stringify(block.input || {}),
+        },
+      });
+    }
+  }
+
+  const message: any = {
+    role: 'assistant',
+    content: textContent,
+  };
+
+  if (toolCalls.length > 0) {
+    message.tool_calls = toolCalls;
+  }
+
+  const usage = body?.usage ? {
+    prompt_tokens: body.usage.input_tokens || 0,
+    completion_tokens: body.usage.output_tokens || 0,
+    total_tokens: (body.usage.input_tokens || 0) + (body.usage.output_tokens || 0),
+  } : undefined;
+
+  return {
+    id: body?.id,
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model: body?.model,
+    choices: [{
+      index: 0,
+      message,
+      finish_reason: mapStopReason(body?.stop_reason),
+    }],
+    usage,
+  };
+};
+
 export const extractTokenUsageFromOpenAIUsage = (usage: any): TokenUsage | undefined => {
   if (!usage) return undefined;
   const converted = convertOpenAIUsageToClaude(usage);

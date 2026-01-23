@@ -5,7 +5,7 @@ export default {
         services: [
             {
                 name: 'claudecode',
-                sourceType: 'claude-code',
+                sourceType: 'claude-chat',
                 apiUrl: 'https://open.bigmodel.cn/api/anthropic',
                 models: 'glm-4.7, glm-4.5-air',
             },
@@ -17,13 +17,13 @@ export default {
         services: [
             {
                 name: 'claudecode',
-                sourceType: 'claude-code',
+                sourceType: 'claude-chat',
                 apiUrl: 'https://api.aicodewith.com',
                 models: '',
             },
             {
                 name: 'codex',
-                sourceType: 'openai-responses',
+                sourceType: 'openai-chat',
                 apiUrl: 'https://api.aicodewith.com/chatgpt/v1',
                 models: '',
             },

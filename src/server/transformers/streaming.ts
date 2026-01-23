@@ -368,17 +368,15 @@ export class OpenAIToClaudeEventTransform extends Transform {
   }
 }
 
-export class OpenAIResponsesToClaudeEventTransform extends Transform {
-  private contentIndex = 0;
-  private textBlockIndex: number | null = null;
-  private toolCalls = new Map<string, { id: string; name: string; arguments: string }>();
-  private toolCallKeyToBlockIndex = new Map<string, number>();
-  private hasMessageStart = false;
-  private stopReason: string = 'end_turn';
-  private usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number } | null = null;
-  private messageId: string | null = null;
+
+export class ClaudeToOpenAIChatEventTransform extends Transform {
+  private pendingToolCallId: string | null = null;
+  private pendingToolName: string | null = null;
+  private pendingToolArgs = '';
+  private toolCallIndex = 0;
+  private usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null = null;
+  private finished = false;
   private model: string | null = null;
-  private finalized = false;
 
   constructor(options?: { model?: string }) {
     super({ objectMode: true });
@@ -386,390 +384,96 @@ export class OpenAIResponsesToClaudeEventTransform extends Transform {
   }
 
   getUsage() {
-    if (!this.usage) return undefined;
-    return { ...this.usage };
+    return this.usage;
   }
 
   _transform(event: SSEEvent, _encoding: BufferEncoding, callback: (error?: Error | null) => void) {
-    if (this.finalized) {
+    if (this.finished) {
       callback();
       return;
     }
 
-    const eventType = event.event || event.data?.type || '';
+    const type = event.event;
+    const data = event.data;
 
-    if (eventType.includes('response.created')) {
-      const response = event.data?.response || event.data;
-      if (response?.id) this.messageId = response.id;
-      if (response?.model) this.model = response.model;
-      this.ensureMessageStart();
+    if (type === 'message_start' && data?.message) {
+      this.model = data.message.model || this.model;
+      this.push({ event: null, data: { id: data.message.id, model: this.model, choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }] } });
       callback();
       return;
     }
 
-    if (eventType.includes('output_text')) {
-      const deltaText = event.data?.delta ?? event.data?.text;
-      if (typeof deltaText === 'string' && deltaText.length > 0) {
-        this.handleTextDelta(deltaText);
-      }
-      if (eventType.includes('done')) {
-        this.closeTextBlock();
-      }
-      callback();
-      return;
-    }
-
-    if (eventType.includes('tool_call')) {
-      const toolId = event.data?.tool_call_id || event.data?.id || event.data?.tool_call?.id || `tool_${this.toolCalls.size + 1}`;
-      const toolName = event.data?.name || event.data?.tool_call?.name || 'tool';
-      const delta = event.data?.delta ?? event.data?.arguments;
-      if (typeof delta === 'string') {
-        this.handleToolDelta(toolId, toolName, delta);
-      }
-      if (eventType.includes('done')) {
-        const key = toolId || toolName;
-        this.closeToolBlock(key);
+    if (type === 'content_block_start' && data?.content_block) {
+      if (data.content_block.type === 'text') {
+        // 文本块开始
+      } else if (data.content_block.type === 'tool_use') {
+        this.pendingToolCallId = data.content_block.id;
+        this.pendingToolName = data.content_block.name;
+        this.pendingToolArgs = '';
       }
       callback();
       return;
     }
 
-    if (eventType.includes('response.completed')) {
-      const response = event.data?.response || event.data;
-      if (response?.usage) {
-        const inputTokens = response.usage?.input_tokens ?? response.usage?.prompt_tokens ?? 0;
-        const outputTokens = response.usage?.output_tokens ?? response.usage?.completion_tokens ?? 0;
-        const cacheRead = response.usage?.cache_read_input_tokens ?? response.usage?.prompt_tokens_details?.cached_tokens ?? 0;
-        this.usage = {
-          input_tokens: inputTokens,
-          output_tokens: outputTokens,
-          cache_read_input_tokens: cacheRead,
+    if (type === 'content_block_delta' && data?.delta) {
+      if (data.delta.type === 'text_delta') {
+        const text = data.delta.text || '';
+        if (text) {
+          this.push({ event: null, data: { id: '', model: this.model, choices: [{ index: 0, delta: { content: text } }] } });
+        }
+      } else if (data.delta.type === 'input_json_delta') {
+        this.pendingToolArgs += data.delta.partial_json || '';
+      }
+      callback();
+      return;
+    }
+
+    if (type === 'content_block_stop') {
+      if (this.pendingToolCallId && this.pendingToolName !== null) {
+        const toolCall = {
+          index: this.toolCallIndex,
+          id: this.pendingToolCallId,
+          type: 'function' as const,
+          function: {
+            name: this.pendingToolName,
+            arguments: this.pendingToolArgs,
+          },
         };
+        this.push({ event: null, data: { id: '', model: this.model, choices: [{ index: 0, delta: { tool_calls: [toolCall] } }] } });
+        this.toolCallIndex++;
+        this.pendingToolCallId = null;
+        this.pendingToolName = null;
+        this.pendingToolArgs = '';
       }
-      this.finalize();
       callback();
       return;
+    }
+
+    if (type === 'message_stop' || data?.type === 'message_stop') {
+      this.finished = true;
+      this.push({ event: null, data: { id: '', model: this.model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] } });
+      this.push({ event: 'done', data: { type: 'done' } });
+      callback();
+      return;
+    }
+
+    if (data?.usage) {
+      this.usage = {
+        prompt_tokens: data.usage.input_tokens || 0,
+        completion_tokens: data.usage.output_tokens || 0,
+        total_tokens: (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0),
+      };
     }
 
     callback();
   }
 
   _flush(callback: (error?: Error | null) => void) {
-    this.finalize();
+    if (!this.finished) {
+      this.finished = true;
+      this.push({ event: null, data: { id: '', model: this.model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] } });
+      this.push({ event: 'done', data: { type: 'done' } });
+    }
     callback();
-  }
-
-  private assignContentBlockIndex() {
-    const index = this.contentIndex;
-    this.contentIndex += 1;
-    return index;
-  }
-
-  private pushEvent(type: string, data: any) {
-    this.push({ event: type, data });
-  }
-
-  private ensureMessageStart() {
-    if (this.hasMessageStart) return;
-    const message = {
-      id: this.messageId || `msg_${crypto.randomUUID()}`,
-      type: 'message',
-      role: 'assistant',
-      content: [],
-      model: this.model || 'unknown',
-      stop_reason: null,
-      stop_sequence: null,
-      usage: {
-        input_tokens: 0,
-        output_tokens: 0,
-      },
-    };
-    this.pushEvent('message_start', { type: 'message_start', message });
-    this.hasMessageStart = true;
-  }
-
-  private handleTextDelta(text: string) {
-    this.ensureMessageStart();
-    if (this.textBlockIndex === null) {
-      this.textBlockIndex = this.assignContentBlockIndex();
-      this.pushEvent('content_block_start', {
-        type: 'content_block_start',
-        index: this.textBlockIndex,
-        content_block: { type: 'text' },
-      });
-    }
-    this.pushEvent('content_block_delta', {
-      type: 'content_block_delta',
-      index: this.textBlockIndex,
-      delta: { type: 'text_delta', text },
-    });
-  }
-
-  private closeTextBlock() {
-    if (this.textBlockIndex === null) return;
-    this.pushEvent('content_block_stop', {
-      type: 'content_block_stop',
-      index: this.textBlockIndex,
-    });
-    this.textBlockIndex = null;
-  }
-
-  private handleToolDelta(toolId: string, toolName: string, delta: string) {
-    this.ensureMessageStart();
-    const key = toolId || toolName;
-    if (!this.toolCalls.has(key)) {
-      const toolBlockIndex = this.assignContentBlockIndex();
-      this.toolCalls.set(key, { id: toolId, name: toolName, arguments: '' });
-      this.toolCallKeyToBlockIndex.set(key, toolBlockIndex);
-      this.pushEvent('content_block_start', {
-        type: 'content_block_start',
-        index: toolBlockIndex,
-        content_block: { type: 'tool_use', id: toolId, name: toolName },
-      });
-    }
-    const toolEntry = this.toolCalls.get(key);
-    if (toolEntry) {
-      toolEntry.arguments += delta;
-    }
-    const blockIndex = this.toolCallKeyToBlockIndex.get(key);
-    if (blockIndex !== undefined) {
-      this.pushEvent('content_block_delta', {
-        type: 'content_block_delta',
-        index: blockIndex,
-        delta: { type: 'input_json_delta', partial_json: delta },
-      });
-    }
-  }
-
-  private closeToolBlock(key: string) {
-    const blockIndex = this.toolCallKeyToBlockIndex.get(key);
-    if (blockIndex === undefined) return;
-    this.pushEvent('content_block_stop', {
-      type: 'content_block_stop',
-      index: blockIndex,
-    });
-    this.toolCallKeyToBlockIndex.delete(key);
-    this.toolCalls.delete(key);
-  }
-
-  private finalize() {
-    if (this.finalized) return;
-    this.ensureMessageStart();
-    this.closeTextBlock();
-
-    for (const blockIndex of this.toolCallKeyToBlockIndex.values()) {
-      this.pushEvent('content_block_stop', {
-        type: 'content_block_stop',
-        index: blockIndex,
-      });
-    }
-    this.toolCallKeyToBlockIndex.clear();
-    this.toolCalls.clear();
-
-    const usage = this.usage || {
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_read_input_tokens: 0,
-    };
-
-    this.pushEvent('message_delta', {
-      type: 'message_delta',
-      delta: { stop_reason: this.stopReason, stop_sequence: null },
-      usage,
-    });
-
-    this.pushEvent('message_stop', { type: 'message_stop' });
-    this.finalized = true;
-  }
-}
-
-export class ClaudeToOpenAIResponsesEventTransform extends Transform {
-  private responseId: string | null = null;
-  private model: string | null = null;
-  private createdAt: number = Date.now();
-  private outputText = '';
-  private textBlockIndex: number | null = null;
-  private toolCalls = new Map<number, { id: string; name: string; arguments: string }>();
-  private completedToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
-  private usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number } | null = null;
-  private hasCreated = false;
-
-  constructor(options?: { model?: string }) {
-    super({ objectMode: true });
-    this.model = options?.model ?? null;
-  }
-
-  getUsage() {
-    if (!this.usage) return undefined;
-    return { ...this.usage };
-  }
-
-  _transform(event: SSEEvent, _encoding: BufferEncoding, callback: (error?: Error | null) => void) {
-    const eventType = event.event || '';
-
-    if (eventType === 'message_start') {
-      const message = event.data?.message;
-      if (message?.id) this.responseId = message.id;
-      if (message?.model) this.model = message.model;
-      this.ensureResponseCreated();
-      callback();
-      return;
-    }
-
-    if (eventType === 'content_block_start') {
-      const block = event.data?.content_block;
-      const index = event.data?.index;
-      if (block?.type === 'text') {
-        this.textBlockIndex = index;
-      }
-      if (block?.type === 'tool_use' && typeof index === 'number') {
-        this.toolCalls.set(index, {
-          id: block.id || `tool_${index}`,
-          name: block.name || 'tool',
-          arguments: '',
-        });
-      }
-      callback();
-      return;
-    }
-
-    if (eventType === 'content_block_delta') {
-      const delta = event.data?.delta;
-      const index = event.data?.index;
-      if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
-        this.ensureResponseCreated();
-        this.outputText += delta.text;
-        this.pushEvent('response.output_text.delta', {
-          type: 'response.output_text.delta',
-          delta: delta.text,
-          output_index: 0,
-          content_index: 0,
-        });
-      }
-      if (delta?.type === 'input_json_delta' && typeof delta.partial_json === 'string' && typeof index === 'number') {
-        const tool = this.toolCalls.get(index);
-        if (tool) {
-          tool.arguments += delta.partial_json;
-          this.ensureResponseCreated();
-          this.pushEvent('response.output_tool_call.delta', {
-            type: 'response.output_tool_call.delta',
-            delta: delta.partial_json,
-            output_index: index,
-            tool_call_id: tool.id,
-            name: tool.name,
-          });
-        }
-      }
-      callback();
-      return;
-    }
-
-    if (eventType === 'content_block_stop') {
-      const index = event.data?.index;
-      if (typeof index === 'number') {
-        if (this.textBlockIndex === index) {
-          this.pushEvent('response.output_text.done', {
-            type: 'response.output_text.done',
-            text: this.outputText,
-            output_index: 0,
-            content_index: 0,
-          });
-          this.textBlockIndex = null;
-        }
-        const tool = this.toolCalls.get(index);
-        if (tool) {
-          this.completedToolCalls.push(tool);
-          this.pushEvent('response.output_tool_call.done', {
-            type: 'response.output_tool_call.done',
-            output_index: index,
-            tool_call: {
-              id: tool.id,
-              name: tool.name,
-              arguments: tool.arguments,
-            },
-          });
-          this.toolCalls.delete(index);
-        }
-      }
-      callback();
-      return;
-    }
-
-    if (eventType === 'message_delta') {
-      if (event.data?.usage) {
-        this.usage = {
-          input_tokens: event.data.usage.input_tokens ?? 0,
-          output_tokens: event.data.usage.output_tokens ?? 0,
-          cache_read_input_tokens: event.data.usage.cache_read_input_tokens ?? 0,
-        };
-      }
-      callback();
-      return;
-    }
-
-    if (eventType === 'message_stop') {
-      this.pushCompletedResponse();
-      callback();
-      return;
-    }
-
-    callback();
-  }
-
-  private ensureResponseCreated() {
-    if (this.hasCreated) return;
-    const response = {
-      id: this.responseId || `resp_${crypto.randomUUID()}`,
-      object: 'response',
-      model: this.model || 'unknown',
-      output: [],
-      created_at: this.createdAt,
-    };
-    this.pushEvent('response.created', { type: 'response.created', response });
-    this.hasCreated = true;
-  }
-
-  private pushEvent(event: string, data: any) {
-    this.push({ event, data });
-  }
-
-  private pushCompletedResponse() {
-    this.ensureResponseCreated();
-    const output: any[] = [];
-    if (this.outputText) {
-      output.push({
-        type: 'message',
-        role: 'assistant',
-        content: [{ type: 'output_text', text: this.outputText }],
-      });
-    }
-    for (const tool of this.completedToolCalls) {
-      output.push({
-        type: 'tool_call',
-        id: tool.id,
-        name: tool.name,
-        arguments: tool.arguments,
-      });
-    }
-
-    const inputTokens = this.usage?.input_tokens ?? 0;
-    const cacheRead = this.usage?.cache_read_input_tokens ?? 0;
-    const outputTokens = this.usage?.output_tokens ?? 0;
-
-    const response = {
-      id: this.responseId || `resp_${crypto.randomUUID()}`,
-      object: 'response',
-      model: this.model || 'unknown',
-      output,
-      output_text: this.outputText,
-      status: 'completed',
-      created_at: this.createdAt,
-      usage: {
-        input_tokens: inputTokens + cacheRead,
-        output_tokens: outputTokens,
-        total_tokens: inputTokens + cacheRead + outputTokens,
-      },
-    };
-    this.pushEvent('response.completed', { type: 'response.completed', response });
   }
 }

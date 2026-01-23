@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { api } from '../api/client';
 import type { Vendor, APIService, SourceType } from '../../types';
 import vendorsConfig from '../constants/vendors';
+import { SOURCE_TYPE, TIMEOUT_MS } from '../constants';
 import { useRecomandVendors } from '../hooks/docs';
 
 // TagInput 组件
@@ -95,14 +96,6 @@ function TagInput({ value = [], onChange, placeholder, inputValue, onInputChange
   );
 }
 
-const SOURCE_TYPE = {
-  'openai-chat': 'OpenAI Chat',
-  'openai-code': 'OpenAI Code',
-  'openai-responses': 'OpenAI Responses',
-  'claude-chat': 'Claude Chat',
-  'claude-code': 'Claude Code',
-  'deepseek-chat': 'DeepSeek Chat',
-};
 
 function VendorsPage() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -237,7 +230,7 @@ function VendorsPage() {
       name: formData.get('name') as string,
       apiUrl: formData.get('apiUrl') as string,
       apiKey: formData.get('apiKey') as string,
-      timeout: parseInt(formData.get('timeout') as string) || 30000,
+      timeout: parseInt(formData.get('timeout') as string) || TIMEOUT_MS,
       sourceType: formData.get('sourceType') as SourceType,
       supportedModels: finalModels.length > 0 ? finalModels : undefined,
     };
@@ -319,7 +312,7 @@ function VendorsPage() {
           name: serviceConfig.name,
           apiUrl: serviceConfig.apiUrl,
           apiKey: apiKey,
-          timeout: 30000,
+          timeout: TIMEOUT_MS,
           sourceType: sourceType,
           supportedModels: serviceConfig.models ? serviceConfig.models.split(',').map(m => m.trim()) : undefined,
         });
@@ -516,18 +509,6 @@ function VendorsPage() {
                 <input type="text" name="name" defaultValue={editingService ? editingService.name : ''} required />
               </div>
               <div className="form-group">
-                <label>源类型 <small>供应商接口返回的数据格式标准类型</small></label>
-                <select name="sourceType" defaultValue={editingService ? editingService.sourceType || '' : ''} required>
-                  <option value="">请选择源类型</option>
-                  <option value="openai-chat">OpenAI Chat</option>
-                  <option value="openai-code">OpenAI Code</option>
-                  <option value="openai-responses">OpenAI Responses</option>
-                  <option value="claude-chat">Claude Chat</option>
-                  <option value="claude-code">Claude Code</option>
-                  <option value="deepseek-chat">DeepSeek Chat</option>
-                </select>
-              </div>
-              <div className="form-group">
                 <label>供应商API地址</label>
                 <input type="url" name="apiUrl" defaultValue={editingService ? editingService.apiUrl : ''} required />
               </div>
@@ -535,9 +516,18 @@ function VendorsPage() {
                 <label>供应商API密钥</label>
                 <input type="password" name="apiKey" defaultValue={editingService ? editingService.apiKey : ''} required />
               </div>
+              <div className="form-group">
+                <label>数据源类型 <small>供应商接口返回的数据格式标准类型</small></label>
+                <select name="sourceType" defaultValue={editingService ? editingService.sourceType || '' : ''} required>
+                  <option value="">请选择源类型</option>
+                  {Object.keys(SOURCE_TYPE).map((type) => (
+                    <option key={type} value={type}>{SOURCE_TYPE[type as keyof typeof SOURCE_TYPE]}</option>
+                  ))}
+                </select>
+              </div>
                <div className="form-group">
                  <label>超时时间(ms)</label>
-                 <input type="number" name="timeout" defaultValue={editingService ? editingService.timeout : 30000} />
+                 <input type="number" name="timeout" defaultValue={editingService ? editingService.timeout : TIMEOUT_MS} />
                </div>
                <div className="form-group">
                  <label>支持的模型列表</label>

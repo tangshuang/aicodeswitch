@@ -92,14 +92,13 @@ aicos version            # Show current version information
 #### 2. Proxy Server - `server/proxy-server.ts`
 - **Route Matching**: Finds active route based on target type (claude-code/codex)
 - **Rule Matching**: Determines content type from request (image-understanding/thinking/long-context/background/default)
-- **Request Transformation**: Converts between different API formats (Claude ↔ OpenAI ↔ OpenAI Responses)
+- **Request Transformation**: Converts between different API formats (Claude ↔ OpenAI Chat)
 - **Streaming**: Handles SSE (Server-Sent Events) streaming responses with real-time transformation
 - **Logging**: Tracks requests, responses, and errors
 
 #### 3. Transformers - `server/transformers/`
 - **streaming.ts**: SSE parsing/serialization and event transformation
 - **claude-openai.ts**: Claude ↔ OpenAI Chat format conversion
-- **openai-responses.ts**: OpenAI Responses format conversion
 - **chunk-collector.ts**: Collects streaming chunks for logging
 
 #### 4. Database - `server/database.ts`

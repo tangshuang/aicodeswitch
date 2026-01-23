@@ -3,8 +3,7 @@ import axios, { AxiosRequestConfig } from 'axios';
 import { pipeline } from 'stream';
 import { DatabaseManager } from './database';
 import {
-  ClaudeToOpenAIResponsesEventTransform,
-  OpenAIResponsesToClaudeEventTransform,
+  ClaudeToOpenAIChatEventTransform,
   OpenAIToClaudeEventTransform,
   SSEParserTransform,
   SSESerializerTransform,
@@ -14,16 +13,9 @@ import {
   extractTokenUsageFromClaudeUsage,
   extractTokenUsageFromOpenAIUsage,
   transformClaudeRequestToOpenAIChat,
+  transformClaudeResponseToOpenAIChat,
   transformOpenAIChatResponseToClaude,
 } from './transformers/claude-openai';
-import {
-  extractTokenUsageFromOpenAIResponsesUsage,
-  transformClaudeRequestToOpenAIResponses,
-  transformClaudeResponseToOpenAIResponses,
-  transformOpenAIResponsesRequestToClaude,
-  transformOpenAIResponsesRequestToOpenAIChat,
-  transformOpenAIResponsesToClaude,
-} from './transformers/openai-responses';
 import type { AppConfig, Rule, APIService, Route, SourceType, TargetType, TokenUsage, ContentType } from '../types';
 
 type ContentTypeDetector = {
@@ -781,15 +773,11 @@ export class ProxyServer {
   }
 
   private isClaudeSource(sourceType: SourceType) {
-    return sourceType === 'claude-chat' || sourceType === 'claude-code';
+    return sourceType === 'claude-chat';
   }
 
   private isOpenAIChatSource(sourceType: SourceType) {
-    return sourceType === 'openai-chat' || sourceType === 'openai-code' || sourceType === 'deepseek-chat';
-  }
-
-  private isOpenAIResponsesSource(sourceType: SourceType) {
-    return sourceType === 'openai-responses';
+    return sourceType === 'openai-chat' || sourceType === 'deepseek-chat';
   }
 
   private applyModelOverride(body: any, rule: Rule) {
@@ -897,9 +885,6 @@ export class ProxyServer {
 
   private extractTokenUsage(usage: any): TokenUsage | undefined {
     if (!usage) return undefined;
-    if (typeof usage.input_tokens === 'number' && typeof usage.output_tokens === 'number' && usage.prompt_tokens === undefined) {
-      return extractTokenUsageFromOpenAIResponsesUsage(usage);
-    }
     if (typeof usage.prompt_tokens === 'number' || typeof usage.completion_tokens === 'number') {
       return extractTokenUsageFromOpenAIUsage(usage);
     }
@@ -926,24 +911,18 @@ export class ProxyServer {
       } else if (this.isOpenAIChatSource(targetSourceType)) {
         // Claude → OpenAI Chat: /v1/messages → /v1/chat/completions
         return originalPath.replace(/\/v1\/messages\b/, '/v1/chat/completions');
-      } else if (this.isOpenAIResponsesSource(targetSourceType)) {
-        // Claude → OpenAI Responses: /v1/messages → /v1/responses/completions
-        return originalPath.replace(/\/v1\/messages\b/, '/v1/responses/completions');
       }
     }
 
     // Codex 发起的请求
     if (sourceTool === 'codex') {
-      // Codex 默认使用 OpenAI Responses API 格式
-      if (this.isOpenAIResponsesSource(targetSourceType)) {
-        // OpenAI Responses → OpenAI Responses: 直接透传路径
+      // Codex 默认使用 OpenAI Chat API 格式
+      if (this.isOpenAIChatSource(targetSourceType)) {
+        // OpenAI Chat → OpenAI Chat: 直接透传路径
         return originalPath;
-      } else if (this.isOpenAIChatSource(targetSourceType)) {
-        // OpenAI Responses → OpenAI Chat: /v1/responses/completions → /v1/chat/completions
-        return originalPath.replace(/\/v1\/responses\/completions\b/, '/v1/chat/completions');
       } else if (this.isClaudeSource(targetSourceType)) {
-        // OpenAI Responses → Claude: /v1/responses/completions → /v1/messages
-        return originalPath.replace(/\/v1\/responses\/completions\b/, '/v1/messages');
+        // OpenAI Chat → Claude: /v1/chat/completions → /v1/messages
+        return originalPath.replace(/\/v1\/chat\/completions\b/, '/v1/messages');
       }
     }
 
@@ -1010,22 +989,18 @@ export class ProxyServer {
           requestBody = this.applyModelOverride(requestBody, rule);
         } else if (this.isOpenAIChatSource(sourceType)) {
           requestBody = transformClaudeRequestToOpenAIChat(requestBody, rule.targetModel);
-        } else if (this.isOpenAIResponsesSource(sourceType)) {
-          requestBody = transformClaudeRequestToOpenAIResponses(requestBody, rule.targetModel);
         } else {
           res.status(400).json({ error: 'Unsupported source type for Claude Code.' });
           await finalizeLog(400, 'Unsupported source type for Claude Code');
           return;
         }
       } else if (targetType === 'codex') {
-        if (this.isOpenAIResponsesSource(sourceType)) {
+        if (this.isOpenAIChatSource(sourceType)) {
           requestBody = this.applyModelOverride(requestBody, rule);
-        } else if (this.isOpenAIChatSource(sourceType)) {
-          requestBody = transformOpenAIResponsesRequestToOpenAIChat(requestBody, rule.targetModel);
         } else if (this.isClaudeSource(sourceType)) {
-          requestBody = transformOpenAIResponsesRequestToClaude(requestBody, rule.targetModel);
+          requestBody = transformClaudeRequestToOpenAIChat(requestBody, rule.targetModel);
         } else {
-          res.status(400).json({ error: 'Codex requires an OpenAI Responses compatible source.' });
+          res.status(400).json({ error: 'Unsupported source type for Codex.' });
           await finalizeLog(400, 'Unsupported source type for Codex');
           return;
         }
@@ -1048,7 +1023,7 @@ export class ProxyServer {
         method: req.method as any,
         url: `${service.apiUrl}${mappedPath}`,
         headers: this.buildUpstreamHeaders(req, service, sourceType, streamRequested),
-        timeout: service.timeout || 30000,
+        timeout: service.timeout || 3000000, // 默认300秒
         validateStatus: () => true,
         responseType: streamRequested ? 'stream' : 'json',
       };
@@ -1112,41 +1087,6 @@ export class ProxyServer {
           return;
         }
 
-        if (targetType === 'claude-code' && this.isOpenAIResponsesSource(sourceType)) {
-          res.setHeader('Content-Type', 'text/event-stream');
-          res.setHeader('Cache-Control', 'no-cache');
-          res.setHeader('Connection', 'keep-alive');
-
-          const parser = new SSEParserTransform();
-          const eventCollector = new SSEEventCollectorTransform();
-          const converter = new OpenAIResponsesToClaudeEventTransform({ model: requestBody?.model });
-          const serializer = new SSESerializerTransform();
-
-          responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
-
-          res.on('finish', () => {
-            const usage = converter.getUsage();
-            if (usage) {
-              usageForLog = extractTokenUsageFromClaudeUsage(usage);
-            } else {
-              // 尝试从event collector中提取usage
-              const extractedUsage = eventCollector.extractUsage();
-              if (extractedUsage) {
-                usageForLog = this.extractTokenUsage(extractedUsage);
-              }
-            }
-            streamChunksForLog = eventCollector.getChunks();
-            void finalizeLog(res.statusCode);
-          });
-
-          pipeline(response.data, parser, eventCollector, converter, serializer, res, (error) => {
-            if (error) {
-              void finalizeLog(500, error.message);
-            }
-          });
-          return;
-        }
-
         if (targetType === 'codex' && this.isClaudeSource(sourceType)) {
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache');
@@ -1154,7 +1094,7 @@ export class ProxyServer {
 
           const parser = new SSEParserTransform();
           const eventCollector = new SSEEventCollectorTransform();
-          const converter = new ClaudeToOpenAIResponsesEventTransform({ model: requestBody?.model });
+          const converter = new ClaudeToOpenAIChatEventTransform({ model: requestBody?.model });
           const serializer = new SSESerializerTransform();
 
           responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
@@ -1162,7 +1102,7 @@ export class ProxyServer {
           res.on('finish', () => {
             const usage = converter.getUsage();
             if (usage) {
-              usageForLog = extractTokenUsageFromClaudeUsage(usage);
+              usageForLog = extractTokenUsageFromOpenAIUsage(usage);
             } else {
               // 尝试从event collector中提取usage
               const extractedUsage = eventCollector.extractUsage();
@@ -1175,42 +1115,6 @@ export class ProxyServer {
           });
 
           pipeline(response.data, parser, eventCollector, converter, serializer, res, (error) => {
-            if (error) {
-              void finalizeLog(500, error.message);
-            }
-          });
-          return;
-        }
-
-        if (targetType === 'codex' && this.isOpenAIChatSource(sourceType)) {
-          res.setHeader('Content-Type', 'text/event-stream');
-          res.setHeader('Cache-Control', 'no-cache');
-          res.setHeader('Connection', 'keep-alive');
-
-          const parser = new SSEParserTransform();
-          const eventCollector = new SSEEventCollectorTransform();
-          const toClaude = new OpenAIToClaudeEventTransform({ model: requestBody?.model });
-          const toResponses = new ClaudeToOpenAIResponsesEventTransform({ model: requestBody?.model });
-          const serializer = new SSESerializerTransform();
-
-          responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
-
-          res.on('finish', () => {
-            const usage = toResponses.getUsage();
-            if (usage) {
-              usageForLog = extractTokenUsageFromClaudeUsage(usage);
-            } else {
-              // 尝试从event collector中提取usage
-              const extractedUsage = eventCollector.extractUsage();
-              if (extractedUsage) {
-                usageForLog = this.extractTokenUsage(extractedUsage);
-              }
-            }
-            streamChunksForLog = eventCollector.getChunks();
-            void finalizeLog(res.statusCode);
-          });
-
-          pipeline(response.data, parser, eventCollector, toClaude, toResponses, serializer, res, (error) => {
             if (error) {
               void finalizeLog(500, error.message);
             }
@@ -1269,20 +1173,9 @@ export class ProxyServer {
         // 记录转换后的响应体
         responseBodyForLog = JSON.stringify(converted);
         res.status(response.status).json(converted);
-      } else if (targetType === 'claude-code' && this.isOpenAIResponsesSource(sourceType)) {
-        const converted = transformOpenAIResponsesToClaude(responseData);
-        usageForLog = extractTokenUsageFromOpenAIResponsesUsage(responseData?.usage);
-        responseBodyForLog = JSON.stringify(converted);
-        res.status(response.status).json(converted);
       } else if (targetType === 'codex' && this.isClaudeSource(sourceType)) {
-        const converted = transformClaudeResponseToOpenAIResponses(responseData);
+        const converted = transformClaudeResponseToOpenAIChat(responseData);
         usageForLog = extractTokenUsageFromClaudeUsage(responseData?.usage);
-        responseBodyForLog = JSON.stringify(converted);
-        res.status(response.status).json(converted);
-      } else if (targetType === 'codex' && this.isOpenAIChatSource(sourceType)) {
-        const claudeResponse = transformOpenAIChatResponseToClaude(responseData);
-        const converted = transformClaudeResponseToOpenAIResponses(claudeResponse);
-        usageForLog = extractTokenUsageFromOpenAIUsage(responseData?.usage);
         responseBodyForLog = JSON.stringify(converted);
         res.status(response.status).json(converted);
       } else {
