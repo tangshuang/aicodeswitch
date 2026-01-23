@@ -232,22 +232,22 @@ function AppContent() {
             <NavLink to="/">📊 数据统计</NavLink>
           </li>
           <li>
-            <NavLink to="/routes">路由管理</NavLink>
+            <NavLink to="/routes">🌏 路由管理</NavLink>
           </li>
           <li>
-            <NavLink to="/vendors">供应商管理</NavLink>
+            <NavLink to="/vendors">🏭 供应商管理</NavLink>
           </li>
           <li>
-            <NavLink to="/write-config">覆盖配置文件</NavLink>
+            <NavLink to="/write-config">🗄️ 覆盖配置文件</NavLink>
           </li>
           <li>
-            <NavLink to="/logs">请求日志</NavLink>
+            <NavLink to="/logs">🪵 日志</NavLink>
           </li>
           <li>
-            <NavLink to="/settings">设置</NavLink>
+            <NavLink to="/settings">⚙️ 设置</NavLink>
           </li>
           <li>
-            <NavLink to="/usage">使用说明</NavLink>
+            <NavLink to="/usage">📖 使用说明</NavLink>
           </li>
         </ul>
 

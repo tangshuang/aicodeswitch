@@ -46,7 +46,62 @@ export class DatabaseManager {
 
   async initialize() {
     this.createTables();
+    await this.runMigrations();
     await this.ensureDefaultConfig();
+  }
+
+  private async runMigrations() {
+    const columns = this.db.pragma('table_info(api_services)') as any[];
+
+    // 检查是否有旧的 max_output_tokens 字段（单值版本）
+    const hasOldMaxOutputTokens = columns.some((col: any) => col.name === 'max_output_tokens');
+    // 检查是否已经有新的 model_limits 字段（JSON 版本）
+    const hasModelLimits = columns.some((col: any) => col.name === 'model_limits');
+
+    if (!hasModelLimits) {
+      if (hasOldMaxOutputTokens) {
+        // 如果有旧字段，先删除旧字段（SQLite 不支持 ALTER TABLE DROP COLUMN，需要重建表）
+        console.log('[DB] Running migration: Replacing max_output_tokens with model_limits');
+        await this.migrateMaxOutputTokensToModelLimits();
+      } else {
+        // 直接添加新字段
+        console.log('[DB] Running migration: Adding model_limits column to api_services table');
+        this.db.exec('ALTER TABLE api_services ADD COLUMN model_limits TEXT;');
+        console.log('[DB] Migration completed: model_limits column added');
+      }
+    }
+  }
+
+  private async migrateMaxOutputTokensToModelLimits() {
+    // SQLite 不支持直接删除列，需要重建表
+    this.db.exec(`
+      CREATE TABLE api_services_new (
+        id TEXT PRIMARY KEY,
+        vendor_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        api_url TEXT NOT NULL,
+        api_key TEXT NOT NULL,
+        timeout INTEGER,
+        source_type TEXT,
+        supported_models TEXT,
+        model_limits TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE CASCADE
+      );
+
+      INSERT INTO api_services_new
+      SELECT
+        id, vendor_id, name, api_url, api_key, timeout, source_type, supported_models,
+        NULL, -- model_limits 设为 NULL，旧数据需要手动配置
+        created_at, updated_at
+      FROM api_services;
+
+      DROP TABLE api_services;
+      ALTER TABLE api_services_new RENAME TO api_services;
+    `);
+
+    console.log('[DB] Migration completed: Replaced max_output_tokens with model_limits');
   }
 
   private createTables() {
@@ -175,6 +230,7 @@ export class DatabaseManager {
       timeout: row.timeout,
       sourceType: row.source_type,
       supportedModels: row.supported_models ? row.supported_models.split(',').map((model: string) => model.trim()).filter((model: string) => model.length > 0) : undefined,
+      modelLimits: row.model_limits ? JSON.parse(row.model_limits) : undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -192,7 +248,7 @@ export class DatabaseManager {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, timeout, source_type, supported_models, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, timeout, source_type, supported_models, model_limits, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         id,
@@ -203,6 +259,7 @@ export class DatabaseManager {
         service.timeout || null,
         service.sourceType || null,
         service.supportedModels ? service.supportedModels.join(',') : null,
+        service.modelLimits ? JSON.stringify(service.modelLimits) : null,
         now,
         now
       );
@@ -213,7 +270,7 @@ export class DatabaseManager {
     const now = Date.now();
     const result = this.db
       .prepare(
-        'UPDATE api_services SET name = ?, api_url = ?, api_key = ?, timeout = ?, source_type = ?, supported_models = ?, updated_at = ? WHERE id = ?'
+        'UPDATE api_services SET name = ?, api_url = ?, api_key = ?, timeout = ?, source_type = ?, supported_models = ?, model_limits = ?, updated_at = ? WHERE id = ?'
       )
       .run(
         service.name,
@@ -222,6 +279,7 @@ export class DatabaseManager {
         service.timeout || null,
         service.sourceType || null,
         service.supportedModels ? service.supportedModels.join(',') : null,
+        service.modelLimits ? JSON.stringify(service.modelLimits) : null,
         now,
         id
       );
@@ -563,7 +621,7 @@ export class DatabaseManager {
        for (const service of importData.apiServices) {
          this.db
            .prepare(
-             'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, timeout, source_type, supported_models, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+             'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, timeout, source_type, supported_models, model_limits, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
            )
            .run(
              service.id,
@@ -574,6 +632,7 @@ export class DatabaseManager {
              service.timeout || null,
              service.sourceType || null,
              service.supportedModels ? service.supportedModels.join(',') : null,
+             service.modelLimits ? JSON.stringify(service.modelLimits) : null,
              service.createdAt,
              service.updatedAt
            );

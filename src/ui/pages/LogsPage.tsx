@@ -265,7 +265,7 @@ function LogsPage() {
   return (
     <div>
       <div className="page-header">
-        <h1>请求日志</h1>
+        <h1>日志</h1>
         <p>查看所有API请求日志</p>
       </div>
 

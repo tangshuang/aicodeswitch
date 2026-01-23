@@ -22,6 +22,7 @@ export interface APIService {
   timeout?: number;
   sourceType?: SourceType;
   supportedModels?: string[];
+  modelLimits?: Record<string, number>; // 模型名 -> 最大输出tokens映射
   createdAt: number;
   updatedAt: number;
 }
@@ -80,6 +81,8 @@ export interface RequestLog {
   upstreamRequest?: {                              // 实际发送给后端的请求信息
     url: string;                                   // 实际请求的URL路径
     model: string;                                 // 实际请求的模型名
+    maxTokens?: number;                            // 实际的 max_tokens 或 max_completion_tokens 值
+    maxTokensField?: 'max_tokens' | 'max_completion_tokens'; // 使用的字段名
   };
 }
 

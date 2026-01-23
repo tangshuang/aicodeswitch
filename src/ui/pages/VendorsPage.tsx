@@ -109,6 +109,7 @@ function VendorsPage() {
   const [editingService, setEditingService] = useState<APIService | null>(null);
   const [supportedModels, setSupportedModels] = useState<string[]>([]);
   const [tagInputValue, setTagInputValue] = useState('');
+  const [modelLimits, setModelLimits] = useState<Record<string, number>>({});
 
   // 一键配置相关状态
   const [quickSetupVendorKey, setQuickSetupVendorKey] = useState<string>('');
@@ -126,6 +127,26 @@ function VendorsPage() {
       loadServices(selectedVendor.id);
     }
   }, [selectedVendor]);
+
+  // 同步模型列表和模型限制
+  useEffect(() => {
+    const currentModels = new Set(supportedModels);
+
+    // 移除已从 supportedModels 删除的模型的限制
+    const cleanedLimits: Record<string, number> = {};
+    Object.entries(modelLimits).forEach(([model, limit]) => {
+      if (currentModels.has(model)) {
+        cleanedLimits[model] = limit;
+      }
+    });
+
+    // 应用变更（只移除删除的模型，不自动添加新模型的默认限制）
+    const hasRemovedLimits = Object.keys(cleanedLimits).length !== Object.keys(modelLimits).length;
+
+    if (hasRemovedLimits) {
+      setModelLimits(cleanedLimits);
+    }
+  }, [supportedModels]);
 
   const loadVendors = async () => {
     const data = await api.getVendors();
@@ -187,6 +208,7 @@ function VendorsPage() {
     setEditingService(null);
     setSupportedModels([]);
     setTagInputValue('');
+    setModelLimits({});
     setShowServiceModal(true);
   };
 
@@ -194,6 +216,7 @@ function VendorsPage() {
     setEditingService(service);
     setSupportedModels(service.supportedModels || []);
     setTagInputValue('');
+    setModelLimits(service.modelLimits || {});
     setShowServiceModal(true);
   };
 
@@ -225,6 +248,14 @@ function VendorsPage() {
 
     const formData = new FormData(e.currentTarget);
 
+    // 过滤掉值为空的 modelLimits
+    const finalModelLimits: Record<string, number> = {};
+    Object.entries(modelLimits).forEach(([model, limit]) => {
+      if (model && limit && limit > 0) {
+        finalModelLimits[model] = limit;
+      }
+    });
+
     const service = {
       vendorId: selectedVendor!.id,
       name: formData.get('name') as string,
@@ -233,6 +264,7 @@ function VendorsPage() {
       timeout: parseInt(formData.get('timeout') as string) || TIMEOUT_MS,
       sourceType: formData.get('sourceType') as SourceType,
       supportedModels: finalModels.length > 0 ? finalModels : undefined,
+      modelLimits: Object.keys(finalModelLimits).length > 0 ? finalModelLimits : undefined,
     };
 
     if (editingService) {
@@ -244,6 +276,7 @@ function VendorsPage() {
     setShowServiceModal(false);
     setSupportedModels([]);
     setTagInputValue('');
+    setModelLimits({});
     if (selectedVendor) {
       loadServices(selectedVendor.id);
     }
@@ -499,7 +532,7 @@ function VendorsPage() {
 
       {showServiceModal && (
         <div className="modal-overlay">
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 800 }}>
             <div className="modal-header">
               <h2>{editingService ? '编辑供应商API服务' : '新增供应商API服务'}</h2>
             </div>
@@ -542,6 +575,207 @@ function VendorsPage() {
                   <div style={{ display:'block', width: '100%' }}>
                     <small style={{fontSize:'10px'}}>留空表示支持所有模型，路由配置中，可直接将模型透传给该供应商服务接口。</small>
                   </div>
+               </div>
+               <div className="form-group">
+                 <label>模型输出限制 <small style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}>为支持的模型配置最大输出tokens</small></label>
+                 <div style={{
+                   border: '1px solid var(--border-primary)',
+                   borderRadius: '8px',
+                   padding: '16px',
+                   background: 'var(--bg-secondary)',
+                   maxHeight: '300px',
+                   overflowY: 'auto'
+                 }}>
+                   {Object.keys(modelLimits).length === 0 && supportedModels.length === 0 ? (
+                     <div style={{
+                       color: 'var(--text-muted)',
+                       textAlign: 'center',
+                       padding: '20px',
+                       fontSize: '14px'
+                     }}>
+                       暂无模型限制配置，可点击下方按钮添加
+                     </div>
+                   ) : (
+                     <div>
+                       {supportedModels.length > 0 && (
+                         <div style={{ marginBottom: '12px' }}>
+                           <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px', fontWeight: 500 }}>
+                             来自"支持的模型列表"（自动同步）
+                           </div>
+                           {supportedModels.map((model) => (
+                             <div key={`sync-${model}`} style={{
+                               display: 'flex',
+                               gap: '8px',
+                               marginBottom: '8px',
+                               alignItems: 'center',
+                               padding: '8px',
+                               background: 'var(--bg-primary)',
+                               borderRadius: '4px',
+                               border: '1px solid var(--accent-light)'
+                             }}>
+                               <div style={{
+                                 flex: 2,
+                                 fontSize: '14px',
+                                 color: 'var(--text-primary)',
+                                 fontWeight: 500,
+                                 display: 'flex',
+                                 alignItems: 'center',
+                                 gap: '6px'
+                               }}>
+                                 {model}
+                                 <span style={{
+                                   fontSize: '10px',
+                                   padding: '2px 6px',
+                                   borderRadius: '3px',
+                                   background: 'var(--accent-light)',
+                                   color: 'var(--accent-primary)'
+                                 }}>
+                                   已同步
+                                 </span>
+                               </div>
+                               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                 <input
+                                   type="number"
+                                   value={modelLimits[model] || ''}
+                                   onChange={(e) => {
+                                     const value = e.target.value;
+                                     if (value === '') {
+                                       const newLimits = { ...modelLimits };
+                                       delete newLimits[model];
+                                       setModelLimits(newLimits);
+                                     } else {
+                                       setModelLimits({
+                                         ...modelLimits,
+                                         [model]: parseInt(value) || 0
+                                       });
+                                     }
+                                   }}
+                                   placeholder="留空不限"
+                                   min="1"
+                                   style={{
+                                     width: '100%',
+                                     padding: '6px 8px',
+                                     border: '1px solid var(--border-primary)',
+                                     borderRadius: '4px',
+                                     fontSize: '14px'
+                                   }}
+                                 />
+                                 <span style={{ fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                                   tokens
+                                 </span>
+                               </div>
+                               <button
+                                 type="button"
+                                 className="btn btn-sm btn-secondary"
+                                 onClick={() => {
+                                   const newLimits = { ...modelLimits };
+                                   delete newLimits[model];
+                                   setModelLimits(newLimits);
+                                 }}
+                                 style={{ padding: '4px 8px', fontSize: '12px' }}
+                                 title="移除此限制（模型仍在支持列表中）"
+                               >
+                                 移除限制
+                               </button>
+                             </div>
+                           ))}
+                         </div>
+                       )}
+
+                       {Object.keys(modelLimits).length > 0 && (
+                         <div>
+                           {Object.entries(modelLimits)
+                             .filter(([model]) => !supportedModels.includes(model))
+                             .map(([model, limit]) => (
+                               <div key={`custom-${model}`} style={{
+                                 display: 'flex',
+                                 gap: '8px',
+                                 marginBottom: '8px',
+                                 alignItems: 'center',
+                                 padding: '8px',
+                                 background: 'var(--bg-primary)',
+                                 borderRadius: '4px',
+                                 border: '1px solid var(--border-secondary)'
+                               }}>
+                                 <input
+                                   type="text"
+                                   value={model}
+                                   onChange={(e) => {
+                                     const newLimits = { ...modelLimits };
+                                     const newModel = e.target.value;
+                                     delete newLimits[model];
+                                     newLimits[newModel] = limit;
+                                     setModelLimits(newLimits);
+                                   }}
+                                   placeholder="模型名 (如: gpt-4)"
+                                   style={{
+                                     flex: 2,
+                                     padding: '6px 8px',
+                                     border: '1px solid var(--border-primary)',
+                                     borderRadius: '4px',
+                                     fontSize: '14px'
+                                   }}
+                                 />
+                                 <input
+                                   type="number"
+                                   value={limit}
+                                   onChange={(e) => {
+                                     setModelLimits({
+                                       ...modelLimits,
+                                       [model]: parseInt(e.target.value) || 0
+                                     });
+                                   }}
+                                   placeholder="最大tokens"
+                                   min="1"
+                                   style={{
+                                     flex: 1,
+                                     padding: '6px 8px',
+                                     border: '1px solid var(--border-primary)',
+                                     borderRadius: '4px',
+                                     fontSize: '14px'
+                                   }}
+                                 />
+                                 <button
+                                   type="button"
+                                   className="btn btn-sm btn-danger"
+                                   onClick={() => {
+                                     const newLimits = { ...modelLimits };
+                                     delete newLimits[model];
+                                     setModelLimits(newLimits);
+                                   }}
+                                   style={{ padding: '4px 8px', fontSize: '12px' }}
+                                 >
+                                   删除
+                                 </button>
+                               </div>
+                             ))}
+                         </div>
+                       )}
+                     </div>
+                   )}
+                   <button
+                     type="button"
+                     className="btn btn-sm btn-secondary"
+                     onClick={() => {
+                       const newModel = `model-${Date.now()}`;
+                       setModelLimits({
+                         ...modelLimits,
+                         [newModel]: 4096
+                       });
+                     }}
+                     style={{ marginTop: '8px', width: '100%' }}
+                   >
+                     + 添加模型限制
+                   </button>
+                 </div>
+                 <div style={{ display:'block', width: '100%', marginTop: '8px' }}>
+                   <small style={{fontSize:'10px'}}>
+                     <strong>自动同步：</strong>上方添加的模型会自动在此创建限制配置（默认4096），删除模型会同步移除限制。
+                     <strong>手动添加：</strong>可点击下方按钮为特定模型（如 gpt-4）或前缀（如 gpt-4-*）添加限制。
+                     留空则透传前端工具发送的值。支持精确匹配和前缀匹配。
+                     对于o1等新模型，将自动映射到max_completion_tokens字段。
+                   </small>
+                 </div>
                </div>
                <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowServiceModal(false)}>取消</button>

@@ -859,6 +859,89 @@ export class ProxyServer {
     return sourceType === 'openai-chat' || sourceType === 'deepseek-chat';
   }
 
+  /**
+   * 判断模型是否应该使用 max_completion_tokens 字段
+   * GPT 的新模型（如 o1 系列）使用 max_completion_tokens
+   */
+  private shouldUseMaxCompletionTokens(model: string): boolean {
+    if (!model) return false;
+    const lowerModel = model.toLowerCase();
+    // o1 系列模型使用 max_completion_tokens
+    return lowerModel.includes('o1-') ||
+           lowerModel.startsWith('o1') ||
+           lowerModel.includes('gpt-4.1') ||
+           lowerModel.includes('gpt-4o') ||
+           lowerModel.startsWith('chatgpt-');
+  }
+
+  /**
+   * 获取 max tokens 字段的名称
+   */
+  private getMaxTokensFieldName(model: string): 'max_tokens' | 'max_completion_tokens' {
+    return this.shouldUseMaxCompletionTokens(model) ? 'max_completion_tokens' : 'max_tokens';
+  }
+
+  /**
+   * 应用 max_output_tokens 限制
+   * 根据服务的 modelLimits 配置，对具体模型应用 max_tokens/max_completion_tokens 限制
+   */
+  private applyMaxOutputTokensLimit(body: any, service: APIService): any {
+    if (!service.modelLimits || !body || typeof body !== 'object') {
+      return body;
+    }
+
+    const result = { ...body };
+    const model = result.model;
+
+    if (!model) {
+      return body;
+    }
+
+    // 查找该模型的限制配置
+    // 支持精确匹配和前缀匹配（例如：gpt-4 可以匹配 gpt-4-turbo）
+    let maxOutputLimit: number | undefined;
+
+    // 1. 先尝试精确匹配
+    if (typeof service.modelLimits[model] === 'number') {
+      maxOutputLimit = service.modelLimits[model];
+    } else {
+      // 2. 尝试前缀匹配（查找配置中以模型名开头的项）
+      const matchedKey = Object.keys(service.modelLimits).find(key =>
+        model.startsWith(key) || key.startsWith(model)
+      );
+      if (matchedKey && typeof service.modelLimits[matchedKey] === 'number') {
+        maxOutputLimit = service.modelLimits[matchedKey];
+      }
+    }
+
+    if (maxOutputLimit === undefined) {
+      // 没有找到配置，直接透传
+      return body;
+    }
+
+    const maxTokensFieldName = this.getMaxTokensFieldName(model);
+
+    // 获取请求中的 max_tokens 或 max_completion_tokens 值
+    const requestedMaxTokens = result[maxTokensFieldName] || result.max_tokens;
+
+    // 如果请求中指定了 max_tokens，并且超过配置的限制，则限制为配置的最大值
+    if (typeof requestedMaxTokens === 'number' && requestedMaxTokens > maxOutputLimit) {
+      console.log(`[Proxy] Limiting ${maxTokensFieldName} from ${requestedMaxTokens} to ${maxOutputLimit} for model ${model} in service ${service.name}`);
+      result[maxTokensFieldName] = maxOutputLimit;
+
+      // 如果使用了 max_completion_tokens，清理旧的 max_tokens 字段
+      if (maxTokensFieldName === 'max_completion_tokens' && result.max_tokens !== undefined) {
+        delete result.max_tokens;
+      }
+    } else if (requestedMaxTokens === undefined) {
+      // 如果请求中没有指定 max_tokens，则使用配置的最大值
+      console.log(`[Proxy] Setting ${maxTokensFieldName} to ${maxOutputLimit} for model ${model} in service ${service.name}`);
+      result[maxTokensFieldName] = maxOutputLimit;
+    }
+
+    return result;
+  }
+
   private applyModelOverride(body: any, rule: Rule) {
     // 如果 targetModel 为空或不存在,保留原始 model(透传)
     if (!rule.targetModel) return body;
@@ -1022,7 +1105,12 @@ export class ProxyServer {
     let responseHeadersForLog: Record<string, string> | undefined;
     let responseBodyForLog: string | undefined;
     let streamChunksForLog: string[] | undefined;
-    let upstreamRequestForLog: { url: string; model: string } | undefined;
+    let upstreamRequestForLog: {
+      url: string;
+      model: string;
+      maxTokens?: number;
+      maxTokensField?: 'max_tokens' | 'max_completion_tokens';
+    } | undefined;
 
     const finalizeLog = async (statusCode: number, error?: string) => {
       if (logged || !this.config?.enableLogging) return;
@@ -1085,6 +1173,9 @@ export class ProxyServer {
         }
       }
 
+      // 应用 max_output_tokens 限制
+      requestBody = this.applyMaxOutputTokensLimit(requestBody, service);
+
       const streamRequested = this.isStreamRequested(req, requestBody);
 
       // Build the full URL by appending the request path to the service API URL
@@ -1116,9 +1207,15 @@ export class ProxyServer {
       }
 
       // 记录实际发出的请求信息作为日志的一部分
+      const actualModel = requestBody?.model || '';
+      const maxTokensFieldName = this.getMaxTokensFieldName(actualModel);
+      const actualMaxTokens = requestBody?.[maxTokensFieldName] || requestBody?.max_tokens;
+
       upstreamRequestForLog = {
         url: `${service.apiUrl}${mappedPath}`,
-        model: requestBody?.model || '',
+        model: actualModel,
+        maxTokens: actualMaxTokens,
+        maxTokensField: maxTokensFieldName,
       };
 
       const response = await axios(config);
