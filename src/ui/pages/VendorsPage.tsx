@@ -917,6 +917,9 @@ function VendorsPage() {
                   ))}
                 </select>
               </div>
+              {vendorsConfig[quickSetupVendorKey]?.description ? (
+                <div style={{fontSize:'.8em',marginBottom:16,marginTop:-16}}>{vendorsConfig[quickSetupVendorKey].description}</div>
+              ) : null}
               <div className="form-group">
                 <label>源类型 <small style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}>可选择多个</small></label>
                 <div style={{
