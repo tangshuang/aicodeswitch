@@ -28,9 +28,11 @@ const SUPPORTED_TARGETS = ['claude-code', 'codex'];
 export class ProxyServer {
   private app: express.Application;
   private dbManager: DatabaseManager;
-  private routes: Route[] = [];
-  private rules: Map<string, Rule[]> = new Map();
-  private services: Map<string, APIService> = new Map();
+  // 以下字段用于缓存备份（将来可能用于性能优化）
+  // 实际使用时，所有配置都从数据库实时读取
+  private routes?: Route[] = [];
+  private rules?: Map<string, Rule[]> = new Map();
+  private services?: Map<string, APIService> = new Map();
   private config: AppConfig;
 
   constructor(dbManager: DatabaseManager, app: express.Application) {
@@ -151,7 +153,7 @@ export class ProxyServer {
             return res.status(404).json({ error: 'No matching rule found' });
           }
 
-          const service = this.services.get(rule.targetServiceId);
+          const service = this.getServiceById(rule.targetServiceId);
           if (!service) {
             return res.status(500).json({ error: 'Target service not configured' });
           }
@@ -170,7 +172,7 @@ export class ProxyServer {
         let lastError: Error | null = null;
 
         for (const rule of allRules) {
-          const service = this.services.get(rule.targetServiceId);
+          const service = this.getServiceById(rule.targetServiceId);
           if (!service) continue;
 
           // 检查黑名单
@@ -299,7 +301,7 @@ export class ProxyServer {
             return res.status(404).json({ error: 'No matching rule found' });
           }
 
-          const service = this.services.get(rule.targetServiceId);
+          const service = this.getServiceById(rule.targetServiceId);
           if (!service) {
             return res.status(500).json({ error: 'Target service not configured' });
           }
@@ -318,7 +320,7 @@ export class ProxyServer {
         let lastError: Error | null = null;
 
         for (const rule of allRules) {
-          const service = this.services.get(rule.targetServiceId);
+          const service = this.getServiceById(rule.targetServiceId);
           if (!service) continue;
 
           // 检查黑名单
@@ -420,19 +422,49 @@ export class ProxyServer {
     };
   }
 
+  /**
+   * 从数据库实时获取所有活跃路由
+   * @returns 活跃路由列表
+   */
+  private getActiveRoutes(): Route[] {
+    return this.dbManager.getRoutes().filter(route => route.isActive);
+  }
+
+  /**
+   * 从数据库实时获取指定路由的规则
+   * @param routeId 路由ID
+   * @returns 规则列表（按 sortOrder 降序排序）
+   */
+  private getRulesByRouteId(routeId: string): Rule[] {
+    const routeRules = this.dbManager.getRules(routeId);
+    return routeRules.sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0));
+  }
+
   private findMatchingRoute(_req: Request): Route | undefined {
     // Find active route based on targetType - for now, return the first active route
     // This can be extended later based on specific routing logic
-    return this.routes.find(route => route.isActive);
+    const activeRoutes = this.getActiveRoutes();
+    return activeRoutes.find(route => route.isActive);
   }
 
   private findRouteByTargetType(targetType: 'claude-code' | 'codex'): Route | undefined {
-    return this.routes.find(route => route.targetType === targetType && route.isActive);
+    const activeRoutes = this.getActiveRoutes();
+    return activeRoutes.find(route => route.targetType === targetType && route.isActive);
+  }
+
+  /**
+   * 从数据库实时获取服务配置
+   * @param serviceId 服务ID
+   * @returns 服务配置，如果不存在则返回 undefined
+   */
+  private getServiceById(serviceId: string): APIService | undefined {
+    const allServices = this.dbManager.getAPIServices();
+    return allServices.find(service => service.id === serviceId);
   }
 
   private async findMatchingRule(routeId: string, req: Request): Promise<Rule | undefined> {
-    const rules = this.rules.get(routeId);
-    if (!rules) return undefined;
+    const rules = this.getRulesByRouteId(routeId);
+    if (!rules || rules.length === 0) return undefined;
 
     const body = req.body;
     const requestModel = body?.model;
@@ -493,8 +525,8 @@ export class ProxyServer {
   }
 
   private getAllMatchingRules(routeId: string, req: Request): Rule[] {
-    const rules = this.rules.get(routeId);
-    if (!rules) return [];
+    const rules = this.getRulesByRouteId(routeId);
+    if (!rules || rules.length === 0) return [];
 
     const body = req.body;
     const requestModel = body?.model;
@@ -1218,24 +1250,33 @@ export class ProxyServer {
   }
 
   async reloadRoutes() {
-    this.routes = this.dbManager.getRoutes().filter((g) => g.isActive);
-    this.rules.clear();
+    // 注意：所有配置（路由、规则、服务）现在都在每次请求时实时从数据库读取
+    // 这个方法主要用于初始化和日志记录
+    // 修改数据库后无需调用此方法，配置会自动生效
 
-    for (const route of this.routes) {
-      const routeRules = this.dbManager.getRules(route.id);
-      // 确保按 sortOrder 降序排序（database 层已处理，但再次确保）
-      const sortedRules = [...routeRules].sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0));
-      this.rules.set(route.id, sortedRules);
+    const allRoutes = this.dbManager.getRoutes();
+    const activeRoutes = allRoutes.filter((g) => g.isActive);
+    const allServices = this.dbManager.getAPIServices();
+
+    // 保留缓存以备将来可能的性能优化需求
+    this.routes! = activeRoutes;
+    if (this.rules) {
+      this.rules.clear();
+      for (const route of activeRoutes) {
+        const routeRules = this.dbManager.getRules(route.id);
+        const sortedRules = [...routeRules].sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0));
+        this.rules.set(route.id, sortedRules);
+      }
+    }
+    if (this.services) {
+      const services = this.services;
+      services.clear();
+      allServices.forEach((service) => {
+        services.set(service.id, service);
+      });
     }
 
-    // Load all services
-    const allServices = this.dbManager.getAPIServices();
-    this.services.clear();
-    allServices.forEach((service) => {
-      this.services.set(service.id, service);
-    });
-
-    console.log(`Loaded ${this.routes.length} active routes and ${this.services.size} services`);
+    console.log(`Initialized with ${activeRoutes.length} active routes and ${allServices.length} services (all config read from database in real-time)`);
   }
 
   async updateConfig(config: AppConfig) {

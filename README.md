@@ -199,6 +199,10 @@ PORT=4567
 *   [indb](https://github.com/tangshuang/indb): 网页端轻量kv数据库操作库
 *   [Formast](https://github.com/tangshuang/formast): 复杂业务场景下的企业级JSON驱动表单框架
 
+## 关联资源
+
+*   [Claude Code 深度教程](https://claudecode.tangshuang.net): 100%免费的Claude Code入门到精通教程
+
 ## 支持我
 
 ![](public/donate-to-me.png)
