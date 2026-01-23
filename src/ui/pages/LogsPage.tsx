@@ -59,7 +59,16 @@ function LogsPage() {
   };
 
   const handleClearLogs = async () => {
-    if (confirm('确定要清空当前类型的所有日志吗?')) {
+    const logTypeMap = {
+      request: '请求日志',
+      access: '访问日志',
+      error: '错误日志'
+    };
+
+    const logType = logTypeMap[activeTab];
+    const warningMessage = `确定要清空所有${logType}吗?\n\n⚠️ 警告:\n1. 此操作将永久删除所有${logType}记录\n2. 相关的统计数据也会被清空\n3. 此操作不可撤销\n\n是否继续?`;
+
+    if (confirm(warningMessage)) {
       if (activeTab === 'request') {
         await api.clearLogs();
         setRequestLogs([]);
