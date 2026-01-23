@@ -167,10 +167,21 @@ function AppContent() {
   if (authEnabled && !isAuthenticated) {
     return (
       <div className="modal-overlay">
+        <button
+          type="button"
+          className="modal-close-btn"
+          onClick={() => {}}
+          aria-label="关闭"
+          disabled
+          style={{ opacity: 0.3, cursor: 'not-allowed' }}
+        >
+          ×
+        </button>
         <div className="modal" style={{ maxWidth: '400px' }}>
-          <div className="modal-header">
-            <h2>🔐 系统鉴权</h2>
-          </div>
+          <div className="modal-container">
+            <div className="modal-header">
+              <h2>🔐 系统鉴权</h2>
+            </div>
           <form onSubmit={handleLogin}>
             <div style={{ padding: '20px 0' }}>
               <p style={{ marginBottom: '16px', lineHeight: '1.6', color: 'var(--text-secondary)' }}>
@@ -216,6 +227,7 @@ function AppContent() {
               </button>
             </div>
           </form>
+          </div>
         </div>
       </div>
     );
@@ -307,22 +319,32 @@ function AppContent() {
       </main>
 
       {showVendorModal && (
-        <div className="modal-overlay" onClick={() => setShowVendorModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>⚠️ 需要配置供应商</h2>
-            </div>
-            <div style={{ padding: '20px 0' }}>
-              <p style={{ marginBottom: '16px', lineHeight: '1.6' }}>
-                检测到系统中没有配置任何API供应商。在没有供应商的情况下，路由将无法正常工作。
-              </p>
-              <p style={{ marginBottom: '0', lineHeight: '1.6', fontWeight: '500' }}>
-                请先添加至少一个供应商，然后再配置路由规则。
-              </p>
-            </div>
-            <div className="modal-footer">
-              <button type="button" className="btn btn-secondary" onClick={() => setShowVendorModal(false)}>稍后</button>
-              <button type="button" className="btn btn-primary" onClick={handleVendorModalConfirm}>前往供应商管理</button>
+        <div className="modal-overlay">
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={() => setShowVendorModal(false)}
+            aria-label="关闭"
+          >
+            ×
+          </button>
+          <div className="modal">
+            <div className="modal-container">
+              <div className="modal-header">
+                <h2>⚠️ 需要配置供应商</h2>
+              </div>
+              <div style={{ padding: '20px 0' }}>
+                <p style={{ marginBottom: '16px', lineHeight: '1.6' }}>
+                  检测到系统中没有配置任何API供应商。在没有供应商的情况下，路由将无法正常工作。
+                </p>
+                <p style={{ marginBottom: '0', lineHeight: '1.6', fontWeight: '500' }}>
+                  请先添加至少一个供应商，然后再配置路由规则。
+                </p>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowVendorModal(false)}>稍后</button>
+                <button type="button" className="btn btn-primary" onClick={handleVendorModalConfirm}>前往供应商管理</button>
+              </div>
             </div>
           </div>
         </div>

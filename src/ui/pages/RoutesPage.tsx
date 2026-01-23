@@ -181,7 +181,7 @@ export default function RoutesPage() {
 
   const handleNewRule = () => {
     setEditingRule(null);
-    setSelectedContentType('');
+    setSelectedContentType('default');
     setSelectedVendor('');
     setSelectedService('');
     setSelectedModel('');
@@ -239,7 +239,7 @@ export default function RoutesPage() {
                       {route.isActive && <span className="badge badge-success">{TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label} 已激活</span>}
                     </div>
                      <div style={{ fontSize: '12px', color: 'var(--text-route-muted)', marginTop: '2px' }}>
-                       路由对象: {TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label}
+                       客户端工具: {TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label}
                      </div>
                     <div className="action-buttons" style={{ marginTop: '8px' }}>
                       {!route.isActive ? (
@@ -416,10 +416,19 @@ export default function RoutesPage() {
 
       {showRouteModal && (
         <div className="modal-overlay">
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>{editingRoute ? '编辑路由' : '新建路由'}</h2>
-            </div>
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={() => setShowRouteModal(false)}
+            aria-label="关闭"
+          >
+            ×
+          </button>
+          <div className="modal">
+            <div className="modal-container">
+              <div className="modal-header">
+                <h2>{editingRoute ? '编辑路由' : '新建路由'}</h2>
+              </div>
             <form onSubmit={handleSaveRoute}>
               <div className="form-group">
                 <label>路由名称</label>
@@ -430,7 +439,7 @@ export default function RoutesPage() {
                 <textarea name="description" rows={3} defaultValue={editingRoute ? editingRoute.description : ''} />
               </div>
               <div className="form-group">
-                <label>路由对象</label>
+                <label>客户端工具</label>
                 <select name="targetType" defaultValue={editingRoute ? editingRoute.targetType : 'claude-code'} required>
                   {TARGET_TYPE_OPTIONS.map(opt => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -443,16 +452,26 @@ export default function RoutesPage() {
                 <button type="submit" className="btn btn-primary">保存</button>
               </div>
             </form>
+            </div>
           </div>
         </div>
       )}
 
       {showRuleModal && (
         <div className="modal-overlay">
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>{editingRule ? '编辑规则' : '新建规则'}</h2>
-            </div>
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={() => setShowRuleModal(false)}
+            aria-label="关闭"
+          >
+            ×
+          </button>
+          <div className="modal">
+            <div className="modal-container">
+              <div className="modal-header">
+                <h2>{editingRule ? '编辑规则' : '新建规则'}</h2>
+              </div>
             <form onSubmit={handleSaveRule}>
               <div className="form-group">
                 <label>对象请求类型</label>
@@ -464,7 +483,6 @@ export default function RoutesPage() {
                     setSelectedContentType(e.target.value);
                   }}
                 >
-                  <option value="" disabled>请选择对象请求类型</option>
                   {getAvailableContentTypes().map(opt => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
@@ -544,6 +562,7 @@ export default function RoutesPage() {
                 <button type="submit" className="btn btn-primary">保存</button>
               </div>
             </form>
+            </div>
           </div>
         </div>
       )}

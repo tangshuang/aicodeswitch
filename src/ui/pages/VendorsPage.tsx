@@ -508,10 +508,19 @@ function VendorsPage() {
 
       {showVendorModal && (
         <div className="modal-overlay">
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>{editingVendor ? '编辑供应商' : '新增供应商'}</h2>
-            </div>
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={() => setShowVendorModal(false)}
+            aria-label="关闭"
+          >
+            ×
+          </button>
+          <div className="modal">
+            <div className="modal-container">
+              <div className="modal-header">
+                <h2>{editingVendor ? '编辑供应商' : '新增供应商'}</h2>
+              </div>
             <form onSubmit={handleSaveVendor}>
               <div className="form-group">
                 <label>供应商名称</label>
@@ -526,23 +535,33 @@ function VendorsPage() {
                 <button type="submit" className="btn btn-primary">保存</button>
               </div>
             </form>
+            </div>
           </div>
         </div>
       )}
 
       {showServiceModal && (
         <div className="modal-overlay">
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 800 }}>
-            <div className="modal-header">
-              <h2>{editingService ? '编辑供应商API服务' : '新增供应商API服务'}</h2>
-            </div>
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={() => setShowServiceModal(false)}
+            aria-label="关闭"
+          >
+            ×
+          </button>
+          <div className="modal" style={{ width: 800 }}>
+            <div className="modal-container">
+              <div className="modal-header">
+                <h2>{editingService ? '编辑供应商API服务' : '新增供应商API服务'}</h2>
+              </div>
             <form onSubmit={handleSaveService}>
               <div className="form-group">
                 <label>服务名称</label>
                 <input type="text" name="name" defaultValue={editingService ? editingService.name : ''} required />
               </div>
               <div className="form-group">
-                <label>供应商API地址</label>
+                <label>供应商API地址 <small>填写根路径，不需要 /v1 及后面的</small></label>
                 <input type="url" name="apiUrl" defaultValue={editingService ? editingService.apiUrl : ''} required />
               </div>
               <div className="form-group">
@@ -577,7 +596,7 @@ function VendorsPage() {
                   </div>
                </div>
                <div className="form-group">
-                 <label>模型输出限制 <small style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}>为支持的模型配置最大输出tokens</small></label>
+                 <label>模型输出限制 <small>为支持的模型配置最大输出tokens</small></label>
                  <div style={{
                    border: '1px solid var(--border-primary)',
                    borderRadius: '8px',
@@ -782,16 +801,26 @@ function VendorsPage() {
                 <button type="submit" className="btn btn-primary">保存</button>
               </div>
             </form>
+            </div>
           </div>
         </div>
       )}
 
       {showRecommendModal && (
         <div className="modal-overlay">
-          <div className="modal" style={{ maxWidth: '800px' }} onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>供应商推荐</h2>
-            </div>
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={() => setShowRecommendModal(false)}
+            aria-label="关闭"
+          >
+            ×
+          </button>
+          <div className="modal" style={{ maxWidth: '800px' }}>
+            <div className="modal-container">
+              <div className="modal-header">
+                <h2>供应商推荐</h2>
+              </div>
             <div className="modal-body">
               <div className="markdown-content">
                 <ReactMarkdown
@@ -841,16 +870,26 @@ function VendorsPage() {
             <div className="modal-footer">
               <button type="button" className="btn btn-secondary" onClick={() => setShowRecommendModal(false)}>关闭</button>
             </div>
+            </div>
           </div>
         </div>
       )}
 
       {showQuickSetupModal && (
         <div className="modal-overlay">
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>一键配置供应商</h2>
-            </div>
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={() => setShowQuickSetupModal(false)}
+            aria-label="关闭"
+          >
+            ×
+          </button>
+          <div className="modal">
+            <div className="modal-container">
+              <div className="modal-header">
+                <h2>一键配置供应商</h2>
+              </div>
             <form onSubmit={handleQuickSetupSubmit}>
               <div className="form-group">
                 <label>供应商</label>
@@ -986,6 +1025,7 @@ function VendorsPage() {
                 <button type="submit" className="btn btn-primary">确认配置</button>
               </div>
             </form>
+            </div>
           </div>
         </div>
       )}

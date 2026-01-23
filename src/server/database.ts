@@ -74,6 +74,9 @@ export class DatabaseManager {
 
   private async migrateMaxOutputTokensToModelLimits() {
     // SQLite 不支持直接删除列，需要重建表
+    // 先临时禁用外键约束
+    this.db.pragma('foreign_keys = OFF');
+
     this.db.exec(`
       CREATE TABLE api_services_new (
         id TEXT PRIMARY KEY,
@@ -100,6 +103,9 @@ export class DatabaseManager {
       DROP TABLE api_services;
       ALTER TABLE api_services_new RENAME TO api_services;
     `);
+
+    // 重新启用外键约束
+    this.db.pragma('foreign_keys = ON');
 
     console.log('[DB] Migration completed: Replaced max_output_tokens with model_limits');
   }
@@ -164,7 +170,7 @@ export class DatabaseManager {
     if (!config) {
       const defaultConfig: AppConfig = {
         enableLogging: true,
-        logRetentionDays: 7,
+        logRetentionDays: 30,
         maxLogSize: 1000,
         apiKey: '',
         enableFailover: true,  // 默认启用智能故障切换

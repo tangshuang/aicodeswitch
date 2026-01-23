@@ -97,7 +97,7 @@ Codex的配置覆盖逻辑一模一样。
 
 **有什么用？**
 
-aicodeswitch内部，会根据“源类型”来转换数据。例如，你的供应商API服务接口是OpenAI Chat的数据格式，而你在路由中配置的“路由对象“是Claude Code，那么就意味着，这个供应商API的数据，需要经过转换之后才能被Claude Code正确使用。
+aicodeswitch内部，会根据“源类型”来转换数据。例如，你的供应商API服务接口是OpenAI Chat的数据格式，而你在路由中配置的“客户端工具“是Claude Code，那么就意味着，这个供应商API的数据，需要经过转换之后才能被Claude Code正确使用。
 
 ## 路由管理
 
@@ -105,7 +105,7 @@ aicodeswitch内部，会根据“源类型”来转换数据。例如，你的�
 
 路由是aicodeswitch的核心功能，它负责将不同的对象（目前指Claude Code和Codex）的请求，路由到不同的供应商API服务上。
 
-### 什么是“路由对象”？
+### 什么是“客户端工具”？
 
 目前指Claude Code或Codex。
 

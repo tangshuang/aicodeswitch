@@ -1,3 +1,16 @@
+type VendorConfig = {
+    [vendorKey: string]: {
+        name: string;
+        description: string;
+        services: {
+            name: string;
+            sourceType: 'claude-chat' | 'openai-chat';
+            apiUrl: string;
+            models?: string;
+        }[];
+    };
+};
+
 export default {
     glm: {
         name: 'GLM',
@@ -19,14 +32,52 @@ export default {
                 name: 'claudecode',
                 sourceType: 'claude-chat',
                 apiUrl: 'https://api.aicodewith.com',
-                models: '',
             },
             {
                 name: 'codex',
                 sourceType: 'openai-chat',
                 apiUrl: 'https://api.aicodewith.com/chatgpt',
-                models: '',
             },
         ],
     },
-} as const;
+    openai: {
+        name: 'OpenAI',
+        description: 'OpenAI 官方 API https://platform.openai.com',
+        services: [
+            {
+                name: 'codex',
+                sourceType: 'openai-chat',
+                apiUrl: 'https://api.openai.com',
+            },
+        ],
+    },
+    anthropic: {
+        name: 'Anthropic',
+        description: 'Anthropic 官方 API https://www.anthropic.com',
+        services: [
+            {
+                name: 'claudecode',
+                sourceType: 'claude-chat',
+                apiUrl: 'https://api.anthropic.com',
+            },
+        ],
+    },
+    openrouter: {
+        name: 'OpenRouter',
+        description: '一站式 AI 模型路由平台 https://openrouter.ai',
+        services: [
+            {
+                name: 'claudecode',
+                sourceType: 'claude-chat',
+                apiUrl: 'https://openrouter.ai/api/v1',
+                models: 'anthropic/claude-3.5-sonnet, anthropic/claude-3.5-haiku',
+            },
+            {
+                name: 'codex',
+                sourceType: 'openai-chat',
+                apiUrl: 'https://openrouter.ai/api/v1',
+                models: 'openai/gpt-4o',
+            },
+        ],
+    },
+} as VendorConfig;

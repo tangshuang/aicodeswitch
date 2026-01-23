@@ -32,6 +32,7 @@
   --bg-route-item-selected: rgba(161, 233, 199, 0.25);
   --text-route-muted: #6c757d;
   --text-info: #2faeee;
+  --text-light: #018038;
 }
 
 [data-theme="dark"] {
@@ -61,6 +62,7 @@
   --bg-route-item-hover: rgba(30, 60, 38, 0.85);
   --bg-route-item-selected: rgba(16, 185, 129, 0.15);
   --text-route-muted: #A7F3D0;
+  --text-light: #999999;
 }
 
 body {

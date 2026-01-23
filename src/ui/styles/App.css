@@ -389,6 +389,10 @@ table th {
   box-shadow: 0 0 0 3px var(--shadow-secondary);
   background: var(--bg-secondary);
 }
+.form-group label small {
+  font-size: .8em;
+  color: var(--text-light);
+}
 
 .modal-overlay {
   position: fixed;
@@ -415,13 +419,96 @@ table th {
   backdrop-filter: blur(20px);
   border-radius: 24px;
   padding: 32px;
+  padding-right: 28px;
   min-width: 500px;
   max-width: 90%;
-  max-height: 90%;
-  overflow-y: auto;
+  max-height: 90vh;
   box-shadow: 0 20px 60px var(--shadow-primary), 0 8px 32px var(--shadow-secondary);
   border: 1px solid var(--border-secondary);
   animation: modalSlideIn 0.4s ease-out;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-container {
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin-right: -8px;
+  padding-right: 8px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-secondary) transparent;
+}
+
+/* Webkit浏览器（Chrome、Safari、Edge）滚动条样式 */
+.modal-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.modal-container::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 4px;
+  margin: 4px;
+}
+
+.modal-container::-webkit-scrollbar-thumb {
+  background: var(--border-secondary);
+  border-radius: 4px;
+  border: 2px solid transparent;
+}
+
+.modal-container::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  animation: modalFadeIn 0.3s ease-out;
+}
+
+.modal-close-btn {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 48px;
+  height: 48px;
+  border: none;
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--text-muted);
+  font-size: 32px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  z-index: 1001;
+}
+
+.modal-close-btn:hover {
+  background: var(--accent-danger);
+  color: white;
+  transform: scale(1.1);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+.modal-close-btn:active {
+  transform: scale(0.95);
 }
 
 @keyframes modalSlideIn {
@@ -440,11 +527,13 @@ table th {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
+  position: relative;
 }
 
 .modal-header h2 {
   font-size: 20px;
   color: var(--text-primary);
+  flex: 1;
 }
 
 .modal-footer {

@@ -464,11 +464,20 @@ function LogsPage() {
       </div>
 
       {selectedRequestLog && (
-        <div className="modal-overlay" onClick={() => setSelectedRequestLog(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: '800px', maxWidth: '90%', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div className="modal-header">
-              <h2>请求详情</h2>
-            </div>
+        <div className="modal-overlay">
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={() => setSelectedRequestLog(null)}
+            aria-label="关闭"
+          >
+            ×
+          </button>
+          <div className="modal" style={{ width: '800px' }}>
+            <div className="modal-container">
+              <div className="modal-header">
+                <h2>请求详情</h2>
+              </div>
             <div>
               <div className="form-group">
                 <label>日志ID</label>
@@ -605,16 +614,26 @@ function LogsPage() {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setSelectedRequestLog(null)}>关闭</button>
             </div>
+            </div>
           </div>
         </div>
       )}
 
       {selectedAccessLog && (
-        <div className="modal-overlay" onClick={() => setSelectedAccessLog(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ minWidth: '600px' }}>
-            <div className="modal-header">
-              <h2>访问日志详情</h2>
-            </div>
+        <div className="modal-overlay">
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={() => setSelectedAccessLog(null)}
+            aria-label="关闭"
+          >
+            ×
+          </button>
+          <div className="modal" style={{ minWidth: '600px' }}>
+            <div className="modal-container">
+              <div className="modal-header">
+                <h2>访问日志详情</h2>
+              </div>
             <div>
               <div className="form-group">
                 <label>时间</label>
@@ -654,16 +673,26 @@ function LogsPage() {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setSelectedAccessLog(null)}>关闭</button>
             </div>
+            </div>
           </div>
         </div>
       )}
 
       {selectedErrorLog && (
-        <div className="modal-overlay" onClick={() => setSelectedErrorLog(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ minWidth: '600px' }}>
-            <div className="modal-header">
-              <h2>错误日志详情</h2>
-            </div>
+        <div className="modal-overlay">
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={() => setSelectedErrorLog(null)}
+            aria-label="关闭"
+          >
+            ×
+          </button>
+          <div className="modal" style={{ minWidth: '600px' }}>
+            <div className="modal-container">
+              <div className="modal-header">
+                <h2>错误日志详情</h2>
+              </div>
             <div>
               <div className="form-group">
                 <label>时间</label>
@@ -706,6 +735,7 @@ function LogsPage() {
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setSelectedErrorLog(null)}>关闭</button>
+            </div>
             </div>
           </div>
         </div>
