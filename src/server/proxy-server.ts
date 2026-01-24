@@ -1258,7 +1258,7 @@ export class ProxyServer {
         method: req.method as any,
         url: `${service.apiUrl}${mappedPath}`,
         headers: this.buildUpstreamHeaders(req, service, sourceType, streamRequested),
-        timeout: service.timeout || 3000000, // 默认300秒
+        timeout: rule.timeout || 3000000, // 默认300秒
         validateStatus: () => true,
         responseType: streamRequested ? 'stream' : 'json',
       };

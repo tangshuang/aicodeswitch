@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { api } from '../api/client';
 import type { Vendor, APIService, SourceType } from '../../types';
 import vendorsConfig from '../constants/vendors';
-import { SOURCE_TYPE, TIMEOUT_MS } from '../constants';
+import { SOURCE_TYPE } from '../constants';
 import { useRecomandVendors } from '../hooks/docs';
 
 // TagInput 组件
@@ -261,7 +261,6 @@ function VendorsPage() {
       name: formData.get('name') as string,
       apiUrl: formData.get('apiUrl') as string,
       apiKey: formData.get('apiKey') as string,
-      timeout: parseInt(formData.get('timeout') as string) || TIMEOUT_MS,
       sourceType: formData.get('sourceType') as SourceType,
       supportedModels: finalModels.length > 0 ? finalModels : undefined,
       modelLimits: Object.keys(finalModelLimits).length > 0 ? finalModelLimits : undefined,
@@ -345,7 +344,6 @@ function VendorsPage() {
           name: serviceConfig.name,
           apiUrl: serviceConfig.apiUrl,
           apiKey: apiKey,
-          timeout: TIMEOUT_MS,
           sourceType: sourceType,
           supportedModels: serviceConfig.models ? serviceConfig.models.split(',').map(m => m.trim()) : undefined,
         });
@@ -577,10 +575,6 @@ function VendorsPage() {
                   ))}
                 </select>
               </div>
-               <div className="form-group">
-                 <label>超时时间(ms)</label>
-                 <input type="number" name="timeout" defaultValue={editingService ? editingService.timeout : TIMEOUT_MS} />
-               </div>
                <div className="form-group">
                  <label>支持的模型列表</label>
                   <TagInput

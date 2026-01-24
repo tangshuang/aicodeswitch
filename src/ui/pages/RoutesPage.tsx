@@ -35,6 +35,7 @@ export default function RoutesPage() {
   const [selectedContentType, setSelectedContentType] = useState<string>(editingRule?.contentType || '');
   const [selectedTokenLimit, setSelectedTokenLimit] = useState<number | undefined>(undefined);
   const [selectedResetInterval, setSelectedResetInterval] = useState<number | undefined>(undefined);
+  const [selectedTimeout, setSelectedTimeout] = useState<number | undefined>(undefined);
   const [hoveredRuleId, setHoveredRuleId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -133,6 +134,7 @@ export default function RoutesPage() {
       targetModel: selectedModel || undefined,
       replacedModel: selectedReplacedModel || undefined,
       sortOrder: selectedSortOrder,
+      timeout: selectedTimeout ? selectedTimeout * 1000 : undefined, // 转换为毫秒
       tokenLimit: selectedTokenLimit ? selectedTokenLimit * 1000 : undefined, // 转换为实际token数
       resetInterval: selectedResetInterval,
     };
@@ -187,6 +189,7 @@ export default function RoutesPage() {
         setSelectedModel(rule.targetModel || '');
         setSelectedReplacedModel(rule.replacedModel || '');
         setSelectedSortOrder(rule.sortOrder || 0);
+        setSelectedTimeout(rule.timeout ? rule.timeout / 1000 : undefined); // 转换为秒
         setSelectedTokenLimit(rule.tokenLimit ? rule.tokenLimit / 1000 : undefined); // 转换为k值
         setSelectedResetInterval(rule.resetInterval);
       }, 0);
@@ -202,6 +205,7 @@ export default function RoutesPage() {
     setSelectedModel('');
     setSelectedReplacedModel('');
     setSelectedSortOrder(0);
+    setSelectedTimeout(undefined);
     setSelectedTokenLimit(undefined);
     setSelectedResetInterval(undefined);
     setShowRuleModal(true);
@@ -624,6 +628,21 @@ export default function RoutesPage() {
                 />
                 <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
                   当编程工具的请求tokens达到这个量时，在配置了其他规则的情况下，本条规则将失效，从而保护你的余额。例如：输入100表示100k即100,000个tokens
+                </small>
+              </div>
+
+              {/* 超时时间字段 */}
+              <div className="form-group">
+                <label>超时时间（秒）</label>
+                <input
+                  type="number"
+                  value={selectedTimeout || ''}
+                  onChange={(e) => setSelectedTimeout(e.target.value ? parseInt(e.target.value) : undefined)}
+                  min="1"
+                  placeholder="默认300秒"
+                />
+                <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                  设置此规则的API请求超时时间。不设置则使用默认值300秒（5分钟）
                 </small>
               </div>
 

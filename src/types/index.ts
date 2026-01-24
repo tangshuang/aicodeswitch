@@ -19,7 +19,6 @@ export interface APIService {
   name: string;
   apiUrl: string;
   apiKey: string;
-  timeout?: number;
   sourceType?: SourceType;
   supportedModels?: string[];
   modelLimits?: Record<string, number>; // 模型名 -> 最大输出tokens映射
@@ -47,6 +46,7 @@ export interface Rule {
   targetModel?: string;
   replacedModel?: string;
   sortOrder?: number;
+  timeout?: number;              // 超时时间（毫秒）
   tokenLimit?: number;           // token使用量上限
   totalTokensUsed?: number;      // 当前累计token使用量
   resetInterval?: number;        // 自动重置间隔（小时）

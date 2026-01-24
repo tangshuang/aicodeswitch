@@ -104,6 +104,22 @@ export class DatabaseManager {
       this.db.exec('ALTER TABLE rules ADD COLUMN last_reset_at INTEGER;');
       console.log('[DB] Migration completed: last_reset_at column added');
     }
+
+    // 检查rules表是否有timeout字段
+    const hasRuleTimeout = rulesColumns.some((col: any) => col.name === 'timeout');
+    if (!hasRuleTimeout) {
+      console.log('[DB] Running migration: Adding timeout column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN timeout INTEGER;');
+      console.log('[DB] Migration completed: timeout column added to rules');
+    }
+
+    // 检查api_services表是否有timeout字段，如果有则移除
+    const hasServiceTimeout = columns.some((col: any) => col.name === 'timeout');
+    if (hasServiceTimeout) {
+      console.log('[DB] Running migration: Removing timeout column from api_services table');
+      await this.migrateRemoveServiceTimeout();
+      console.log('[DB] Migration completed: timeout column removed from api_services');
+    }
   }
 
   private async migrateMaxOutputTokensToModelLimits() {
@@ -144,6 +160,36 @@ export class DatabaseManager {
     console.log('[DB] Migration completed: Replaced max_output_tokens with model_limits');
   }
 
+  private async migrateRemoveServiceTimeout() {
+    // SQLite 不支持直接删除列，需要重建表
+    this.db.pragma('foreign_keys = OFF');
+
+    this.db.exec(`
+      CREATE TABLE api_services_new (
+        id TEXT PRIMARY KEY,
+        vendor_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        api_url TEXT NOT NULL,
+        api_key TEXT NOT NULL,
+        source_type TEXT,
+        supported_models TEXT,
+        model_limits TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE CASCADE
+      );
+
+      INSERT INTO api_services_new (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, created_at, updated_at)
+      SELECT id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, created_at, updated_at
+      FROM api_services;
+
+      DROP TABLE api_services;
+      ALTER TABLE api_services_new RENAME TO api_services;
+    `);
+
+    this.db.pragma('foreign_keys = ON');
+  }
+
   private createTables() {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS vendors (
@@ -160,7 +206,6 @@ export class DatabaseManager {
          name TEXT NOT NULL,
          api_url TEXT NOT NULL,
          api_key TEXT NOT NULL,
-         timeout INTEGER,
          source_type TEXT,
          supported_models TEXT,
          created_at INTEGER NOT NULL,
@@ -186,6 +231,7 @@ export class DatabaseManager {
         target_model TEXT,
         replaced_model TEXT,
         sort_order INTEGER DEFAULT 0,
+        timeout INTEGER,
         token_limit INTEGER,
         total_tokens_used INTEGER DEFAULT 0,
         reset_interval INTEGER,
@@ -271,7 +317,6 @@ export class DatabaseManager {
       name: row.name,
       apiUrl: row.api_url,
       apiKey: row.api_key,
-      timeout: row.timeout,
       sourceType: row.source_type,
       supportedModels: row.supported_models ? row.supported_models.split(',').map((model: string) => model.trim()).filter((model: string) => model.length > 0) : undefined,
       modelLimits: row.model_limits ? JSON.parse(row.model_limits) : undefined,
@@ -292,7 +337,7 @@ export class DatabaseManager {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, timeout, source_type, supported_models, model_limits, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         id,
@@ -300,7 +345,6 @@ export class DatabaseManager {
         service.name,
         service.apiUrl,
         service.apiKey,
-        service.timeout || null,
         service.sourceType || null,
         service.supportedModels ? service.supportedModels.join(',') : null,
         service.modelLimits ? JSON.stringify(service.modelLimits) : null,
@@ -314,13 +358,12 @@ export class DatabaseManager {
     const now = Date.now();
     const result = this.db
       .prepare(
-        'UPDATE api_services SET name = ?, api_url = ?, api_key = ?, timeout = ?, source_type = ?, supported_models = ?, model_limits = ?, updated_at = ? WHERE id = ?'
+        'UPDATE api_services SET name = ?, api_url = ?, api_key = ?, source_type = ?, supported_models = ?, model_limits = ?, updated_at = ? WHERE id = ?'
       )
       .run(
         service.name,
         service.apiUrl,
         service.apiKey,
-        service.timeout || null,
         service.sourceType || null,
         service.supportedModels ? service.supportedModels.join(',') : null,
         service.modelLimits ? JSON.stringify(service.modelLimits) : null,
@@ -330,7 +373,7 @@ export class DatabaseManager {
 
     // 调试日志: 记录更新操作
     if (result.changes > 0 && process.env.NODE_ENV === 'development') {
-      console.log(`[DB] Updated service ${id}: ${service.name} -> ${service.apiUrl} (timeout: ${service.timeout})`);
+      console.log(`[DB] Updated service ${id}: ${service.name} -> ${service.apiUrl}`);
     }
 
     return result.changes > 0;
@@ -407,6 +450,7 @@ export class DatabaseManager {
       targetModel: row.target_model,
       replacedModel: row.replaced_model,
       sortOrder: row.sort_order,
+      timeout: row.timeout,
       tokenLimit: row.token_limit,
       totalTokensUsed: row.total_tokens_used,
       resetInterval: row.reset_interval,
@@ -421,7 +465,7 @@ export class DatabaseManager {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, token_limit, total_tokens_used, reset_interval, last_reset_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         id,
@@ -431,6 +475,7 @@ export class DatabaseManager {
         route.targetModel || null,
         route.replacedModel || null,
         route.sortOrder || 0,
+        route.timeout || null,
         route.tokenLimit || null,
         route.totalTokensUsed || 0,
         route.resetInterval || null,
@@ -445,7 +490,7 @@ export class DatabaseManager {
     const now = Date.now();
     const result = this.db
       .prepare(
-        'UPDATE rules SET content_type = ?, target_service_id = ?, target_model = ?, replaced_model = ?, sort_order = ?, token_limit = ?, reset_interval = ?, updated_at = ? WHERE id = ?'
+        'UPDATE rules SET content_type = ?, target_service_id = ?, target_model = ?, replaced_model = ?, sort_order = ?, timeout = ?, token_limit = ?, reset_interval = ?, updated_at = ? WHERE id = ?'
       )
       .run(
         route.contentType,
@@ -453,6 +498,7 @@ export class DatabaseManager {
         route.targetModel || null,
         route.replacedModel || null,
         route.sortOrder || 0,
+        route.timeout !== undefined ? route.timeout : null,
         route.tokenLimit !== undefined ? route.tokenLimit : null,
         route.resetInterval !== undefined ? route.resetInterval : null,
         now,
@@ -729,7 +775,7 @@ export class DatabaseManager {
        for (const service of importData.apiServices) {
          this.db
            .prepare(
-             'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, timeout, source_type, supported_models, model_limits, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+             'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
            )
            .run(
              service.id,
@@ -737,7 +783,6 @@ export class DatabaseManager {
              service.name,
              service.apiUrl,
              service.apiKey,
-             service.timeout || null,
              service.sourceType || null,
              service.supportedModels ? service.supportedModels.join(',') : null,
              service.modelLimits ? JSON.stringify(service.modelLimits) : null,
@@ -757,7 +802,7 @@ export class DatabaseManager {
       for (const rule of importData.rules) {
         this.db
           .prepare(
-            'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
           )
           .run(
             rule.id,
@@ -767,6 +812,11 @@ export class DatabaseManager {
             rule.targetModel || null,
             rule.replacedModel || null,
             rule.sortOrder || 0,
+            rule.timeout || null,
+            rule.tokenLimit || null,
+            rule.totalTokensUsed || 0,
+            rule.resetInterval || null,
+            rule.lastResetAt || null,
             rule.createdAt,
             rule.updatedAt
           );
