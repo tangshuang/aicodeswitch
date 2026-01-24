@@ -528,7 +528,7 @@ export default function RoutesPage() {
                 </select>
               </div>
               <div className="form-group">
-                <label>API服务</label>
+                <label>供应商API服务</label>
                 <select
                   value={selectedService}
                   onChange={(e) => {
@@ -545,7 +545,7 @@ export default function RoutesPage() {
                 </select>
               </div>
               <div className="form-group">
-                <label>模型</label>
+                <label>供应商模型</label>
                 <select
                   value={selectedModel}
                   onChange={(e) => setSelectedModel(e.target.value)}
