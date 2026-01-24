@@ -29,6 +29,7 @@ interface BackendAPI {
   createRule: (route: Omit<Rule, 'id' | 'createdAt' | 'updatedAt'>) => Promise<Rule>;
   updateRule: (id: string, route: Partial<Rule>) => Promise<boolean>;
   deleteRule: (id: string) => Promise<boolean>;
+  resetRuleTokens: (id: string) => Promise<boolean>;
 
   getLogs: (limit: number, offset: number) => Promise<RequestLog[]>;
   clearLogs: () => Promise<boolean>;
@@ -145,6 +146,7 @@ export const api: BackendAPI = {
   createRule: (route) => requestJson(buildUrl('/api/rules'), { method: 'POST', body: JSON.stringify(route) }),
   updateRule: (id, route) => requestJson(buildUrl(`/api/rules/${id}`), { method: 'PUT', body: JSON.stringify(route) }),
   deleteRule: (id) => requestJson(buildUrl(`/api/rules/${id}`), { method: 'DELETE' }),
+  resetRuleTokens: (id) => requestJson(buildUrl(`/api/rules/${id}/reset-tokens`), { method: 'PUT' }),
 
   getLogs: (limit, offset) => requestJson(buildUrl('/api/logs', { limit, offset })),
   clearLogs: () => requestJson(buildUrl('/api/logs'), { method: 'DELETE' }),

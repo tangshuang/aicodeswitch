@@ -524,16 +524,26 @@ export class ProxyServer {
         requestModel.includes(rule.replacedModel)
       );
 
-      // 过滤黑名单
+      // 过滤黑名单和token限制
       for (const rule of modelMappingRules) {
         const isBlacklisted = await this.dbManager.isServiceBlacklisted(
           rule.targetServiceId,
           routeId,
           rule.contentType
         );
-        if (!isBlacklisted) {
-          return rule;
+        if (isBlacklisted) {
+          continue;
         }
+
+        // 检查并重置到期的规则
+        this.dbManager.checkAndResetRuleIfNeeded(rule.id);
+
+        // 检查token限制
+        if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit) {
+          continue; // 跳过超限规则
+        }
+
+        return rule;
       }
     }
 
@@ -541,31 +551,51 @@ export class ProxyServer {
     const contentType = this.determineContentType(req);
     const contentTypeRules = rules.filter(rule => rule.contentType === contentType);
 
-    // 过滤黑名单
+    // 过滤黑名单和token限制
     for (const rule of contentTypeRules) {
       const isBlacklisted = await this.dbManager.isServiceBlacklisted(
         rule.targetServiceId,
         routeId,
         contentType
       );
-      if (!isBlacklisted) {
-        return rule;
+      if (isBlacklisted) {
+        continue;
       }
+
+      // 检查并重置到期的规则
+      this.dbManager.checkAndResetRuleIfNeeded(rule.id);
+
+      // 检查token限制
+      if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit) {
+        continue; // 跳过超限规则
+      }
+
+      return rule;
     }
 
     // 3. 最后返回 default 规则
     const defaultRules = rules.filter(rule => rule.contentType === 'default');
 
-    // 过滤黑名单
+    // 过滤黑名单和token限制
     for (const rule of defaultRules) {
       const isBlacklisted = await this.dbManager.isServiceBlacklisted(
         rule.targetServiceId,
         routeId,
         'default'
       );
-      if (!isBlacklisted) {
-        return rule;
+      if (isBlacklisted) {
+        continue;
       }
+
+      // 检查并重置到期的规则
+      this.dbManager.checkAndResetRuleIfNeeded(rule.id);
+
+      // 检查token限制
+      if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit) {
+        continue; // 跳过超限规则
+      }
+
+      return rule;
     }
 
     return undefined;
@@ -597,6 +627,26 @@ export class ProxyServer {
     // 3. Default rules
     const defaultRules = rules.filter(rule => rule.contentType === 'default');
     candidates.push(...defaultRules);
+
+    // 4. 检查并重置到期的规则
+    candidates.forEach(rule => {
+      this.dbManager.checkAndResetRuleIfNeeded(rule.id);
+    });
+
+    // 5. 过滤掉超过token限制的规则（仅在有多个候选规则时）
+    if (candidates.length > 1) {
+      const filteredCandidates = candidates.filter(rule => {
+        if (rule.tokenLimit && rule.totalTokensUsed !== undefined) {
+          return rule.totalTokensUsed < rule.tokenLimit;
+        }
+        return true; // 没有设置限制的规则总是可用
+      });
+
+      // 如果过滤后还有规则，使用过滤后的结果
+      if (filteredCandidates.length > 0) {
+        return filteredCandidates;
+      }
+    }
 
     return candidates;
   }
@@ -1142,6 +1192,7 @@ export class ProxyServer {
         error,
 
         // 新增字段
+        ruleId: rule.id,
         targetType,
         targetServiceId: service.id,
         targetServiceName: service.name,
@@ -1154,6 +1205,14 @@ export class ProxyServer {
         streamChunks: streamChunksForLog,
         upstreamRequest: upstreamRequestForLog,
       });
+
+      // 更新规则的token使用量（只在成功请求时更新）
+      if (usageForLog && statusCode < 400) {
+        const totalTokens = (usageForLog.inputTokens || 0) + (usageForLog.outputTokens || 0);
+        if (totalTokens > 0) {
+          this.dbManager.incrementRuleTokenUsage(rule.id, totalTokens);
+        }
+      }
     };
 
     try {

@@ -33,6 +33,8 @@ export default function RoutesPage() {
   const [selectedReplacedModel, setSelectedReplacedModel] = useState<string>('');
   const [selectedSortOrder, setSelectedSortOrder] = useState<number>(0);
   const [selectedContentType, setSelectedContentType] = useState<string>(editingRule?.contentType || '');
+  const [selectedTokenLimit, setSelectedTokenLimit] = useState<number | undefined>(undefined);
+  const [selectedResetInterval, setSelectedResetInterval] = useState<number | undefined>(undefined);
   const [hoveredRuleId, setHoveredRuleId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -131,6 +133,8 @@ export default function RoutesPage() {
       targetModel: selectedModel || undefined,
       replacedModel: selectedReplacedModel || undefined,
       sortOrder: selectedSortOrder,
+      tokenLimit: selectedTokenLimit ? selectedTokenLimit * 1000 : undefined, // 转换为实际token数
+      resetInterval: selectedResetInterval,
     };
 
     if (editingRule) {
@@ -148,6 +152,15 @@ export default function RoutesPage() {
   const handleDeleteRule = async (id: string) => {
     if (confirm('确定要删除此路由吗')) {
       await api.deleteRule(id);
+      if (selectedRoute) {
+        loadRules(selectedRoute.id);
+      }
+    }
+  };
+
+  const handleResetTokens = async (id: string) => {
+    if (confirm('确定要重置此规则的Token计数吗？')) {
+      await api.resetRuleTokens(id);
       if (selectedRoute) {
         loadRules(selectedRoute.id);
       }
@@ -174,6 +187,8 @@ export default function RoutesPage() {
         setSelectedModel(rule.targetModel || '');
         setSelectedReplacedModel(rule.replacedModel || '');
         setSelectedSortOrder(rule.sortOrder || 0);
+        setSelectedTokenLimit(rule.tokenLimit ? rule.tokenLimit / 1000 : undefined); // 转换为k值
+        setSelectedResetInterval(rule.resetInterval);
       }, 0);
     }
     setShowRuleModal(true);
@@ -187,6 +202,8 @@ export default function RoutesPage() {
     setSelectedModel('');
     setSelectedReplacedModel('');
     setSelectedSortOrder(0);
+    setSelectedTokenLimit(undefined);
+    setSelectedResetInterval(undefined);
     setShowRuleModal(true);
   };
 
@@ -307,6 +324,7 @@ export default function RoutesPage() {
                   <th>供应商</th>
                   <th>API服务</th>
                   <th>模型</th>
+                  <th>Token使用情况</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -378,8 +396,44 @@ export default function RoutesPage() {
                       <td>{service ? service.name : 'Unknown'}</td>
                       <td>{rule.targetModel || '透传'}</td>
                       <td>
+                        {rule.tokenLimit ? (
+                          <div style={{ fontSize: '13px' }}>
+                            <div>
+                              <span style={{
+                                color: rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit ? 'red' : 'inherit'
+                              }}>
+                                {((rule.totalTokensUsed || 0) / 1000).toFixed(1)}k / {(rule.tokenLimit / 1000).toFixed(0)}k
+                              </span>
+                              {rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit && (
+                                <span style={{ color: 'red', marginLeft: '6px', fontWeight: 'bold' }}>已超限</span>
+                              )}
+                            </div>
+                            {rule.resetInterval && (
+                              <div style={{ fontSize: '11px', color: '#999', marginTop: '2px' }}>
+                                每{rule.resetInterval}小时重置
+                                {rule.lastResetAt && (
+                                  <>
+                                    {(() => {
+                                      const nextResetTime = rule.lastResetAt + (rule.resetInterval * 60 * 60 * 1000);
+                                      const now = Date.now();
+                                      const hoursUntilReset = Math.max(0, Math.ceil((nextResetTime - now) / (60 * 60 * 1000)));
+                                      return ` (${hoursUntilReset}小时后)`;
+                                    })()}
+                                  </>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span style={{ color: '#999', fontSize: '13px' }}>不限制</span>
+                        )}
+                      </td>
+                      <td>
                         <div className="action-buttons">
                           <button className="btn btn-secondary" onClick={() => handleEditRule(rule)}>编辑</button>
+                          {rule.tokenLimit && (
+                            <button className="btn btn-info" onClick={() => handleResetTokens(rule.id)}>重置Token</button>
+                          )}
                           <button className="btn btn-danger" onClick={() => handleDeleteRule(rule.id)}>删除</button>
                         </div>
                       </td>
@@ -557,6 +611,37 @@ export default function RoutesPage() {
                   ))}
                 </select>
               </div>
+
+              {/* Tokens超量字段 */}
+              <div className="form-group">
+                <label>Tokens超量（单位：k）</label>
+                <input
+                  type="number"
+                  value={selectedTokenLimit || ''}
+                  onChange={(e) => setSelectedTokenLimit(e.target.value ? parseInt(e.target.value) : undefined)}
+                  min="0"
+                  placeholder="不限制"
+                />
+                <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                  当编程工具的请求tokens达到这个量时，在配置了其他规则的情况下，本条规则将失效，从而保护你的余额。例如：输入100表示100k即100,000个tokens
+                </small>
+              </div>
+
+              {/* 重置时间字段 */}
+              <div className="form-group">
+                <label>Tokens超量自动重置间隔（小时）</label>
+                <input
+                  type="number"
+                  value={selectedResetInterval || ''}
+                  onChange={(e) => setSelectedResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
+                  min="1"
+                  placeholder="不自动重置"
+                />
+                <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                  设置后，系统将每隔指定小时数自动重置token计数。例如设置5小时，则每5小时重置一次
+                </small>
+              </div>
+
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowRuleModal(false)}>取消</button>
                 <button type="submit" className="btn btn-primary">保存</button>

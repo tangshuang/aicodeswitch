@@ -73,6 +73,37 @@ export class DatabaseManager {
         console.log('[DB] Migration completed: model_limits column added');
       }
     }
+
+    // 检查rules表是否有token相关字段
+    const rulesColumns = this.db.pragma('table_info(rules)') as any[];
+    const hasTokenLimit = rulesColumns.some((col: any) => col.name === 'token_limit');
+    const hasTotalTokensUsed = rulesColumns.some((col: any) => col.name === 'total_tokens_used');
+    const hasResetInterval = rulesColumns.some((col: any) => col.name === 'reset_interval');
+    const hasLastResetAt = rulesColumns.some((col: any) => col.name === 'last_reset_at');
+
+    if (!hasTokenLimit) {
+      console.log('[DB] Running migration: Adding token_limit column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN token_limit INTEGER;');
+      console.log('[DB] Migration completed: token_limit column added');
+    }
+
+    if (!hasTotalTokensUsed) {
+      console.log('[DB] Running migration: Adding total_tokens_used column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN total_tokens_used INTEGER DEFAULT 0;');
+      console.log('[DB] Migration completed: total_tokens_used column added');
+    }
+
+    if (!hasResetInterval) {
+      console.log('[DB] Running migration: Adding reset_interval column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN reset_interval INTEGER;');
+      console.log('[DB] Migration completed: reset_interval column added');
+    }
+
+    if (!hasLastResetAt) {
+      console.log('[DB] Running migration: Adding last_reset_at column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN last_reset_at INTEGER;');
+      console.log('[DB] Migration completed: last_reset_at column added');
+    }
   }
 
   private async migrateMaxOutputTokensToModelLimits() {
@@ -155,6 +186,10 @@ export class DatabaseManager {
         target_model TEXT,
         replaced_model TEXT,
         sort_order INTEGER DEFAULT 0,
+        token_limit INTEGER,
+        total_tokens_used INTEGER DEFAULT 0,
+        reset_interval INTEGER,
+        last_reset_at INTEGER,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE CASCADE,
@@ -372,6 +407,10 @@ export class DatabaseManager {
       targetModel: row.target_model,
       replacedModel: row.replaced_model,
       sortOrder: row.sort_order,
+      tokenLimit: row.token_limit,
+      totalTokensUsed: row.total_tokens_used,
+      resetInterval: row.reset_interval,
+      lastResetAt: row.last_reset_at,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -382,7 +421,7 @@ export class DatabaseManager {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, token_limit, total_tokens_used, reset_interval, last_reset_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         id,
@@ -392,6 +431,10 @@ export class DatabaseManager {
         route.targetModel || null,
         route.replacedModel || null,
         route.sortOrder || 0,
+        route.tokenLimit || null,
+        route.totalTokensUsed || 0,
+        route.resetInterval || null,
+        route.lastResetAt || null,
         now,
         now
       );
@@ -402,7 +445,7 @@ export class DatabaseManager {
     const now = Date.now();
     const result = this.db
       .prepare(
-        'UPDATE rules SET content_type = ?, target_service_id = ?, target_model = ?, replaced_model = ?, sort_order = ?, updated_at = ? WHERE id = ?'
+        'UPDATE rules SET content_type = ?, target_service_id = ?, target_model = ?, replaced_model = ?, sort_order = ?, token_limit = ?, reset_interval = ?, updated_at = ? WHERE id = ?'
       )
       .run(
         route.contentType,
@@ -410,6 +453,8 @@ export class DatabaseManager {
         route.targetModel || null,
         route.replacedModel || null,
         route.sortOrder || 0,
+        route.tokenLimit !== undefined ? route.tokenLimit : null,
+        route.resetInterval !== undefined ? route.resetInterval : null,
         now,
         id
       );
@@ -419,6 +464,60 @@ export class DatabaseManager {
   deleteRule(id: string): boolean {
     const result = this.db.prepare('DELETE FROM rules WHERE id = ?').run(id);
     return result.changes > 0;
+  }
+
+  /**
+   * 增加规则的token使用量
+   * @param ruleId 规则ID
+   * @param tokensUsed 使用的token数量
+   * @returns 是否成功
+   */
+  incrementRuleTokenUsage(ruleId: string, tokensUsed: number): boolean {
+    const result = this.db
+      .prepare('UPDATE rules SET total_tokens_used = total_tokens_used + ? WHERE id = ?')
+      .run(tokensUsed, ruleId);
+    return result.changes > 0;
+  }
+
+  /**
+   * 重置规则的token使用量
+   * @param ruleId 规则ID
+   * @returns 是否成功
+   */
+  resetRuleTokenUsage(ruleId: string): boolean {
+    const now = Date.now();
+    const result = this.db
+      .prepare('UPDATE rules SET total_tokens_used = 0, last_reset_at = ? WHERE id = ?')
+      .run(now, ruleId);
+    return result.changes > 0;
+  }
+
+  /**
+   * 检查并重置到期的规则
+   * 如果规则设置了reset_interval且已经到了重置时间，则自动重置token使用量
+   * @param ruleId 规则ID
+   * @returns 是否进行了重置
+   */
+  checkAndResetRuleIfNeeded(ruleId: string): boolean {
+    const rule = this.db
+      .prepare('SELECT reset_interval, last_reset_at FROM rules WHERE id = ?')
+      .get(ruleId) as { reset_interval: number | null; last_reset_at: number | null } | undefined;
+
+    if (!rule || !rule.reset_interval) {
+      return false; // 没有设置重置间隔
+    }
+
+    const now = Date.now();
+    const resetIntervalMs = rule.reset_interval * 60 * 60 * 1000; // 小时转毫秒
+    const lastResetAt = rule.last_reset_at || 0;
+
+    // 检查是否已经到了重置时间
+    if (now - lastResetAt >= resetIntervalMs) {
+      this.resetRuleTokenUsage(ruleId);
+      return true;
+    }
+
+    return false;
   }
 
   // Log operations

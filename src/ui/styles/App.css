@@ -421,6 +421,7 @@ table th {
   padding: 32px;
   padding-right: 28px;
   min-width: 500px;
+  width: 800px;
   max-width: 90%;
   max-height: 90vh;
   box-shadow: 0 20px 60px var(--shadow-primary), 0 8px 32px var(--shadow-secondary);

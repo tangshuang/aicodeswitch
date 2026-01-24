@@ -47,6 +47,10 @@ export interface Rule {
   targetModel?: string;
   replacedModel?: string;
   sortOrder?: number;
+  tokenLimit?: number;           // token使用量上限
+  totalTokensUsed?: number;      // 当前累计token使用量
+  resetInterval?: number;        // 自动重置间隔（小时）
+  lastResetAt?: number;          // 上次重置时间戳
   createdAt: number;
   updatedAt: number;
 }
@@ -67,6 +71,7 @@ export interface RequestLog {
   error?: string;
 
   // 新增字段 - 用于日志筛选和详情展示
+  ruleId?: string;                                 // 使用的规则ID
   targetType?: TargetType;                         // 客户端类型
   targetServiceId?: string;                        // API服务ID
   targetServiceName?: string;                      // API服务名
@@ -133,6 +138,9 @@ export interface TokenUsage {
   outputTokens: number;
   totalTokens?: number;
   cacheReadInputTokens?: number;
+  // 兼容OpenAI格式
+  promptTokens?: number;
+  completionTokens?: number;
 }
 
 /** 服务黑名单记录 */
