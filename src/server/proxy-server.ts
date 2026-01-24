@@ -1114,6 +1114,12 @@ export class ProxyServer {
 
     const finalizeLog = async (statusCode: number, error?: string) => {
       if (logged || !this.config?.enableLogging) return;
+
+      // 只记录来自编程工具的请求
+      if (!SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
+        return;
+      }
+
       logged = true;
 
       // 获取供应商信息
