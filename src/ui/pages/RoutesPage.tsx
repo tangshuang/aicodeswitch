@@ -368,11 +368,9 @@ export default function RoutesPage() {
               <thead>
                 <tr>
                   <th>优先级</th>
-                  <th>请求类型</th>
-                  <th>供应商</th>
+                  <th>类型</th>
                   <th>API服务</th>
-                  <th>模型</th>
-                  <th>Token使用情况</th>
+                  <th>Token用量</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -440,9 +438,13 @@ export default function RoutesPage() {
                           )}
                         </div>
                       </td>
-                      <td>{vendor ? vendor.name : 'Unknown'}</td>
-                      <td>{service ? service.name : 'Unknown'}</td>
-                      <td>{rule.targetModel || '透传'}</td>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.6em' }}>
+                          <span>{vendor ? vendor.name : 'Unknown'}:</span>
+                          <span>{service ? service.name : 'Unknown'}:</span>
+                          <span>{rule.targetModel || '透传'}</span>
+                        </div>
+                      </td>
                       <td>
                         {rule.tokenLimit ? (
                           <div style={{ fontSize: '13px' }}>
