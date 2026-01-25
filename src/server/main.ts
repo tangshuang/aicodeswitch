@@ -383,6 +383,30 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     })
   );
 
+  app.get(
+    '/api/logs/count',
+    asyncHandler(async (_req, res) => {
+      const count = await dbManager.getLogsCount();
+      res.json({ count });
+    })
+  );
+
+  app.get(
+    '/api/access-logs/count',
+    asyncHandler(async (_req, res) => {
+      const count = await dbManager.getAccessLogsCount();
+      res.json({ count });
+    })
+  );
+
+  app.get(
+    '/api/error-logs/count',
+    asyncHandler(async (_req, res) => {
+      const count = await dbManager.getErrorLogsCount();
+      res.json({ count });
+    })
+  );
+
   app.get('/api/config', (_req, res) => res.json(dbManager.getConfig()));
   app.put(
     '/api/config',

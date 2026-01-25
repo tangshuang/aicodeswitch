@@ -4,6 +4,7 @@ import type { RequestLog, AccessLog, ErrorLog, Vendor, APIService } from '../../
 import dayjs from 'dayjs';
 import JSONViewer from '../components/JSONViewer';
 import { TARGET_TYPE } from '../constants';
+import { Pagination } from '../components/Pagination';
 
 type LogTab = 'request' | 'access' | 'error';
 
@@ -16,8 +17,21 @@ function LogsPage() {
   const [selectedAccessLog, setSelectedAccessLog] = useState<AccessLog | null>(null);
   const [selectedErrorLog, setSelectedErrorLog] = useState<ErrorLog | null>(null);
   const [chunksExpanded, setChunksExpanded] = useState<boolean>(false);
-  const limit = 100;
-  const offset = 0;
+
+  // 分页状态
+  const [requestLogsPage, setRequestLogsPage] = useState(1);
+  const [requestLogsPageSize, setRequestLogsPageSize] = useState(20);
+  const [requestLogsTotal, setRequestLogsTotal] = useState(0);
+
+  const [accessLogsPage, setAccessLogsPage] = useState(1);
+  const [accessLogsPageSize, setAccessLogsPageSize] = useState(20);
+  const [accessLogsTotal, setAccessLogsTotal] = useState(0);
+
+  const [errorLogsPage, setErrorLogsPage] = useState(1);
+  const [errorLogsPageSize, setErrorLogsPageSize] = useState(20);
+  const [errorLogsTotal, setErrorLogsTotal] = useState(0);
+
+  const [loading, setLoading] = useState(false);
 
   // 筛选器相关state
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -29,19 +43,44 @@ function LogsPage() {
 
   useEffect(() => {
     loadLogs();
+  }, [activeTab, requestLogsPage, requestLogsPageSize, accessLogsPage, accessLogsPageSize, errorLogsPage, errorLogsPageSize]);
+
+  useEffect(() => {
     loadVendorsAndServices();
-  }, [activeTab]);
+  }, []);
 
   const loadLogs = async () => {
-    if (activeTab === 'request') {
-      const data = await api.getLogs(limit, offset);
-      setRequestLogs(data);
-    } else if (activeTab === 'access') {
-      const data = await api.getAccessLogs(limit, offset);
-      setAccessLogs(data);
-    } else if (activeTab === 'error') {
-      const data = await api.getErrorLogs(limit, offset);
-      setErrorLogs(data);
+    setLoading(true);
+    try {
+      if (activeTab === 'request') {
+        const offset = (requestLogsPage - 1) * requestLogsPageSize;
+        const [data, countResult] = await Promise.all([
+          api.getLogs(requestLogsPageSize, offset),
+          api.getLogsCount()
+        ]);
+        setRequestLogs(data);
+        setRequestLogsTotal(countResult.count);
+      } else if (activeTab === 'access') {
+        const offset = (accessLogsPage - 1) * accessLogsPageSize;
+        const [data, countResult] = await Promise.all([
+          api.getAccessLogs(accessLogsPageSize, offset),
+          api.getAccessLogsCount()
+        ]);
+        setAccessLogs(data);
+        setAccessLogsTotal(countResult.count);
+      } else if (activeTab === 'error') {
+        const offset = (errorLogsPage - 1) * errorLogsPageSize;
+        const [data, countResult] = await Promise.all([
+          api.getErrorLogs(errorLogsPageSize, offset),
+          api.getErrorLogsCount()
+        ]);
+        setErrorLogs(data);
+        setErrorLogsTotal(countResult.count);
+      }
+    } catch (error) {
+      console.error('Failed to load logs:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -73,14 +112,20 @@ function LogsPage() {
         await api.clearLogs();
         setRequestLogs([]);
         setSelectedRequestLog(null);
+        setRequestLogsPage(1);
+        setRequestLogsTotal(0);
       } else if (activeTab === 'access') {
         await api.clearAccessLogs();
         setAccessLogs([]);
         setSelectedAccessLog(null);
+        setAccessLogsPage(1);
+        setAccessLogsTotal(0);
       } else if (activeTab === 'error') {
         await api.clearErrorLogs();
         setErrorLogs([]);
         setSelectedErrorLog(null);
+        setErrorLogsPage(1);
+        setErrorLogsTotal(0);
       }
     }
   };
@@ -126,6 +171,34 @@ function LogsPage() {
   };
 
   const filteredRequestLogs = filterRequestLogs(requestLogs);
+
+  // 分页回调函数
+  const handleRequestLogsPageChange = (page: number) => {
+    setRequestLogsPage(page);
+  };
+
+  const handleRequestLogsPageSizeChange = (size: number) => {
+    setRequestLogsPageSize(size);
+    setRequestLogsPage(1); // 重置到第1页
+  };
+
+  const handleAccessLogsPageChange = (page: number) => {
+    setAccessLogsPage(page);
+  };
+
+  const handleAccessLogsPageSizeChange = (size: number) => {
+    setAccessLogsPageSize(size);
+    setAccessLogsPage(1);
+  };
+
+  const handleErrorLogsPageChange = (page: number) => {
+    setErrorLogsPage(page);
+  };
+
+  const handleErrorLogsPageSizeChange = (size: number) => {
+    setErrorLogsPageSize(size);
+    setErrorLogsPage(1);
+  };
 
   const renderRequestLogs = () => {
     if (filteredRequestLogs.length === 0) {
@@ -284,7 +357,7 @@ function LogsPage() {
                 fontWeight: activeTab === 'request' ? 'bold' : 'normal',
               }}
             >
-              请求日志 ({requestLogs.length})
+              请求日志 ({requestLogsTotal})
             </button>
             <button
               onClick={() => setActiveTab('access')}
@@ -298,7 +371,7 @@ function LogsPage() {
                 fontWeight: activeTab === 'access' ? 'bold' : 'normal',
               }}
             >
-              访问日志 ({accessLogs.length})
+              访问日志 ({accessLogsTotal})
             </button>
             <button
               onClick={() => setActiveTab('error')}
@@ -312,7 +385,7 @@ function LogsPage() {
                 fontWeight: activeTab === 'error' ? 'bold' : 'normal',
               }}
             >
-              错误日志 ({errorLogs.length})
+              错误日志 ({errorLogsTotal})
             </button>
           </div>
         </div>
@@ -458,9 +531,60 @@ function LogsPage() {
           </div>
         )}
 
-        {activeTab === 'request' && renderRequestLogs()}
-        {activeTab === 'access' && renderAccessLogs()}
-        {activeTab === 'error' && renderErrorLogs()}
+        {activeTab === 'request' && (
+          <>
+            {loading ? (
+              <div className="empty-state"><p>加载中...</p></div>
+            ) : (
+              renderRequestLogs()
+            )}
+            {!loading && (
+              <Pagination
+                currentPage={requestLogsPage}
+                totalItems={requestLogsTotal}
+                pageSize={requestLogsPageSize}
+                onPageChange={handleRequestLogsPageChange}
+                onPageSizeChange={handleRequestLogsPageSizeChange}
+              />
+            )}
+          </>
+        )}
+        {activeTab === 'access' && (
+          <>
+            {loading ? (
+              <div className="empty-state"><p>加载中...</p></div>
+            ) : (
+              renderAccessLogs()
+            )}
+            {!loading && (
+              <Pagination
+                currentPage={accessLogsPage}
+                totalItems={accessLogsTotal}
+                pageSize={accessLogsPageSize}
+                onPageChange={handleAccessLogsPageChange}
+                onPageSizeChange={handleAccessLogsPageSizeChange}
+              />
+            )}
+          </>
+        )}
+        {activeTab === 'error' && (
+          <>
+            {loading ? (
+              <div className="empty-state"><p>加载中...</p></div>
+            ) : (
+              renderErrorLogs()
+            )}
+            {!loading && (
+              <Pagination
+                currentPage={errorLogsPage}
+                totalItems={errorLogsTotal}
+                pageSize={errorLogsPageSize}
+                onPageChange={handleErrorLogsPageChange}
+                onPageSizeChange={handleErrorLogsPageSizeChange}
+              />
+            )}
+          </>
+        )}
       </div>
 
       {selectedRequestLog && (

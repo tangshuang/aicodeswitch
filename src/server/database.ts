@@ -25,6 +25,12 @@ export class DatabaseManager {
   private errorLogDb: Level<string, string>;
   private blacklistDb: Level<string, string>;
 
+  // 缓存机制：总数查询缓存
+  private logsCountCache: { count: number; timestamp: number } | null = null;
+  private accessLogsCountCache: { count: number; timestamp: number } | null = null;
+  private errorLogsCountCache: { count: number; timestamp: number } | null = null;
+  private readonly CACHE_TTL = 1000; // 1秒缓存TTL
+
   constructor(dataPath: string) {
     this.db = new Database(path.join(dataPath, 'app.db'));
 
@@ -585,6 +591,8 @@ export class DatabaseManager {
     }
     const id = crypto.randomUUID();
     await this.logDb.put(id, JSON.stringify({ ...log, id }));
+    // 清除缓存
+    this.logsCountCache = null;
   }
 
   async getLogs(limit: number = 100, offset: number = 0): Promise<RequestLog[]> {
@@ -600,12 +608,16 @@ export class DatabaseManager {
 
   async clearLogs(): Promise<void> {
     await this.logDb.clear();
+    // 清除缓存
+    this.logsCountCache = null;
   }
 
   // Access log operations
   async addAccessLog(log: Omit<AccessLog, 'id'>): Promise<string> {
     const id = crypto.randomUUID();
     await this.accessLogDb.put(id, JSON.stringify({ ...log, id }));
+    // 清除缓存
+    this.accessLogsCountCache = null;
     return id;
   }
 
@@ -628,12 +640,16 @@ export class DatabaseManager {
 
   async clearAccessLogs(): Promise<void> {
     await this.accessLogDb.clear();
+    // 清除缓存
+    this.accessLogsCountCache = null;
   }
 
   // Error log operations
   async addErrorLog(log: Omit<ErrorLog, 'id'>): Promise<void> {
     const id = crypto.randomUUID();
     await this.errorLogDb.put(id, JSON.stringify({ ...log, id }));
+    // 清除缓存
+    this.errorLogsCountCache = null;
   }
 
   async getErrorLogs(limit: number = 100, offset: number = 0): Promise<ErrorLog[]> {
@@ -649,6 +665,62 @@ export class DatabaseManager {
 
   async clearErrorLogs(): Promise<void> {
     await this.errorLogDb.clear();
+    // 清除缓存
+    this.errorLogsCountCache = null;
+  }
+
+  /**
+   * 获取请求日志总数（带缓存）
+   */
+  async getLogsCount(): Promise<number> {
+    const now = Date.now();
+    if (this.logsCountCache && now - this.logsCountCache.timestamp < this.CACHE_TTL) {
+      return this.logsCountCache.count;
+    }
+
+    let count = 0;
+    for await (const _ of this.logDb.iterator()) {
+      count++;
+    }
+
+    this.logsCountCache = { count, timestamp: now };
+    return count;
+  }
+
+  /**
+   * 获取访问日志总数（带缓存）
+   */
+  async getAccessLogsCount(): Promise<number> {
+    const now = Date.now();
+    if (this.accessLogsCountCache && now - this.accessLogsCountCache.timestamp < this.CACHE_TTL) {
+      return this.accessLogsCountCache.count;
+    }
+
+    let count = 0;
+    for await (const _ of this.accessLogDb.iterator()) {
+      count++;
+    }
+
+    this.accessLogsCountCache = { count, timestamp: now };
+    return count;
+  }
+
+  /**
+   * 获取错误日志总数（带缓存）
+   */
+  async getErrorLogsCount(): Promise<number> {
+    const now = Date.now();
+    if (this.errorLogsCountCache && now - this.errorLogsCountCache.timestamp < this.CACHE_TTL) {
+      return this.errorLogsCountCache.count;
+    }
+
+    let count = 0;
+    for await (const _ of this.errorLogDb.iterator()) {
+      count++;
+    }
+
+    this.errorLogsCountCache = { count, timestamp: now };
+    return count;
   }
 
   // Service blacklist operations

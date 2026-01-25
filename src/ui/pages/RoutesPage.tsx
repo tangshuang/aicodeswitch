@@ -264,7 +264,12 @@ export default function RoutesPage() {
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ fontWeight: 500 }}>{route.name}</div>
-                      {route.isActive && <span className="badge badge-warning">{TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label} 已激活</span>}
+                      {route.isActive && <span className="badge badge-warning"
+                        style={{
+                          position: 'absolute',
+                          top: -16,
+                          right: -8
+                        }}>{TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label} 已激活</span>}
                     </div>
                      <div style={{ fontSize: '12px', color: 'var(--text-route-muted)', marginTop: '2px' }}>
                        客户端工具: {TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label}
