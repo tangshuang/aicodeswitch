@@ -48,6 +48,7 @@ export default function RoutesPage() {
   const [selectedContentType, setSelectedContentType] = useState<string>(editingRule?.contentType || '');
   const [selectedTokenLimit, setSelectedTokenLimit] = useState<number | undefined>(undefined);
   const [selectedResetInterval, setSelectedResetInterval] = useState<number | undefined>(undefined);
+  const [selectedTokenResetBaseTime, setSelectedTokenResetBaseTime] = useState<Date | undefined>(undefined);
   const [selectedTimeout, setSelectedTimeout] = useState<number | undefined>(undefined);
   const [selectedRequestCountLimit, setSelectedRequestCountLimit] = useState<number | undefined>(undefined);
   const [selectedRequestResetInterval, setSelectedRequestResetInterval] = useState<number | undefined>(undefined);
@@ -201,6 +202,7 @@ export default function RoutesPage() {
       timeout: selectedTimeout ? selectedTimeout * 1000 : undefined, // 转换为毫秒
       tokenLimit: selectedTokenLimit ? selectedTokenLimit * 1000 : undefined, // 转换为实际token数
       resetInterval: selectedResetInterval,
+      tokenResetBaseTime: selectedTokenResetBaseTime ? selectedTokenResetBaseTime.getTime() : undefined,
       requestCountLimit: selectedRequestCountLimit,
       requestResetInterval: selectedRequestResetInterval,
       requestResetBaseTime: selectedRequestResetBaseTime ? selectedRequestResetBaseTime.getTime() : undefined,
@@ -279,6 +281,9 @@ export default function RoutesPage() {
         setSelectedTimeout(rule.timeout ? rule.timeout / 1000 : undefined); // 转换为秒
         setSelectedTokenLimit(rule.tokenLimit ? rule.tokenLimit / 1000 : undefined); // 转换为k值
         setSelectedResetInterval(rule.resetInterval);
+        setSelectedTokenResetBaseTime(
+          (rule as any).tokenResetBaseTime ? new Date((rule as any).tokenResetBaseTime) : undefined
+        );
         setSelectedRequestCountLimit(rule.requestCountLimit);
         setSelectedRequestResetInterval(rule.requestResetInterval);
         setSelectedRequestResetBaseTime(
@@ -365,6 +370,7 @@ export default function RoutesPage() {
     setSelectedTimeout(undefined);
     setSelectedTokenLimit(undefined);
     setSelectedResetInterval(undefined);
+    setSelectedTokenResetBaseTime(undefined);
     setSelectedRequestCountLimit(undefined);
     setSelectedRequestResetInterval(undefined);
     setSelectedRequestResetBaseTime(undefined);
@@ -912,6 +918,27 @@ export default function RoutesPage() {
                 />
                 <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
                   设置后，系统将每隔指定小时数自动重置token计数。例如设置5小时，则每5小时重置一次
+                </small>
+              </div>
+
+              {/* Token下一次重置时间基点字段 */}
+              <div className="form-group">
+                <label>Token下一次重置时间基点</label>
+                <input
+                  type="datetime-local"
+                  value={selectedTokenResetBaseTime ? formatDateTimeLocal(selectedTokenResetBaseTime) : ''}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      setSelectedTokenResetBaseTime(new Date(e.target.value));
+                    } else {
+                      setSelectedTokenResetBaseTime(undefined);
+                    }
+                  }}
+                  disabled={!selectedResetInterval}
+                  className="datetime-picker-input"
+                />
+                <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                  配合"Tokens超量自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
                 </small>
               </div>
 
