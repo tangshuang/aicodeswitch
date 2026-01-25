@@ -227,23 +227,23 @@ export default function RoutesPage() {
     }
   };
 
-  const handleResetTokens = async (id: string) => {
-    if (confirm('确定要重置此规则的Token计数吗？')) {
-      await api.resetRuleTokens(id);
-      if (selectedRoute) {
-        loadRules(selectedRoute.id);
-      }
-    }
-  };
+  // const handleResetTokens = async (id: string) => {
+  //   if (confirm('确定要重置此规则的Token计数吗？')) {
+  //     await api.resetRuleTokens(id);
+  //     if (selectedRoute) {
+  //       loadRules(selectedRoute.id);
+  //     }
+  //   }
+  // };
 
-  const handleResetRequests = async (id: string) => {
-    if (confirm('确定要重置此规则的请求次数吗？')) {
-      await api.resetRuleRequests(id);
-      if (selectedRoute) {
-        loadRules(selectedRoute.id);
-      }
-    }
-  };
+  // const handleResetRequests = async (id: string) => {
+  //   if (confirm('确定要重置此规则的请求次数吗？')) {
+  //     await api.resetRuleRequests(id);
+  //     if (selectedRoute) {
+  //       loadRules(selectedRoute.id);
+  //     }
+  //   }
+  // };
 
   const handleClearBlacklist = async (id: string) => {
     try {
@@ -702,37 +702,9 @@ export default function RoutesPage() {
                                 }}>
                                   {rule.totalRequestsUsed || 0} / {rule.requestCountLimit}
                                 </span>
-                                {rule.totalRequestsUsed && rule.requestCountLimit && rule.totalRequestsUsed >= rule.requestCountLimit && (
+                                {rule.totalRequestsUsed && rule.requestCountLimit && rule.totalRequestsUsed >= rule.requestCountLimit ? (
                                   <span style={{ color: 'red', marginLeft: '4px', fontWeight: 'bold', fontSize: '11px' }}>超限</span>
-                                )}
-                                {rule.requestResetInterval && (
-                                  <div style={{ fontSize: '11px', color: '#999', marginLeft: '8px' }}>
-                                    每{rule.requestResetInterval}h重置
-                                    {(rule as any).requestResetBaseTime ? (
-                                      <>
-                                        {(() => {
-                                          const baseTime = (rule as any).requestResetBaseTime;
-                                          const now = Date.now();
-                                          const hoursUntilReset = Math.max(0, Math.ceil((baseTime - now) / (60 * 60 * 1000)));
-                                          const resetDate = new Date(baseTime);
-                                          const dateStr = `${resetDate.getMonth() + 1}/${resetDate.getDate()} ${String(resetDate.getHours()).padStart(2, '0')}:${String(resetDate.getMinutes()).padStart(2, '0')}`;
-                                          return ` (下次: ${dateStr}, ${hoursUntilReset}h后)`;
-                                        })()}
-                                      </>
-                                    ) : (
-                                      rule.requestLastResetAt && (
-                                        <>
-                                          {(() => {
-                                            const nextResetTime = rule.requestLastResetAt + (rule.requestResetInterval * 60 * 60 * 1000);
-                                            const now = Date.now();
-                                            const hoursUntilReset = Math.max(0, Math.ceil((nextResetTime - now) / (60 * 60 * 1000)));
-                                            return ` (${hoursUntilReset}h后)`;
-                                          })()}
-                                        </>
-                                      )
-                                    )}
-                                  </div>
-                                )}
+                                ) : null}
                               </>
                             ) : (
                               <span style={{ color: '#999' }}>不限制</span>
@@ -743,12 +715,12 @@ export default function RoutesPage() {
                       <td>
                         <div className="action-buttons">
                           <button className="btn btn-secondary" onClick={() => handleEditRule(rule)}>编辑</button>
-                          {rule.tokenLimit && (
+                          {/* {rule.tokenLimit && (
                             <button className="btn btn-info" onClick={() => handleResetTokens(rule.id)}>重置Token</button>
-                          )}
-                          {rule.requestCountLimit && (
+                          )} */}
+                          {/* {rule.requestCountLimit && (
                             <button className="btn btn-info" onClick={() => handleResetRequests(rule.id)}>重置次数</button>
-                          )}
+                          )} */}
                           <button className="btn btn-danger" onClick={() => handleDeleteRule(rule.id)}>删除</button>
                         </div>
                       </td>
@@ -969,7 +941,7 @@ export default function RoutesPage() {
                   placeholder="不限制"
                 />
                 <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                  按照GLM计费逻辑：只有人类主动发起的请求计费，工具回传（tool_result）不计费。当请求次数达到这个量时，在配置了其他规则的情况下，本条规则将失效
+                  当请求次数达到这个量时，在配置了其他规则的情况下，本条规则将失效
                 </small>
               </div>
 
