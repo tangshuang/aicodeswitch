@@ -24,6 +24,19 @@ export interface APIService {
   supportedModels?: string[];
   modelLimits?: Record<string, number>; // 模型名 -> 最大输出tokens映射
   enableProxy?: boolean; // 是否启用代理
+
+  // 新增：Token超量配置
+  enableTokenLimit?: boolean;          // 是否启用Token超量限制
+  tokenLimit?: number;                 // Token超量值（单位：k）
+  tokenResetInterval?: number;         // Token自动重置间隔（小时）
+  tokenResetBaseTime?: number;         // Token下一次重置时间基点
+
+  // 新增：请求次数超量配置
+  enableRequestLimit?: boolean;        // 是否启用请求次数超量限制
+  requestCountLimit?: number;          // 请求次数超量值
+  requestResetInterval?: number;       // 请求次数自动重置间隔（小时）
+  requestResetBaseTime?: number;       // 请求次数下一次重置时间基点
+
   createdAt: number;
   updatedAt: number;
 }

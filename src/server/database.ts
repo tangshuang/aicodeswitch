@@ -189,6 +189,65 @@ export class DatabaseManager {
       this.db.exec('ALTER TABLE rules ADD COLUMN token_reset_base_time INTEGER;');
       console.log('[DB] Migration completed: token_reset_base_time column added');
     }
+
+    // 检查api_services表是否有超量配置相关字段
+    // Token超量配置
+    const hasEnableTokenLimit = columns.some((col: any) => col.name === 'enable_token_limit');
+    if (!hasEnableTokenLimit) {
+      console.log('[DB] Running migration: Adding enable_token_limit column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN enable_token_limit INTEGER DEFAULT 0;');
+      console.log('[DB] Migration completed: enable_token_limit column added');
+    }
+
+    const hasServiceTokenLimit = columns.some((col: any) => col.name === 'token_limit');
+    if (!hasServiceTokenLimit) {
+      console.log('[DB] Running migration: Adding token_limit column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN token_limit INTEGER;');
+      console.log('[DB] Migration completed: token_limit column added');
+    }
+
+    const hasTokenResetInterval = columns.some((col: any) => col.name === 'token_reset_interval');
+    if (!hasTokenResetInterval) {
+      console.log('[DB] Running migration: Adding token_reset_interval column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN token_reset_interval INTEGER;');
+      console.log('[DB] Migration completed: token_reset_interval column added');
+    }
+
+    const hasServiceTokenResetBaseTime = columns.some((col: any) => col.name === 'token_reset_base_time');
+    if (!hasServiceTokenResetBaseTime) {
+      console.log('[DB] Running migration: Adding token_reset_base_time column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN token_reset_base_time INTEGER;');
+      console.log('[DB] Migration completed: token_reset_base_time column added');
+    }
+
+    // 请求次数超量配置
+    const hasEnableRequestLimit = columns.some((col: any) => col.name === 'enable_request_limit');
+    if (!hasEnableRequestLimit) {
+      console.log('[DB] Running migration: Adding enable_request_limit column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN enable_request_limit INTEGER DEFAULT 0;');
+      console.log('[DB] Migration completed: enable_request_limit column added');
+    }
+
+    const hasServiceRequestCountLimit = columns.some((col: any) => col.name === 'request_count_limit');
+    if (!hasServiceRequestCountLimit) {
+      console.log('[DB] Running migration: Adding request_count_limit column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN request_count_limit INTEGER;');
+      console.log('[DB] Migration completed: request_count_limit column added');
+    }
+
+    const hasServiceRequestResetInterval = columns.some((col: any) => col.name === 'request_reset_interval');
+    if (!hasServiceRequestResetInterval) {
+      console.log('[DB] Running migration: Adding request_reset_interval column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN request_reset_interval INTEGER;');
+      console.log('[DB] Migration completed: request_reset_interval column added');
+    }
+
+    const hasServiceRequestResetBaseTime = columns.some((col: any) => col.name === 'request_reset_base_time');
+    if (!hasServiceRequestResetBaseTime) {
+      console.log('[DB] Running migration: Adding request_reset_base_time column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN request_reset_base_time INTEGER;');
+      console.log('[DB] Migration completed: request_reset_base_time column added');
+    }
   }
 
   private async migrateMaxOutputTokensToModelLimits() {
@@ -400,6 +459,16 @@ export class DatabaseManager {
       supportedModels: row.supported_models ? row.supported_models.split(',').map((model: string) => model.trim()).filter((model: string) => model.length > 0) : undefined,
       modelLimits: row.model_limits ? JSON.parse(row.model_limits) : undefined,
       enableProxy: row.enable_proxy === 1,
+      // Token超量配置
+      enableTokenLimit: row.enable_token_limit === 1,
+      tokenLimit: row.token_limit,
+      tokenResetInterval: row.token_reset_interval,
+      tokenResetBaseTime: row.token_reset_base_time,
+      // 请求次数超量配置
+      enableRequestLimit: row.enable_request_limit === 1,
+      requestCountLimit: row.request_count_limit,
+      requestResetInterval: row.request_reset_interval,
+      requestResetBaseTime: row.request_reset_base_time,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -417,7 +486,7 @@ export class DatabaseManager {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, enable_proxy, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, enable_proxy, enable_token_limit, token_limit, token_reset_interval, token_reset_base_time, enable_request_limit, request_count_limit, request_reset_interval, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         id,
@@ -429,6 +498,14 @@ export class DatabaseManager {
         service.supportedModels ? service.supportedModels.join(',') : null,
         service.modelLimits ? JSON.stringify(service.modelLimits) : null,
         service.enableProxy ? 1 : 0,
+        service.enableTokenLimit ? 1 : 0,
+        service.tokenLimit || null,
+        service.tokenResetInterval || null,
+        service.tokenResetBaseTime || null,
+        service.enableRequestLimit ? 1 : 0,
+        service.requestCountLimit || null,
+        service.requestResetInterval || null,
+        service.requestResetBaseTime || null,
         now,
         now
       );
@@ -439,9 +516,10 @@ export class DatabaseManager {
     const now = Date.now();
     const result = this.db
       .prepare(
-        'UPDATE api_services SET name = ?, api_url = ?, api_key = ?, source_type = ?, supported_models = ?, model_limits = ?, enable_proxy = ?, updated_at = ? WHERE id = ?'
+        'UPDATE api_services SET vendor_id = ?, name = ?, api_url = ?, api_key = ?, source_type = ?, supported_models = ?, model_limits = ?, enable_proxy = ?, enable_token_limit = ?, token_limit = ?, token_reset_interval = ?, token_reset_base_time = ?, enable_request_limit = ?, request_count_limit = ?, request_reset_interval = ?, request_reset_base_time = ?, updated_at = ? WHERE id = ?'
       )
       .run(
+        service.vendorId,
         service.name,
         service.apiUrl,
         service.apiKey,
@@ -449,6 +527,14 @@ export class DatabaseManager {
         service.supportedModels ? service.supportedModels.join(',') : null,
         service.modelLimits ? JSON.stringify(service.modelLimits) : null,
         service.enableProxy !== undefined ? (service.enableProxy ? 1 : 0) : null,
+        service.enableTokenLimit !== undefined ? (service.enableTokenLimit ? 1 : 0) : null,
+        service.tokenLimit !== undefined ? service.tokenLimit : null,
+        service.tokenResetInterval !== undefined ? service.tokenResetInterval : null,
+        service.tokenResetBaseTime !== undefined ? service.tokenResetBaseTime : null,
+        service.enableRequestLimit !== undefined ? (service.enableRequestLimit ? 1 : 0) : null,
+        service.requestCountLimit !== undefined ? service.requestCountLimit : null,
+        service.requestResetInterval !== undefined ? service.requestResetInterval : null,
+        service.requestResetBaseTime !== undefined ? service.requestResetBaseTime : null,
         now,
         id
       );
@@ -1089,7 +1175,7 @@ export class DatabaseManager {
        for (const service of importData.apiServices) {
          this.db
            .prepare(
-             'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+             'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, enable_proxy, enable_token_limit, token_limit, token_reset_interval, token_reset_base_time, enable_request_limit, request_count_limit, request_reset_interval, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
            )
            .run(
              service.id,
@@ -1100,6 +1186,15 @@ export class DatabaseManager {
              service.sourceType || null,
              service.supportedModels ? service.supportedModels.join(',') : null,
              service.modelLimits ? JSON.stringify(service.modelLimits) : null,
+             service.enableProxy ? 1 : 0,
+             service.enableTokenLimit ? 1 : 0,
+             service.tokenLimit || null,
+             service.tokenResetInterval || null,
+             service.tokenResetBaseTime || null,
+             service.enableRequestLimit ? 1 : 0,
+             service.requestCountLimit || null,
+             service.requestResetInterval || null,
+             service.requestResetBaseTime || null,
              service.createdAt,
              service.updatedAt
            );
