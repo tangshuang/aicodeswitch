@@ -677,21 +677,6 @@ export default function RoutesPage() {
                 </small>
               </div>
 
-              {/* 超时时间字段 */}
-              <div className="form-group">
-                <label>超时时间（秒）</label>
-                <input
-                  type="number"
-                  value={selectedTimeout || ''}
-                  onChange={(e) => setSelectedTimeout(e.target.value ? parseInt(e.target.value) : undefined)}
-                  min="1"
-                  placeholder="默认300秒"
-                />
-                <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                  设置此规则的API请求超时时间。不设置则使用默认值300秒（5分钟）
-                </small>
-              </div>
-
               {/* 重置时间字段 */}
               <div className="form-group">
                 <label>Tokens超量自动重置间隔（小时）</label>
@@ -704,6 +689,21 @@ export default function RoutesPage() {
                 />
                 <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
                   设置后，系统将每隔指定小时数自动重置token计数。例如设置5小时，则每5小时重置一次
+                </small>
+              </div>
+
+              {/* 超时时间字段 */}
+              <div className="form-group">
+                <label>超时时间（秒）</label>
+                <input
+                  type="number"
+                  value={selectedTimeout || ''}
+                  onChange={(e) => setSelectedTimeout(e.target.value ? parseInt(e.target.value) : undefined)}
+                  min="1"
+                  placeholder="默认300秒"
+                />
+                <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                  设置此规则的API请求超时时间。不设置则使用默认值300秒（5分钟）
                 </small>
               </div>
 
