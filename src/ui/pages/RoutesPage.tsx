@@ -62,9 +62,15 @@ export default function RoutesPage() {
 
   const loadRoutes = async () => {
     const data = await api.getRoutes();
-    setRoutes(data);
-    if (data.length > 0 && !selectedRoute) {
-      setSelectedRoute(data[0]);
+    // 将已激活的路由排在前面
+    const sortedData = data.sort((a, b) => {
+      if (a.isActive && !b.isActive) return -1;
+      if (!a.isActive && b.isActive) return 1;
+      return 0;
+    });
+    setRoutes(sortedData);
+    if (sortedData.length > 0 && !selectedRoute) {
+      setSelectedRoute(sortedData[0]);
     }
   };
 
@@ -242,6 +248,7 @@ export default function RoutesPage() {
                     cursor: 'pointer',
                     border: '1px solid var(--border-primary)',
                     transition: 'all 0.2s ease',
+                    position: 'relative',
                   }}
                   onMouseEnter={(e) => {
                     if (selectedRoute?.id !== route.id) {
@@ -257,7 +264,7 @@ export default function RoutesPage() {
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ fontWeight: 500 }}>{route.name}</div>
-                      {route.isActive && <span className="badge badge-success">{TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label} 已激活</span>}
+                      {route.isActive && <span className="badge badge-warning">{TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label} 已激活</span>}
                     </div>
                      <div style={{ fontSize: '12px', color: 'var(--text-route-muted)', marginTop: '2px' }}>
                        客户端工具: {TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label}

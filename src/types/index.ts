@@ -3,6 +3,7 @@ export interface Vendor {
   id: string;
   name: string;
   description?: string;
+  sortOrder?: number;
   createdAt: number;
   updatedAt: number;
 }

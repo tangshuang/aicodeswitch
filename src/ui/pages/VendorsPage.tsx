@@ -192,6 +192,7 @@ function VendorsPage() {
     const vendor = {
       name: formData.get('name') as string,
       description: formData.get('description') as string,
+      sortOrder: parseInt(formData.get('sortOrder') as string) || 0,
     };
 
     if (editingVendor) {
@@ -527,6 +528,10 @@ function VendorsPage() {
               <div className="form-group">
                 <label>描述</label>
                 <textarea name="description" rows={3} defaultValue={editingVendor ? editingVendor.description : ''} />
+              </div>
+              <div className="form-group">
+                <label>排序 <small>数值越大越靠前</small></label>
+                <input type="number" name="sortOrder" defaultValue={editingVendor ? editingVendor.sortOrder || 0 : 0} min="0" />
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowVendorModal(false)}>取消</button>

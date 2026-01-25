@@ -2,12 +2,11 @@
   "compilerOptions": {
     "target": "ES6",
     "module": "CommonJS",
-    "useDefineForClassFields": true,
+    "moduleResolution": "node",
     "noEmit": false,
     "rootDir": "src",
     "outDir": "dist",
     "skipLibCheck": true,
-    "moduleResolution": "node",
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
@@ -16,6 +15,7 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
+    "useDefineForClassFields": true,
     "allowSyntheticDefaultImports": true
   },
   "include": ["src/server/**/*"],
