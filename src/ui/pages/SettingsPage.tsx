@@ -21,9 +21,7 @@ function SettingsPage() {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     const newConfig: AppConfig = {
-      enableLogging: formData.get('enableLogging') === 'true',
-      logRetentionDays: parseInt(formData.get('logRetentionDays') as string),
-      maxLogSize: parseInt(formData.get('maxLogSize') as string),
+      ...config, // 保留现有配置
       apiKey: formData.get('apiKey') as string,
       enableFailover: formData.get('enableFailover') === 'true',
     };
@@ -34,6 +32,45 @@ function SettingsPage() {
       loadConfig();
     } else {
       alert('配置保存失败');
+    }
+  };
+
+  const handleSaveLogConfig = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const newConfig: AppConfig = {
+      ...config, // 保留现有配置
+      enableLogging: formData.get('enableLogging') === 'true',
+      logRetentionDays: parseInt(formData.get('logRetentionDays') as string),
+      maxLogSize: parseInt(formData.get('maxLogSize') as string),
+    };
+
+    const success = await api.updateConfig(newConfig);
+    if (success) {
+      alert('日志配置保存成功');
+      loadConfig();
+    } else {
+      alert('日志配置保存失败');
+    }
+  };
+
+  const handleSaveProxyConfig = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const newConfig: AppConfig = {
+      ...config, // 保留现有配置
+      proxyEnabled: formData.get('proxyEnabled') === 'true',
+      proxyUrl: formData.get('proxyUrl') as string,
+      proxyUsername: formData.get('proxyUsername') as string,
+      proxyPassword: formData.get('proxyPassword') as string,
+    };
+
+    const success = await api.updateConfig(newConfig);
+    if (success) {
+      alert('代理配置保存成功');
+      loadConfig();
+    } else {
+      alert('代理配置保存失败');
     }
   };
 
@@ -94,14 +131,10 @@ function SettingsPage() {
                name="apiKey"
                defaultValue={config.apiKey}
              />
+             <small style={{ display: 'block', marginTop: '4px', color: '#666', fontSize: '12px' }}>
+              当编程工具连接到aicodeswitch时，需要使用此API Key进行认证
+            </small>
            </div>
-          <div className="form-group">
-            <label>启用日志</label>
-            <select name="enableLogging" defaultValue={config.enableLogging ? 'true' : 'false'}>
-              <option value="true">是</option>
-              <option value="false">否</option>
-            </select>
-          </div>
           <div className="form-group">
             <label>启用智能故障切换</label>
             <select name="enableFailover" defaultValue={config.enableFailover !== false ? 'true' : 'false'}>
@@ -112,6 +145,23 @@ function SettingsPage() {
               启用后,当某个服务报错时会自动切换到备用服务,并将报错服务标记为不可用10分钟
             </small>
           </div>
+           <button type="submit" className="btn btn-primary">保存配置</button>
+        </form>
+      </div>
+
+      <div className="card" style={{ marginTop: '20px' }}>
+        <h3>日志设置</h3>
+        <p style={{ color: '#7f8c8d', fontSize: '14px' }}>
+          配置请求日志的记录和保留策略。
+        </p>
+        <form onSubmit={handleSaveLogConfig}>
+          <div className="form-group">
+            <label>启用日志</label>
+            <select name="enableLogging" defaultValue={config.enableLogging ? 'true' : 'false'}>
+              <option value="true">是</option>
+              <option value="false">否</option>
+            </select>
+          </div>
           <div className="form-group">
             <label>日志保留天数</label>
             <input
@@ -121,16 +171,64 @@ function SettingsPage() {
               required
             />
           </div>
-           <div className="form-group">
-             <label>最大日志数量</label>
-             <input
-               type="number"
-               name="maxLogSize"
-               defaultValue={config.maxLogSize}
-               required
-             />
-           </div>
-           <button type="submit" className="btn btn-primary">保存配置</button>
+          <div className="form-group">
+            <label>最大日志数量</label>
+            <input
+              type="number"
+              name="maxLogSize"
+              defaultValue={config.maxLogSize}
+              required
+            />
+          </div>
+          <button type="submit" className="btn btn-primary">保存日志配置</button>
+        </form>
+      </div>
+
+      <div className="card" style={{ marginTop: '20px' }}>
+        <h3>代理设置</h3>
+        <p style={{ color: '#7f8c8d', fontSize: '14px' }}>
+          配置代理服务器，API 服务可选择是否通过代理转发请求。
+        </p>
+        <form onSubmit={handleSaveProxyConfig}>
+          <div className="form-group">
+            <label>启用代理</label>
+            <select name="proxyEnabled" defaultValue={config.proxyEnabled ? 'true' : 'false'}>
+              <option value="false">不启用</option>
+              <option value="true">启用</option>
+            </select>
+          </div>
+          {config.proxyEnabled !== false && (
+            <>
+              <div className="form-group">
+                <label>代理地址</label>
+                <input
+                  type="text"
+                  name="proxyUrl"
+                  defaultValue={config.proxyUrl || ''}
+                  placeholder="例如: proxy.example.com:8080 或 http://proxy.example.com:8080"
+                />
+              </div>
+              <div className="form-group">
+                <label>代理用户名（可选）</label>
+                <input
+                  type="text"
+                  name="proxyUsername"
+                  defaultValue={config.proxyUsername || ''}
+                  placeholder="如果代理需要认证"
+                />
+              </div>
+              <div className="form-group">
+                <label>代理密码（可选）</label>
+                <input
+                  type="password"
+                  name="proxyPassword"
+                  defaultValue={config.proxyPassword || ''}
+                  placeholder="如果代理需要认证"
+                />
+              </div>
+            </>
+          )}
+          <button type="submit" className="btn btn-primary">保存代理配置</button>
         </form>
       </div>
 

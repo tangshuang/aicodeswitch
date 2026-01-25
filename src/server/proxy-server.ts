@@ -16,7 +16,7 @@ import {
   transformClaudeResponseToOpenAIChat,
   transformOpenAIChatResponseToClaude,
 } from './transformers/claude-openai';
-import type { AppConfig, Rule, APIService, Route, SourceType, TargetType, TokenUsage, ContentType } from '../types';
+import type { AppConfig, Rule, APIService, Route, SourceType, TargetType, TokenUsage, ContentType, RequestLog } from '../types';
 
 type ContentTypeDetector = {
   type: ContentType;
@@ -1155,12 +1155,8 @@ export class ProxyServer {
     let responseHeadersForLog: Record<string, string> | undefined;
     let responseBodyForLog: string | undefined;
     let streamChunksForLog: string[] | undefined;
-    let upstreamRequestForLog: {
-      url: string;
-      model: string;
-      maxTokens?: number;
-      maxTokensField?: 'max_tokens' | 'max_completion_tokens';
-    } | undefined;
+    let upstreamRequestForLog: RequestLog['upstreamRequest'] | undefined;
+    let actuallyUsedProxy = false; // 标记是否实际使用了代理
 
     const finalizeLog = async (statusCode: number, error?: string) => {
       if (logged || !this.config?.enableLogging) return;
@@ -1271,6 +1267,35 @@ export class ProxyServer {
         config.data = requestBody;
       }
 
+      // 应用代理配置
+      if (service.enableProxy) {
+        const appConfig = this.dbManager.getConfig();
+        if (appConfig.proxyEnabled && appConfig.proxyUrl) {
+          try {
+            const { HttpsProxyAgent } = await import('https-proxy-agent');
+            const proxyAuth = appConfig.proxyUsername && appConfig.proxyPassword
+              ? `${appConfig.proxyUsername}:${appConfig.proxyPassword}@`
+              : '';
+            let proxyUrl = appConfig.proxyUrl;
+            if (!proxyUrl.startsWith('http://') && !proxyUrl.startsWith('https://')) {
+              proxyUrl = `http://${proxyAuth}${proxyUrl}`;
+            } else if (proxyAuth) {
+              // 如果 URL 已经包含协议，需要插入认证信息
+              const urlObj = new URL(proxyUrl);
+              urlObj.username = appConfig.proxyUsername!;
+              urlObj.password = appConfig.proxyPassword!;
+              proxyUrl = urlObj.toString();
+            }
+
+            config.httpsAgent = new HttpsProxyAgent(proxyUrl);
+            config.httpAgent = new HttpsProxyAgent(proxyUrl);
+            actuallyUsedProxy = true; // 标记实际使用了代理
+          } catch (error) {
+            console.error('[Proxy] Failed to create proxy agent:', error);
+          }
+        }
+      }
+
       // 记录实际发出的请求信息作为日志的一部分
       const actualModel = requestBody?.model || '';
       const maxTokensFieldName = this.getMaxTokensFieldName(actualModel);
@@ -1279,9 +1304,11 @@ export class ProxyServer {
       upstreamRequestForLog = {
         url: `${service.apiUrl}${mappedPath}`,
         model: actualModel,
-        maxTokens: actualMaxTokens,
-        maxTokensField: maxTokensFieldName,
+        [maxTokensFieldName]: actualMaxTokens,
       };
+      if (actuallyUsedProxy) {
+        upstreamRequestForLog.useProxy = true;
+      }
 
       const response = await axios(config);
       const responseHeaders = response.headers || {};

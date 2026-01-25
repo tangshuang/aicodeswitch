@@ -265,6 +265,7 @@ function VendorsPage() {
       sourceType: formData.get('sourceType') as SourceType,
       supportedModels: finalModels.length > 0 ? finalModels : undefined,
       modelLimits: Object.keys(finalModelLimits).length > 0 ? finalModelLimits : undefined,
+      enableProxy: formData.get('enableProxy') === 'on',
     };
 
     if (editingService) {
@@ -795,6 +796,20 @@ function VendorsPage() {
                    </small>
                  </div>
                </div>
+              <div className="form-group">
+                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    name="enableProxy"
+                    defaultChecked={editingService?.enableProxy || false}
+                    style={{ marginRight: '8px', cursor: 'pointer', width: '16px', height: '16px' }}
+                  />
+                  <span>启用代理</span>
+                </label>
+                <small style={{ display: 'block', marginTop: '6px', color: '#666', fontSize: '12px', marginLeft: '24px' }}>
+                  勾选后，此 API 服务的请求将通过设置的代理转发。请在"设置"页面配置代理。
+                </small>
+              </div>
                <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowServiceModal(false)}>取消</button>
                 <button type="submit" className="btn btn-primary">保存</button>

@@ -135,6 +135,14 @@ export class DatabaseManager {
       await this.migrateRemoveServiceTimeout();
       console.log('[DB] Migration completed: timeout column removed from api_services');
     }
+
+    // 检查api_services表是否有enable_proxy字段
+    const hasEnableProxy = columns.some((col: any) => col.name === 'enable_proxy');
+    if (!hasEnableProxy) {
+      console.log('[DB] Running migration: Adding enable_proxy column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN enable_proxy INTEGER DEFAULT 0;');
+      console.log('[DB] Migration completed: enable_proxy column added');
+    }
   }
 
   private async migrateMaxOutputTokensToModelLimits() {
@@ -271,9 +279,13 @@ export class DatabaseManager {
       const defaultConfig: AppConfig = {
         enableLogging: true,
         logRetentionDays: 30,
-        maxLogSize: 1000,
+        maxLogSize: 100000,
         apiKey: '',
         enableFailover: true,  // 默认启用智能故障切换
+        proxyEnabled: false,  // 默认不启用代理
+        proxyUrl: '',
+        proxyUsername: '',
+        proxyPassword: '',
       };
       this.db.prepare('INSERT INTO config (key, value) VALUES (?, ?)').run(
         'app_config',
@@ -337,6 +349,7 @@ export class DatabaseManager {
       sourceType: row.source_type,
       supportedModels: row.supported_models ? row.supported_models.split(',').map((model: string) => model.trim()).filter((model: string) => model.length > 0) : undefined,
       modelLimits: row.model_limits ? JSON.parse(row.model_limits) : undefined,
+      enableProxy: row.enable_proxy === 1,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -354,7 +367,7 @@ export class DatabaseManager {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, enable_proxy, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         id,
@@ -365,6 +378,7 @@ export class DatabaseManager {
         service.sourceType || null,
         service.supportedModels ? service.supportedModels.join(',') : null,
         service.modelLimits ? JSON.stringify(service.modelLimits) : null,
+        service.enableProxy ? 1 : 0,
         now,
         now
       );
@@ -375,7 +389,7 @@ export class DatabaseManager {
     const now = Date.now();
     const result = this.db
       .prepare(
-        'UPDATE api_services SET name = ?, api_url = ?, api_key = ?, source_type = ?, supported_models = ?, model_limits = ?, updated_at = ? WHERE id = ?'
+        'UPDATE api_services SET name = ?, api_url = ?, api_key = ?, source_type = ?, supported_models = ?, model_limits = ?, enable_proxy = ?, updated_at = ? WHERE id = ?'
       )
       .run(
         service.name,
@@ -384,6 +398,7 @@ export class DatabaseManager {
         service.sourceType || null,
         service.supportedModels ? service.supportedModels.join(',') : null,
         service.modelLimits ? JSON.stringify(service.modelLimits) : null,
+        service.enableProxy !== undefined ? (service.enableProxy ? 1 : 0) : null,
         now,
         id
       );

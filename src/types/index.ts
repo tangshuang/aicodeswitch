@@ -23,6 +23,7 @@ export interface APIService {
   sourceType?: SourceType;
   supportedModels?: string[];
   modelLimits?: Record<string, number>; // 模型名 -> 最大输出tokens映射
+  enableProxy?: boolean; // 是否启用代理
   createdAt: number;
   updatedAt: number;
 }
@@ -87,8 +88,9 @@ export interface RequestLog {
   upstreamRequest?: {                              // 实际发送给后端的请求信息
     url: string;                                   // 实际请求的URL路径
     model: string;                                 // 实际请求的模型名
-    maxTokens?: number;                            // 实际的 max_tokens 或 max_completion_tokens 值
-    maxTokensField?: 'max_tokens' | 'max_completion_tokens'; // 使用的字段名
+    max_tokens?: number;                           // 实际的 max_tokens 值
+    max_completion_tokens?: number;                // 实际的 max_completion_tokens 值
+    useProxy?: boolean;                            // 是否使用了代理
   };
 }
 
@@ -117,11 +119,16 @@ export interface ErrorLog {
 }
 
 export interface AppConfig {
-  enableLogging: boolean;
-  logRetentionDays: number;
-  maxLogSize: number;
-  apiKey: string;
+  enableLogging?: boolean;
+  logRetentionDays?: number;
+  maxLogSize?: number;
+  apiKey?: string;
   enableFailover?: boolean;  // 是否启用智能故障切换,默认 true
+  // 代理配置
+  proxyEnabled?: boolean;  // 是否启用代理
+  proxyUrl?: string;  // 代理地址，例如: proxy.example.com:8080
+  proxyUsername?: string;  // 代理认证用户名
+  proxyPassword?: string;  // 代理认证密码
 }
 
 export interface ExportData {
