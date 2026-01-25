@@ -25,6 +25,20 @@ type ContentTypeDetector = {
 
 const SUPPORTED_TARGETS = ['claude-code', 'codex'];
 
+// 需要排除的路径模式（非业务请求）
+const IGNORED_PATHS = [
+  '/favicon.ico',
+  '/robots.txt',
+  '/sitemap.xml',
+];
+
+/**
+ * 检查路径是否应该被忽略
+ */
+function shouldIgnorePath(path: string): boolean {
+  return IGNORED_PATHS.some(ignored => path === ignored || path.startsWith(ignored + '?'));
+}
+
 export class ProxyServer {
   private app: express.Application;
   private dbManager: DatabaseManager;
@@ -44,6 +58,11 @@ export class ProxyServer {
   private setupMiddleware() {
     // Access logging middleware
     this.app.use(async (req: Request, res: Response, next: NextFunction) => {
+      // 忽略非业务请求
+      if (shouldIgnorePath(req.path)) {
+        return next();
+      }
+
       // Capture client info
       const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '';
       const userAgent = req.headers['user-agent'] || '';
@@ -128,7 +147,8 @@ export class ProxyServer {
       const startTime = Date.now();
       const originalSend = res.send.bind(res);
 
-      if (SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
+      // 忽略非业务请求，并且只记录支持的编程工具请求
+      if (!shouldIgnorePath(req.path) && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
         res.send = (data: any) => {
           res.send = originalSend;
           if (!res.locals.skipLog && this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
