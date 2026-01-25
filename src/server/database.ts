@@ -698,8 +698,6 @@ export class DatabaseManager {
 
   // Log operations
   async addLog(log: Omit<RequestLog, 'id'>): Promise<void> {
-    const { path } = log;
-    console.debug('hint--->', path);
     const id = crypto.randomUUID();
     await this.logDb.put(id, JSON.stringify({ ...log, id }));
     // 清除缓存
