@@ -60,37 +60,64 @@ export class ProxyServer {
         userAgent,
       });
 
-      res.send = (data: any) => {
-        res.send = originalSend;
+      const updateLog = (res: Response | Error, data?: any) => {
         const responseTime = Date.now() - startTime;
         accessLog.then((accessLogId) => {
-          this.dbManager.updateAccessLog(accessLogId, {
+          const updateData: any = {
             responseTime,
-            statusCode: res.statusCode,
-          });
+          };
+          let errorMessage: string = '';
+          if (res instanceof Error) {
+            updateData.error = res.message;
+            errorMessage = res.message;
+          }
+          else if (res.statusCode >= 400) {
+            updateData.statusCode = res.statusCode;
+            updateData.error = res.statusMessage;
+            // @ts-ignore
+            updateData.responseHeaders = this.normalizeResponseHeaders(res.headers || {});
+            errorMessage = res.statusMessage;
+          }
+          else {
+            updateData.statusCode = res.statusCode;
+            // @ts-ignore
+            updateData.responseHeaders = this.normalizeResponseHeaders(res.headers || {});
+            updateData.responseBody = data ? JSON.stringify(data) : undefined;
+          }
+          this.dbManager.updateAccessLog(accessLogId, updateData);
+          // 记录错误日志
+          if (res instanceof Error || res.statusCode >= 400) {
+            this.dbManager.addErrorLog({
+              timestamp: Date.now(),
+              method: req.method,
+              path: req.path,
+              statusCode: 503,
+              errorMessage,
+              requestHeaders: this.normalizeHeaders(req.headers),
+              requestBody: req.body ? JSON.stringify(req.body) : undefined,
+              responseBody: data ? JSON.stringify(data) : undefined,
+              // @ts-ignore
+              responseHeaders: res.headers ? this.normalizeResponseHeaders(res.headers) : undefined,
+              responseTime,
+            });
+          }
         });
+      };
+
+      res.send = (data: any) => {
+        res.send = originalSend;
+        updateLog(res, data);
         return originalSend(data);
       };
 
       res.json = (data: any) => {
         res.json = originalJson;
-        const responseTime = Date.now() - startTime;
-        accessLog.then((accessLogId) => {
-          this.dbManager.updateAccessLog(accessLogId, {
-            responseTime,
-            statusCode: res.statusCode,
-          });
-        });
+        updateLog(res, data);
         return originalJson(data);
       };
 
       res.on('error', (err) => {
-        accessLog.then((accessLogId) => {
-          this.dbManager.updateAccessLog(accessLogId, {
-            statusCode: res.statusCode,
-            error: err.message,
-          });
-        });
+        updateLog(err);
       });
 
       next();
@@ -493,6 +520,33 @@ export class ProxyServer {
   }
 
   /**
+   * 根据GLM计费逻辑判断请求是否应该计费
+   * 核心规则：
+   * 1. 最后一条消息必须是 role: "user"
+   * 2. 上一条消息不能是包含 tool_calls 的 assistant 消息（即不是工具回传）
+   */
+  private shouldChargeRequest(requestBody: any): boolean {
+    const messages = requestBody?.messages;
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return false;
+    }
+
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage.role !== 'user') {
+      return false;
+    }
+
+    if (messages.length > 1) {
+      const previousMessage = messages[messages.length - 2];
+      if (previousMessage.role === 'assistant' && previousMessage.tool_calls) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
    * 从数据库实时获取服务配置
    * @param serviceId 服务ID
    * @returns 服务配置，如果不存在则返回 undefined
@@ -537,9 +591,15 @@ export class ProxyServer {
 
         // 检查并重置到期的规则
         this.dbManager.checkAndResetRuleIfNeeded(rule.id);
+        this.dbManager.checkAndResetRequestCountIfNeeded(rule.id);
 
         // 检查token限制
         if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit) {
+          continue; // 跳过超限规则
+        }
+
+        // 检查请求次数限制
+        if (rule.requestCountLimit && rule.totalRequestsUsed !== undefined && rule.totalRequestsUsed >= rule.requestCountLimit) {
           continue; // 跳过超限规则
         }
 
@@ -564,9 +624,15 @@ export class ProxyServer {
 
       // 检查并重置到期的规则
       this.dbManager.checkAndResetRuleIfNeeded(rule.id);
+      this.dbManager.checkAndResetRequestCountIfNeeded(rule.id);
 
       // 检查token限制
       if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit) {
+        continue; // 跳过超限规则
+      }
+
+      // 检查请求次数限制
+      if (rule.requestCountLimit && rule.totalRequestsUsed !== undefined && rule.totalRequestsUsed >= rule.requestCountLimit) {
         continue; // 跳过超限规则
       }
 
@@ -589,9 +655,15 @@ export class ProxyServer {
 
       // 检查并重置到期的规则
       this.dbManager.checkAndResetRuleIfNeeded(rule.id);
+      this.dbManager.checkAndResetRequestCountIfNeeded(rule.id);
 
       // 检查token限制
       if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit) {
+        continue; // 跳过超限规则
+      }
+
+      // 检查请求次数限制
+      if (rule.requestCountLimit && rule.totalRequestsUsed !== undefined && rule.totalRequestsUsed >= rule.requestCountLimit) {
         continue; // 跳过超限规则
       }
 
@@ -631,13 +703,23 @@ export class ProxyServer {
     // 4. 检查并重置到期的规则
     candidates.forEach(rule => {
       this.dbManager.checkAndResetRuleIfNeeded(rule.id);
+      this.dbManager.checkAndResetRequestCountIfNeeded(rule.id);
     });
 
-    // 5. 过滤掉超过token限制的规则（仅在有多个候选规则时）
+    // 5. 过滤掉超过限制的规则（仅在有多个候选规则时）
     if (candidates.length > 1) {
       const filteredCandidates = candidates.filter(rule => {
+        // 检查token限制
         if (rule.tokenLimit && rule.totalTokensUsed !== undefined) {
-          return rule.totalTokensUsed < rule.tokenLimit;
+          if (rule.totalTokensUsed >= rule.tokenLimit) {
+            return false;
+          }
+        }
+        // 检查请求次数限制
+        if (rule.requestCountLimit && rule.totalRequestsUsed !== undefined) {
+          if (rule.totalRequestsUsed >= rule.requestCountLimit) {
+            return false;
+          }
         }
         return true; // 没有设置限制的规则总是可用
       });
@@ -1208,6 +1290,11 @@ export class ProxyServer {
         if (totalTokens > 0) {
           this.dbManager.incrementRuleTokenUsage(rule.id, totalTokens);
         }
+      }
+
+      // 更新规则的请求次数（只在成功请求时更新）
+      if (statusCode < 400 && this.shouldChargeRequest(req.body)) {
+        this.dbManager.incrementRuleRequestCount(rule.id, 1);
       }
     };
 

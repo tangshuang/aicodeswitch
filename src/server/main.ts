@@ -325,6 +325,7 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
   app.put('/api/rules/:id', (req, res) => res.json(dbManager.updateRule(req.params.id, req.body)));
   app.delete('/api/rules/:id', (req, res) => res.json(dbManager.deleteRule(req.params.id)));
   app.put('/api/rules/:id/reset-tokens', (req, res) => res.json(dbManager.resetRuleTokenUsage(req.params.id)));
+  app.put('/api/rules/:id/reset-requests', (req, res) => res.json(dbManager.resetRuleRequestCount(req.params.id)));
 
   app.get(
     '/api/logs',

@@ -53,6 +53,10 @@ export interface Rule {
   totalTokensUsed?: number;      // 当前累计token使用量
   resetInterval?: number;        // 自动重置间隔（小时）
   lastResetAt?: number;          // 上次重置时间戳
+  requestCountLimit?: number;    // 请求次数上限
+  totalRequestsUsed?: number;    // 当前累计请求次数
+  requestResetInterval?: number; // 次数重置间隔（小时）
+  requestLastResetAt?: number;   // 上次次数重置时间戳
   createdAt: number;
   updatedAt: number;
 }
@@ -116,6 +120,9 @@ export interface ErrorLog {
   errorStack?: string;
   requestHeaders?: Record<string, string>;
   requestBody?: string;
+  responseHeaders?: Record<string, string>;
+  responseBody?: string;
+  responseTime?: number;
 }
 
 export interface AppConfig {

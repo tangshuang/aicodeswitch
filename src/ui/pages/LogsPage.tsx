@@ -760,6 +760,10 @@ function LogsPage() {
               </div>
             <div>
               <div className="form-group">
+                <label>ID</label>
+                <input type="text" value={selectedAccessLog.id} readOnly />
+              </div>
+              <div className="form-group">
                 <label>时间</label>
                 <input type="text" value={dayjs(selectedAccessLog.timestamp).format('YYYY-MM-DD HH:mm:ss')} readOnly />
               </div>
@@ -819,6 +823,10 @@ function LogsPage() {
               </div>
             <div>
               <div className="form-group">
+                <label>ID</label>
+                <input type="text" value={selectedErrorLog.id} readOnly />
+              </div>
+              <div className="form-group">
                 <label>时间</label>
                 <input type="text" value={dayjs(selectedErrorLog.timestamp).format('YYYY-MM-DD HH:mm:ss')} readOnly />
               </div>
@@ -833,6 +841,10 @@ function LogsPage() {
               <div className="form-group">
                 <label>状态码</label>
                 <input type="text" value={selectedErrorLog.statusCode || '-'} readOnly />
+              </div>
+              <div className="form-group">
+                <label>响应时间</label>
+                <input type="text" value={selectedErrorLog.responseTime ? `${selectedErrorLog.responseTime}ms` : '-'} readOnly />
               </div>
               <div className="form-group">
                 <label>错误信息</label>
@@ -854,6 +866,18 @@ function LogsPage() {
                 <div className="form-group">
                   <label>请求头</label>
                   <JSONViewer data={selectedErrorLog.requestHeaders} />
+                </div>
+              )}
+              {selectedErrorLog.responseHeaders && (
+                <div className="form-group">
+                  <label>响应头</label>
+                  <JSONViewer data={selectedErrorLog.responseHeaders} collapsed />
+                </div>
+              )}
+              {selectedErrorLog.responseBody && (
+                <div className="form-group">
+                  <label>响应体</label>
+                  <JSONViewer data={selectedErrorLog.responseBody} />
                 </div>
               )}
             </div>

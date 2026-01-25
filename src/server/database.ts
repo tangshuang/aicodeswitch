@@ -143,6 +143,36 @@ export class DatabaseManager {
       this.db.exec('ALTER TABLE api_services ADD COLUMN enable_proxy INTEGER DEFAULT 0;');
       console.log('[DB] Migration completed: enable_proxy column added');
     }
+
+    // 检查rules表是否有请求次数相关字段
+    const hasRequestCountLimit = rulesColumns.some((col: any) => col.name === 'request_count_limit');
+    const hasTotalRequestsUsed = rulesColumns.some((col: any) => col.name === 'total_requests_used');
+    const hasRequestResetInterval = rulesColumns.some((col: any) => col.name === 'request_reset_interval');
+    const hasRequestLastResetAt = rulesColumns.some((col: any) => col.name === 'request_last_reset_at');
+
+    if (!hasRequestCountLimit) {
+      console.log('[DB] Running migration: Adding request_count_limit column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN request_count_limit INTEGER;');
+      console.log('[DB] Migration completed: request_count_limit column added');
+    }
+
+    if (!hasTotalRequestsUsed) {
+      console.log('[DB] Running migration: Adding total_requests_used column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN total_requests_used INTEGER DEFAULT 0;');
+      console.log('[DB] Migration completed: total_requests_used column added');
+    }
+
+    if (!hasRequestResetInterval) {
+      console.log('[DB] Running migration: Adding request_reset_interval column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN request_reset_interval INTEGER;');
+      console.log('[DB] Migration completed: request_reset_interval column added');
+    }
+
+    if (!hasRequestLastResetAt) {
+      console.log('[DB] Running migration: Adding request_last_reset_at column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN request_last_reset_at INTEGER;');
+      console.log('[DB] Migration completed: request_last_reset_at column added');
+    }
   }
 
   private async migrateMaxOutputTokensToModelLimits() {
@@ -260,6 +290,10 @@ export class DatabaseManager {
         total_tokens_used INTEGER DEFAULT 0,
         reset_interval INTEGER,
         last_reset_at INTEGER,
+        request_count_limit INTEGER,
+        total_requests_used INTEGER DEFAULT 0,
+        request_reset_interval INTEGER,
+        request_last_reset_at INTEGER,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE CASCADE,
@@ -487,6 +521,10 @@ export class DatabaseManager {
       totalTokensUsed: row.total_tokens_used,
       resetInterval: row.reset_interval,
       lastResetAt: row.last_reset_at,
+      requestCountLimit: row.request_count_limit,
+      totalRequestsUsed: row.total_requests_used,
+      requestResetInterval: row.request_reset_interval,
+      requestLastResetAt: row.request_last_reset_at,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -497,7 +535,7 @@ export class DatabaseManager {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, request_count_limit, total_requests_used, request_reset_interval, request_last_reset_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         id,
@@ -512,6 +550,10 @@ export class DatabaseManager {
         route.totalTokensUsed || 0,
         route.resetInterval || null,
         route.lastResetAt || null,
+        route.requestCountLimit || null,
+        route.totalRequestsUsed || 0,
+        route.requestResetInterval || null,
+        route.requestLastResetAt || null,
         now,
         now
       );
@@ -522,7 +564,7 @@ export class DatabaseManager {
     const now = Date.now();
     const result = this.db
       .prepare(
-        'UPDATE rules SET content_type = ?, target_service_id = ?, target_model = ?, replaced_model = ?, sort_order = ?, timeout = ?, token_limit = ?, reset_interval = ?, updated_at = ? WHERE id = ?'
+        'UPDATE rules SET content_type = ?, target_service_id = ?, target_model = ?, replaced_model = ?, sort_order = ?, timeout = ?, token_limit = ?, reset_interval = ?, request_count_limit = ?, request_reset_interval = ?, updated_at = ? WHERE id = ?'
       )
       .run(
         route.contentType,
@@ -533,6 +575,8 @@ export class DatabaseManager {
         route.timeout !== undefined ? route.timeout : null,
         route.tokenLimit !== undefined ? route.tokenLimit : null,
         route.resetInterval !== undefined ? route.resetInterval : null,
+        route.requestCountLimit !== undefined ? route.requestCountLimit : null,
+        route.requestResetInterval !== undefined ? route.requestResetInterval : null,
         now,
         id
       );
@@ -598,12 +642,64 @@ export class DatabaseManager {
     return false;
   }
 
+  /**
+   * 增加规则的请求次数
+   * @param ruleId 规则ID
+   * @param count 增加的次数
+   * @returns 是否成功
+   */
+  incrementRuleRequestCount(ruleId: string, count: number): boolean {
+    const result = this.db
+      .prepare('UPDATE rules SET total_requests_used = total_requests_used + ? WHERE id = ?')
+      .run(count, ruleId);
+    return result.changes > 0;
+  }
+
+  /**
+   * 重置规则的请求次数
+   * @param ruleId 规则ID
+   * @returns 是否成功
+   */
+  resetRuleRequestCount(ruleId: string): boolean {
+    const now = Date.now();
+    const result = this.db
+      .prepare('UPDATE rules SET total_requests_used = 0, request_last_reset_at = ? WHERE id = ?')
+      .run(now, ruleId);
+    return result.changes > 0;
+  }
+
+  /**
+   * 检查并重置到期的规则（请求次数）
+   * 如果规则设置了request_reset_interval且已经到了重置时间，则自动重置请求次数
+   * @param ruleId 规则ID
+   * @returns 是否进行了重置
+   */
+  checkAndResetRequestCountIfNeeded(ruleId: string): boolean {
+    const rule = this.db
+      .prepare('SELECT request_reset_interval, request_last_reset_at FROM rules WHERE id = ?')
+      .get(ruleId) as { request_reset_interval: number | null; request_last_reset_at: number | null } | undefined;
+
+    if (!rule || !rule.request_reset_interval) {
+      return false; // 没有设置重置间隔
+    }
+
+    const now = Date.now();
+    const resetIntervalMs = rule.request_reset_interval * 60 * 60 * 1000; // 小时转毫秒
+    const lastResetAt = rule.request_last_reset_at || 0;
+
+    // 检查是否已经到了重置时间
+    if (now - lastResetAt >= resetIntervalMs) {
+      this.resetRuleRequestCount(ruleId);
+      return true;
+    }
+
+    return false;
+  }
+
   // Log operations
   async addLog(log: Omit<RequestLog, 'id'>): Promise<void> {
     const { path } = log;
-    if (!path.startsWith('/v1/')) {
-      return;
-    }
+    console.debug('hint--->', path);
     const id = crypto.randomUUID();
     await this.logDb.put(id, JSON.stringify({ ...log, id }));
     // 清除缓存
@@ -904,7 +1000,7 @@ export class DatabaseManager {
       for (const rule of importData.rules) {
         this.db
           .prepare(
-            'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, request_count_limit, total_requests_used, request_reset_interval, request_last_reset_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
           )
           .run(
             rule.id,
@@ -919,6 +1015,10 @@ export class DatabaseManager {
             rule.totalTokensUsed || 0,
             rule.resetInterval || null,
             rule.lastResetAt || null,
+            rule.requestCountLimit || null,
+            rule.totalRequestsUsed || 0,
+            rule.requestResetInterval || null,
+            rule.requestLastResetAt || null,
             rule.createdAt,
             rule.updatedAt
           );

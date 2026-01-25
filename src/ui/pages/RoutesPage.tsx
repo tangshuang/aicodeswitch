@@ -37,6 +37,8 @@ export default function RoutesPage() {
   const [selectedTokenLimit, setSelectedTokenLimit] = useState<number | undefined>(undefined);
   const [selectedResetInterval, setSelectedResetInterval] = useState<number | undefined>(undefined);
   const [selectedTimeout, setSelectedTimeout] = useState<number | undefined>(undefined);
+  const [selectedRequestCountLimit, setSelectedRequestCountLimit] = useState<number | undefined>(undefined);
+  const [selectedRequestResetInterval, setSelectedRequestResetInterval] = useState<number | undefined>(undefined);
   const [hoveredRuleId, setHoveredRuleId] = useState<string | null>(null);
 
   // FLIP动画相关
@@ -168,6 +170,8 @@ export default function RoutesPage() {
       timeout: selectedTimeout ? selectedTimeout * 1000 : undefined, // 转换为毫秒
       tokenLimit: selectedTokenLimit ? selectedTokenLimit * 1000 : undefined, // 转换为实际token数
       resetInterval: selectedResetInterval,
+      requestCountLimit: selectedRequestCountLimit,
+      requestResetInterval: selectedRequestResetInterval,
     };
 
     if (editingRule) {
@@ -200,6 +204,15 @@ export default function RoutesPage() {
     }
   };
 
+  const handleResetRequests = async (id: string) => {
+    if (confirm('确定要重置此规则的请求次数吗？')) {
+      await api.resetRuleRequests(id);
+      if (selectedRoute) {
+        loadRules(selectedRoute.id);
+      }
+    }
+  };
+
   const getAvailableContentTypes = () => {
     // 取消对象请求类型的互斥限制，允许添加多个相同类型的规则
     // 通过 sort_order 字段区分优先级
@@ -223,6 +236,8 @@ export default function RoutesPage() {
         setSelectedTimeout(rule.timeout ? rule.timeout / 1000 : undefined); // 转换为秒
         setSelectedTokenLimit(rule.tokenLimit ? rule.tokenLimit / 1000 : undefined); // 转换为k值
         setSelectedResetInterval(rule.resetInterval);
+        setSelectedRequestCountLimit(rule.requestCountLimit);
+        setSelectedRequestResetInterval(rule.requestResetInterval);
       }, 0);
     }
     setShowRuleModal(true);
@@ -239,6 +254,8 @@ export default function RoutesPage() {
     setSelectedTimeout(undefined);
     setSelectedTokenLimit(undefined);
     setSelectedResetInterval(undefined);
+    setSelectedRequestCountLimit(undefined);
+    setSelectedRequestResetInterval(undefined);
     setShowRuleModal(true);
   };
 
@@ -370,7 +387,7 @@ export default function RoutesPage() {
                   <th>优先级</th>
                   <th>类型</th>
                   <th>API服务</th>
-                  <th>Token用量</th>
+                  <th>用量情况</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -446,43 +463,83 @@ export default function RoutesPage() {
                         </div>
                       </td>
                       <td>
-                        {rule.tokenLimit ? (
-                          <div style={{ fontSize: '13px' }}>
-                            <div>
-                              <span style={{
-                                color: rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit ? 'red' : 'inherit'
-                              }}>
-                                {((rule.totalTokensUsed || 0) / 1000).toFixed(1)}k / {(rule.tokenLimit / 1000).toFixed(0)}k
-                              </span>
-                              {rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit && (
-                                <span style={{ color: 'red', marginLeft: '6px', fontWeight: 'bold' }}>已超限</span>
-                              )}
-                            </div>
-                            {rule.resetInterval && (
-                              <div style={{ fontSize: '11px', color: '#999', marginTop: '2px' }}>
-                                每{rule.resetInterval}小时重置
-                                {rule.lastResetAt && (
-                                  <>
-                                    {(() => {
-                                      const nextResetTime = rule.lastResetAt + (rule.resetInterval * 60 * 60 * 1000);
-                                      const now = Date.now();
-                                      const hoursUntilReset = Math.max(0, Math.ceil((nextResetTime - now) / (60 * 60 * 1000)));
-                                      return ` (${hoursUntilReset}小时后)`;
-                                    })()}
-                                  </>
+                        <div style={{ fontSize: '13px' }}>
+                          {/* Token限制 */}
+                          <div>
+                            <span style={{ fontWeight: 'bold', fontSize: '12px' }}>Token:</span>
+                            {rule.tokenLimit ? (
+                              <>
+                                <span style={{
+                                  color: rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit ? 'red' : 'inherit'
+                                }}>
+                                  {((rule.totalTokensUsed || 0) / 1000).toFixed(1)}k / {(rule.tokenLimit / 1000).toFixed(0)}k
+                                </span>
+                                {rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit && (
+                                  <span style={{ color: 'red', marginLeft: '4px', fontWeight: 'bold', fontSize: '11px' }}>超限</span>
                                 )}
-                              </div>
+                                {rule.resetInterval && (
+                                  <div style={{ fontSize: '11px', color: '#999', marginLeft: '8px' }}>
+                                    每{rule.resetInterval}h重置
+                                    {rule.lastResetAt && (
+                                      <>
+                                        {(() => {
+                                          const nextResetTime = rule.lastResetAt + (rule.resetInterval * 60 * 60 * 1000);
+                                          const now = Date.now();
+                                          const hoursUntilReset = Math.max(0, Math.ceil((nextResetTime - now) / (60 * 60 * 1000)));
+                                          return ` (${hoursUntilReset}h后)`;
+                                        })()}
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                              </>
+                            ) : (
+                              <span style={{ color: '#999' }}>不限制</span>
                             )}
                           </div>
-                        ) : (
-                          <span style={{ color: '#999', fontSize: '13px' }}>不限制</span>
-                        )}
+                          {/* 请求次数限制 */}
+                          <div style={{ marginTop: '6px' }}>
+                            <span style={{ fontWeight: 'bold', fontSize: '12px' }}>次数:</span>
+                            {rule.requestCountLimit ? (
+                              <>
+                                <span style={{
+                                  color: rule.totalRequestsUsed && rule.requestCountLimit && rule.totalRequestsUsed >= rule.requestCountLimit ? 'red' : 'inherit'
+                                }}>
+                                  {rule.totalRequestsUsed || 0} / {rule.requestCountLimit}
+                                </span>
+                                {rule.totalRequestsUsed && rule.requestCountLimit && rule.totalRequestsUsed >= rule.requestCountLimit && (
+                                  <span style={{ color: 'red', marginLeft: '4px', fontWeight: 'bold', fontSize: '11px' }}>超限</span>
+                                )}
+                                {rule.requestResetInterval && (
+                                  <div style={{ fontSize: '11px', color: '#999', marginLeft: '8px' }}>
+                                    每{rule.requestResetInterval}h重置
+                                    {rule.requestLastResetAt && (
+                                      <>
+                                        {(() => {
+                                          const nextResetTime = rule.requestLastResetAt + (rule.requestResetInterval * 60 * 60 * 1000);
+                                          const now = Date.now();
+                                          const hoursUntilReset = Math.max(0, Math.ceil((nextResetTime - now) / (60 * 60 * 1000)));
+                                          return ` (${hoursUntilReset}h后)`;
+                                        })()}
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                              </>
+                            ) : (
+                              <span style={{ color: '#999' }}>不限制</span>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td>
                         <div className="action-buttons">
                           <button className="btn btn-secondary" onClick={() => handleEditRule(rule)}>编辑</button>
                           {rule.tokenLimit && (
                             <button className="btn btn-info" onClick={() => handleResetTokens(rule.id)}>重置Token</button>
+                          )}
+                          {rule.requestCountLimit && (
+                            <button className="btn btn-info" onClick={() => handleResetRequests(rule.id)}>重置次数</button>
                           )}
                           <button className="btn btn-danger" onClick={() => handleDeleteRule(rule.id)}>删除</button>
                         </div>
@@ -689,6 +746,36 @@ export default function RoutesPage() {
                 />
                 <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
                   设置后，系统将每隔指定小时数自动重置token计数。例如设置5小时，则每5小时重置一次
+                </small>
+              </div>
+
+              {/* 请求次数超量字段 */}
+              <div className="form-group">
+                <label>请求次数超量</label>
+                <input
+                  type="number"
+                  value={selectedRequestCountLimit || ''}
+                  onChange={(e) => setSelectedRequestCountLimit(e.target.value ? parseInt(e.target.value) : undefined)}
+                  min="0"
+                  placeholder="不限制"
+                />
+                <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                  按照GLM计费逻辑：只有人类主动发起的请求计费，工具回传（tool_result）不计费。当请求次数达到这个量时，在配置了其他规则的情况下，本条规则将失效
+                </small>
+              </div>
+
+              {/* 请求次数自动重置间隔字段 */}
+              <div className="form-group">
+                <label>请求次数自动重置间隔（小时）</label>
+                <input
+                  type="number"
+                  value={selectedRequestResetInterval || ''}
+                  onChange={(e) => setSelectedRequestResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
+                  min="1"
+                  placeholder="不自动重置"
+                />
+                <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                  设置后，系统将每隔指定小时数自动重置请求次数计数。例如设置24小时，则每24小时重置一次
                 </small>
               </div>
 
