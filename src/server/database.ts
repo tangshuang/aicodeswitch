@@ -864,7 +864,8 @@ export class DatabaseManager {
     routeId: string,
     contentType: ContentType,
     errorMessage?: string,
-    statusCode?: number
+    statusCode?: number,
+    errorType?: 'http' | 'timeout' | 'unknown'
   ): Promise<void> {
     const key = `${routeId}:${contentType}:${serviceId}`;
     const now = Date.now();
@@ -880,6 +881,7 @@ export class DatabaseManager {
       entry.errorCount++;
       entry.lastError = errorMessage;
       entry.lastStatusCode = statusCode;
+      entry.errorType = errorType;
 
       await this.blacklistDb.put(key, JSON.stringify(entry));
     } catch (error: any) {
@@ -894,6 +896,7 @@ export class DatabaseManager {
           errorCount: 1,
           lastError: errorMessage,
           lastStatusCode: statusCode,
+          errorType,
         };
 
         await this.blacklistDb.put(key, JSON.stringify(entry));
@@ -901,6 +904,15 @@ export class DatabaseManager {
         throw error;
       }
     }
+  }
+
+  async removeFromBlacklist(
+    serviceId: string,
+    routeId: string,
+    contentType: ContentType
+  ): Promise<void> {
+    const key = `${routeId}:${contentType}:${serviceId}`;
+    await this.blacklistDb.del(key);
   }
 
   async cleanupExpiredBlacklist(): Promise<number> {
@@ -1241,6 +1253,31 @@ export class DatabaseManager {
         recentErrors: recentErrorLogs.length,
       },
     };
+  }
+
+  async getRuleBlacklistStatus(
+    serviceId: string,
+    routeId: string,
+    contentType: ContentType
+  ): Promise<ServiceBlacklistEntry | null> {
+    const key = `${routeId}:${contentType}:${serviceId}`;
+    try {
+      const value = await this.blacklistDb.get(key);
+      const entry: ServiceBlacklistEntry = JSON.parse(value);
+
+      // 检查是否过期
+      if (Date.now() > entry.expiresAt) {
+        await this.blacklistDb.del(key);
+        return null;
+      }
+
+      return entry;
+    } catch (error: any) {
+      if (error.code === 'LEVEL_NOT_FOUND') {
+        return null;
+      }
+      throw error;
+    }
   }
 
   close() {

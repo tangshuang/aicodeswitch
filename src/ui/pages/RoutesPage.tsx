@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
-import type { Route, Rule, APIService, ContentType, Vendor } from '../../types';
+import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry } from '../../types';
 import { useFlipAnimation } from '../hooks/useFlipAnimation';
 
 const CONTENT_TYPE_OPTIONS = [
@@ -40,6 +40,10 @@ export default function RoutesPage() {
   const [selectedRequestCountLimit, setSelectedRequestCountLimit] = useState<number | undefined>(undefined);
   const [selectedRequestResetInterval, setSelectedRequestResetInterval] = useState<number | undefined>(undefined);
   const [hoveredRuleId, setHoveredRuleId] = useState<string | null>(null);
+  const [blacklistStatuses, setBlacklistStatuses] = useState<Record<string, {
+    isBlacklisted: boolean;
+    blacklistEntry?: ServiceBlacklistEntry;
+  }>>({});
 
   // FLIP动画相关
   const { recordPositions, applyAnimation } = useFlipAnimation();
@@ -85,6 +89,20 @@ export default function RoutesPage() {
   const loadRules = async (routeId: string) => {
     const data = await api.getRules(routeId);
     setRules(data);
+
+    // 加载黑名单状态
+    if (routeId) {
+      try {
+        const statuses = await api.getRulesBlacklistStatus(routeId);
+        const statusMap = statuses.reduce((acc, status) => {
+          acc[status.ruleId] = status;
+          return acc;
+        }, {} as Record<string, typeof statuses[0]>);
+        setBlacklistStatuses(statusMap);
+      } catch (error) {
+        console.error('Failed to load blacklist status:', error);
+      }
+    }
   };
 
   const loadVendors = async () => {
@@ -213,6 +231,17 @@ export default function RoutesPage() {
     }
   };
 
+  const handleClearBlacklist = async (id: string) => {
+    try {
+      await api.clearRuleBlacklist(id);
+      if (selectedRoute) {
+        loadRules(selectedRoute.id);
+      }
+    } catch (error: any) {
+      alert('恢复失败: ' + error.message);
+    }
+  };
+
   const getAvailableContentTypes = () => {
     // 取消对象请求类型的互斥限制，允许添加多个相同类型的规则
     // 通过 sort_order 字段区分优先级
@@ -241,6 +270,71 @@ export default function RoutesPage() {
       }, 0);
     }
     setShowRuleModal(true);
+  };
+
+  // 判断规则状态
+  const getRuleStatus = (rule: Rule) => {
+    const blacklistStatus = blacklistStatuses[rule.id];
+    const issues: string[] = [];
+
+    // 1. 检查黑名单（包括timeout）
+    if (blacklistStatus?.isBlacklisted) {
+      const entry = blacklistStatus.blacklistEntry;
+      if (entry?.errorType === 'timeout') {
+        issues.push('请求超时');
+      } else if (entry?.lastStatusCode) {
+        issues.push(`HTTP ${entry.lastStatusCode}错误`);
+      }
+    }
+
+    // 2. 检查token限制
+    if (rule.tokenLimit && rule.totalTokensUsed !== undefined) {
+      if (rule.totalTokensUsed >= rule.tokenLimit) {
+        issues.push('Token超限');
+      }
+    }
+
+    // 3. 检查请求次数限制
+    if (rule.requestCountLimit && rule.totalRequestsUsed !== undefined) {
+      if (rule.totalRequestsUsed >= rule.requestCountLimit) {
+        issues.push('次数超限');
+      }
+    }
+
+    // 如果有任何错误，显示第一个错误
+    if (issues.length > 0) {
+      return {
+        status: 'error',
+        label: blacklistStatus?.isBlacklisted
+          ? (blacklistStatus.blacklistEntry?.errorType === 'timeout' ? '超时' : '服务错误')
+          : issues[0],
+        reason: issues.join(', ')
+      };
+    }
+
+    // 检查警告状态
+    const warnings: string[] = [];
+
+    if (rule.tokenLimit && rule.totalTokensUsed !== undefined) {
+      const usagePercent = (rule.totalTokensUsed / rule.tokenLimit) * 100;
+      if (usagePercent >= 80) {
+        warnings.push(`Token ${usagePercent.toFixed(0)}%`);
+      }
+    }
+
+    if (rule.requestCountLimit && rule.totalRequestsUsed !== undefined) {
+      const usagePercent = (rule.totalRequestsUsed / rule.requestCountLimit) * 100;
+      if (usagePercent >= 80) {
+        warnings.push(`次数 ${usagePercent.toFixed(0)}%`);
+      }
+    }
+
+    if (warnings.length > 0) {
+      return { status: 'warning', label: '接近限制', reason: warnings.join(', ') };
+    }
+
+    // 正常状态
+    return { status: 'success', label: '正常', reason: '' };
   };
 
   const handleNewRule = () => {
@@ -387,6 +481,7 @@ export default function RoutesPage() {
                   <th>优先级</th>
                   <th>类型</th>
                   <th>API服务</th>
+                  <th>状态</th>
                   <th>用量情况</th>
                   <th>操作</th>
                 </tr>
@@ -461,6 +556,88 @@ export default function RoutesPage() {
                           <span>{service ? service.name : 'Unknown'}:</span>
                           <span>{rule.targetModel || '透传'}</span>
                         </div>
+                      </td>
+                      <td>
+                        {/* 新增：状态列 */}
+                        {(() => {
+                          const ruleStatus = getRuleStatus(rule);
+                          const blacklistStatus = blacklistStatuses[rule.id];
+                          const isBlacklistedOnly = blacklistStatus?.isBlacklisted &&
+                            !ruleStatus.reason?.includes('Token超限') &&
+                            !ruleStatus.reason?.includes('次数超限');
+
+                          return (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                {ruleStatus.status === 'success' && (
+                                  <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '14px' }}>✓</span>
+                                )}
+                                {ruleStatus.status === 'warning' && (
+                                  <span style={{ color: '#ffc107', fontWeight: 'bold', fontSize: '14px' }}>⚠</span>
+                                )}
+                                {ruleStatus.status === 'error' && (
+                                  <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '14px' }}>✗</span>
+                                )}
+                                <span style={{
+                                  fontSize: '13px',
+                                  color: ruleStatus.status === 'success' ? '#28a745' :
+                                         ruleStatus.status === 'warning' ? '#ffc107' :
+                                         '#dc3545',
+                                  fontWeight: ruleStatus.status !== 'success' ? 'bold' : 'normal'
+                                }}>
+                                  {ruleStatus.label}
+                                </span>
+                                {ruleStatus.reason && (
+                                  <div
+                                    style={{ position: 'relative', display: 'inline-block', cursor: 'help' }}
+                                    onMouseEnter={() => setHoveredRuleId(rule.id + '-status')}
+                                    onMouseLeave={() => setHoveredRuleId(null)}
+                                  >
+                                    <span style={{ fontSize: '12px', color: '#999', marginLeft: '4px' }}> ⓘ</span>
+                                    {hoveredRuleId === rule.id + '-status' && (
+                                      <div style={{
+                                        position: 'absolute',
+                                        left: '50%',
+                                        transform: 'translateX(-50%)',
+                                        bottom: 'calc(100% + 8px)',
+                                        backgroundColor: 'var(--bg-popover, #333)',
+                                        color: 'var(--text-popover, #fff)',
+                                        padding: '6px 10px',
+                                        borderRadius: '4px',
+                                        fontSize: '12px',
+                                        whiteSpace: 'nowrap',
+                                        zIndex: 1000,
+                                        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                                      }}>
+                                        {ruleStatus.reason}
+                                        <div style={{
+                                          position: 'absolute',
+                                          left: '50%',
+                                          transform: 'translateX(-50%)',
+                                          bottom: '-4px',
+                                          width: '0',
+                                          height: '0',
+                                          borderLeft: '4px solid transparent',
+                                          borderRight: '4px solid transparent',
+                                          borderTop: '4px solid var(--bg-popover, #333)',
+                                        }}/>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                              {isBlacklistedOnly && (
+                                <button
+                                  className="btn btn-info"
+                                  style={{ padding: '2px 8px', fontSize: '11px' }}
+                                  onClick={() => handleClearBlacklist(rule.id)}
+                                >
+                                  恢复
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td>
                         <div style={{ fontSize: '13px' }}>
@@ -553,21 +730,22 @@ export default function RoutesPage() {
           {selectedRoute && rules.length > 0 && (
             <div style={{
               fontSize: '12px',
-              color: '#666',
+              color: 'var(--text-info-box)',
               marginTop: '16px',
               padding: '12px',
-              backgroundColor: '#f8f9fa',
+              backgroundColor: 'var(--bg-info-box)',
               borderRadius: '6px',
-              border: '1px solid #e0e0e0',
+              border: '1px solid var(--border-info-box)',
               lineHeight: '1.6'
             }}>
               <strong>💡 智能故障切换机制</strong>
               <div style={{ marginTop: '6px' }}>
                 • 当同一请求类型配置多个规则时,系统会按排序优先使用第一个<br/>
-                • 如果某个服务报错(4xx/5xx),将自动切换到下一个可用服务<br/>
-                • 报错的服务会被标记为不可用,有效期10分钟<br/>
-                • 10分钟后自动解除标记,如果再次报错则重新标记<br/>
+                • 如果某个服务报错(4xx/5xx)或请求超时,将自动切换到下一个可用服务<br/>
+                • 报错或超时的服务会被标记为不可用,有效期10分钟<br/>
+                • 10分钟后自动解除标记,如果再次报错或超时则重新标记<br/>
                 • 确保您的请求始终路由到稳定可用的服务<br/>
+                • 规则状态列会实时显示每个规则的可用性状态<br/>
                 • 如不需要此功能,可在<strong>设置</strong>页面关闭"启用智能故障切换"选项
               </div>
             </div>

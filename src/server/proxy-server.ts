@@ -242,19 +242,41 @@ export class ProxyServer {
             console.error(`Service ${service.name} failed:`, error.message);
             lastError = error;
 
-            // 判断是否应该加入黑名单 (4xx + 5xx)
-            const statusCode = error.response?.status || 500;
-            if (statusCode >= 400) {
+            // 检测是否是 timeout 错误
+            const isTimeout = error.code === 'ECONNABORTED' ||
+                              error.message?.toLowerCase().includes('timeout') ||
+                              (error.errno && error.errno === 'ETIMEDOUT');
+
+            // 判断错误类型并加入黑名单
+            if (isTimeout) {
+              // Timeout错误，加入黑名单
               await this.dbManager.addToBlacklist(
                 service.id,
                 route.id,
                 rule.contentType,
-                error.message,
-                statusCode
+                'Request timeout - the upstream API took too long to respond',
+                undefined,  // timeout没有HTTP状态码
+                'timeout'
               );
               console.log(
-                `Service ${service.name} added to blacklist (${route.id}:${rule.contentType}:${service.id})`
+                `Service ${service.name} added to blacklist due to timeout (${route.id}:${rule.contentType}:${service.id})`
               );
+            } else {
+              // HTTP错误，检查状态码
+              const statusCode = error.response?.status || 500;
+              if (statusCode >= 400) {
+                await this.dbManager.addToBlacklist(
+                  service.id,
+                  route.id,
+                  rule.contentType,
+                  error.message,
+                  statusCode,
+                  'http'
+                );
+                console.log(
+                  `Service ${service.name} added to blacklist due to HTTP error ${statusCode} (${route.id}:${rule.contentType}:${service.id})`
+                );
+              }
             }
 
             // 继续尝试下一个服务
@@ -417,19 +439,41 @@ export class ProxyServer {
             console.error(`Service ${service.name} failed:`, error.message);
             lastError = error;
 
-            // 判断是否应该加入黑名单 (4xx + 5xx)
-            const statusCode = error.response?.status || 500;
-            if (statusCode >= 400) {
+            // 检测是否是 timeout 错误
+            const isTimeout = error.code === 'ECONNABORTED' ||
+                              error.message?.toLowerCase().includes('timeout') ||
+                              (error.errno && error.errno === 'ETIMEDOUT');
+
+            // 判断错误类型并加入黑名单
+            if (isTimeout) {
+              // Timeout错误，加入黑名单
               await this.dbManager.addToBlacklist(
                 service.id,
                 route.id,
                 rule.contentType,
-                error.message,
-                statusCode
+                'Request timeout - the upstream API took too long to respond',
+                undefined,  // timeout没有HTTP状态码
+                'timeout'
               );
               console.log(
-                `Service ${service.name} added to blacklist (${route.id}:${rule.contentType}:${service.id})`
+                `Service ${service.name} added to blacklist due to timeout (${route.id}:${rule.contentType}:${service.id})`
               );
+            } else {
+              // HTTP错误，检查状态码
+              const statusCode = error.response?.status || 500;
+              if (statusCode >= 400) {
+                await this.dbManager.addToBlacklist(
+                  service.id,
+                  route.id,
+                  rule.contentType,
+                  error.message,
+                  statusCode,
+                  'http'
+                );
+                console.log(
+                  `Service ${service.name} added to blacklist due to HTTP error ${statusCode} (${route.id}:${rule.contentType}:${service.id})`
+                );
+              }
             }
 
             // 继续尝试下一个服务

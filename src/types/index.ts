@@ -168,6 +168,7 @@ export interface ServiceBlacklistEntry {
   errorCount: number;         // 错误计数
   lastError?: string;         // 最后一次错误信息
   lastStatusCode?: number;    // 最后一次错误的状态码
+  errorType?: 'http' | 'timeout' | 'unknown'; // 错误类型
 }
 
 /** 鉴权状态响应 */
