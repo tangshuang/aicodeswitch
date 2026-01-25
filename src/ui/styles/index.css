@@ -143,3 +143,32 @@ code {
 html {
   scroll-behavior: smooth;
 }
+
+/* datetime-local input styles */
+.datetime-picker-input {
+  cursor: pointer;
+}
+
+/* Chrome, Edge, Safari - Make calendar picker indicator white and visible */
+.datetime-picker-input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 1;
+  filter: brightness(0) invert(1);
+  padding: 2px 4px;
+}
+
+.datetime-picker-input::-webkit-calendar-picker-indicator:hover {
+  filter: brightness(0.2) invert(1);
+}
+
+/* Firefox - Calendar picker indicator */
+.datetime-picker-input::-moz-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 1;
+  filter: brightness(0) invert(1);
+  padding: 2px 4px;
+}
+
+.datetime-picker-input::-moz-calendar-picker-indicator:hover {
+  filter: brightness(0.2) invert(1);
+}

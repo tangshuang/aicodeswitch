@@ -57,6 +57,7 @@ export interface Rule {
   totalRequestsUsed?: number;    // 当前累计请求次数
   requestResetInterval?: number; // 次数重置间隔（小时）
   requestLastResetAt?: number;   // 上次次数重置时间戳
+  requestResetBaseTime?: number; // 下一次重置的时间基点（Unix时间戳）
   createdAt: number;
   updatedAt: number;
 }

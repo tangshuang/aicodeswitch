@@ -17,6 +17,18 @@ const TARGET_TYPE_OPTIONS = [
   { value: 'codex', label: 'Codex' },
 ];
 
+/**
+ * 将 Date 对象转换为 datetime-local input 所需的格式
+ */
+function formatDateTimeLocal(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
 export default function RoutesPage() {
   const [routes, setRoutes] = useState<Route[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
@@ -39,6 +51,7 @@ export default function RoutesPage() {
   const [selectedTimeout, setSelectedTimeout] = useState<number | undefined>(undefined);
   const [selectedRequestCountLimit, setSelectedRequestCountLimit] = useState<number | undefined>(undefined);
   const [selectedRequestResetInterval, setSelectedRequestResetInterval] = useState<number | undefined>(undefined);
+  const [selectedRequestResetBaseTime, setSelectedRequestResetBaseTime] = useState<Date | undefined>(undefined);
   const [hoveredRuleId, setHoveredRuleId] = useState<string | null>(null);
   const [blacklistStatuses, setBlacklistStatuses] = useState<Record<string, {
     isBlacklisted: boolean;
@@ -190,6 +203,7 @@ export default function RoutesPage() {
       resetInterval: selectedResetInterval,
       requestCountLimit: selectedRequestCountLimit,
       requestResetInterval: selectedRequestResetInterval,
+      requestResetBaseTime: selectedRequestResetBaseTime ? selectedRequestResetBaseTime.getTime() : undefined,
     };
 
     if (editingRule) {
@@ -267,6 +281,9 @@ export default function RoutesPage() {
         setSelectedResetInterval(rule.resetInterval);
         setSelectedRequestCountLimit(rule.requestCountLimit);
         setSelectedRequestResetInterval(rule.requestResetInterval);
+        setSelectedRequestResetBaseTime(
+          (rule as any).requestResetBaseTime ? new Date((rule as any).requestResetBaseTime) : undefined
+        );
       }, 0);
     }
     setShowRuleModal(true);
@@ -350,6 +367,7 @@ export default function RoutesPage() {
     setSelectedResetInterval(undefined);
     setSelectedRequestCountLimit(undefined);
     setSelectedRequestResetInterval(undefined);
+    setSelectedRequestResetBaseTime(undefined);
     setShowRuleModal(true);
   };
 
@@ -690,15 +708,28 @@ export default function RoutesPage() {
                                 {rule.requestResetInterval && (
                                   <div style={{ fontSize: '11px', color: '#999', marginLeft: '8px' }}>
                                     每{rule.requestResetInterval}h重置
-                                    {rule.requestLastResetAt && (
+                                    {(rule as any).requestResetBaseTime ? (
                                       <>
                                         {(() => {
-                                          const nextResetTime = rule.requestLastResetAt + (rule.requestResetInterval * 60 * 60 * 1000);
+                                          const baseTime = (rule as any).requestResetBaseTime;
                                           const now = Date.now();
-                                          const hoursUntilReset = Math.max(0, Math.ceil((nextResetTime - now) / (60 * 60 * 1000)));
-                                          return ` (${hoursUntilReset}h后)`;
+                                          const hoursUntilReset = Math.max(0, Math.ceil((baseTime - now) / (60 * 60 * 1000)));
+                                          const resetDate = new Date(baseTime);
+                                          const dateStr = `${resetDate.getMonth() + 1}/${resetDate.getDate()} ${String(resetDate.getHours()).padStart(2, '0')}:${String(resetDate.getMinutes()).padStart(2, '0')}`;
+                                          return ` (下次: ${dateStr}, ${hoursUntilReset}h后)`;
                                         })()}
                                       </>
+                                    ) : (
+                                      rule.requestLastResetAt && (
+                                        <>
+                                          {(() => {
+                                            const nextResetTime = rule.requestLastResetAt + (rule.requestResetInterval * 60 * 60 * 1000);
+                                            const now = Date.now();
+                                            const hoursUntilReset = Math.max(0, Math.ceil((nextResetTime - now) / (60 * 60 * 1000)));
+                                            return ` (${hoursUntilReset}h后)`;
+                                          })()}
+                                        </>
+                                      )
                                     )}
                                   </div>
                                 )}
@@ -954,6 +985,27 @@ export default function RoutesPage() {
                 />
                 <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
                   设置后，系统将每隔指定小时数自动重置请求次数计数。例如设置24小时，则每24小时重置一次
+                </small>
+              </div>
+
+              {/* 下一次重置时间基点字段 */}
+              <div className="form-group">
+                <label>下一次重置时间基点</label>
+                <input
+                  type="datetime-local"
+                  value={selectedRequestResetBaseTime ? formatDateTimeLocal(selectedRequestResetBaseTime) : ''}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      setSelectedRequestResetBaseTime(new Date(e.target.value));
+                    } else {
+                      setSelectedRequestResetBaseTime(undefined);
+                    }
+                  }}
+                  disabled={!selectedRequestResetInterval}
+                  className="datetime-picker-input"
+                />
+                <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                  配合"请求次数自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
                 </small>
               </div>
 

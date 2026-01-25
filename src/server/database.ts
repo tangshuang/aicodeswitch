@@ -173,6 +173,14 @@ export class DatabaseManager {
       this.db.exec('ALTER TABLE rules ADD COLUMN request_last_reset_at INTEGER;');
       console.log('[DB] Migration completed: request_last_reset_at column added');
     }
+
+    // 检查rules表是否有request_reset_base_time字段
+    const hasRequestResetBaseTime = rulesColumns.some((col: any) => col.name === 'request_reset_base_time');
+    if (!hasRequestResetBaseTime) {
+      console.log('[DB] Running migration: Adding request_reset_base_time column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN request_reset_base_time INTEGER;');
+      console.log('[DB] Migration completed: request_reset_base_time column added');
+    }
   }
 
   private async migrateMaxOutputTokensToModelLimits() {
@@ -525,6 +533,7 @@ export class DatabaseManager {
       totalRequestsUsed: row.total_requests_used,
       requestResetInterval: row.request_reset_interval,
       requestLastResetAt: row.request_last_reset_at,
+      requestResetBaseTime: row.request_reset_base_time,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -535,7 +544,7 @@ export class DatabaseManager {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, request_count_limit, total_requests_used, request_reset_interval, request_last_reset_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, request_count_limit, total_requests_used, request_reset_interval, request_last_reset_at, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         id,
@@ -554,6 +563,7 @@ export class DatabaseManager {
         route.totalRequestsUsed || 0,
         route.requestResetInterval || null,
         route.requestLastResetAt || null,
+        route.requestResetBaseTime || null,
         now,
         now
       );
@@ -564,7 +574,7 @@ export class DatabaseManager {
     const now = Date.now();
     const result = this.db
       .prepare(
-        'UPDATE rules SET content_type = ?, target_service_id = ?, target_model = ?, replaced_model = ?, sort_order = ?, timeout = ?, token_limit = ?, reset_interval = ?, request_count_limit = ?, request_reset_interval = ?, updated_at = ? WHERE id = ?'
+        'UPDATE rules SET content_type = ?, target_service_id = ?, target_model = ?, replaced_model = ?, sort_order = ?, timeout = ?, token_limit = ?, reset_interval = ?, request_count_limit = ?, request_reset_interval = ?, request_reset_base_time = ?, updated_at = ? WHERE id = ?'
       )
       .run(
         route.contentType,
@@ -577,6 +587,7 @@ export class DatabaseManager {
         route.resetInterval !== undefined ? route.resetInterval : null,
         route.requestCountLimit !== undefined ? route.requestCountLimit : null,
         route.requestResetInterval !== undefined ? route.requestResetInterval : null,
+        route.requestResetBaseTime !== undefined ? route.requestResetBaseTime : null,
         now,
         id
       );
@@ -676,8 +687,12 @@ export class DatabaseManager {
    */
   checkAndResetRequestCountIfNeeded(ruleId: string): boolean {
     const rule = this.db
-      .prepare('SELECT request_reset_interval, request_last_reset_at FROM rules WHERE id = ?')
-      .get(ruleId) as { request_reset_interval: number | null; request_last_reset_at: number | null } | undefined;
+      .prepare('SELECT request_reset_interval, request_last_reset_at, request_reset_base_time FROM rules WHERE id = ?')
+      .get(ruleId) as {
+        request_reset_interval: number | null;
+        request_last_reset_at: number | null;
+        request_reset_base_time: number | null;
+      } | undefined;
 
     if (!rule || !rule.request_reset_interval) {
       return false; // 没有设置重置间隔
@@ -685,15 +700,53 @@ export class DatabaseManager {
 
     const now = Date.now();
     const resetIntervalMs = rule.request_reset_interval * 60 * 60 * 1000; // 小时转毫秒
+    const baseTime = rule.request_reset_base_time;
     const lastResetAt = rule.request_last_reset_at || 0;
 
-    // 检查是否已经到了重置时间
+    // 场景1: 设置了时间基点
+    if (baseTime) {
+      if (now >= baseTime) {
+        this.resetRuleRequestCountWithBaseTime(ruleId, baseTime);
+        return true;
+      }
+      return false;
+    }
+
+    // 场景2: 未设置时间基点，使用原始逻辑（向后兼容）
     if (now - lastResetAt >= resetIntervalMs) {
       this.resetRuleRequestCount(ruleId);
       return true;
     }
 
     return false;
+  }
+
+  /**
+   * 重置规则的请求次数（带时间基点更新）
+   */
+  resetRuleRequestCountWithBaseTime(ruleId: string, currentBaseTime: number): boolean {
+    const now = Date.now();
+    const rule = this.db
+      .prepare('SELECT request_reset_interval FROM rules WHERE id = ?')
+      .get(ruleId) as { request_reset_interval: number } | undefined;
+
+    if (!rule || !rule.request_reset_interval) {
+      return false;
+    }
+
+    const resetIntervalMs = rule.request_reset_interval * 60 * 60 * 1000;
+
+    // 计算下一个时间基点
+    let nextBaseTime = currentBaseTime;
+    while (nextBaseTime <= now) {
+      nextBaseTime += resetIntervalMs;
+    }
+
+    const result = this.db
+      .prepare('UPDATE rules SET total_requests_used = 0, request_last_reset_at = ?, request_reset_base_time = ? WHERE id = ?')
+      .run(now, nextBaseTime, ruleId);
+
+    return result.changes > 0;
   }
 
   // Log operations
@@ -1010,7 +1063,7 @@ export class DatabaseManager {
       for (const rule of importData.rules) {
         this.db
           .prepare(
-            'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, request_count_limit, total_requests_used, request_reset_interval, request_last_reset_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, request_count_limit, total_requests_used, request_reset_interval, request_last_reset_at, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
           )
           .run(
             rule.id,
@@ -1029,6 +1082,7 @@ export class DatabaseManager {
             rule.totalRequestsUsed || 0,
             rule.requestResetInterval || null,
             rule.requestLastResetAt || null,
+            (rule as any).requestResetBaseTime || null,
             rule.createdAt,
             rule.updatedAt
           );
