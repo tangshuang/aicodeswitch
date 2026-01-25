@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
 import type { Route, Rule, APIService, ContentType, Vendor } from '../../types';
+import { useFlipAnimation } from '../hooks/useFlipAnimation';
 
 const CONTENT_TYPE_OPTIONS = [
   { value: 'default', label: '默认' },
@@ -38,6 +39,11 @@ export default function RoutesPage() {
   const [selectedTimeout, setSelectedTimeout] = useState<number | undefined>(undefined);
   const [hoveredRuleId, setHoveredRuleId] = useState<string | null>(null);
 
+  // FLIP动画相关
+  const { recordPositions, applyAnimation } = useFlipAnimation();
+  const routeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const activatingRouteIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     loadRoutes();
     loadVendors();
@@ -62,9 +68,15 @@ export default function RoutesPage() {
 
   const loadRoutes = async () => {
     const data = await api.getRoutes();
-    setRoutes(data);
-    if (data.length > 0 && !selectedRoute) {
-      setSelectedRoute(data[0]);
+    // 将已激活的路由排在前面
+    const sortedData = data.sort((a, b) => {
+      if (a.isActive && !b.isActive) return -1;
+      if (!a.isActive && b.isActive) return 1;
+      return 0;
+    });
+    setRoutes(sortedData);
+    if (sortedData.length > 0 && !selectedRoute) {
+      setSelectedRoute(sortedData[0]);
     }
   };
 
@@ -84,8 +96,27 @@ export default function RoutesPage() {
   };
 
   const handleActivateRoute = async (id: string) => {
+    // 记录当前被激活路由项的位置（First阶段）
+    const routeElement = routeRefs.current.get(id);
+    if (routeElement) {
+      recordPositions(id, routeElement);
+    }
+
+    activatingRouteIdRef.current = id;
     await api.activateRoute(id);
-    loadRoutes();
+    await loadRoutes();
+
+    // 在下一帧应用动画（Invert和Play阶段）
+    if (routeElement) {
+      // 使用setTimeout确保DOM已经更新
+      setTimeout(() => {
+        const newRouteElement = routeRefs.current.get(id);
+        if (newRouteElement) {
+          applyAnimation(id, newRouteElement, 400);
+        }
+        activatingRouteIdRef.current = null;
+      }, 0);
+    }
   };
 
   const handleDeactivateRoute = async (id: string) => {
@@ -231,6 +262,13 @@ export default function RoutesPage() {
               {routes.map((route) => (
                 <div
                   key={route.id}
+                  ref={(el) => {
+                    if (el) {
+                      routeRefs.current.set(route.id, el);
+                    } else {
+                      routeRefs.current.delete(route.id);
+                    }
+                  }}
                   onClick={() => setSelectedRoute(route)}
                   style={{
                     padding: '12px',
@@ -242,6 +280,7 @@ export default function RoutesPage() {
                     cursor: 'pointer',
                     border: '1px solid var(--border-primary)',
                     transition: 'all 0.2s ease',
+                    position: 'relative',
                   }}
                   onMouseEnter={(e) => {
                     if (selectedRoute?.id !== route.id) {
@@ -257,7 +296,12 @@ export default function RoutesPage() {
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ fontWeight: 500 }}>{route.name}</div>
-                      {route.isActive && <span className="badge badge-success">{TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label} 已激活</span>}
+                      {route.isActive && <span className="badge badge-warning"
+                        style={{
+                          position: 'absolute',
+                          top: -16,
+                          right: -8
+                        }}>{TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label} 已激活</span>}
                     </div>
                      <div style={{ fontSize: '12px', color: 'var(--text-route-muted)', marginTop: '2px' }}>
                        客户端工具: {TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label}

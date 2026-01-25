@@ -25,6 +25,12 @@ export class DatabaseManager {
   private errorLogDb: Level<string, string>;
   private blacklistDb: Level<string, string>;
 
+  // 缓存机制：总数查询缓存
+  private logsCountCache: { count: number; timestamp: number } | null = null;
+  private accessLogsCountCache: { count: number; timestamp: number } | null = null;
+  private errorLogsCountCache: { count: number; timestamp: number } | null = null;
+  private readonly CACHE_TTL = 1000; // 1秒缓存TTL
+
   constructor(dataPath: string) {
     this.db = new Database(path.join(dataPath, 'app.db'));
 
@@ -74,6 +80,15 @@ export class DatabaseManager {
       }
     }
 
+    // 检查vendors表是否有sort_order字段
+    const vendorsColumns = this.db.pragma('table_info(vendors)') as any[];
+    const hasSortOrder = vendorsColumns.some((col: any) => col.name === 'sort_order');
+    if (!hasSortOrder) {
+      console.log('[DB] Running migration: Adding sort_order column to vendors table');
+      this.db.exec('ALTER TABLE vendors ADD COLUMN sort_order INTEGER DEFAULT 0;');
+      console.log('[DB] Migration completed: sort_order column added to vendors');
+    }
+
     // 检查rules表是否有token相关字段
     const rulesColumns = this.db.pragma('table_info(rules)') as any[];
     const hasTokenLimit = rulesColumns.some((col: any) => col.name === 'token_limit');
@@ -119,6 +134,14 @@ export class DatabaseManager {
       console.log('[DB] Running migration: Removing timeout column from api_services table');
       await this.migrateRemoveServiceTimeout();
       console.log('[DB] Migration completed: timeout column removed from api_services');
+    }
+
+    // 检查api_services表是否有enable_proxy字段
+    const hasEnableProxy = columns.some((col: any) => col.name === 'enable_proxy');
+    if (!hasEnableProxy) {
+      console.log('[DB] Running migration: Adding enable_proxy column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN enable_proxy INTEGER DEFAULT 0;');
+      console.log('[DB] Migration completed: enable_proxy column added');
     }
   }
 
@@ -196,6 +219,7 @@ export class DatabaseManager {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         description TEXT,
+        sort_order INTEGER DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -255,9 +279,13 @@ export class DatabaseManager {
       const defaultConfig: AppConfig = {
         enableLogging: true,
         logRetentionDays: 30,
-        maxLogSize: 1000,
+        maxLogSize: 100000,
         apiKey: '',
         enableFailover: true,  // 默认启用智能故障切换
+        proxyEnabled: false,  // 默认不启用代理
+        proxyUrl: '',
+        proxyUsername: '',
+        proxyPassword: '',
       };
       this.db.prepare('INSERT INTO config (key, value) VALUES (?, ?)').run(
         'app_config',
@@ -268,11 +296,12 @@ export class DatabaseManager {
 
   // Vendor operations
   getVendors(): Vendor[] {
-    const rows = this.db.prepare('SELECT * FROM vendors ORDER BY created_at DESC').all();
+    const rows = this.db.prepare('SELECT * FROM vendors ORDER BY sort_order DESC, created_at DESC').all();
     return rows.map((row: any) => ({
       id: row.id,
       name: row.name,
       description: row.description,
+      sortOrder: row.sort_order,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -282,16 +311,16 @@ export class DatabaseManager {
     const id = crypto.randomUUID();
     const now = Date.now();
     this.db
-      .prepare('INSERT INTO vendors (id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
-      .run(id, vendor.name, vendor.description || null, now, now);
+      .prepare('INSERT INTO vendors (id, name, description, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, vendor.name, vendor.description || null, vendor.sortOrder || 0, now, now);
     return { ...vendor, id, createdAt: now, updatedAt: now };
   }
 
   updateVendor(id: string, vendor: Partial<Vendor>): boolean {
     const now = Date.now();
     const result = this.db
-      .prepare('UPDATE vendors SET name = ?, description = ?, updated_at = ? WHERE id = ?')
-      .run(vendor.name, vendor.description || null, now, id);
+      .prepare('UPDATE vendors SET name = ?, description = ?, sort_order = ?, updated_at = ? WHERE id = ?')
+      .run(vendor.name, vendor.description || null, vendor.sortOrder !== undefined ? vendor.sortOrder : 0, now, id);
     return result.changes > 0;
   }
 
@@ -320,6 +349,7 @@ export class DatabaseManager {
       sourceType: row.source_type,
       supportedModels: row.supported_models ? row.supported_models.split(',').map((model: string) => model.trim()).filter((model: string) => model.length > 0) : undefined,
       modelLimits: row.model_limits ? JSON.parse(row.model_limits) : undefined,
+      enableProxy: row.enable_proxy === 1,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -337,7 +367,7 @@ export class DatabaseManager {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, enable_proxy, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         id,
@@ -348,6 +378,7 @@ export class DatabaseManager {
         service.sourceType || null,
         service.supportedModels ? service.supportedModels.join(',') : null,
         service.modelLimits ? JSON.stringify(service.modelLimits) : null,
+        service.enableProxy ? 1 : 0,
         now,
         now
       );
@@ -358,7 +389,7 @@ export class DatabaseManager {
     const now = Date.now();
     const result = this.db
       .prepare(
-        'UPDATE api_services SET name = ?, api_url = ?, api_key = ?, source_type = ?, supported_models = ?, model_limits = ?, updated_at = ? WHERE id = ?'
+        'UPDATE api_services SET name = ?, api_url = ?, api_key = ?, source_type = ?, supported_models = ?, model_limits = ?, enable_proxy = ?, updated_at = ? WHERE id = ?'
       )
       .run(
         service.name,
@@ -367,6 +398,7 @@ export class DatabaseManager {
         service.sourceType || null,
         service.supportedModels ? service.supportedModels.join(',') : null,
         service.modelLimits ? JSON.stringify(service.modelLimits) : null,
+        service.enableProxy !== undefined ? (service.enableProxy ? 1 : 0) : null,
         now,
         id
       );
@@ -568,8 +600,14 @@ export class DatabaseManager {
 
   // Log operations
   async addLog(log: Omit<RequestLog, 'id'>): Promise<void> {
+    const { path } = log;
+    if (!path.startsWith('/v1/')) {
+      return;
+    }
     const id = crypto.randomUUID();
     await this.logDb.put(id, JSON.stringify({ ...log, id }));
+    // 清除缓存
+    this.logsCountCache = null;
   }
 
   async getLogs(limit: number = 100, offset: number = 0): Promise<RequestLog[]> {
@@ -585,12 +623,16 @@ export class DatabaseManager {
 
   async clearLogs(): Promise<void> {
     await this.logDb.clear();
+    // 清除缓存
+    this.logsCountCache = null;
   }
 
   // Access log operations
   async addAccessLog(log: Omit<AccessLog, 'id'>): Promise<string> {
     const id = crypto.randomUUID();
     await this.accessLogDb.put(id, JSON.stringify({ ...log, id }));
+    // 清除缓存
+    this.accessLogsCountCache = null;
     return id;
   }
 
@@ -613,12 +655,16 @@ export class DatabaseManager {
 
   async clearAccessLogs(): Promise<void> {
     await this.accessLogDb.clear();
+    // 清除缓存
+    this.accessLogsCountCache = null;
   }
 
   // Error log operations
   async addErrorLog(log: Omit<ErrorLog, 'id'>): Promise<void> {
     const id = crypto.randomUUID();
     await this.errorLogDb.put(id, JSON.stringify({ ...log, id }));
+    // 清除缓存
+    this.errorLogsCountCache = null;
   }
 
   async getErrorLogs(limit: number = 100, offset: number = 0): Promise<ErrorLog[]> {
@@ -634,6 +680,62 @@ export class DatabaseManager {
 
   async clearErrorLogs(): Promise<void> {
     await this.errorLogDb.clear();
+    // 清除缓存
+    this.errorLogsCountCache = null;
+  }
+
+  /**
+   * 获取请求日志总数（带缓存）
+   */
+  async getLogsCount(): Promise<number> {
+    const now = Date.now();
+    if (this.logsCountCache && now - this.logsCountCache.timestamp < this.CACHE_TTL) {
+      return this.logsCountCache.count;
+    }
+
+    let count = 0;
+    for await (const _ of this.logDb.iterator()) {
+      count++;
+    }
+
+    this.logsCountCache = { count, timestamp: now };
+    return count;
+  }
+
+  /**
+   * 获取访问日志总数（带缓存）
+   */
+  async getAccessLogsCount(): Promise<number> {
+    const now = Date.now();
+    if (this.accessLogsCountCache && now - this.accessLogsCountCache.timestamp < this.CACHE_TTL) {
+      return this.accessLogsCountCache.count;
+    }
+
+    let count = 0;
+    for await (const _ of this.accessLogDb.iterator()) {
+      count++;
+    }
+
+    this.accessLogsCountCache = { count, timestamp: now };
+    return count;
+  }
+
+  /**
+   * 获取错误日志总数（带缓存）
+   */
+  async getErrorLogsCount(): Promise<number> {
+    const now = Date.now();
+    if (this.errorLogsCountCache && now - this.errorLogsCountCache.timestamp < this.CACHE_TTL) {
+      return this.errorLogsCountCache.count;
+    }
+
+    let count = 0;
+    for await (const _ of this.errorLogDb.iterator()) {
+      count++;
+    }
+
+    this.errorLogsCountCache = { count, timestamp: now };
+    return count;
   }
 
   // Service blacklist operations
@@ -767,8 +869,8 @@ export class DatabaseManager {
       // Import vendors
       for (const vendor of importData.vendors) {
         this.db
-          .prepare('INSERT INTO vendors (id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
-          .run(vendor.id, vendor.name, vendor.description || null, vendor.createdAt, vendor.updatedAt);
+          .prepare('INSERT INTO vendors (id, name, description, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(vendor.id, vendor.name, vendor.description || null, (vendor as any).sortOrder || 0, vendor.createdAt, vendor.updatedAt);
       }
 
        // Import API services
