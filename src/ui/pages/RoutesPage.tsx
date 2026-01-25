@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
 import type { Route, Rule, APIService, ContentType, Vendor } from '../../types';
+import { useFlipAnimation } from '../hooks/useFlipAnimation';
 
 const CONTENT_TYPE_OPTIONS = [
   { value: 'default', label: '默认' },
@@ -37,6 +38,11 @@ export default function RoutesPage() {
   const [selectedResetInterval, setSelectedResetInterval] = useState<number | undefined>(undefined);
   const [selectedTimeout, setSelectedTimeout] = useState<number | undefined>(undefined);
   const [hoveredRuleId, setHoveredRuleId] = useState<string | null>(null);
+
+  // FLIP动画相关
+  const { recordPositions, applyAnimation } = useFlipAnimation();
+  const routeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const activatingRouteIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     loadRoutes();
@@ -90,8 +96,27 @@ export default function RoutesPage() {
   };
 
   const handleActivateRoute = async (id: string) => {
+    // 记录当前被激活路由项的位置（First阶段）
+    const routeElement = routeRefs.current.get(id);
+    if (routeElement) {
+      recordPositions(id, routeElement);
+    }
+
+    activatingRouteIdRef.current = id;
     await api.activateRoute(id);
-    loadRoutes();
+    await loadRoutes();
+
+    // 在下一帧应用动画（Invert和Play阶段）
+    if (routeElement) {
+      // 使用setTimeout确保DOM已经更新
+      setTimeout(() => {
+        const newRouteElement = routeRefs.current.get(id);
+        if (newRouteElement) {
+          applyAnimation(id, newRouteElement, 400);
+        }
+        activatingRouteIdRef.current = null;
+      }, 0);
+    }
   };
 
   const handleDeactivateRoute = async (id: string) => {
@@ -237,6 +262,13 @@ export default function RoutesPage() {
               {routes.map((route) => (
                 <div
                   key={route.id}
+                  ref={(el) => {
+                    if (el) {
+                      routeRefs.current.set(route.id, el);
+                    } else {
+                      routeRefs.current.delete(route.id);
+                    }
+                  }}
                   onClick={() => setSelectedRoute(route)}
                   style={{
                     padding: '12px',

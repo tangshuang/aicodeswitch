@@ -241,16 +241,16 @@ function AppContent() {
         </div>
          <ul className="nav-menu">
           <li>
-            <NavLink to="/">📊 数据统计</NavLink>
-          </li>
-          <li>
-            <NavLink to="/routes">🌏 路由管理</NavLink>
+            <NavLink to="/">🌏 路由管理</NavLink>
           </li>
           <li>
             <NavLink to="/vendors">🏭 供应商管理</NavLink>
           </li>
           <li>
             <NavLink to="/write-config">🗄️ 覆盖配置文件</NavLink>
+          </li>
+          <li>
+            <NavLink to="/statistics">📊 数据统计</NavLink>
           </li>
           <li>
             <NavLink to="/logs">🪵 日志</NavLink>
@@ -292,23 +292,15 @@ function AppContent() {
         <div className="theme-toggle">
           <button
             onClick={toggleTheme}
-            className={theme === 'light' ? 'active' : ''}
-            title="浅色模式"
           >
-            ☀️
-          </button>
-          <button
-            onClick={toggleTheme}
-            className={theme === 'dark' ? 'active' : ''}
-            title="深色模式"
-          >
-            🌙
+            {theme === 'dark' ? '🌙' : '☀️'}
           </button>
         </div>
       </nav>
       <main className="main-content">
           <Routes>
-            <Route path="/" element={<StatisticsPage />} />
+            <Route path="/" element={<RouteGroupsPage />} />
+            <Route path="/statistics" element={<StatisticsPage />} />
             <Route path="/routes" element={<RouteGroupsPage />} />
             <Route path="/vendors" element={<VendorsPage />} />
             <Route path="/logs" element={<LogsPage />} />

@@ -683,18 +683,7 @@ table th {
   right: 20px;
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 12px;
-  padding: 12px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  transition: all 0.3s ease-out;
-}
-
-.theme-toggle:hover {
-  background: rgba(255, 255, 255, 0.12);
 }
 
 .theme-toggle button {
