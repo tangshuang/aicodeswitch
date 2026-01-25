@@ -572,7 +572,7 @@ export default function RoutesPage() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.6em', flexWrap: 'wrap' }}>
                           <span>{vendor ? vendor.name : 'Unknown'}:</span>
                           <span>{service ? service.name : 'Unknown'}:</span>
-                          <span>{rule.targetModel || '透传'}</span>
+                          <span>{rule.targetModel || '透传模型'}</span>
                         </div>
                       </td>
                       <td>
