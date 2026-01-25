@@ -42,7 +42,8 @@
     "build:ui": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "release": "standard-version"
   },
   "dependencies": {
     "@types/jsonwebtoken": "^9.0.10",
@@ -81,6 +82,7 @@
     "react-markdown": "^10.1.0",
     "react-router-dom": "^6.21.3",
     "recharts": "^3.7.0",
+    "standard-version": "^9.5.0",
     "tsx": "^4.7.0",
     "typescript": "^5.2.2",
     "vite": "^5.0.8"
