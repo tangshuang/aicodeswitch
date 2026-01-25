@@ -667,26 +667,11 @@ export default function RoutesPage() {
                                 <span style={{
                                   color: rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit ? 'red' : 'inherit'
                                 }}>
-                                  {((rule.totalTokensUsed || 0) / 1000).toFixed(1)}k / {(rule.tokenLimit / 1000).toFixed(0)}k
+                                  {((rule.totalTokensUsed || 0) / 1000).toFixed(1)}K/{(rule.tokenLimit / 1000).toFixed(0)}K
                                 </span>
-                                {rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit && (
+                                {rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit ? (
                                   <span style={{ color: 'red', marginLeft: '4px', fontWeight: 'bold', fontSize: '11px' }}>超限</span>
-                                )}
-                                {rule.resetInterval && (
-                                  <div style={{ fontSize: '11px', color: '#999', marginLeft: '8px' }}>
-                                    每{rule.resetInterval}h重置
-                                    {rule.lastResetAt && (
-                                      <>
-                                        {(() => {
-                                          const nextResetTime = rule.lastResetAt + (rule.resetInterval * 60 * 60 * 1000);
-                                          const now = Date.now();
-                                          const hoursUntilReset = Math.max(0, Math.ceil((nextResetTime - now) / (60 * 60 * 1000)));
-                                          return ` (${hoursUntilReset}h后)`;
-                                        })()}
-                                      </>
-                                    )}
-                                  </div>
-                                )}
+                                ) : null}
                               </>
                             ) : (
                               <span style={{ color: '#999' }}>不限制</span>
@@ -700,7 +685,7 @@ export default function RoutesPage() {
                                 <span style={{
                                   color: rule.totalRequestsUsed && rule.requestCountLimit && rule.totalRequestsUsed >= rule.requestCountLimit ? 'red' : 'inherit'
                                 }}>
-                                  {rule.totalRequestsUsed || 0} / {rule.requestCountLimit}
+                                  {rule.totalRequestsUsed || 0}/{rule.requestCountLimit}
                                 </span>
                                 {rule.totalRequestsUsed && rule.requestCountLimit && rule.totalRequestsUsed >= rule.requestCountLimit ? (
                                   <span style={{ color: 'red', marginLeft: '4px', fontWeight: 'bold', fontSize: '11px' }}>超限</span>
