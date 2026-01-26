@@ -449,11 +449,22 @@ export class ProxyServer {
     return routeRules.sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0));
   }
 
-  private findMatchingRoute(_req: Request): Route | undefined {
-    // Find active route based on targetType - for now, return the first active route
-    // This can be extended later based on specific routing logic
+  private findMatchingRoute(req: Request): Route | undefined {
+    // 根据请求路径确定目标类型
+    let targetType: TargetType | undefined;
+    if (req.path.startsWith('/claude-code/')) {
+      targetType = 'claude-code';
+    } else if (req.path.startsWith('/codex/')) {
+      targetType = 'codex';
+    }
+
+    if (!targetType) {
+      return undefined;
+    }
+
+    // 返回匹配目标类型且处于活跃状态的路由
     const activeRoutes = this.getActiveRoutes();
-    return activeRoutes.find(route => route.isActive);
+    return activeRoutes.find(route => route.targetType === targetType && route.isActive);
   }
 
   private findRouteByTargetType(targetType: 'claude-code' | 'codex'): Route | undefined {
