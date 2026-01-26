@@ -15,6 +15,7 @@ import type {
   Statistics,
   ContentType,
   ServiceBlacklistEntry,
+  Session,
 } from '../types';
 
 export class DatabaseManager {
@@ -374,6 +375,21 @@ export class DatabaseManager {
       CREATE TABLE IF NOT EXISTS config (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        target_type TEXT NOT NULL CHECK(target_type IN ('claude-code', 'codex')),
+        title TEXT,
+        first_request_at INTEGER NOT NULL,
+        last_request_at INTEGER NOT NULL,
+        request_count INTEGER DEFAULT 1,
+        total_tokens INTEGER DEFAULT 0,
+        vendor_id TEXT,
+        vendor_name TEXT,
+        service_id TEXT,
+        service_name TEXT,
+        model TEXT
       );
     `);
   }
@@ -1454,6 +1470,168 @@ export class DatabaseManager {
       }
       throw error;
     }
+  }
+
+  // Session operations
+  /**
+   * 创建或更新 session
+   * 当有新的请求日志时调用此方法来更新 session 信息
+   */
+  upsertSession(session: Omit<Session, 'requestCount' | 'totalTokens'> & { requestCount?: number; totalTokens?: number }): void {
+    const now = Date.now();
+    const existing = this.db.prepare('SELECT * FROM sessions WHERE id = ?').get(session.id) as any;
+
+    if (existing) {
+      // 更新现有 session
+      this.db.prepare(`
+        UPDATE sessions SET
+          last_request_at = ?,
+          request_count = request_count + 1,
+          total_tokens = total_tokens + ?,
+          vendor_id = ?,
+          vendor_name = ?,
+          service_id = ?,
+          service_name = ?,
+          model = ?
+        WHERE id = ?
+      `).run(
+        now,
+        session.totalTokens || 0,
+        session.vendorId || null,
+        session.vendorName || null,
+        session.serviceId || null,
+        session.serviceName || null,
+        session.model || null,
+        session.id
+      );
+    } else {
+      // 创建新 session
+      this.db.prepare(`
+        INSERT INTO sessions (id, target_type, title, first_request_at, last_request_at, request_count, total_tokens, vendor_id, vendor_name, service_id, service_name, model)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        session.id,
+        session.targetType,
+        session.title || null,
+        session.firstRequestAt,
+        now,
+        1,
+        session.totalTokens || 0,
+        session.vendorId || null,
+        session.vendorName || null,
+        session.serviceId || null,
+        session.serviceName || null,
+        session.model || null
+      );
+    }
+  }
+
+  /**
+   * 获取所有 sessions
+   */
+  getSessions(limit: number = 100, offset: number = 0): Session[] {
+    const rows = this.db.prepare('SELECT * FROM sessions ORDER BY last_request_at DESC LIMIT ? OFFSET ?').all(limit, offset) as any[];
+    return rows.map((row: any) => ({
+      id: row.id,
+      targetType: row.target_type,
+      title: row.title,
+      firstRequestAt: row.first_request_at,
+      lastRequestAt: row.last_request_at,
+      requestCount: row.request_count,
+      totalTokens: row.total_tokens,
+      vendorId: row.vendor_id,
+      vendorName: row.vendor_name,
+      serviceId: row.service_id,
+      serviceName: row.service_name,
+      model: row.model,
+    }));
+  }
+
+  /**
+   * 根据 session ID 获取 session
+   */
+  getSession(id: string): Session | null {
+    const row = this.db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as any;
+    if (!row) return null;
+    return {
+      id: row.id,
+      targetType: row.target_type,
+      title: row.title,
+      firstRequestAt: row.first_request_at,
+      lastRequestAt: row.last_request_at,
+      requestCount: row.request_count,
+      totalTokens: row.total_tokens,
+      vendorId: row.vendor_id,
+      vendorName: row.vendor_name,
+      serviceId: row.service_id,
+      serviceName: row.service_name,
+      model: row.model,
+    };
+  }
+
+  /**
+   * 获取 sessions 总数
+   */
+  getSessionsCount(): number {
+    const result = this.db.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number };
+    return result.count;
+  }
+
+  /**
+   * 删除指定 session
+   */
+  deleteSession(id: string): boolean {
+    const result = this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+    return result.changes > 0;
+  }
+
+  /**
+   * 清空所有 sessions
+   */
+  clearSessions(): void {
+    this.db.prepare('DELETE FROM sessions').run();
+  }
+
+  /**
+   * 获取指定 session 的请求日志
+   * @param sessionId session ID
+   * @param limit 限制数量
+   */
+  async getLogsBySessionId(sessionId: string, limit: number = 100): Promise<RequestLog[]> {
+    // 从 LevelDB 中读取所有日志
+    const allLogs: RequestLog[] = [];
+    for await (const [, value] of this.logDb.iterator()) {
+      const log = JSON.parse(value) as RequestLog;
+      // 检查日志是否属于该 session（通过 headers 中的 session_id 或 body 中的 metadata.user_id）
+      if (this.isLogBelongsToSession(log, sessionId)) {
+        allLogs.push(log);
+      }
+    }
+    // 按时间倒序排序并限制数量
+    allLogs.sort((a, b) => b.timestamp - a.timestamp);
+    return allLogs.slice(0, limit);
+  }
+
+  /**
+   * 检查日志是否属于指定 session
+   */
+  private isLogBelongsToSession(log: RequestLog, sessionId: string): boolean {
+    // 检查 headers 中的 session_id（Codex）
+    if (log.headers?.['session_id'] === sessionId) {
+      return true;
+    }
+    // 检查 body 中的 metadata.user_id（Claude Code）
+    if (log.body) {
+      try {
+        const body = JSON.parse(log.body);
+        if (body.metadata?.user_id === sessionId) {
+          return true;
+        }
+      } catch {
+        // 忽略解析错误
+      }
+    }
+    return false;
   }
 
   close() {

@@ -76,20 +76,41 @@ export const mapStopReason = (finishReason?: string | null): string => {
   }
 };
 
+/**
+ * 检查模型是否需要使用 developer 角色而不是 system 角色
+ * 某些 OpenAI 兼容的 API (如 DeepSeek) 不支持 system 角色，需要使用 developer
+ */
+const shouldUseDeveloperRole = (model?: string): boolean => {
+  if (!model) return false;
+  const lowerModel = model.toLowerCase();
+  // DeepSeek 模型使用 developer 角色
+  if (lowerModel.includes('deepseek')) {
+    return true;
+  }
+  // 其他可能需要 developer 角色的模型可以在这里添加
+  // 例如:某些国内的 GPT 兼容 API
+  return false;
+};
+
 export const transformClaudeRequestToOpenAIChat = (body: ClaudeRequest, targetModel?: string) => {
   const messages: any[] = [];
+  const useDeveloperRole = shouldUseDeveloperRole(targetModel);
+  const systemRoleName = useDeveloperRole ? 'developer' : 'system';
 
   if (body.system) {
     const systemText = toTextContent(body.system);
     if (systemText) {
-      messages.push({ role: 'system', content: systemText });
+      messages.push({ role: systemRoleName, content: systemText });
     }
   }
 
   if (Array.isArray(body.messages)) {
     for (const message of body.messages) {
+      // 映射 system 角色到 developer (如果需要)
+      const mappedRole = (message.role === 'system' && useDeveloperRole) ? 'developer' : message.role;
+
       if (typeof message.content === 'string' || message.content === null) {
-        messages.push({ role: message.role, content: message.content });
+        messages.push({ role: mappedRole, content: message.content });
         continue;
       }
 
@@ -130,7 +151,7 @@ export const transformClaudeRequestToOpenAIChat = (body: ClaudeRequest, targetMo
 
         const content = textParts.length > 0 ? textParts.join('') : null;
         const openaiMessage: any = {
-          role: message.role,
+          role: mappedRole,
           content,
         };
 

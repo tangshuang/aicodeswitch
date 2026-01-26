@@ -581,6 +581,16 @@ table th {
   color: white;
 }
 
+.badge-claude-code {
+  background: #ce653c;
+  color: white;
+}
+
+.badge-codex {
+  background: #1f2937;
+  color: white;
+}
+
 .empty-state {
   text-align: center;
   padding: 60px 20px;

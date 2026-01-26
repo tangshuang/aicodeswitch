@@ -189,6 +189,22 @@ export interface LoginResponse {
   token: string;
 }
 
+/** Session 会话信息 */
+export interface Session {
+  id: string;              // session ID (对于Claude Code是metadata.user_id，对于Codex是headers.session_id)
+  targetType: TargetType;  // 客户端类型 (claude-code 或 codex)
+  title?: string;          // 会话标题（从第一条消息内容提取）
+  firstRequestAt: number;  // 第一次请求时间
+  lastRequestAt: number;   // 最后一次请求时间
+  requestCount: number;    // 请求总数
+  totalTokens: number;     // 总token使用量
+  vendorId?: string;       // 最后使用的供应商ID
+  vendorName?: string;     // 最后使用的供应商名称
+  serviceId?: string;      // 最后使用的服务ID
+  serviceName?: string;    // 最后使用的服务名称
+  model?: string;          // 最后使用的模型
+}
+
 /** 统计数据 */
 export interface Statistics {
   overview: {

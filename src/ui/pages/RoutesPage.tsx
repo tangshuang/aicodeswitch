@@ -468,7 +468,7 @@ export default function RoutesPage() {
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ fontWeight: 500 }}>{route.name}</div>
-                      {route.isActive && <span className="badge badge-warning"
+                      {route.isActive && <span className={`badge ${route.targetType === 'claude-code' ? 'badge-claude-code' : 'badge-codex'}`}
                         style={{
                           position: 'absolute',
                           top: -16,

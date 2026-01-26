@@ -1280,6 +1280,61 @@ export class ProxyServer {
   }
 
   /**
+   * 从请求中提取 session ID（默认方法）
+   * Claude Code: metadata.user_id
+   * Codex: headers.session_id
+   */
+  private defaultExtractSessionId(request: Request, type: TargetType): string | null {
+    if (type === 'claude-code') {
+      // Claude Code 使用 metadata.user_id
+      return request.body?.metadata?.user_id || null;
+    } else if (type === 'codex') {
+      // Codex 使用 headers.session_id
+      const sessionId = request.headers['session_id'];
+      if (typeof sessionId === 'string') {
+        return sessionId;
+      }
+      if (Array.isArray(sessionId)) {
+        return sessionId[0] || null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 提取会话标题（默认方法）
+   * 对于新会话，尝试从第一条消息的内容中提取标题
+   */
+  private defaultExtractSessionTitle(request: Request, sessionId: string): string | undefined {
+    const existingSession = this.dbManager.getSession(sessionId);
+    if (existingSession) {
+      // 已存在的会话，保持原有标题
+      return existingSession.title;
+    }
+
+    // 新会话，从消息内容提取标题
+    const messages = request.body?.messages;
+    if (Array.isArray(messages) && messages.length > 0) {
+      // 查找第一条 user 消息
+      const firstUserMessage = messages.find((msg: any) => msg.role === 'user');
+      if (firstUserMessage) {
+        const content = firstUserMessage.content;
+        if (typeof content === 'string') {
+          // 截取前50个字符作为标题
+          return content.slice(0, 50).trim();
+        } else if (Array.isArray(content)) {
+          // 处理结构化内容（如图片+文本）
+          const textBlock = content.find((block: any) => block?.type === 'text');
+          if (textBlock?.text) {
+            return textBlock.text.slice(0, 50).trim();
+          }
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * 根据源工具类型和目标API类型,映射请求路径
    * @param sourceTool 源工具类型 (claude-code 或 codex)
    * @param targetSourceType 目标API的数据格式类型
@@ -1380,6 +1435,27 @@ export class ProxyServer {
         streamChunks: streamChunksForLog,
         upstreamRequest: upstreamRequestForLog,
       });
+
+      // Session 索引逻辑
+      const sessionId = this.defaultExtractSessionId(req, targetType);
+      if (sessionId) {
+        const totalTokens = (usageForLog?.inputTokens || 0) + (usageForLog?.outputTokens || 0) +
+                           (usageForLog?.totalTokens || 0);
+        const sessionTitle = this.defaultExtractSessionTitle(req, sessionId);
+        this.dbManager.upsertSession({
+          id: sessionId,
+          targetType,
+          title: sessionTitle,
+          firstRequestAt: startTime,
+          lastRequestAt: Date.now(),
+          vendorId: service.vendorId,
+          vendorName: vendor?.name,
+          serviceId: service.id,
+          serviceName: service.name,
+          model: requestModel || rule.targetModel,
+          totalTokens,
+        });
+      }
 
       // 更新规则的token使用量（只在成功请求时更新）
       if (usageForLog && statusCode < 400) {

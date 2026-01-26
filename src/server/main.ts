@@ -540,6 +540,65 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     })
   );
 
+  // Sessions 相关端点
+  app.get(
+    '/api/sessions',
+    asyncHandler(async (req, res) => {
+      const rawLimit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : NaN;
+      const rawOffset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : NaN;
+      const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
+      const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
+      const sessions = dbManager.getSessions(limit, offset);
+      res.json(sessions);
+    })
+  );
+
+  app.get(
+    '/api/sessions/count',
+    asyncHandler(async (_req, res) => {
+      const count = dbManager.getSessionsCount();
+      res.json({ count });
+    })
+  );
+
+  app.get(
+    '/api/sessions/:id',
+    asyncHandler(async (req, res) => {
+      const session = dbManager.getSession(req.params.id);
+      if (!session) {
+        res.status(404).json({ error: 'Session not found' });
+        return;
+      }
+      res.json(session);
+    })
+  );
+
+  app.get(
+    '/api/sessions/:id/logs',
+    asyncHandler(async (req, res) => {
+      const rawLimit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : NaN;
+      const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
+      const logs = await dbManager.getLogsBySessionId(req.params.id, limit);
+      res.json(logs);
+    })
+  );
+
+  app.delete(
+    '/api/sessions/:id',
+    asyncHandler(async (req, res) => {
+      const result = dbManager.deleteSession(req.params.id);
+      res.json(result);
+    })
+  );
+
+  app.delete(
+    '/api/sessions',
+    asyncHandler(async (_req, res) => {
+      dbManager.clearSessions();
+      res.json(true);
+    })
+  );
+
   app.get('/api/docs/recommend-vendors', asyncHandler(async (_req, res) => {
     const resp = await fetch('https://unpkg.com/aicodeswitch/docs/vendors-recommand.md');
     if (!resp.ok) {

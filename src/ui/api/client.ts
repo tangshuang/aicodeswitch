@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -60,6 +60,14 @@ interface BackendAPI {
   checkCodexBackup: () => Promise<{ exists: boolean }>;
 
   getStatistics: (days?: number) => Promise<Statistics>;
+
+  // Sessions 相关
+  getSessions: (limit?: number, offset?: number) => Promise<Session[]>;
+  getSessionsCount: () => Promise<{ count: number }>;
+  getSession: (id: string) => Promise<Session | null>;
+  getSessionLogs: (id: string, limit?: number) => Promise<RequestLog[]>;
+  deleteSession: (id: string) => Promise<boolean>;
+  clearSessions: () => Promise<boolean>;
 
   getRecommendVendorsMarkdown: () => Promise<string>;
   getReadmeMarkdown: () => Promise<string>;
@@ -190,6 +198,14 @@ export const api: BackendAPI = {
   checkCodexBackup: () => requestJson(buildUrl('/api/check-backup/codex')),
 
   getStatistics: (days) => requestJson(buildUrl('/api/statistics', days ? { days } : undefined)),
+
+  // Sessions 相关
+  getSessions: (limit, offset) => requestJson(buildUrl('/api/sessions', { limit, offset })),
+  getSessionsCount: () => requestJson<{ count: number }>(buildUrl('/api/sessions/count')),
+  getSession: (id) => requestJson<Session | null>(buildUrl(`/api/sessions/${id}`)),
+  getSessionLogs: (id, limit) => requestJson(buildUrl(`/api/sessions/${id}/logs`, { limit })),
+  deleteSession: (id) => requestJson(buildUrl(`/api/sessions/${id}`), { method: 'DELETE' }),
+  clearSessions: () => requestJson(buildUrl('/api/sessions'), { method: 'DELETE' }),
 
   getRecommendVendorsMarkdown: () => requestJson(buildUrl('/api/docs/recommend-vendors')),
 
