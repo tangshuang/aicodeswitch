@@ -1607,6 +1607,22 @@ export class ProxyServer {
         usageForLog = this.extractTokenUsage(responseData?.usage);
         // 记录错误响应体
         responseBodyForLog = typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
+
+        // 将 4xx/5xx 错误记录到错误日志
+        const errorDetail = responseData?.error || responseData?.message || JSON.stringify(responseData);
+        await this.dbManager.addErrorLog({
+          timestamp: Date.now(),
+          method: req.method,
+          path: req.path,
+          statusCode: response.status,
+          errorMessage: `Upstream API returned ${response.status}: ${errorDetail}`,
+          errorStack: undefined,
+          requestHeaders: this.normalizeHeaders(req.headers),
+          requestBody: req.body ? JSON.stringify(req.body) : undefined,
+          responseHeaders: responseHeadersForLog,
+          responseBody: responseBodyForLog,
+        });
+
         this.copyResponseHeaders(responseHeaders, res);
         if (contentType.includes('application/json')) {
           res.status(response.status).json(responseData);
@@ -1653,7 +1669,19 @@ export class ProxyServer {
         ? 'Request timeout - the upstream API took too long to respond'
         : (error.message || 'Internal server error');
 
-      await finalizeLog(500, errorMessage);
+      // 将错误记录到错误日志
+      await this.dbManager.addErrorLog({
+        timestamp: Date.now(),
+        method: req.method,
+        path: req.path,
+        statusCode: isTimeout ? 504 : 500,
+        errorMessage: errorMessage,
+        errorStack: error.stack,
+        requestHeaders: this.normalizeHeaders(req.headers),
+        requestBody: req.body ? JSON.stringify(req.body) : undefined,
+      });
+
+      await finalizeLog(isTimeout ? 504 : 500, errorMessage);
 
       // 根据请求类型返回适当格式的错误响应
       const streamRequested = this.isStreamRequested(req, req.body || {});
