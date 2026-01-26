@@ -225,4 +225,4 @@ const restore = async () => {
   console.log('\n');
 };
 
-module.exports = restore();
+module.exports = restore;

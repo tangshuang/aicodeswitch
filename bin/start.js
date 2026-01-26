@@ -5,6 +5,7 @@ const os = require('os');
 const chalk = require('chalk');
 const boxen = require('boxen');
 const ora = require('ora');
+const { isServerRunning, getServerInfo } = require('./utils/get-server');
 
 const PID_FILE = path.join(os.homedir(), '.aicodeswitch', 'server.pid');
 const LOG_FILE = path.join(os.homedir(), '.aicodeswitch', 'server.log');
@@ -17,71 +18,49 @@ const ensureDir = (filePath) => {
   }
 };
 
-const isServerRunning = () => {
-  if (!fs.existsSync(PID_FILE)) {
-    return false;
-  }
-
-  try {
-    const pid = parseInt(fs.readFileSync(PID_FILE, 'utf-8'), 10);
-    // 检查进程是否存在
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    // 进程不存在,删除过期的 PID 文件
-    fs.unlinkSync(PID_FILE);
-    return false;
-  }
-};
-
-const getServerInfo = () => {
-  // 尝试多个可能的配置文件位置
-  const possiblePaths = [
-    path.join(os.homedir(), '.aicodeswitch', '.env'),
-    path.join(os.homedir(), '.aicodeswitch', 'aicodeswitch.conf')
-  ];
-
-  let host = '127.0.0.1';
-  let port = 4567;
-
-  for (const dotenvPath of possiblePaths) {
-    if (fs.existsSync(dotenvPath)) {
-      const content = fs.readFileSync(dotenvPath, 'utf-8');
-      const hostMatch = content.match(/HOST=(.+)/);
-      const portMatch = content.match(/PORT=(.+)/);
-
-      if (hostMatch) host = hostMatch[1].trim();
-      if (portMatch) port = parseInt(portMatch[1].trim(), 10);
-      break;
-    }
-  }
-
-  return { host, port };
-};
-
-const start = async () => {
+const start = async (options = {}) => {
+  const { silent = false, noExit = false, callback } = options;
   console.log('\n');
 
-  // 检查是否已经运行
+  // 已经运行
   if (isServerRunning()) {
     const { host, port } = getServerInfo();
-    console.log(boxen(
-      chalk.yellow.bold('⚠ Server is already running!\n\n') +
-      chalk.white(`URL: `) + chalk.cyan.bold(`http://${host}:${port}`),
-      {
-        padding: 1,
-        margin: 1,
-        borderStyle: 'round',
-        borderColor: 'yellow'
+    if (!silent) {
+      if (!silent) {
+        console.log(boxen(
+          chalk.yellow.bold('⚠ Server is already running!\n\n') +
+          chalk.white(`URL: `) + chalk.cyan.bold(`http://${host}:${port}`),
+          {
+            padding: 1,
+            margin: 1,
+            borderStyle: 'round',
+            borderColor: 'yellow'
+          }
+        ));
+        console.log('');
       }
-    ));
-    console.log('');
-    process.exit(0);
+
+      if (callback) {
+        callback();
+      }
+
+      if (!noExit) {
+        process.exit(0);
+      }
+
+      return true;
+    }
+    if (callback) callback();
+    if (!noExit) process.exit(0);
+    return true;
   }
+
+
+  // 启动服务器
 
   const spinner = ora({
     text: chalk.cyan('Starting AI Code Switch server...'),
-    color: 'cyan'
+    color: 'cyan',
   }).start();
 
   ensureDir(PID_FILE);
@@ -93,7 +72,8 @@ const start = async () => {
   if (!fs.existsSync(serverPath)) {
     spinner.fail(chalk.red('Server file not found!'));
     console.log(chalk.yellow(`\nPlease run ${chalk.cyan('npm run build')} first.\n`));
-    process.exit(1);
+    if (!noExit) process.exit(1);
+    return false;
   }
 
   // 启动服务器进程 - 完全分离
@@ -122,45 +102,53 @@ const start = async () => {
     try {
       const pid = parseInt(fs.readFileSync(PID_FILE, 'utf-8'), 10);
       process.kill(pid, 0);
-      spinner.succeed(chalk.green('Server started successfully!'));
+      if (!silent) {
+        spinner.succeed(chalk.green('Server started successfully!'));
 
-      const { host, port } = getServerInfo();
-      const url = `http://${host}:${port}`;
+        const { host, port } = getServerInfo();
+        const url = `http://${host}:${port}`;
 
-      // 显示漂亮的启动信息
-      console.log(boxen(
-        chalk.green.bold('🚀 AI Code Switch Server\n\n') +
-        chalk.white('Status:  ') + chalk.green.bold('● Running\n') +
-        chalk.white('URL:     ') + chalk.cyan.bold(url) + '\n' +
-        chalk.white('PID:     ') + chalk.yellow(pid) + '\n' +
-        chalk.white('Logs:    ') + chalk.gray(LOG_FILE) + '\n\n' +
-        chalk.gray('Open the URL in your browser to access the dashboard'),
-        {
-          padding: 1,
-          margin: 1,
-          borderStyle: 'double',
-          borderColor: 'green'
-        }
-      ));
+        // 显示漂亮的启动信息
+        console.log(boxen(
+          chalk.green.bold('🚀 AI Code Switch Server\n\n') +
+          chalk.white('Status:  ') + chalk.green.bold('● Running\n') +
+          chalk.white('URL:     ') + chalk.cyan.bold(url) + '\n' +
+          chalk.white('PID:     ') + chalk.yellow(pid) + '\n' +
+          chalk.white('Logs:    ') + chalk.gray(LOG_FILE) + '\n\n' +
+          chalk.gray('Open the URL in your browser to access the dashboard'),
+          {
+            padding: 1,
+            margin: 1,
+            borderStyle: 'double',
+            borderColor: 'green'
+          }
+        ));
 
-      console.log(chalk.cyan('💡 Tips:\n'));
-      console.log(chalk.white('  • Open browser: ') + chalk.cyan(url));
-      console.log(chalk.white('  • View logs:    ') + chalk.gray(`tail -f ${LOG_FILE}`));
-      console.log(chalk.white('  • Stop server:  ') + chalk.yellow('aicos stop'));
-      console.log('\n');
+        console.log(chalk.cyan('💡 Tips:\n'));
+        console.log(chalk.white('  • Open browser: ') + chalk.cyan(url));
+        console.log(chalk.white('  • View logs:    ') + chalk.gray(`tail -f ${LOG_FILE}`));
+        console.log(chalk.white('  • Stop server:  ') + chalk.yellow('aicos stop'));
+        console.log('\n');
+      }
 
+      // (callback)
+      if (callback) callback();
       // 立即退出,返回控制台
-      process.exit(0);
+      if (!noExit) process.exit(0);
+      return true;
     } catch (err) {
       spinner.fail(chalk.red('Failed to start server!'));
       console.log(chalk.yellow(`\nCheck logs: ${chalk.cyan(LOG_FILE)}\n`));
-      process.exit(1);
+      if (!noExit) process.exit(1);
+      return false;
     }
   } else {
     spinner.fail(chalk.red('Failed to start server!'));
     console.log(chalk.yellow(`\nCheck logs: ${chalk.cyan(LOG_FILE)}\n`));
-    process.exit(1);
+    if (!noExit) process.exit(1);
+    return false;
   }
 };
 
-module.exports = start();
+// 导出辅助函数供其他模块使用
+module.exports = start;

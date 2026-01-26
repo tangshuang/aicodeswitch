@@ -44,4 +44,4 @@ const version = () => {
   process.exit(0);
 };
 
-module.exports = version();
+module.exports = version;

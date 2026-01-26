@@ -1,18 +1,16 @@
 #!/usr/bin/env node
 
-const path = require('path');
-
 const args = process.argv.slice(2);
 const command = args[0];
 
 const commands = {
-  start: () => require(path.join(__dirname, 'start')),
-  stop: () => require(path.join(__dirname, 'stop')),
-  restart: () => require(path.join(__dirname, 'restart')),
-  update: () => require(path.join(__dirname, 'update')),
-  restore: () => require(path.join(__dirname, 'restore')),
-  version: () => require(path.join(__dirname, 'version')),
-  ui: () => require(path.join(__dirname, 'ui')),
+  start: require('./start'),
+  stop: require('./stop'),
+  restart: require('./restart'),
+  update: require('./update'),
+  restore: require('./restore'),
+  version: require('./version'),
+  ui: require('./ui'),
 };
 
 if (!command || !commands[command]) {
