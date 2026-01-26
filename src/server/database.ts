@@ -634,6 +634,33 @@ export class DatabaseManager {
     }));
   }
 
+  getRule(id: string): Rule | undefined {
+    const row = this.db.prepare('SELECT * FROM rules WHERE id = ?').get(id) as any;
+    if (!row) return undefined;
+    return {
+      id: row.id,
+      routeId: row.route_id,
+      contentType: row.content_type,
+      targetServiceId: row.target_service_id,
+      targetModel: row.target_model,
+      replacedModel: row.replaced_model,
+      sortOrder: row.sort_order,
+      timeout: row.timeout,
+      tokenLimit: row.token_limit,
+      totalTokensUsed: row.total_tokens_used,
+      resetInterval: row.reset_interval,
+      lastResetAt: row.last_reset_at,
+      tokenResetBaseTime: row.token_reset_base_time,
+      requestCountLimit: row.request_count_limit,
+      totalRequestsUsed: row.total_requests_used,
+      requestResetInterval: row.request_reset_interval,
+      requestLastResetAt: row.request_last_reset_at,
+      requestResetBaseTime: row.request_reset_base_time,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
   createRule(route: Omit<Rule, 'id' | 'createdAt' | 'updatedAt'>): Rule {
     const id = crypto.randomUUID();
     const now = Date.now();
