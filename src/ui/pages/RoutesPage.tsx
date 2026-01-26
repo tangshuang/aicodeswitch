@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
-import type { Route, Rule, APIService, ContentType, Vendor } from '../../types';
+import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry } from '../../types';
 import { useFlipAnimation } from '../hooks/useFlipAnimation';
 
 const CONTENT_TYPE_OPTIONS = [
@@ -16,6 +16,18 @@ const TARGET_TYPE_OPTIONS = [
   { value: 'claude-code', label: 'Claude Code' },
   { value: 'codex', label: 'Codex' },
 ];
+
+/**
+ * 将 Date 对象转换为 datetime-local input 所需的格式
+ */
+function formatDateTimeLocal(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
 
 export default function RoutesPage() {
   const [routes, setRoutes] = useState<Route[]>([]);
@@ -36,8 +48,20 @@ export default function RoutesPage() {
   const [selectedContentType, setSelectedContentType] = useState<string>(editingRule?.contentType || '');
   const [selectedTokenLimit, setSelectedTokenLimit] = useState<number | undefined>(undefined);
   const [selectedResetInterval, setSelectedResetInterval] = useState<number | undefined>(undefined);
+  const [selectedTokenResetBaseTime, setSelectedTokenResetBaseTime] = useState<Date | undefined>(undefined);
   const [selectedTimeout, setSelectedTimeout] = useState<number | undefined>(undefined);
+  const [selectedRequestCountLimit, setSelectedRequestCountLimit] = useState<number | undefined>(undefined);
+  const [selectedRequestResetInterval, setSelectedRequestResetInterval] = useState<number | undefined>(undefined);
+  const [selectedRequestResetBaseTime, setSelectedRequestResetBaseTime] = useState<Date | undefined>(undefined);
   const [hoveredRuleId, setHoveredRuleId] = useState<string | null>(null);
+  const [inheritedTokenLimit, setInheritedTokenLimit] = useState<boolean>(false);
+  const [inheritedRequestLimit, setInheritedRequestLimit] = useState<boolean>(false);
+  const [maxTokenLimit, setMaxTokenLimit] = useState<number | undefined>(undefined);
+  const [maxRequestCountLimit, setMaxRequestCountLimit] = useState<number | undefined>(undefined);
+  const [blacklistStatuses, setBlacklistStatuses] = useState<Record<string, {
+    isBlacklisted: boolean;
+    blacklistEntry?: ServiceBlacklistEntry;
+  }>>({});
 
   // FLIP动画相关
   const { recordPositions, applyAnimation } = useFlipAnimation();
@@ -83,6 +107,20 @@ export default function RoutesPage() {
   const loadRules = async (routeId: string) => {
     const data = await api.getRules(routeId);
     setRules(data);
+
+    // 加载黑名单状态
+    if (routeId) {
+      try {
+        const statuses = await api.getRulesBlacklistStatus(routeId);
+        const statusMap = statuses.reduce((acc, status) => {
+          acc[status.ruleId] = status;
+          return acc;
+        }, {} as Record<string, typeof statuses[0]>);
+        setBlacklistStatuses(statusMap);
+      } catch (error) {
+        console.error('Failed to load blacklist status:', error);
+      }
+    }
   };
 
   const loadVendors = async () => {
@@ -157,6 +195,18 @@ export default function RoutesPage() {
 
   const handleSaveRule = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+
+    // 验证超量值不超过API服务的限制
+    if (selectedTokenLimit !== undefined && maxTokenLimit !== undefined && selectedTokenLimit > maxTokenLimit) {
+      alert(`Token超量值 (${selectedTokenLimit}k) 不能超过API服务的限制 (${maxTokenLimit}k)`);
+      return;
+    }
+
+    if (selectedRequestCountLimit !== undefined && maxRequestCountLimit !== undefined && selectedRequestCountLimit > maxRequestCountLimit) {
+      alert(`请求次数超量值 (${selectedRequestCountLimit}) 不能超过API服务的限制 (${maxRequestCountLimit})`);
+      return;
+    }
+
     const formData = new FormData(e.currentTarget);
     const rule = {
       routeId: selectedRoute!.id,
@@ -168,6 +218,10 @@ export default function RoutesPage() {
       timeout: selectedTimeout ? selectedTimeout * 1000 : undefined, // 转换为毫秒
       tokenLimit: selectedTokenLimit ? selectedTokenLimit * 1000 : undefined, // 转换为实际token数
       resetInterval: selectedResetInterval,
+      tokenResetBaseTime: selectedTokenResetBaseTime ? selectedTokenResetBaseTime.getTime() : undefined,
+      requestCountLimit: selectedRequestCountLimit,
+      requestResetInterval: selectedRequestResetInterval,
+      requestResetBaseTime: selectedRequestResetBaseTime ? selectedRequestResetBaseTime.getTime() : undefined,
     };
 
     if (editingRule) {
@@ -191,12 +245,32 @@ export default function RoutesPage() {
     }
   };
 
-  const handleResetTokens = async (id: string) => {
-    if (confirm('确定要重置此规则的Token计数吗？')) {
-      await api.resetRuleTokens(id);
+  // const handleResetTokens = async (id: string) => {
+  //   if (confirm('确定要重置此规则的Token计数吗？')) {
+  //     await api.resetRuleTokens(id);
+  //     if (selectedRoute) {
+  //       loadRules(selectedRoute.id);
+  //     }
+  //   }
+  // };
+
+  // const handleResetRequests = async (id: string) => {
+  //   if (confirm('确定要重置此规则的请求次数吗？')) {
+  //     await api.resetRuleRequests(id);
+  //     if (selectedRoute) {
+  //       loadRules(selectedRoute.id);
+  //     }
+  //   }
+  // };
+
+  const handleClearBlacklist = async (id: string) => {
+    try {
+      await api.clearRuleBlacklist(id);
       if (selectedRoute) {
         loadRules(selectedRoute.id);
       }
+    } catch (error: any) {
+      alert('恢复失败: ' + error.message);
     }
   };
 
@@ -223,9 +297,99 @@ export default function RoutesPage() {
         setSelectedTimeout(rule.timeout ? rule.timeout / 1000 : undefined); // 转换为秒
         setSelectedTokenLimit(rule.tokenLimit ? rule.tokenLimit / 1000 : undefined); // 转换为k值
         setSelectedResetInterval(rule.resetInterval);
+        setSelectedTokenResetBaseTime(
+          (rule as any).tokenResetBaseTime ? new Date((rule as any).tokenResetBaseTime) : undefined
+        );
+        setSelectedRequestCountLimit(rule.requestCountLimit);
+        setSelectedRequestResetInterval(rule.requestResetInterval);
+        setSelectedRequestResetBaseTime(
+          (rule as any).requestResetBaseTime ? new Date((rule as any).requestResetBaseTime) : undefined
+        );
+
+        // 设置API服务的限制值和继承状态
+        if (service.enableTokenLimit && service.tokenLimit) {
+          setMaxTokenLimit(service.tokenLimit);
+          setInheritedTokenLimit(true);
+        } else {
+          setMaxTokenLimit(undefined);
+          setInheritedTokenLimit(false);
+        }
+
+        if (service.enableRequestLimit && service.requestCountLimit) {
+          setMaxRequestCountLimit(service.requestCountLimit);
+          setInheritedRequestLimit(true);
+        } else {
+          setMaxRequestCountLimit(undefined);
+          setInheritedRequestLimit(false);
+        }
       }, 0);
     }
     setShowRuleModal(true);
+  };
+
+  // 判断规则状态
+  const getRuleStatus = (rule: Rule) => {
+    const blacklistStatus = blacklistStatuses[rule.id];
+    const issues: string[] = [];
+
+    // 1. 检查黑名单（包括timeout）
+    if (blacklistStatus?.isBlacklisted) {
+      const entry = blacklistStatus.blacklistEntry;
+      if (entry?.errorType === 'timeout') {
+        issues.push('请求超时');
+      } else if (entry?.lastStatusCode) {
+        issues.push(`HTTP ${entry.lastStatusCode}错误`);
+      }
+    }
+
+    // 2. 检查token限制
+    if (rule.tokenLimit && rule.totalTokensUsed !== undefined) {
+      if (rule.totalTokensUsed >= rule.tokenLimit) {
+        issues.push('Token超限');
+      }
+    }
+
+    // 3. 检查请求次数限制
+    if (rule.requestCountLimit && rule.totalRequestsUsed !== undefined) {
+      if (rule.totalRequestsUsed >= rule.requestCountLimit) {
+        issues.push('次数超限');
+      }
+    }
+
+    // 如果有任何错误，显示第一个错误
+    if (issues.length > 0) {
+      return {
+        status: 'error',
+        label: blacklistStatus?.isBlacklisted
+          ? (blacklistStatus.blacklistEntry?.errorType === 'timeout' ? '超时' : '服务错误')
+          : issues[0],
+        reason: issues.join(', ')
+      };
+    }
+
+    // 检查警告状态
+    const warnings: string[] = [];
+
+    if (rule.tokenLimit && rule.totalTokensUsed !== undefined) {
+      const usagePercent = (rule.totalTokensUsed / rule.tokenLimit) * 100;
+      if (usagePercent >= 80) {
+        warnings.push(`Token ${usagePercent.toFixed(0)}%`);
+      }
+    }
+
+    if (rule.requestCountLimit && rule.totalRequestsUsed !== undefined) {
+      const usagePercent = (rule.totalRequestsUsed / rule.requestCountLimit) * 100;
+      if (usagePercent >= 80) {
+        warnings.push(`次数 ${usagePercent.toFixed(0)}%`);
+      }
+    }
+
+    if (warnings.length > 0) {
+      return { status: 'warning', label: '接近限制', reason: warnings.join(', ') };
+    }
+
+    // 正常状态
+    return { status: 'success', label: '正常', reason: '' };
   };
 
   const handleNewRule = () => {
@@ -239,6 +403,14 @@ export default function RoutesPage() {
     setSelectedTimeout(undefined);
     setSelectedTokenLimit(undefined);
     setSelectedResetInterval(undefined);
+    setSelectedTokenResetBaseTime(undefined);
+    setSelectedRequestCountLimit(undefined);
+    setSelectedRequestResetInterval(undefined);
+    setSelectedRequestResetBaseTime(undefined);
+    setInheritedTokenLimit(false);
+    setInheritedRequestLimit(false);
+    setMaxTokenLimit(undefined);
+    setMaxRequestCountLimit(undefined);
     setShowRuleModal(true);
   };
 
@@ -368,11 +540,10 @@ export default function RoutesPage() {
               <thead>
                 <tr>
                   <th>优先级</th>
-                  <th>请求类型</th>
-                  <th>供应商</th>
+                  <th>类型</th>
                   <th>API服务</th>
-                  <th>模型</th>
-                  <th>Token使用情况</th>
+                  <th>状态</th>
+                  <th>用量情况</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -440,48 +611,144 @@ export default function RoutesPage() {
                           )}
                         </div>
                       </td>
-                      <td>{vendor ? vendor.name : 'Unknown'}</td>
-                      <td>{service ? service.name : 'Unknown'}</td>
-                      <td>{rule.targetModel || '透传'}</td>
                       <td>
-                        {rule.tokenLimit ? (
-                          <div style={{ fontSize: '13px' }}>
-                            <div>
-                              <span style={{
-                                color: rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit ? 'red' : 'inherit'
-                              }}>
-                                {((rule.totalTokensUsed || 0) / 1000).toFixed(1)}k / {(rule.tokenLimit / 1000).toFixed(0)}k
-                              </span>
-                              {rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit && (
-                                <span style={{ color: 'red', marginLeft: '6px', fontWeight: 'bold' }}>已超限</span>
-                              )}
-                            </div>
-                            {rule.resetInterval && (
-                              <div style={{ fontSize: '11px', color: '#999', marginTop: '2px' }}>
-                                每{rule.resetInterval}小时重置
-                                {rule.lastResetAt && (
-                                  <>
-                                    {(() => {
-                                      const nextResetTime = rule.lastResetAt + (rule.resetInterval * 60 * 60 * 1000);
-                                      const now = Date.now();
-                                      const hoursUntilReset = Math.max(0, Math.ceil((nextResetTime - now) / (60 * 60 * 1000)));
-                                      return ` (${hoursUntilReset}小时后)`;
-                                    })()}
-                                  </>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.6em', flexWrap: 'wrap' }}>
+                          <span>{vendor ? vendor.name : 'Unknown'}:</span>
+                          <span>{service ? service.name : 'Unknown'}:</span>
+                          <span>{rule.targetModel || '透传模型'}</span>
+                        </div>
+                      </td>
+                      <td>
+                        {/* 新增：状态列 */}
+                        {(() => {
+                          const ruleStatus = getRuleStatus(rule);
+                          const blacklistStatus = blacklistStatuses[rule.id];
+                          const isBlacklistedOnly = blacklistStatus?.isBlacklisted &&
+                            !ruleStatus.reason?.includes('Token超限') &&
+                            !ruleStatus.reason?.includes('次数超限');
+
+                          return (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                {ruleStatus.status === 'success' && (
+                                  <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '14px' }}>✓</span>
+                                )}
+                                {ruleStatus.status === 'warning' && (
+                                  <span style={{ color: '#ffc107', fontWeight: 'bold', fontSize: '14px' }}>⚠</span>
+                                )}
+                                {ruleStatus.status === 'error' && (
+                                  <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '14px' }}>✗</span>
+                                )}
+                                <span style={{
+                                  fontSize: '13px',
+                                  color: ruleStatus.status === 'success' ? '#28a745' :
+                                         ruleStatus.status === 'warning' ? '#ffc107' :
+                                         '#dc3545',
+                                  fontWeight: ruleStatus.status !== 'success' ? 'bold' : 'normal'
+                                }}>
+                                  {ruleStatus.label}
+                                </span>
+                                {ruleStatus.reason && (
+                                  <div
+                                    style={{ position: 'relative', display: 'inline-block', cursor: 'help' }}
+                                    onMouseEnter={() => setHoveredRuleId(rule.id + '-status')}
+                                    onMouseLeave={() => setHoveredRuleId(null)}
+                                  >
+                                    <span style={{ fontSize: '12px', color: '#999', marginLeft: '4px' }}> ⓘ</span>
+                                    {hoveredRuleId === rule.id + '-status' && (
+                                      <div style={{
+                                        position: 'absolute',
+                                        left: '50%',
+                                        transform: 'translateX(-50%)',
+                                        bottom: 'calc(100% + 8px)',
+                                        backgroundColor: 'var(--bg-popover, #333)',
+                                        color: 'var(--text-popover, #fff)',
+                                        padding: '6px 10px',
+                                        borderRadius: '4px',
+                                        fontSize: '12px',
+                                        whiteSpace: 'nowrap',
+                                        zIndex: 1000,
+                                        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                                      }}>
+                                        {ruleStatus.reason}
+                                        <div style={{
+                                          position: 'absolute',
+                                          left: '50%',
+                                          transform: 'translateX(-50%)',
+                                          bottom: '-4px',
+                                          width: '0',
+                                          height: '0',
+                                          borderLeft: '4px solid transparent',
+                                          borderRight: '4px solid transparent',
+                                          borderTop: '4px solid var(--bg-popover, #333)',
+                                        }}/>
+                                      </div>
+                                    )}
+                                  </div>
                                 )}
                               </div>
+                              {isBlacklistedOnly && (
+                                <button
+                                  className="btn btn-info"
+                                  style={{ padding: '2px 8px', fontSize: '11px' }}
+                                  onClick={() => handleClearBlacklist(rule.id)}
+                                >
+                                  恢复
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td>
+                        <div style={{ fontSize: '13px' }}>
+                          {/* Token限制 */}
+                          <div>
+                            <span style={{ fontWeight: 'bold', fontSize: '12px' }}>Token:</span>
+                            {rule.tokenLimit ? (
+                              <>
+                                <span style={{
+                                  color: rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit ? 'red' : 'inherit'
+                                }}>
+                                  {((rule.totalTokensUsed || 0) / 1000).toFixed(1)}K/{(rule.tokenLimit / 1000).toFixed(0)}K
+                                </span>
+                                {rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit ? (
+                                  <span style={{ color: 'red', marginLeft: '4px', fontWeight: 'bold', fontSize: '11px' }}>超限</span>
+                                ) : null}
+                              </>
+                            ) : (
+                              <span style={{ color: '#999' }}>不限制</span>
                             )}
                           </div>
-                        ) : (
-                          <span style={{ color: '#999', fontSize: '13px' }}>不限制</span>
-                        )}
+                          {/* 请求次数限制 */}
+                          <div style={{ marginTop: '6px' }}>
+                            <span style={{ fontWeight: 'bold', fontSize: '12px' }}>次数:</span>
+                            {rule.requestCountLimit ? (
+                              <>
+                                <span style={{
+                                  color: rule.totalRequestsUsed && rule.requestCountLimit && rule.totalRequestsUsed >= rule.requestCountLimit ? 'red' : 'inherit'
+                                }}>
+                                  {rule.totalRequestsUsed || 0}/{rule.requestCountLimit}
+                                </span>
+                                {rule.totalRequestsUsed && rule.requestCountLimit && rule.totalRequestsUsed >= rule.requestCountLimit ? (
+                                  <span style={{ color: 'red', marginLeft: '4px', fontWeight: 'bold', fontSize: '11px' }}>超限</span>
+                                ) : null}
+                              </>
+                            ) : (
+                              <span style={{ color: '#999' }}>不限制</span>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td>
                         <div className="action-buttons">
                           <button className="btn btn-secondary" onClick={() => handleEditRule(rule)}>编辑</button>
-                          {rule.tokenLimit && (
+                          {/* {rule.tokenLimit && (
                             <button className="btn btn-info" onClick={() => handleResetTokens(rule.id)}>重置Token</button>
-                          )}
+                          )} */}
+                          {/* {rule.requestCountLimit && (
+                            <button className="btn btn-info" onClick={() => handleResetRequests(rule.id)}>重置次数</button>
+                          )} */}
                           <button className="btn btn-danger" onClick={() => handleDeleteRule(rule.id)}>删除</button>
                         </div>
                       </td>
@@ -494,21 +761,22 @@ export default function RoutesPage() {
           {selectedRoute && rules.length > 0 && (
             <div style={{
               fontSize: '12px',
-              color: '#666',
+              color: 'var(--text-info-box)',
               marginTop: '16px',
               padding: '12px',
-              backgroundColor: '#f8f9fa',
+              backgroundColor: 'var(--bg-info-box)',
               borderRadius: '6px',
-              border: '1px solid #e0e0e0',
+              border: '1px solid var(--border-info-box)',
               lineHeight: '1.6'
             }}>
               <strong>💡 智能故障切换机制</strong>
               <div style={{ marginTop: '6px' }}>
                 • 当同一请求类型配置多个规则时,系统会按排序优先使用第一个<br/>
-                • 如果某个服务报错(4xx/5xx),将自动切换到下一个可用服务<br/>
-                • 报错的服务会被标记为不可用,有效期10分钟<br/>
-                • 10分钟后自动解除标记,如果再次报错则重新标记<br/>
+                • 如果某个服务报错(4xx/5xx)或请求超时,将自动切换到下一个可用服务<br/>
+                • 报错或超时的服务会被标记为不可用,有效期10分钟<br/>
+                • 10分钟后自动解除标记,如果再次报错或超时则重新标记<br/>
                 • 确保您的请求始终路由到稳定可用的服务<br/>
+                • 规则状态列会实时显示每个规则的可用性状态<br/>
                 • 如不需要此功能,可在<strong>设置</strong>页面关闭"启用智能故障切换"选项
               </div>
             </div>
@@ -634,8 +902,41 @@ export default function RoutesPage() {
                 <select
                   value={selectedService}
                   onChange={(e) => {
-                    setSelectedService(e.target.value);
+                    const serviceId = e.target.value;
+                    setSelectedService(serviceId);
                     setSelectedModel('');
+
+                    // 获取选中的API服务
+                    const service = allServices.find(s => s.id === serviceId);
+                    if (service) {
+                      // 如果API服务启用了Token超量限制，自动填充并设置最大值
+                      if (service.enableTokenLimit && service.tokenLimit) {
+                        setSelectedTokenLimit(service.tokenLimit);
+                        setSelectedResetInterval(service.tokenResetInterval);
+                        setSelectedTokenResetBaseTime(
+                          service.tokenResetBaseTime ? new Date(service.tokenResetBaseTime) : undefined
+                        );
+                        setMaxTokenLimit(service.tokenLimit);
+                        setInheritedTokenLimit(true);
+                      } else {
+                        setMaxTokenLimit(undefined);
+                        setInheritedTokenLimit(false);
+                      }
+
+                      // 如果API服务启用了请求次数超量限制，自动填充并设置最大值
+                      if (service.enableRequestLimit && service.requestCountLimit) {
+                        setSelectedRequestCountLimit(service.requestCountLimit);
+                        setSelectedRequestResetInterval(service.requestResetInterval);
+                        setSelectedRequestResetBaseTime(
+                          service.requestResetBaseTime ? new Date(service.requestResetBaseTime) : undefined
+                        );
+                        setMaxRequestCountLimit(service.requestCountLimit);
+                        setInheritedRequestLimit(true);
+                      } else {
+                        setMaxRequestCountLimit(undefined);
+                        setInheritedRequestLimit(false);
+                      }
+                    }
                   }}
                   required
                   disabled={!selectedVendor}
@@ -666,13 +967,160 @@ export default function RoutesPage() {
                 <input
                   type="number"
                   value={selectedTokenLimit || ''}
-                  onChange={(e) => setSelectedTokenLimit(e.target.value ? parseInt(e.target.value) : undefined)}
+                  onChange={(e) => {
+                    const value = e.target.value ? parseInt(e.target.value) : undefined;
+                    if (value !== undefined && maxTokenLimit !== undefined && value > maxTokenLimit) {
+                      alert(`Token超量值不能超过API服务的限制 (${maxTokenLimit}k)`);
+                      return;
+                    }
+                    setSelectedTokenLimit(value);
+                  }}
                   min="0"
-                  placeholder="不限制"
+                  max={maxTokenLimit}
+                  placeholder={inheritedTokenLimit ? `最大 ${maxTokenLimit}k` : "不限制"}
                 />
-                <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                  当编程工具的请求tokens达到这个量时，在配置了其他规则的情况下，本条规则将失效，从而保护你的余额。例如：输入100表示100k即100,000个tokens
-                </small>
+                {inheritedTokenLimit && maxTokenLimit && (
+                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                    ⚠️ API服务限制：最大 {maxTokenLimit}k，当前值不能超过此限制
+                  </small>
+                )}
+                {!inheritedTokenLimit && (
+                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                    当编程工具的请求tokens达到这个量时，在配置了其他规则的情况下，本条规则将失效，从而保护你的余额。例如：输入100表示100k即100,000个tokens
+                  </small>
+                )}
+              </div>
+
+              {/* 重置时间字段 */}
+              <div className="form-group">
+                <label>Tokens超量自动重置间隔（小时）</label>
+                <input
+                  type="number"
+                  value={selectedResetInterval || ''}
+                  onChange={(e) => setSelectedResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
+                  min="1"
+                  placeholder="不自动重置"
+                  disabled={inheritedTokenLimit}
+                />
+                {inheritedTokenLimit && (
+                  <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                    此配置从API服务继承，不可修改
+                  </small>
+                )}
+                {!inheritedTokenLimit && (
+                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                    设置后，系统将每隔指定小时数自动重置token计数。例如设置5小时，则每5小时重置一次
+                  </small>
+                )}
+              </div>
+
+              {/* Token下一次重置时间基点字段 */}
+              <div className="form-group">
+                <label>Token下一次重置时间基点</label>
+                <input
+                  type="datetime-local"
+                  value={selectedTokenResetBaseTime ? formatDateTimeLocal(selectedTokenResetBaseTime) : ''}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      setSelectedTokenResetBaseTime(new Date(e.target.value));
+                    } else {
+                      setSelectedTokenResetBaseTime(undefined);
+                    }
+                  }}
+                  disabled={!selectedResetInterval || inheritedTokenLimit}
+                  className="datetime-picker-input"
+                />
+                {inheritedTokenLimit && (
+                  <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                    此配置从API服务继承，不可修改
+                  </small>
+                )}
+                {!inheritedTokenLimit && (
+                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                    配合"Tokens超量自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
+                  </small>
+                )}
+              </div>
+
+              {/* 请求次数超量字段 */}
+              <div className="form-group">
+                <label>请求次数超量</label>
+                <input
+                  type="number"
+                  value={selectedRequestCountLimit || ''}
+                  onChange={(e) => {
+                    const value = e.target.value ? parseInt(e.target.value) : undefined;
+                    if (value !== undefined && maxRequestCountLimit !== undefined && value > maxRequestCountLimit) {
+                      alert(`请求次数超量值不能超过API服务的限制 (${maxRequestCountLimit})`);
+                      return;
+                    }
+                    setSelectedRequestCountLimit(value);
+                  }}
+                  min="0"
+                  max={maxRequestCountLimit}
+                  placeholder={inheritedRequestLimit ? `最大 ${maxRequestCountLimit}` : "不限制"}
+                />
+                {inheritedRequestLimit && maxRequestCountLimit && (
+                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                    ⚠️ API服务限制：最大 {maxRequestCountLimit}，当前值不能超过此限制
+                  </small>
+                )}
+                {!inheritedRequestLimit && (
+                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                    当请求次数达到这个量时，在配置了其他规则的情况下，本条规则将失效
+                  </small>
+                )}
+              </div>
+
+              {/* 请求次数自动重置间隔字段 */}
+              <div className="form-group">
+                <label>请求次数自动重置间隔（小时）</label>
+                <input
+                  type="number"
+                  value={selectedRequestResetInterval || ''}
+                  onChange={(e) => setSelectedRequestResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
+                  min="1"
+                  placeholder="不自动重置"
+                  disabled={inheritedRequestLimit}
+                />
+                {inheritedRequestLimit && (
+                  <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                    此配置从API服务继承，不可修改
+                  </small>
+                )}
+                {!inheritedRequestLimit && (
+                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                    设置后，系统将每隔指定小时数自动重置请求次数计数。例如设置24小时，则每24小时重置一次
+                  </small>
+                )}
+              </div>
+
+              {/* 下一次重置时间基点字段 */}
+              <div className="form-group">
+                <label>下一次重置时间基点</label>
+                <input
+                  type="datetime-local"
+                  value={selectedRequestResetBaseTime ? formatDateTimeLocal(selectedRequestResetBaseTime) : ''}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      setSelectedRequestResetBaseTime(new Date(e.target.value));
+                    } else {
+                      setSelectedRequestResetBaseTime(undefined);
+                    }
+                  }}
+                  disabled={!selectedRequestResetInterval || inheritedRequestLimit}
+                  className="datetime-picker-input"
+                />
+                {inheritedRequestLimit && (
+                  <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                    此配置从API服务继承，不可修改
+                  </small>
+                )}
+                {!inheritedRequestLimit && (
+                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                    配合"请求次数自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
+                  </small>
+                )}
               </div>
 
               {/* 超时时间字段 */}
@@ -687,21 +1135,6 @@ export default function RoutesPage() {
                 />
                 <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
                   设置此规则的API请求超时时间。不设置则使用默认值300秒（5分钟）
-                </small>
-              </div>
-
-              {/* 重置时间字段 */}
-              <div className="form-group">
-                <label>Tokens超量自动重置间隔（小时）</label>
-                <input
-                  type="number"
-                  value={selectedResetInterval || ''}
-                  onChange={(e) => setSelectedResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
-                  min="1"
-                  placeholder="不自动重置"
-                />
-                <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                  设置后，系统将每隔指定小时数自动重置token计数。例如设置5小时，则每5小时重置一次
                 </small>
               </div>
 

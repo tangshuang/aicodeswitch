@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, AccessLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, AccessLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -30,6 +30,13 @@ interface BackendAPI {
   updateRule: (id: string, route: Partial<Rule>) => Promise<boolean>;
   deleteRule: (id: string) => Promise<boolean>;
   resetRuleTokens: (id: string) => Promise<boolean>;
+  resetRuleRequests: (id: string) => Promise<boolean>;
+  clearRuleBlacklist: (id: string) => Promise<boolean>;
+  getRulesBlacklistStatus: (routeId: string) => Promise<Array<{
+    ruleId: string;
+    isBlacklisted: boolean;
+    blacklistEntry?: ServiceBlacklistEntry;
+  }>>;
 
   getLogs: (limit: number, offset: number) => Promise<RequestLog[]>;
   clearLogs: () => Promise<boolean>;
@@ -150,6 +157,9 @@ export const api: BackendAPI = {
   updateRule: (id, route) => requestJson(buildUrl(`/api/rules/${id}`), { method: 'PUT', body: JSON.stringify(route) }),
   deleteRule: (id) => requestJson(buildUrl(`/api/rules/${id}`), { method: 'DELETE' }),
   resetRuleTokens: (id) => requestJson(buildUrl(`/api/rules/${id}/reset-tokens`), { method: 'PUT' }),
+  resetRuleRequests: (id) => requestJson(buildUrl(`/api/rules/${id}/reset-requests`), { method: 'PUT' }),
+  clearRuleBlacklist: (id) => requestJson(buildUrl(`/api/rules/${id}/clear-blacklist`), { method: 'PUT' }),
+  getRulesBlacklistStatus: (routeId) => requestJson(buildUrl(`/api/rules/${routeId}/blacklist-status`)),
 
   getLogs: (limit, offset) => requestJson(buildUrl('/api/logs', { limit, offset })),
   clearLogs: () => requestJson(buildUrl('/api/logs'), { method: 'DELETE' }),

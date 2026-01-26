@@ -389,6 +389,11 @@ table th {
   box-shadow: 0 0 0 3px var(--shadow-secondary);
   background: var(--bg-secondary);
 }
+.form-group input:disabled {
+  background: var(--bg-card);
+  cursor: not-allowed;
+  color: var(--text-muted);
+}
 .form-group label small {
   font-size: .8em;
   color: var(--text-light);

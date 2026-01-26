@@ -143,6 +143,111 @@ export class DatabaseManager {
       this.db.exec('ALTER TABLE api_services ADD COLUMN enable_proxy INTEGER DEFAULT 0;');
       console.log('[DB] Migration completed: enable_proxy column added');
     }
+
+    // 检查rules表是否有请求次数相关字段
+    const hasRequestCountLimit = rulesColumns.some((col: any) => col.name === 'request_count_limit');
+    const hasTotalRequestsUsed = rulesColumns.some((col: any) => col.name === 'total_requests_used');
+    const hasRequestResetInterval = rulesColumns.some((col: any) => col.name === 'request_reset_interval');
+    const hasRequestLastResetAt = rulesColumns.some((col: any) => col.name === 'request_last_reset_at');
+
+    if (!hasRequestCountLimit) {
+      console.log('[DB] Running migration: Adding request_count_limit column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN request_count_limit INTEGER;');
+      console.log('[DB] Migration completed: request_count_limit column added');
+    }
+
+    if (!hasTotalRequestsUsed) {
+      console.log('[DB] Running migration: Adding total_requests_used column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN total_requests_used INTEGER DEFAULT 0;');
+      console.log('[DB] Migration completed: total_requests_used column added');
+    }
+
+    if (!hasRequestResetInterval) {
+      console.log('[DB] Running migration: Adding request_reset_interval column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN request_reset_interval INTEGER;');
+      console.log('[DB] Migration completed: request_reset_interval column added');
+    }
+
+    if (!hasRequestLastResetAt) {
+      console.log('[DB] Running migration: Adding request_last_reset_at column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN request_last_reset_at INTEGER;');
+      console.log('[DB] Migration completed: request_last_reset_at column added');
+    }
+
+    // 检查rules表是否有request_reset_base_time字段
+    const hasRequestResetBaseTime = rulesColumns.some((col: any) => col.name === 'request_reset_base_time');
+    if (!hasRequestResetBaseTime) {
+      console.log('[DB] Running migration: Adding request_reset_base_time column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN request_reset_base_time INTEGER;');
+      console.log('[DB] Migration completed: request_reset_base_time column added');
+    }
+
+    // 检查rules表是否有token_reset_base_time字段
+    const hasTokenResetBaseTime = rulesColumns.some((col: any) => col.name === 'token_reset_base_time');
+    if (!hasTokenResetBaseTime) {
+      console.log('[DB] Running migration: Adding token_reset_base_time column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN token_reset_base_time INTEGER;');
+      console.log('[DB] Migration completed: token_reset_base_time column added');
+    }
+
+    // 检查api_services表是否有超量配置相关字段
+    // Token超量配置
+    const hasEnableTokenLimit = columns.some((col: any) => col.name === 'enable_token_limit');
+    if (!hasEnableTokenLimit) {
+      console.log('[DB] Running migration: Adding enable_token_limit column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN enable_token_limit INTEGER DEFAULT 0;');
+      console.log('[DB] Migration completed: enable_token_limit column added');
+    }
+
+    const hasServiceTokenLimit = columns.some((col: any) => col.name === 'token_limit');
+    if (!hasServiceTokenLimit) {
+      console.log('[DB] Running migration: Adding token_limit column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN token_limit INTEGER;');
+      console.log('[DB] Migration completed: token_limit column added');
+    }
+
+    const hasTokenResetInterval = columns.some((col: any) => col.name === 'token_reset_interval');
+    if (!hasTokenResetInterval) {
+      console.log('[DB] Running migration: Adding token_reset_interval column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN token_reset_interval INTEGER;');
+      console.log('[DB] Migration completed: token_reset_interval column added');
+    }
+
+    const hasServiceTokenResetBaseTime = columns.some((col: any) => col.name === 'token_reset_base_time');
+    if (!hasServiceTokenResetBaseTime) {
+      console.log('[DB] Running migration: Adding token_reset_base_time column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN token_reset_base_time INTEGER;');
+      console.log('[DB] Migration completed: token_reset_base_time column added');
+    }
+
+    // 请求次数超量配置
+    const hasEnableRequestLimit = columns.some((col: any) => col.name === 'enable_request_limit');
+    if (!hasEnableRequestLimit) {
+      console.log('[DB] Running migration: Adding enable_request_limit column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN enable_request_limit INTEGER DEFAULT 0;');
+      console.log('[DB] Migration completed: enable_request_limit column added');
+    }
+
+    const hasServiceRequestCountLimit = columns.some((col: any) => col.name === 'request_count_limit');
+    if (!hasServiceRequestCountLimit) {
+      console.log('[DB] Running migration: Adding request_count_limit column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN request_count_limit INTEGER;');
+      console.log('[DB] Migration completed: request_count_limit column added');
+    }
+
+    const hasServiceRequestResetInterval = columns.some((col: any) => col.name === 'request_reset_interval');
+    if (!hasServiceRequestResetInterval) {
+      console.log('[DB] Running migration: Adding request_reset_interval column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN request_reset_interval INTEGER;');
+      console.log('[DB] Migration completed: request_reset_interval column added');
+    }
+
+    const hasServiceRequestResetBaseTime = columns.some((col: any) => col.name === 'request_reset_base_time');
+    if (!hasServiceRequestResetBaseTime) {
+      console.log('[DB] Running migration: Adding request_reset_base_time column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN request_reset_base_time INTEGER;');
+      console.log('[DB] Migration completed: request_reset_base_time column added');
+    }
   }
 
   private async migrateMaxOutputTokensToModelLimits() {
@@ -260,6 +365,10 @@ export class DatabaseManager {
         total_tokens_used INTEGER DEFAULT 0,
         reset_interval INTEGER,
         last_reset_at INTEGER,
+        request_count_limit INTEGER,
+        total_requests_used INTEGER DEFAULT 0,
+        request_reset_interval INTEGER,
+        request_last_reset_at INTEGER,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE CASCADE,
@@ -350,6 +459,16 @@ export class DatabaseManager {
       supportedModels: row.supported_models ? row.supported_models.split(',').map((model: string) => model.trim()).filter((model: string) => model.length > 0) : undefined,
       modelLimits: row.model_limits ? JSON.parse(row.model_limits) : undefined,
       enableProxy: row.enable_proxy === 1,
+      // Token超量配置
+      enableTokenLimit: row.enable_token_limit === 1,
+      tokenLimit: row.token_limit,
+      tokenResetInterval: row.token_reset_interval,
+      tokenResetBaseTime: row.token_reset_base_time,
+      // 请求次数超量配置
+      enableRequestLimit: row.enable_request_limit === 1,
+      requestCountLimit: row.request_count_limit,
+      requestResetInterval: row.request_reset_interval,
+      requestResetBaseTime: row.request_reset_base_time,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -367,7 +486,7 @@ export class DatabaseManager {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, enable_proxy, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, enable_proxy, enable_token_limit, token_limit, token_reset_interval, token_reset_base_time, enable_request_limit, request_count_limit, request_reset_interval, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         id,
@@ -379,6 +498,14 @@ export class DatabaseManager {
         service.supportedModels ? service.supportedModels.join(',') : null,
         service.modelLimits ? JSON.stringify(service.modelLimits) : null,
         service.enableProxy ? 1 : 0,
+        service.enableTokenLimit ? 1 : 0,
+        service.tokenLimit || null,
+        service.tokenResetInterval || null,
+        service.tokenResetBaseTime || null,
+        service.enableRequestLimit ? 1 : 0,
+        service.requestCountLimit || null,
+        service.requestResetInterval || null,
+        service.requestResetBaseTime || null,
         now,
         now
       );
@@ -389,9 +516,10 @@ export class DatabaseManager {
     const now = Date.now();
     const result = this.db
       .prepare(
-        'UPDATE api_services SET name = ?, api_url = ?, api_key = ?, source_type = ?, supported_models = ?, model_limits = ?, enable_proxy = ?, updated_at = ? WHERE id = ?'
+        'UPDATE api_services SET vendor_id = ?, name = ?, api_url = ?, api_key = ?, source_type = ?, supported_models = ?, model_limits = ?, enable_proxy = ?, enable_token_limit = ?, token_limit = ?, token_reset_interval = ?, token_reset_base_time = ?, enable_request_limit = ?, request_count_limit = ?, request_reset_interval = ?, request_reset_base_time = ?, updated_at = ? WHERE id = ?'
       )
       .run(
+        service.vendorId,
         service.name,
         service.apiUrl,
         service.apiKey,
@@ -399,6 +527,14 @@ export class DatabaseManager {
         service.supportedModels ? service.supportedModels.join(',') : null,
         service.modelLimits ? JSON.stringify(service.modelLimits) : null,
         service.enableProxy !== undefined ? (service.enableProxy ? 1 : 0) : null,
+        service.enableTokenLimit !== undefined ? (service.enableTokenLimit ? 1 : 0) : null,
+        service.tokenLimit !== undefined ? service.tokenLimit : null,
+        service.tokenResetInterval !== undefined ? service.tokenResetInterval : null,
+        service.tokenResetBaseTime !== undefined ? service.tokenResetBaseTime : null,
+        service.enableRequestLimit !== undefined ? (service.enableRequestLimit ? 1 : 0) : null,
+        service.requestCountLimit !== undefined ? service.requestCountLimit : null,
+        service.requestResetInterval !== undefined ? service.requestResetInterval : null,
+        service.requestResetBaseTime !== undefined ? service.requestResetBaseTime : null,
         now,
         id
       );
@@ -487,6 +623,12 @@ export class DatabaseManager {
       totalTokensUsed: row.total_tokens_used,
       resetInterval: row.reset_interval,
       lastResetAt: row.last_reset_at,
+      tokenResetBaseTime: row.token_reset_base_time,
+      requestCountLimit: row.request_count_limit,
+      totalRequestsUsed: row.total_requests_used,
+      requestResetInterval: row.request_reset_interval,
+      requestLastResetAt: row.request_last_reset_at,
+      requestResetBaseTime: row.request_reset_base_time,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -497,7 +639,7 @@ export class DatabaseManager {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, token_reset_base_time, request_count_limit, total_requests_used, request_reset_interval, request_last_reset_at, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         id,
@@ -512,6 +654,12 @@ export class DatabaseManager {
         route.totalTokensUsed || 0,
         route.resetInterval || null,
         route.lastResetAt || null,
+        (route as any).tokenResetBaseTime || null,
+        route.requestCountLimit || null,
+        route.totalRequestsUsed || 0,
+        route.requestResetInterval || null,
+        route.requestLastResetAt || null,
+        route.requestResetBaseTime || null,
         now,
         now
       );
@@ -522,7 +670,7 @@ export class DatabaseManager {
     const now = Date.now();
     const result = this.db
       .prepare(
-        'UPDATE rules SET content_type = ?, target_service_id = ?, target_model = ?, replaced_model = ?, sort_order = ?, timeout = ?, token_limit = ?, reset_interval = ?, updated_at = ? WHERE id = ?'
+        'UPDATE rules SET content_type = ?, target_service_id = ?, target_model = ?, replaced_model = ?, sort_order = ?, timeout = ?, token_limit = ?, reset_interval = ?, token_reset_base_time = ?, request_count_limit = ?, request_reset_interval = ?, request_reset_base_time = ?, updated_at = ? WHERE id = ?'
       )
       .run(
         route.contentType,
@@ -533,6 +681,10 @@ export class DatabaseManager {
         route.timeout !== undefined ? route.timeout : null,
         route.tokenLimit !== undefined ? route.tokenLimit : null,
         route.resetInterval !== undefined ? route.resetInterval : null,
+        (route as any).tokenResetBaseTime !== undefined ? (route as any).tokenResetBaseTime : null,
+        route.requestCountLimit !== undefined ? route.requestCountLimit : null,
+        route.requestResetInterval !== undefined ? route.requestResetInterval : null,
+        route.requestResetBaseTime !== undefined ? route.requestResetBaseTime : null,
         now,
         id
       );
@@ -578,8 +730,12 @@ export class DatabaseManager {
    */
   checkAndResetRuleIfNeeded(ruleId: string): boolean {
     const rule = this.db
-      .prepare('SELECT reset_interval, last_reset_at FROM rules WHERE id = ?')
-      .get(ruleId) as { reset_interval: number | null; last_reset_at: number | null } | undefined;
+      .prepare('SELECT reset_interval, last_reset_at, token_reset_base_time FROM rules WHERE id = ?')
+      .get(ruleId) as {
+        reset_interval: number | null;
+        last_reset_at: number | null;
+        token_reset_base_time: number | null;
+      } | undefined;
 
     if (!rule || !rule.reset_interval) {
       return false; // 没有设置重置间隔
@@ -587,9 +743,19 @@ export class DatabaseManager {
 
     const now = Date.now();
     const resetIntervalMs = rule.reset_interval * 60 * 60 * 1000; // 小时转毫秒
+    const baseTime = rule.token_reset_base_time;
     const lastResetAt = rule.last_reset_at || 0;
 
-    // 检查是否已经到了重置时间
+    // 场景1: 设置了时间基点
+    if (baseTime) {
+      if (now >= baseTime) {
+        this.resetRuleTokenUsageWithBaseTime(ruleId, baseTime);
+        return true;
+      }
+      return false;
+    }
+
+    // 场景2: 未设置时间基点，使用原始逻辑（向后兼容）
     if (now - lastResetAt >= resetIntervalMs) {
       this.resetRuleTokenUsage(ruleId);
       return true;
@@ -598,12 +764,132 @@ export class DatabaseManager {
     return false;
   }
 
+  /**
+   * 重置规则的Token使用量（带时间基点更新）
+   */
+  resetRuleTokenUsageWithBaseTime(ruleId: string, currentBaseTime: number): boolean {
+    const now = Date.now();
+    const rule = this.db
+      .prepare('SELECT reset_interval FROM rules WHERE id = ?')
+      .get(ruleId) as { reset_interval: number } | undefined;
+
+    if (!rule || !rule.reset_interval) {
+      return false;
+    }
+
+    const resetIntervalMs = rule.reset_interval * 60 * 60 * 1000;
+
+    // 计算下一个时间基点
+    let nextBaseTime = currentBaseTime;
+    while (nextBaseTime <= now) {
+      nextBaseTime += resetIntervalMs;
+    }
+
+    const result = this.db
+      .prepare('UPDATE rules SET total_tokens_used = 0, last_reset_at = ?, token_reset_base_time = ? WHERE id = ?')
+      .run(now, nextBaseTime, ruleId);
+
+    return result.changes > 0;
+  }
+
+  /**
+   * 增加规则的请求次数
+   * @param ruleId 规则ID
+   * @param count 增加的次数
+   * @returns 是否成功
+   */
+  incrementRuleRequestCount(ruleId: string, count: number): boolean {
+    const result = this.db
+      .prepare('UPDATE rules SET total_requests_used = total_requests_used + ? WHERE id = ?')
+      .run(count, ruleId);
+    return result.changes > 0;
+  }
+
+  /**
+   * 重置规则的请求次数
+   * @param ruleId 规则ID
+   * @returns 是否成功
+   */
+  resetRuleRequestCount(ruleId: string): boolean {
+    const now = Date.now();
+    const result = this.db
+      .prepare('UPDATE rules SET total_requests_used = 0, request_last_reset_at = ? WHERE id = ?')
+      .run(now, ruleId);
+    return result.changes > 0;
+  }
+
+  /**
+   * 检查并重置到期的规则（请求次数）
+   * 如果规则设置了request_reset_interval且已经到了重置时间，则自动重置请求次数
+   * @param ruleId 规则ID
+   * @returns 是否进行了重置
+   */
+  checkAndResetRequestCountIfNeeded(ruleId: string): boolean {
+    const rule = this.db
+      .prepare('SELECT request_reset_interval, request_last_reset_at, request_reset_base_time FROM rules WHERE id = ?')
+      .get(ruleId) as {
+        request_reset_interval: number | null;
+        request_last_reset_at: number | null;
+        request_reset_base_time: number | null;
+      } | undefined;
+
+    if (!rule || !rule.request_reset_interval) {
+      return false; // 没有设置重置间隔
+    }
+
+    const now = Date.now();
+    const resetIntervalMs = rule.request_reset_interval * 60 * 60 * 1000; // 小时转毫秒
+    const baseTime = rule.request_reset_base_time;
+    const lastResetAt = rule.request_last_reset_at || 0;
+
+    // 场景1: 设置了时间基点
+    if (baseTime) {
+      if (now >= baseTime) {
+        this.resetRuleRequestCountWithBaseTime(ruleId, baseTime);
+        return true;
+      }
+      return false;
+    }
+
+    // 场景2: 未设置时间基点，使用原始逻辑（向后兼容）
+    if (now - lastResetAt >= resetIntervalMs) {
+      this.resetRuleRequestCount(ruleId);
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * 重置规则的请求次数（带时间基点更新）
+   */
+  resetRuleRequestCountWithBaseTime(ruleId: string, currentBaseTime: number): boolean {
+    const now = Date.now();
+    const rule = this.db
+      .prepare('SELECT request_reset_interval FROM rules WHERE id = ?')
+      .get(ruleId) as { request_reset_interval: number } | undefined;
+
+    if (!rule || !rule.request_reset_interval) {
+      return false;
+    }
+
+    const resetIntervalMs = rule.request_reset_interval * 60 * 60 * 1000;
+
+    // 计算下一个时间基点
+    let nextBaseTime = currentBaseTime;
+    while (nextBaseTime <= now) {
+      nextBaseTime += resetIntervalMs;
+    }
+
+    const result = this.db
+      .prepare('UPDATE rules SET total_requests_used = 0, request_last_reset_at = ?, request_reset_base_time = ? WHERE id = ?')
+      .run(now, nextBaseTime, ruleId);
+
+    return result.changes > 0;
+  }
+
   // Log operations
   async addLog(log: Omit<RequestLog, 'id'>): Promise<void> {
-    const { path } = log;
-    if (!path.startsWith('/v1/')) {
-      return;
-    }
     const id = crypto.randomUUID();
     await this.logDb.put(id, JSON.stringify({ ...log, id }));
     // 清除缓存
@@ -770,7 +1056,8 @@ export class DatabaseManager {
     routeId: string,
     contentType: ContentType,
     errorMessage?: string,
-    statusCode?: number
+    statusCode?: number,
+    errorType?: 'http' | 'timeout' | 'unknown'
   ): Promise<void> {
     const key = `${routeId}:${contentType}:${serviceId}`;
     const now = Date.now();
@@ -786,6 +1073,7 @@ export class DatabaseManager {
       entry.errorCount++;
       entry.lastError = errorMessage;
       entry.lastStatusCode = statusCode;
+      entry.errorType = errorType;
 
       await this.blacklistDb.put(key, JSON.stringify(entry));
     } catch (error: any) {
@@ -800,6 +1088,7 @@ export class DatabaseManager {
           errorCount: 1,
           lastError: errorMessage,
           lastStatusCode: statusCode,
+          errorType,
         };
 
         await this.blacklistDb.put(key, JSON.stringify(entry));
@@ -807,6 +1096,15 @@ export class DatabaseManager {
         throw error;
       }
     }
+  }
+
+  async removeFromBlacklist(
+    serviceId: string,
+    routeId: string,
+    contentType: ContentType
+  ): Promise<void> {
+    const key = `${routeId}:${contentType}:${serviceId}`;
+    await this.blacklistDb.del(key);
   }
 
   async cleanupExpiredBlacklist(): Promise<number> {
@@ -877,7 +1175,7 @@ export class DatabaseManager {
        for (const service of importData.apiServices) {
          this.db
            .prepare(
-             'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+             'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, enable_proxy, enable_token_limit, token_limit, token_reset_interval, token_reset_base_time, enable_request_limit, request_count_limit, request_reset_interval, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
            )
            .run(
              service.id,
@@ -888,6 +1186,15 @@ export class DatabaseManager {
              service.sourceType || null,
              service.supportedModels ? service.supportedModels.join(',') : null,
              service.modelLimits ? JSON.stringify(service.modelLimits) : null,
+             service.enableProxy ? 1 : 0,
+             service.enableTokenLimit ? 1 : 0,
+             service.tokenLimit || null,
+             service.tokenResetInterval || null,
+             service.tokenResetBaseTime || null,
+             service.enableRequestLimit ? 1 : 0,
+             service.requestCountLimit || null,
+             service.requestResetInterval || null,
+             service.requestResetBaseTime || null,
              service.createdAt,
              service.updatedAt
            );
@@ -904,7 +1211,7 @@ export class DatabaseManager {
       for (const rule of importData.rules) {
         this.db
           .prepare(
-            'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, token_reset_base_time, request_count_limit, total_requests_used, request_reset_interval, request_last_reset_at, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
           )
           .run(
             rule.id,
@@ -919,6 +1226,12 @@ export class DatabaseManager {
             rule.totalTokensUsed || 0,
             rule.resetInterval || null,
             rule.lastResetAt || null,
+            (rule as any).tokenResetBaseTime || null,
+            rule.requestCountLimit || null,
+            rule.totalRequestsUsed || 0,
+            rule.requestResetInterval || null,
+            rule.requestLastResetAt || null,
+            (rule as any).requestResetBaseTime || null,
             rule.createdAt,
             rule.updatedAt
           );
@@ -1143,6 +1456,31 @@ export class DatabaseManager {
         recentErrors: recentErrorLogs.length,
       },
     };
+  }
+
+  async getRuleBlacklistStatus(
+    serviceId: string,
+    routeId: string,
+    contentType: ContentType
+  ): Promise<ServiceBlacklistEntry | null> {
+    const key = `${routeId}:${contentType}:${serviceId}`;
+    try {
+      const value = await this.blacklistDb.get(key);
+      const entry: ServiceBlacklistEntry = JSON.parse(value);
+
+      // 检查是否过期
+      if (Date.now() > entry.expiresAt) {
+        await this.blacklistDb.del(key);
+        return null;
+      }
+
+      return entry;
+    } catch (error: any) {
+      if (error.code === 'LEVEL_NOT_FOUND') {
+        return null;
+      }
+      throw error;
+    }
   }
 
   close() {

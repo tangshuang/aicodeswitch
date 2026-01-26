@@ -6,6 +6,18 @@ import vendorsConfig from '../constants/vendors';
 import { SOURCE_TYPE } from '../constants';
 import { useRecomandVendors } from '../hooks/docs';
 
+/**
+ * 将 Date 对象转换为 datetime-local input 所需的格式
+ */
+function formatDateTimeLocal(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
 // TagInput 组件
 function TagInput({ value = [], onChange, placeholder, inputValue, onInputChange }: {
   value: string[];
@@ -111,6 +123,18 @@ function VendorsPage() {
   const [tagInputValue, setTagInputValue] = useState('');
   const [modelLimits, setModelLimits] = useState<Record<string, number>>({});
 
+  // Token超量配置
+  const [enableTokenLimit, setEnableTokenLimit] = useState(false);
+  const [tokenLimit, setTokenLimit] = useState<number | undefined>(undefined);
+  const [tokenResetInterval, setTokenResetInterval] = useState<number | undefined>(undefined);
+  const [tokenResetBaseTime, setTokenResetBaseTime] = useState<Date | undefined>(undefined);
+
+  // 请求次数超量配置
+  const [enableRequestLimit, setEnableRequestLimit] = useState(false);
+  const [requestCountLimit, setRequestCountLimit] = useState<number | undefined>(undefined);
+  const [requestResetInterval, setRequestResetInterval] = useState<number | undefined>(undefined);
+  const [requestResetBaseTime, setRequestResetBaseTime] = useState<Date | undefined>(undefined);
+
   // 一键配置相关状态
   const [quickSetupVendorKey, setQuickSetupVendorKey] = useState<string>('');
   const [quickSetupSourceTypes, setQuickSetupSourceTypes] = useState<SourceType[]>([]);
@@ -210,6 +234,16 @@ function VendorsPage() {
     setSupportedModels([]);
     setTagInputValue('');
     setModelLimits({});
+    // Token超量配置
+    setEnableTokenLimit(false);
+    setTokenLimit(undefined);
+    setTokenResetInterval(undefined);
+    setTokenResetBaseTime(undefined);
+    // 请求次数超量配置
+    setEnableRequestLimit(false);
+    setRequestCountLimit(undefined);
+    setRequestResetInterval(undefined);
+    setRequestResetBaseTime(undefined);
     setShowServiceModal(true);
   };
 
@@ -218,6 +252,20 @@ function VendorsPage() {
     setSupportedModels(service.supportedModels || []);
     setTagInputValue('');
     setModelLimits(service.modelLimits || {});
+    // Token超量配置
+    setEnableTokenLimit(service.enableTokenLimit || false);
+    setTokenLimit(service.tokenLimit);
+    setTokenResetInterval(service.tokenResetInterval);
+    setTokenResetBaseTime(
+      (service as any).tokenResetBaseTime ? new Date((service as any).tokenResetBaseTime) : undefined
+    );
+    // 请求次数超量配置
+    setEnableRequestLimit(service.enableRequestLimit || false);
+    setRequestCountLimit(service.requestCountLimit);
+    setRequestResetInterval(service.requestResetInterval);
+    setRequestResetBaseTime(
+      (service as any).requestResetBaseTime ? new Date((service as any).requestResetBaseTime) : undefined
+    );
     setShowServiceModal(true);
   };
 
@@ -266,6 +314,16 @@ function VendorsPage() {
       supportedModels: finalModels.length > 0 ? finalModels : undefined,
       modelLimits: Object.keys(finalModelLimits).length > 0 ? finalModelLimits : undefined,
       enableProxy: formData.get('enableProxy') === 'on',
+      // Token超量配置
+      enableTokenLimit,
+      tokenLimit,
+      tokenResetInterval,
+      tokenResetBaseTime: tokenResetBaseTime ? tokenResetBaseTime.getTime() : undefined,
+      // 请求次数超量配置
+      enableRequestLimit,
+      requestCountLimit,
+      requestResetInterval,
+      requestResetBaseTime: requestResetBaseTime ? requestResetBaseTime.getTime() : undefined,
     };
 
     if (editingService) {
@@ -278,6 +336,14 @@ function VendorsPage() {
     setSupportedModels([]);
     setTagInputValue('');
     setModelLimits({});
+    setEnableTokenLimit(false);
+    setTokenLimit(undefined);
+    setTokenResetInterval(undefined);
+    setTokenResetBaseTime(undefined);
+    setEnableRequestLimit(false);
+    setRequestCountLimit(undefined);
+    setRequestResetInterval(undefined);
+    setRequestResetBaseTime(undefined);
     if (selectedVendor) {
       loadServices(selectedVendor.id);
     }
@@ -810,6 +876,123 @@ function VendorsPage() {
                   勾选后，此 API 服务的请求将通过设置的代理转发。请在"设置"页面配置代理。
                 </small>
               </div>
+
+              {/* Token超量配置 */}
+              <div className="form-group">
+                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={enableTokenLimit}
+                    onChange={(e) => setEnableTokenLimit(e.target.checked)}
+                    style={{ marginRight: '8px', cursor: 'pointer', width: '16px', height: '16px' }}
+                  />
+                  <span>启用Token超量限制</span>
+                </label>
+              </div>
+
+              {enableTokenLimit && (
+                <>
+                  <div className="form-group">
+                    <label>Token超量值（单位：k）</label>
+                    <input
+                      type="number"
+                      value={tokenLimit || ''}
+                      onChange={(e) => setTokenLimit(e.target.value ? parseInt(e.target.value) : undefined)}
+                      min="1"
+                      placeholder="例如：1000表示1000k tokens"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>自动重置间隔（小时）</label>
+                    <input
+                      type="number"
+                      value={tokenResetInterval || ''}
+                      onChange={(e) => setTokenResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
+                      min="1"
+                      placeholder="例如：720表示30天，168表示7天"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>下一次重置时间基点</label>
+                    <input
+                      type="datetime-local"
+                      value={tokenResetBaseTime ? formatDateTimeLocal(tokenResetBaseTime) : ''}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setTokenResetBaseTime(new Date(e.target.value));
+                        } else {
+                          setTokenResetBaseTime(undefined);
+                        }
+                      }}
+                      className="datetime-picker-input"
+                    />
+                    <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                      设置下一次重置的精确时间点
+                    </small>
+                  </div>
+                </>
+              )}
+
+              {/* 请求次数超量配置 */}
+              <div className="form-group">
+                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={enableRequestLimit}
+                    onChange={(e) => setEnableRequestLimit(e.target.checked)}
+                    style={{ marginRight: '8px', cursor: 'pointer', width: '16px', height: '16px' }}
+                  />
+                  <span>启用请求次数超量限制</span>
+                </label>
+              </div>
+
+              {enableRequestLimit && (
+                <>
+                  <div className="form-group">
+                    <label>请求次数超量值</label>
+                    <input
+                      type="number"
+                      value={requestCountLimit || ''}
+                      onChange={(e) => setRequestCountLimit(e.target.value ? parseInt(e.target.value) : undefined)}
+                      min="1"
+                      placeholder="例如：100"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>自动重置间隔（小时）</label>
+                    <input
+                      type="number"
+                      value={requestResetInterval || ''}
+                      onChange={(e) => setRequestResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
+                      min="1"
+                      placeholder="例如：720表示30天，168表示7天"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>下一次重置时间基点</label>
+                    <input
+                      type="datetime-local"
+                      value={requestResetBaseTime ? formatDateTimeLocal(requestResetBaseTime) : ''}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setRequestResetBaseTime(new Date(e.target.value));
+                        } else {
+                          setRequestResetBaseTime(undefined);
+                        }
+                      }}
+                      className="datetime-picker-input"
+                    />
+                    <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                      设置下一次重置的精确时间点
+                    </small>
+                  </div>
+                </>
+              )}
+
                <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowServiceModal(false)}>取消</button>
                 <button type="submit" className="btn btn-primary">保存</button>

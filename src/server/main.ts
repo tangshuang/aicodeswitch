@@ -325,6 +325,73 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
   app.put('/api/rules/:id', (req, res) => res.json(dbManager.updateRule(req.params.id, req.body)));
   app.delete('/api/rules/:id', (req, res) => res.json(dbManager.deleteRule(req.params.id)));
   app.put('/api/rules/:id/reset-tokens', (req, res) => res.json(dbManager.resetRuleTokenUsage(req.params.id)));
+  app.put('/api/rules/:id/reset-requests', (req, res) => res.json(dbManager.resetRuleRequestCount(req.params.id)));
+
+  // 解除规则的黑名单状态
+  app.put(
+    '/api/rules/:id/clear-blacklist',
+    asyncHandler(async (req, res) => {
+      const { id } = req.params;
+      const rule = dbManager.getRule(id);
+
+      if (!rule) {
+        return res.status(404).json({ error: 'Rule not found' });
+      }
+
+      // 找到该规则所属的路由
+      const routes = dbManager.getRoutes();
+      const route = routes.find(r => {
+        const rules = dbManager.getRules(r.id);
+        return rules.some(r => r.id === id);
+      });
+
+      if (!route) {
+        return res.status(404).json({ error: 'Route not found' });
+      }
+
+      try {
+        await dbManager.removeFromBlacklist(
+          rule.targetServiceId,
+          route.id,
+          rule.contentType
+        );
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Error clearing blacklist:', error);
+        res.status(500).json({ error: 'Failed to clear blacklist' });
+      }
+    })
+  );
+
+  // 获取规则的黑名单状态
+  app.get(
+    '/api/rules/:routeId/blacklist-status',
+    asyncHandler(async (req, res) => {
+      const { routeId } = req.params;
+      const rules = dbManager.getRules(routeId);
+
+      try {
+        const results = await Promise.all(
+          rules.map(async (rule) => {
+            const blacklistStatus = await dbManager.getRuleBlacklistStatus(
+              rule.targetServiceId,
+              routeId,
+              rule.contentType
+            );
+            return {
+              ruleId: rule.id,
+              isBlacklisted: blacklistStatus !== null,
+              blacklistEntry: blacklistStatus,
+            };
+          })
+        );
+        res.json(results);
+      } catch (error) {
+        console.error('Error getting blacklist status:', error);
+        res.status(500).json({ error: 'Failed to get blacklist status' });
+      }
+    })
+  );
 
   app.get(
     '/api/logs',

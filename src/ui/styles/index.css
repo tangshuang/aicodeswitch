@@ -33,6 +33,9 @@
   --text-route-muted: #6c757d;
   --text-info: #2faeee;
   --text-light: #018038;
+  --bg-info-box: #f8f9fa;
+  --border-info-box: #e0e0e0;
+  --text-info-box: #666;
 }
 
 [data-theme="dark"] {
@@ -63,6 +66,9 @@
   --bg-route-item-selected: rgba(16, 185, 129, 0.15);
   --text-route-muted: #A7F3D0;
   --text-light: #999999;
+  --bg-info-box: rgba(20, 46, 28, 0.6);
+  --border-info-box: rgba(161, 233, 199, 0.2);
+  --text-info-box: #A7F3D0;
 }
 
 body {
@@ -136,4 +142,33 @@ code {
 /* Smooth scrolling */
 html {
   scroll-behavior: smooth;
+}
+
+/* datetime-local input styles */
+.datetime-picker-input {
+  cursor: pointer;
+}
+
+/* Chrome, Edge, Safari - Make calendar picker indicator white and visible */
+.datetime-picker-input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 1;
+  filter: brightness(0) invert(1);
+  padding: 2px 4px;
+}
+
+.datetime-picker-input::-webkit-calendar-picker-indicator:hover {
+  filter: brightness(0.2) invert(1);
+}
+
+/* Firefox - Calendar picker indicator */
+.datetime-picker-input::-moz-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 1;
+  filter: brightness(0) invert(1);
+  padding: 2px 4px;
+}
+
+.datetime-picker-input::-moz-calendar-picker-indicator:hover {
+  filter: brightness(0.2) invert(1);
 }

@@ -24,6 +24,19 @@ export interface APIService {
   supportedModels?: string[];
   modelLimits?: Record<string, number>; // 模型名 -> 最大输出tokens映射
   enableProxy?: boolean; // 是否启用代理
+
+  // 新增：Token超量配置
+  enableTokenLimit?: boolean;          // 是否启用Token超量限制
+  tokenLimit?: number;                 // Token超量值（单位：k）
+  tokenResetInterval?: number;         // Token自动重置间隔（小时）
+  tokenResetBaseTime?: number;         // Token下一次重置时间基点
+
+  // 新增：请求次数超量配置
+  enableRequestLimit?: boolean;        // 是否启用请求次数超量限制
+  requestCountLimit?: number;          // 请求次数超量值
+  requestResetInterval?: number;       // 请求次数自动重置间隔（小时）
+  requestResetBaseTime?: number;       // 请求次数下一次重置时间基点
+
   createdAt: number;
   updatedAt: number;
 }
@@ -53,6 +66,12 @@ export interface Rule {
   totalTokensUsed?: number;      // 当前累计token使用量
   resetInterval?: number;        // 自动重置间隔（小时）
   lastResetAt?: number;          // 上次重置时间戳
+  tokenResetBaseTime?: number;   // Token下一次重置的时间基点（Unix时间戳）
+  requestCountLimit?: number;    // 请求次数上限
+  totalRequestsUsed?: number;    // 当前累计请求次数
+  requestResetInterval?: number; // 次数重置间隔（小时）
+  requestLastResetAt?: number;   // 上次次数重置时间戳
+  requestResetBaseTime?: number; // 下一次重置的时间基点（Unix时间戳）
   createdAt: number;
   updatedAt: number;
 }
@@ -116,6 +135,9 @@ export interface ErrorLog {
   errorStack?: string;
   requestHeaders?: Record<string, string>;
   requestBody?: string;
+  responseHeaders?: Record<string, string>;
+  responseBody?: string;
+  responseTime?: number;
 }
 
 export interface AppConfig {
@@ -161,6 +183,7 @@ export interface ServiceBlacklistEntry {
   errorCount: number;         // 错误计数
   lastError?: string;         // 最后一次错误信息
   lastStatusCode?: number;    // 最后一次错误的状态码
+  errorType?: 'http' | 'timeout' | 'unknown'; // 错误类型
 }
 
 /** 鉴权状态响应 */
