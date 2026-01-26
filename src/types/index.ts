@@ -113,18 +113,6 @@ export interface RequestLog {
   };
 }
 
-export interface AccessLog {
-  id: string;
-  timestamp: number;
-  method: string;
-  path: string;
-  clientIp?: string;
-  userAgent?: string;
-  statusCode?: number;
-  responseTime?: number;
-  error?: string;
-}
-
 export interface ErrorLog {
   id: string;
   timestamp: number;

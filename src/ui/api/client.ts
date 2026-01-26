@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, AccessLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -41,10 +41,6 @@ interface BackendAPI {
   getLogs: (limit: number, offset: number) => Promise<RequestLog[]>;
   clearLogs: () => Promise<boolean>;
   getLogsCount: () => Promise<{ count: number }>;
-
-  getAccessLogs: (limit: number, offset: number) => Promise<AccessLog[]>;
-  clearAccessLogs: () => Promise<boolean>;
-  getAccessLogsCount: () => Promise<{ count: number }>;
 
   getErrorLogs: (limit: number, offset: number) => Promise<ErrorLog[]>;
   clearErrorLogs: () => Promise<boolean>;
@@ -164,14 +160,10 @@ export const api: BackendAPI = {
   getLogs: (limit, offset) => requestJson(buildUrl('/api/logs', { limit, offset })),
   clearLogs: () => requestJson(buildUrl('/api/logs'), { method: 'DELETE' }),
 
-  getAccessLogs: (limit, offset) => requestJson(buildUrl('/api/access-logs', { limit, offset })),
-  clearAccessLogs: () => requestJson(buildUrl('/api/access-logs'), { method: 'DELETE' }),
-
   getErrorLogs: (limit, offset) => requestJson(buildUrl('/api/error-logs', { limit, offset })),
   clearErrorLogs: () => requestJson(buildUrl('/api/error-logs'), { method: 'DELETE' }),
 
   getLogsCount: () => requestJson<{ count: number }>(buildUrl('/api/logs/count')),
-  getAccessLogsCount: () => requestJson<{ count: number }>(buildUrl('/api/access-logs/count')),
   getErrorLogsCount: () => requestJson<{ count: number }>(buildUrl('/api/error-logs/count')),
 
   getConfig: () => requestJson(buildUrl('/api/config')),

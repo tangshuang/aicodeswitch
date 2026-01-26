@@ -25,20 +25,6 @@ type ContentTypeDetector = {
 
 const SUPPORTED_TARGETS = ['claude-code', 'codex'];
 
-// 需要排除的路径模式（非业务请求）
-const IGNORED_PATHS = [
-  '/favicon.ico',
-  '/robots.txt',
-  '/sitemap.xml',
-];
-
-/**
- * 检查路径是否应该被忽略
- */
-function shouldIgnorePath(path: string): boolean {
-  return IGNORED_PATHS.some(ignored => path === ignored || path.startsWith(ignored + '?'));
-}
-
 export class ProxyServer {
   private app: express.Application;
   private dbManager: DatabaseManager;
@@ -55,132 +41,11 @@ export class ProxyServer {
     this.app = app;
   }
 
-  private setupMiddleware() {
-    // Access logging middleware
-    this.app.use(async (req: Request, res: Response, next: NextFunction) => {
-      // 忽略非业务请求
-      if (shouldIgnorePath(req.path)) {
-        return next();
-      }
-
-      // Capture client info
-      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '';
-      const userAgent = req.headers['user-agent'] || '';
-
-      const startTime = Date.now();
-      const originalSend = res.send.bind(res);
-      const originalJson = res.json.bind(res);
-
-      const accessLog = this.dbManager.addAccessLog({
-        timestamp: Date.now(),
-        method: req.method,
-        path: req.path,
-        clientIp,
-        userAgent,
-      });
-
-      const updateLog = (res: Response | Error, data?: any) => {
-        const responseTime = Date.now() - startTime;
-        accessLog.then((accessLogId) => {
-          const updateData: any = {
-            responseTime,
-          };
-          let errorMessage: string = '';
-          if (res instanceof Error) {
-            updateData.error = res.message;
-            errorMessage = res.message;
-          }
-          else if (res.statusCode >= 400) {
-            updateData.statusCode = res.statusCode;
-            updateData.error = res.statusMessage;
-            // @ts-ignore
-            updateData.responseHeaders = this.normalizeResponseHeaders(res.headers || {});
-            errorMessage = res.statusMessage;
-          }
-          else {
-            updateData.statusCode = res.statusCode;
-            // @ts-ignore
-            updateData.responseHeaders = this.normalizeResponseHeaders(res.headers || {});
-            updateData.responseBody = data ? JSON.stringify(data) : undefined;
-          }
-          this.dbManager.updateAccessLog(accessLogId, updateData);
-          // 记录错误日志
-          if (res instanceof Error || res.statusCode >= 400) {
-            this.dbManager.addErrorLog({
-              timestamp: Date.now(),
-              method: req.method,
-              path: req.path,
-              statusCode: 503,
-              errorMessage,
-              requestHeaders: this.normalizeHeaders(req.headers),
-              requestBody: req.body ? JSON.stringify(req.body) : undefined,
-              responseBody: data ? JSON.stringify(data) : undefined,
-              // @ts-ignore
-              responseHeaders: res.headers ? this.normalizeResponseHeaders(res.headers) : undefined,
-              responseTime,
-            });
-          }
-        });
-      };
-
-      res.send = (data: any) => {
-        res.send = originalSend;
-        updateLog(res, data);
-        return originalSend(data);
-      };
-
-      res.json = (data: any) => {
-        res.json = originalJson;
-        updateLog(res, data);
-        return originalJson(data);
-      };
-
-      res.on('error', (err) => {
-        updateLog(err);
-      });
-
-      next();
-    });
-
-    // Logging middleware (legacy RequestLog)
-    this.app.use(async (req: Request, res: Response, next: NextFunction) => {
-      const startTime = Date.now();
-      const originalSend = res.send.bind(res);
-
-      // 忽略非业务请求，并且只记录支持的编程工具请求
-      if (!shouldIgnorePath(req.path) && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
-        res.send = (data: any) => {
-          res.send = originalSend;
-          if (!res.locals.skipLog && this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
-            const responseTime = Date.now() - startTime;
-            this.dbManager.addLog({
-              timestamp: Date.now(),
-              method: req.method,
-              path: req.path,
-              headers: this.normalizeHeaders(req.headers),
-              body: req.body ? JSON.stringify(req.body) : undefined,
-              statusCode: res.statusCode,
-              responseTime,
-            });
-          }
-
-          return res.send(data);
-        };
-      }
-
-      next();
-    });
-
-    // Fixed route handlers
-    this.app.use('/claude-code/', this.createFixedRouteHandler('claude-code'));
-    this.app.use('/claude-code', this.createFixedRouteHandler('claude-code'));
-    this.app.use('/codex/', this.createFixedRouteHandler('codex'));
-    this.app.use('/codex', this.createFixedRouteHandler('codex'));
-
+  initialize() {
     // Dynamic proxy middleware
     this.app.use(async (req: Request, res: Response, next: NextFunction) => {
-      // 根路径 / 不应该被代理中间件处理,应该传递给静态文件服务
-      if (req.path === '/') {
+      // 仅处理支持的目标路径
+      if (!SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
         return next();
       }
 
@@ -288,7 +153,7 @@ export class ProxyServer {
         console.error('All services failed');
 
         // 记录日志
-        if (this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
+        if (this.config?.enableLogging !== false && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
           await this.dbManager.addLog({
             timestamp: Date.now(),
             method: req.method,
@@ -330,7 +195,7 @@ export class ProxyServer {
         }
       } catch (error: any) {
         console.error('Proxy error:', error);
-        if (this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
+        if (this.config?.enableLogging !== false && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
           await this.dbManager.addLog({
             timestamp: Date.now(),
             method: req.method,
@@ -368,6 +233,14 @@ export class ProxyServer {
         }
       }
     });
+  }
+
+  private addProxyRoutes() {
+    // Fixed route handlers
+    this.app.use('/claude-code/', this.createFixedRouteHandler('claude-code'));
+    this.app.use('/claude-code', this.createFixedRouteHandler('claude-code'));
+    this.app.use('/codex/', this.createFixedRouteHandler('codex'));
+    this.app.use('/codex', this.createFixedRouteHandler('codex'));
   }
 
   private createFixedRouteHandler(targetType: 'claude-code' | 'codex') {
@@ -485,7 +358,7 @@ export class ProxyServer {
         console.error('All services failed');
 
         // 记录日志
-        if (this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
+        if (this.config?.enableLogging !== false && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
           await this.dbManager.addLog({
             timestamp: Date.now(),
             method: req.method,
@@ -527,7 +400,7 @@ export class ProxyServer {
         }
       } catch (error: any) {
         console.error(`Fixed route error for ${targetType}:`, error);
-        if (this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
+        if (this.config?.enableLogging !== false && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
           await this.dbManager.addLog({
             timestamp: Date.now(),
             method: req.method,
@@ -1305,7 +1178,13 @@ export class ProxyServer {
     let actuallyUsedProxy = false; // 标记是否实际使用了代理
 
     const finalizeLog = async (statusCode: number, error?: string) => {
-      if (logged || !this.config?.enableLogging) return;
+      if (logged) return;
+
+      // 检查是否启用日志记录（默认启用）
+      const enableLogging = this.config?.enableLogging !== false; // 默认为 true
+      if (!enableLogging) {
+        return;
+      }
 
       // 只记录来自编程工具的请求
       if (!SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
@@ -1693,8 +1572,8 @@ export class ProxyServer {
     this.config = config;
   }
 
-  async initialize() {
-    this.setupMiddleware();
+  async registerProxyRoutes() {
+    this.addProxyRoutes();
     await this.reloadRoutes();
   }
 }

@@ -1,20 +1,18 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api/client';
-import type { RequestLog, AccessLog, ErrorLog, Vendor, APIService } from '../../types';
+import type { RequestLog, ErrorLog, Vendor, APIService } from '../../types';
 import dayjs from 'dayjs';
 import JSONViewer from '../components/JSONViewer';
 import { TARGET_TYPE } from '../constants';
 import { Pagination } from '../components/Pagination';
 
-type LogTab = 'request' | 'access' | 'error';
+type LogTab = 'request' | 'error';
 
 function LogsPage() {
   const [activeTab, setActiveTab] = useState<LogTab>('request');
   const [requestLogs, setRequestLogs] = useState<RequestLog[]>([]);
-  const [accessLogs, setAccessLogs] = useState<AccessLog[]>([]);
   const [errorLogs, setErrorLogs] = useState<ErrorLog[]>([]);
   const [selectedRequestLog, setSelectedRequestLog] = useState<RequestLog | null>(null);
-  const [selectedAccessLog, setSelectedAccessLog] = useState<AccessLog | null>(null);
   const [selectedErrorLog, setSelectedErrorLog] = useState<ErrorLog | null>(null);
   const [chunksExpanded, setChunksExpanded] = useState<boolean>(false);
 
@@ -22,10 +20,6 @@ function LogsPage() {
   const [requestLogsPage, setRequestLogsPage] = useState(1);
   const [requestLogsPageSize, setRequestLogsPageSize] = useState(20);
   const [requestLogsTotal, setRequestLogsTotal] = useState(0);
-
-  const [accessLogsPage, setAccessLogsPage] = useState(1);
-  const [accessLogsPageSize, setAccessLogsPageSize] = useState(20);
-  const [accessLogsTotal, setAccessLogsTotal] = useState(0);
 
   const [errorLogsPage, setErrorLogsPage] = useState(1);
   const [errorLogsPageSize, setErrorLogsPageSize] = useState(20);
@@ -43,7 +37,7 @@ function LogsPage() {
 
   useEffect(() => {
     loadLogs();
-  }, [activeTab, requestLogsPage, requestLogsPageSize, accessLogsPage, accessLogsPageSize, errorLogsPage, errorLogsPageSize]);
+  }, [activeTab, requestLogsPage, requestLogsPageSize, errorLogsPage, errorLogsPageSize]);
 
   useEffect(() => {
     loadVendorsAndServices();
@@ -60,14 +54,6 @@ function LogsPage() {
         ]);
         setRequestLogs(data);
         setRequestLogsTotal(countResult.count);
-      } else if (activeTab === 'access') {
-        const offset = (accessLogsPage - 1) * accessLogsPageSize;
-        const [data, countResult] = await Promise.all([
-          api.getAccessLogs(accessLogsPageSize, offset),
-          api.getAccessLogsCount()
-        ]);
-        setAccessLogs(data);
-        setAccessLogsTotal(countResult.count);
       } else if (activeTab === 'error') {
         const offset = (errorLogsPage - 1) * errorLogsPageSize;
         const [data, countResult] = await Promise.all([
@@ -114,12 +100,6 @@ function LogsPage() {
         setSelectedRequestLog(null);
         setRequestLogsPage(1);
         setRequestLogsTotal(0);
-      } else if (activeTab === 'access') {
-        await api.clearAccessLogs();
-        setAccessLogs([]);
-        setSelectedAccessLog(null);
-        setAccessLogsPage(1);
-        setAccessLogsTotal(0);
       } else if (activeTab === 'error') {
         await api.clearErrorLogs();
         setErrorLogs([]);
@@ -182,15 +162,6 @@ function LogsPage() {
     setRequestLogsPage(1); // 重置到第1页
   };
 
-  const handleAccessLogsPageChange = (page: number) => {
-    setAccessLogsPage(page);
-  };
-
-  const handleAccessLogsPageSizeChange = (size: number) => {
-    setAccessLogsPageSize(size);
-    setAccessLogsPage(1);
-  };
-
   const handleErrorLogsPageChange = (page: number) => {
     setErrorLogsPage(page);
   };
@@ -245,47 +216,6 @@ function LogsPage() {
               </td>
               <td>
                 <button className="btn btn-secondary" onClick={() => setSelectedRequestLog(log)}>详情</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    );
-  };
-
-  const renderAccessLogs = () => {
-    if (accessLogs.length === 0) {
-      return <div className="empty-state"><p>暂无访问日志</p></div>;
-    }
-
-    return (
-      <table>
-        <thead>
-          <tr>
-            <th>时间</th>
-            <th>方法</th>
-            <th>路径</th>
-            <th>状态</th>
-            <th>响应时间</th>
-            <th>客户端IP</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {accessLogs.map((log) => (
-            <tr key={log.id}>
-              <td>{dayjs(log.timestamp).format('YYYY-MM-DD HH:mm:ss')}</td>
-              <td><span className="badge badge-success">{log.method}</span></td>
-              <td>{log.path}</td>
-              <td>
-                <span className={`badge ${getStatusBadge(log.statusCode)}`}>
-                  {log.statusCode || '-'}
-                </span>
-              </td>
-              <td>{log.responseTime ? `${log.responseTime}ms` : '-'}</td>
-              <td style={{ fontSize: '12px' }}>{log.clientIp || '-'}</td>
-              <td>
-                <button className="btn btn-secondary" onClick={() => setSelectedAccessLog(log)}>详情</button>
               </td>
             </tr>
           ))}
@@ -360,20 +290,6 @@ function LogsPage() {
               请求日志 ({requestLogsTotal})
             </button>
             <button
-              onClick={() => setActiveTab('access')}
-              style={{
-                padding: '12px 24px',
-                border: 'none',
-                background: activeTab === 'access' ? '#3498db' : 'transparent',
-                color: activeTab === 'access' ? 'white' : '#7f8c8d',
-                cursor: 'pointer',
-                borderBottom: activeTab === 'access' ? '2px solid #2980b9' : '2px solid transparent',
-                fontWeight: activeTab === 'access' ? 'bold' : 'normal',
-              }}
-            >
-              访问日志 ({accessLogsTotal})
-            </button>
-            <button
               onClick={() => setActiveTab('error')}
               style={{
                 padding: '12px 24px',
@@ -392,7 +308,6 @@ function LogsPage() {
 
         <div className="toolbar">
           <h3>
-            {activeTab === 'access' && '访问日志列表'}
             {activeTab === 'error' && '错误日志列表'}
             {activeTab === 'request' && '请求日志列表'}
           </h3>
@@ -545,24 +460,6 @@ function LogsPage() {
                 pageSize={requestLogsPageSize}
                 onPageChange={handleRequestLogsPageChange}
                 onPageSizeChange={handleRequestLogsPageSizeChange}
-              />
-            )}
-          </>
-        )}
-        {activeTab === 'access' && (
-          <>
-            {loading ? (
-              <div className="empty-state"><p>加载中...</p></div>
-            ) : (
-              renderAccessLogs()
-            )}
-            {!loading && (
-              <Pagination
-                currentPage={accessLogsPage}
-                totalItems={accessLogsTotal}
-                pageSize={accessLogsPageSize}
-                onPageChange={handleAccessLogsPageChange}
-                onPageSizeChange={handleAccessLogsPageSizeChange}
               />
             )}
           </>
@@ -737,69 +634,6 @@ function LogsPage() {
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setSelectedRequestLog(null)}>关闭</button>
-            </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {selectedAccessLog && (
-        <div className="modal-overlay">
-          <button
-            type="button"
-            className="modal-close-btn"
-            onClick={() => setSelectedAccessLog(null)}
-            aria-label="关闭"
-          >
-            ×
-          </button>
-          <div className="modal" style={{ minWidth: '600px' }}>
-            <div className="modal-container">
-              <div className="modal-header">
-                <h2>访问日志详情</h2>
-              </div>
-            <div>
-              <div className="form-group">
-                <label>ID</label>
-                <input type="text" value={selectedAccessLog.id} readOnly />
-              </div>
-              <div className="form-group">
-                <label>时间</label>
-                <input type="text" value={dayjs(selectedAccessLog.timestamp).format('YYYY-MM-DD HH:mm:ss')} readOnly />
-              </div>
-              <div className="form-group">
-                <label>请求方法</label>
-                <input type="text" value={selectedAccessLog.method} readOnly />
-              </div>
-              <div className="form-group">
-                <label>请求路径</label>
-                <input type="text" value={selectedAccessLog.path} readOnly />
-              </div>
-              <div className="form-group">
-                <label>状态码</label>
-                <input type="text" value={selectedAccessLog.statusCode || '-'} readOnly />
-              </div>
-              <div className="form-group">
-                <label>响应时间</label>
-                <input type="text" value={selectedAccessLog.responseTime ? `${selectedAccessLog.responseTime}ms` : '-'} readOnly />
-              </div>
-              <div className="form-group">
-                <label>客户端IP</label>
-                <input type="text" value={selectedAccessLog.clientIp || '-'} readOnly />
-              </div>
-              <div className="form-group">
-                <label>User Agent</label>
-                <textarea rows={2} value={selectedAccessLog.userAgent || '-'} readOnly />
-              </div>
-              {selectedAccessLog.error && (
-                <div className="form-group">
-                  <label>错误信息</label>
-                  <textarea rows={6} value={selectedAccessLog.error} readOnly style={{ color: '#e74c3c' }} />
-                </div>
-              )}
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setSelectedAccessLog(null)}>关闭</button>
             </div>
             </div>
           </div>

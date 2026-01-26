@@ -9,7 +9,6 @@ import type {
   Route,
   Rule,
   RequestLog,
-  AccessLog,
   ErrorLog,
   AppConfig,
   ExportData,
@@ -21,13 +20,11 @@ import type {
 export class DatabaseManager {
   private db: Database.Database;
   private logDb: Level<string, string>;
-  private accessLogDb: Level<string, string>;
   private errorLogDb: Level<string, string>;
   private blacklistDb: Level<string, string>;
 
   // 缓存机制：总数查询缓存
   private logsCountCache: { count: number; timestamp: number } | null = null;
-  private accessLogsCountCache: { count: number; timestamp: number } | null = null;
   private errorLogsCountCache: { count: number; timestamp: number } | null = null;
   private readonly CACHE_TTL = 1000; // 1秒缓存TTL
 
@@ -48,7 +45,6 @@ export class DatabaseManager {
     this.db.pragma('read_uncommitted = 0');
 
     this.logDb = new Level(path.join(dataPath, 'logs'), { valueEncoding: 'json' });
-    this.accessLogDb = new Level(path.join(dataPath, 'access-logs'), { valueEncoding: 'json' });
     this.errorLogDb = new Level(path.join(dataPath, 'error-logs'), { valueEncoding: 'json' });
     this.blacklistDb = new Level(path.join(dataPath, 'service-blacklist'), { valueEncoding: 'json' });
   }
@@ -940,38 +936,6 @@ export class DatabaseManager {
     this.logsCountCache = null;
   }
 
-  // Access log operations
-  async addAccessLog(log: Omit<AccessLog, 'id'>): Promise<string> {
-    const id = crypto.randomUUID();
-    await this.accessLogDb.put(id, JSON.stringify({ ...log, id }));
-    // 清除缓存
-    this.accessLogsCountCache = null;
-    return id;
-  }
-
-  async updateAccessLog(id: string, data: Partial<AccessLog>): Promise<void> {
-    const log = await this.accessLogDb.get(id);
-    const updatedLog = { ...JSON.parse(log), ...data };
-    await this.accessLogDb.put(id, JSON.stringify(updatedLog));
-  }
-
-  async getAccessLogs(limit: number = 100, offset: number = 0): Promise<AccessLog[]> {
-    const allLogs: AccessLog[] = [];
-    for await (const [, value] of this.accessLogDb.iterator()) {
-      allLogs.push(JSON.parse(value));
-    }
-    // Sort by timestamp in descending order (newest first)
-    allLogs.sort((a, b) => b.timestamp - a.timestamp);
-    // Apply offset and limit
-    return allLogs.slice(offset, offset + limit);
-  }
-
-  async clearAccessLogs(): Promise<void> {
-    await this.accessLogDb.clear();
-    // 清除缓存
-    this.accessLogsCountCache = null;
-  }
-
   // Error log operations
   async addErrorLog(log: Omit<ErrorLog, 'id'>): Promise<void> {
     const id = crypto.randomUUID();
@@ -1012,24 +976,6 @@ export class DatabaseManager {
     }
 
     this.logsCountCache = { count, timestamp: now };
-    return count;
-  }
-
-  /**
-   * 获取访问日志总数（带缓存）
-   */
-  async getAccessLogsCount(): Promise<number> {
-    const now = Date.now();
-    if (this.accessLogsCountCache && now - this.accessLogsCountCache.timestamp < this.CACHE_TTL) {
-      return this.accessLogsCountCache.count;
-    }
-
-    let count = 0;
-    for await (const _ of this.accessLogDb.iterator()) {
-      count++;
-    }
-
-    this.accessLogsCountCache = { count, timestamp: now };
     return count;
   }
 
@@ -1513,7 +1459,6 @@ export class DatabaseManager {
   close() {
     this.db.close();
     this.logDb.close();
-    this.accessLogDb.close();
     this.errorLogDb.close();
     this.blacklistDb.close();
   }

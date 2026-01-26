@@ -9,6 +9,7 @@ import type { AppConfig, LoginRequest, LoginResponse, AuthStatus } from '../type
 import os from 'os';
 import { isAuthEnabled, verifyAuthCode, generateToken, authMiddleware } from './auth';
 import { checkVersionUpdate } from './version-check';
+import { checkPortUsable } from './utils';
 
 const dotenvPath = path.resolve(os.homedir(), '.aicodeswitch/aicodeswitch.conf');
 if (fs.existsSync(dotenvPath)) {
@@ -415,25 +416,6 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
   );
 
   app.get(
-    '/api/access-logs',
-    asyncHandler(async (req, res) => {
-      const rawLimit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : NaN;
-      const rawOffset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : NaN;
-      const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
-      const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
-      const logs = await dbManager.getAccessLogs(limit, offset);
-      res.json(logs);
-    })
-  );
-  app.delete(
-    '/api/access-logs',
-    asyncHandler(async (_req, res) => {
-      await dbManager.clearAccessLogs();
-      res.json(true);
-    })
-  );
-
-  app.get(
     '/api/error-logs',
     asyncHandler(async (req, res) => {
       const rawLimit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : NaN;
@@ -456,14 +438,6 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     '/api/logs/count',
     asyncHandler(async (_req, res) => {
       const count = await dbManager.getLogsCount();
-      res.json({ count });
-    })
-  );
-
-  app.get(
-    '/api/access-logs/count',
-    asyncHandler(async (_req, res) => {
-      const count = await dbManager.getAccessLogsCount();
       res.json({ count });
     })
   );
@@ -585,32 +559,41 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     const text = await resp.text();
     res.type('text/plain').send(text);
   }));
-
-  app.use(express.static(path.resolve(__dirname, '../ui')));
 };
 
 const start = async () => {
   fs.mkdirSync(dataDir, { recursive: true });
 
   const dbManager = new DatabaseManager(dataDir);
-  await dbManager.initialize();
-
   const proxyServer = new ProxyServer(dbManager, app);
+
+  await dbManager.initialize();
+  // Initialize proxy server and register proxy routes last
+  proxyServer.initialize();
 
   // Register admin routes first
   registerRoutes(dbManager, proxyServer);
+  await proxyServer.registerProxyRoutes();
 
-  // Initialize proxy server and register proxy routes last
-  await proxyServer.initialize();
+  app.use(express.static(path.resolve(__dirname, '../ui')));
 
-  const adminServer = app.listen(port, host, () => {
+  const isPortUsable = await checkPortUsable(port);
+  if (!isPortUsable) {
+    console.error(`端口 ${port} 已被占用，无法启动服务。请执行 aicos stop 后重启。`);
+    process.exit(1);
+  }
+
+  const server = app.listen(port, host, () => {
     console.log(`Admin server running on http://${host}:${port}`);
   });
 
   const shutdown = async () => {
     console.log('Shutting down server...');
     dbManager.close();
-    adminServer.close(() => process.exit(0));
+    server.close(() => {
+      console.log('Server stopped.');
+      process.exit(0);
+    });
   };
 
   process.on('SIGINT', shutdown);
