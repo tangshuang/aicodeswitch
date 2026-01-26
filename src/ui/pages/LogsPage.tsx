@@ -87,7 +87,7 @@ function parseSSEChunks(chunks: string[]): ParsedSSEEvent[] {
  * 从解析的SSE事件中组装完整文本
  * 返回 { text, thinking } 结构
  */
-function assembleStreamText(events: ParsedSSEEvent[], targetType?: string): { text: string; thinking: string } {
+function assembleStreamText(events: ParsedSSEEvent[], _targetType?: string): { text: string; thinking: string } {
   let text = '';
   let thinking = '';
   let inThinkingBlock = false;
@@ -369,17 +369,6 @@ function LogsPage() {
       console.error('Failed to load session logs:', error);
     } finally {
       setLogsLoading(false);
-    }
-  };
-
-  const handleDeleteSession = async (sessionId: string) => {
-    if (confirm('确定要删除此会话吗？')) {
-      await api.deleteSession(sessionId);
-      if (selectedSession?.id === sessionId) {
-        setSelectedSession(null);
-        setSelectedSessionLogs([]);
-      }
-      loadLogs();
     }
   };
 
