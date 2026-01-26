@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import axios, { AxiosRequestConfig } from 'axios';
 import { pipeline } from 'stream';
+import crypto from 'crypto';
 import { DatabaseManager } from './database';
 import {
   ClaudeToOpenAIChatEventTransform,
@@ -34,6 +35,10 @@ export class ProxyServer {
   private rules?: Map<string, Rule[]> = new Map();
   private services?: Map<string, APIService> = new Map();
   private config: AppConfig;
+  // 请求去重缓存：用于防止同一个请求被重复计数（如网络重试）
+  // key: requestHash, value: timestamp
+  private requestDedupeCache = new Map<string, number>();
+  private readonly DEDUPE_CACHE_TTL = 60000; // 去重缓存1分钟过期
 
   constructor(dbManager: DatabaseManager, app: express.Application) {
     this.dbManager = dbManager;
@@ -457,13 +462,104 @@ export class ProxyServer {
   }
 
   /**
+   * 计算请求内容的哈希值，用于去重
+   * 基于请求的关键字段生成唯一标识
+   */
+  private computeRequestHash(req: Request): string | null {
+    const body = req.body;
+    if (!body) return null;
+
+    // 提取关键信息用于哈希
+    const messages = body.messages;
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return null;
+    }
+
+    // 只使用最后几条消息的内容来生成哈希（避免整个历史过长）
+    const lastMessages = messages.slice(-3).map((msg: any) => ({
+      role: msg.role,
+      // 对消息内容进行简化处理，避免token差异导致哈希不同
+      content: this.normalizeMessageContent(msg.content)
+    }));
+
+    // 包含其他可能影响计费的字段
+    const keyFields = {
+      messages: lastMessages,
+      model: body.model,
+      stream: body.stream
+    };
+
+    return crypto.createHash('md5').update(JSON.stringify(keyFields)).digest('hex');
+  }
+
+  /**
+   * 规范化消息内容，去除细微差异
+   */
+  private normalizeMessageContent(content: any): string {
+    if (typeof content === 'string') {
+      // 去除首尾空白，限制长度
+      return content.trim().slice(0, 500);
+    }
+    if (Array.isArray(content)) {
+      // 对于数组类型内容（如图片+文本），只提取文本部分
+      const textParts = content
+        .filter((item: any) => item?.type === 'text')
+        .map((item: any) => item.text?.trim().slice(0, 500) || '')
+        .join('|');
+      return textParts;
+    }
+    return String(content || '').slice(0, 500);
+  }
+
+  /**
+   * 检查请求是否已经被处理过（去重）
+   */
+  private isRequestProcessed(hash: string | null): boolean {
+    if (!hash) return false;
+
+    const timestamp = this.requestDedupeCache.get(hash);
+    if (timestamp === undefined) {
+      // 未处理过，记录并返回false
+      this.requestDedupeCache.set(hash, Date.now());
+      return false;
+    }
+
+    // 检查是否过期
+    const now = Date.now();
+    if (now - timestamp > this.DEDUPE_CACHE_TTL) {
+      // 缓存已过期，视为新请求
+      this.requestDedupeCache.set(hash, now);
+      return false;
+    }
+
+    // 在缓存期内，视为重复请求
+    return true;
+  }
+
+  /**
+   * 清理过期的去重缓存
+   */
+  private cleanExpiredDedupeCache(): void {
+    const now = Date.now();
+    for (const [hash, timestamp] of this.requestDedupeCache.entries()) {
+      if (now - timestamp > this.DEDUPE_CACHE_TTL) {
+        this.requestDedupeCache.delete(hash);
+      }
+    }
+  }
+
+  /**
    * 根据GLM计费逻辑判断请求是否应该计费
    * 核心规则：
    * 1. 最后一条消息必须是 role: "user"
    * 2. 上一条消息不能是包含 tool_calls 的 assistant 消息（即不是工具回传）
+   * 3. 上一条消息应该是 assistant（正常的对话流程），而非连续的 user 消息
+   * 4. 避免历史消息重复计数：检查消息序列是否符合正常的对话模式
    */
-  private shouldChargeRequest(requestBody: any): boolean {
-    const messages = requestBody?.messages;
+  private shouldChargeRequest(req: Request): boolean {
+    const body = req.body;
+    const messages = body?.messages;
+
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return false;
     }
@@ -473,14 +569,61 @@ export class ProxyServer {
       return false;
     }
 
-    if (messages.length > 1) {
-      const previousMessage = messages[messages.length - 2];
-      if (previousMessage.role === 'assistant' && previousMessage.tool_calls) {
-        return false;
+    // 规则1：只有一条消息，这是新会话的开始，应该计费
+    if (messages.length === 1) {
+      return true;
+    }
+
+    const previousMessage = messages[messages.length - 2];
+
+    // 规则2：上一条消息是 assistant 且包含 tool_calls，说明这是工具回调，不应计费
+    if (previousMessage.role === 'assistant' && previousMessage.tool_calls) {
+      return false;
+    }
+
+    // 规则3：上一条消息不是 user，说明是正常的 user->assistant->user 流程，应该计费
+    if (previousMessage.role !== 'user') {
+      return true;
+    }
+
+    // 规则4：上一条消息也是 user（连续的 user 消息）
+    // 这种情况下需要进一步判断：
+    // - 如果倒数第三条是 assistant，可能是用户连续发送的消息，只计最后一条
+    // - 检查两条 user 消息的内容是否相同，相同则可能是历史重放
+    if (messages.length >= 3) {
+      const thirdLastMessage = messages[messages.length - 3];
+      // 正常的对话流程: ... assistant, user, user
+      // 这种情况说明最后一条 user 消息是在 assistant 之后的新消息，应该计费
+      if (thirdLastMessage.role === 'assistant') {
+        return true;
       }
     }
 
-    return true;
+    // 规则5：检查是否有连续的 user 消息内容相同（可能的重复）
+    const lastContent = this.normalizeMessageContent(lastMessage.content);
+    const prevContent = this.normalizeMessageContent(previousMessage.content);
+    if (lastContent === prevContent && lastContent.length > 0) {
+      // 两条连续的 user 消息内容相同，可能是重复，不应计费
+      return false;
+    }
+
+    // 规则6：如果上一条是 user，但没有 assistant 在中间，可能是异常的对话流
+    // 为了安全起见，检查再往前是否有 assistant
+    for (let i = messages.length - 3; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role === 'assistant') {
+        // 找到了最近的 assistant，说明当前是新的对话轮次，应该计费
+        return true;
+      }
+      if (msg.role === 'user') {
+        // 还是 user 消息，继续往前找
+        continue;
+      }
+      // 其他 role（如 system），继续
+    }
+
+    // 没有找到 assistant，可能是异常情况，不计费
+    return false;
   }
 
   /**
@@ -1236,8 +1379,17 @@ export class ProxyServer {
       }
 
       // 更新规则的请求次数（只在成功请求时更新）
-      if (statusCode < 400 && this.shouldChargeRequest(req.body)) {
-        this.dbManager.incrementRuleRequestCount(rule.id, 1);
+      if (statusCode < 400 && this.shouldChargeRequest(req)) {
+        // 计算请求哈希用于去重
+        const requestHash = this.computeRequestHash(req);
+        // 检查是否是重复请求（如网络重试）
+        if (!this.isRequestProcessed(requestHash)) {
+          this.dbManager.incrementRuleRequestCount(rule.id, 1);
+        }
+        // 定期清理过期缓存
+        if (Math.random() < 0.01) { // 1%概率清理，避免每次都清理
+          this.cleanExpiredDedupeCache();
+        }
       }
     };
 
