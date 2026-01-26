@@ -335,7 +335,8 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
       const rule = dbManager.getRule(id);
 
       if (!rule) {
-        return res.status(404).json({ error: 'Rule not found' });
+        res.status(404).json({ error: 'Rule not found' });
+        return;
       }
 
       // 找到该规则所属的路由
@@ -346,7 +347,8 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
       });
 
       if (!route) {
-        return res.status(404).json({ error: 'Route not found' });
+        res.status(404).json({ error: 'Route not found' });
+        return;
       }
 
       try {
