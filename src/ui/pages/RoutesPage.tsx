@@ -85,6 +85,10 @@ export default function RoutesPage() {
     blacklistEntry?: ServiceBlacklistEntry;
   }>>({});
 
+  // 超量配置展开状态
+  const [showTokenLimit, setShowTokenLimit] = useState(false);
+  const [showRequestLimit, setShowRequestLimit] = useState(false);
+
   // 配置文件备份状态
   const [backupStatus, setBackupStatus] = useState<{
     'claude-code': boolean;
@@ -490,6 +494,10 @@ export default function RoutesPage() {
           setMaxRequestCountLimit(undefined);
           setInheritedRequestLimit(false);
         }
+
+        // 如果规则有配置超量限制，则展开对应的字段
+        setShowTokenLimit(!!rule.tokenLimit);
+        setShowRequestLimit(!!rule.requestCountLimit);
       }, 0);
     }
     setShowRuleModal(true);
@@ -579,6 +587,8 @@ export default function RoutesPage() {
     setInheritedRequestLimit(false);
     setMaxTokenLimit(undefined);
     setMaxRequestCountLimit(undefined);
+    setShowTokenLimit(false);
+    setShowRequestLimit(false);
     setShowRuleModal(true);
   };
 
@@ -1164,9 +1174,11 @@ export default function RoutesPage() {
                         );
                         setMaxTokenLimit(service.tokenLimit);
                         setInheritedTokenLimit(true);
+                        setShowTokenLimit(true); // 自动展开
                       } else {
                         setMaxTokenLimit(undefined);
                         setInheritedTokenLimit(false);
+                        setShowTokenLimit(false); // 收起
                       }
 
                       // 如果API服务启用了请求次数超量限制，自动填充并设置最大值
@@ -1178,9 +1190,11 @@ export default function RoutesPage() {
                         );
                         setMaxRequestCountLimit(service.requestCountLimit);
                         setInheritedRequestLimit(true);
+                        setShowRequestLimit(true); // 自动展开
                       } else {
                         setMaxRequestCountLimit(undefined);
                         setInheritedRequestLimit(false);
+                        setShowRequestLimit(false); // 收起
                       }
                     }
                   }}
@@ -1207,167 +1221,209 @@ export default function RoutesPage() {
                 </select>
               </div>
 
-              {/* Tokens超量字段 */}
+              {/* Tokens超量配置 */}
               <div className="form-group">
-                <label>Tokens超量（单位：k）</label>
-                <input
-                  type="number"
-                  value={selectedTokenLimit || ''}
-                  onChange={(e) => {
-                    const value = e.target.value ? parseInt(e.target.value) : undefined;
-                    if (value !== undefined && maxTokenLimit !== undefined && value > maxTokenLimit) {
-                      toast.warning(`Token超量值不能超过API服务的限制 (${maxTokenLimit}k)`);
-                      return;
-                    }
-                    setSelectedTokenLimit(value);
-                  }}
-                  min="0"
-                  max={maxTokenLimit}
-                  placeholder={inheritedTokenLimit ? `最大 ${maxTokenLimit}k` : "不限制"}
-                />
-                {inheritedTokenLimit && maxTokenLimit && (
-                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    ⚠️ API服务限制：最大 {maxTokenLimit}k，当前值不能超过此限制
-                  </small>
-                )}
-                {!inheritedTokenLimit && (
-                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    当编程工具的请求tokens达到这个量时，在配置了其他规则的情况下，本条规则将失效，从而保护你的余额。例如：输入100表示100k即100,000个tokens
-                  </small>
-                )}
+                <label style={{ display: 'flex', alignItems: 'center', cursor: inheritedTokenLimit ? 'not-allowed' : 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={showTokenLimit}
+                    onChange={(e) => setShowTokenLimit(e.target.checked)}
+                    disabled={inheritedTokenLimit}
+                    style={{ marginRight: '8px', cursor: inheritedTokenLimit ? 'not-allowed' : 'pointer', width: '16px', height: '16px' }}
+                  />
+                  <span>启用Tokens超量限制</span>
+                  {inheritedTokenLimit && (
+                    <small style={{ color: '#999', fontSize: '12px', marginLeft: '8px' }}>（从API服务继承，不可取消）</small>
+                  )}
+                </label>
               </div>
 
-              {/* 重置时间字段 */}
+              {showTokenLimit && (
+                <>
+                  {/* Tokens超量字段 */}
+                  <div className="form-group">
+                    <label>Tokens超量（单位：k）</label>
+                    <input
+                      type="number"
+                      value={selectedTokenLimit || ''}
+                      onChange={(e) => {
+                        const value = e.target.value ? parseInt(e.target.value) : undefined;
+                        if (value !== undefined && maxTokenLimit !== undefined && value > maxTokenLimit) {
+                          toast.warning(`Token超量值不能超过API服务的限制 (${maxTokenLimit}k)`);
+                          return;
+                        }
+                        setSelectedTokenLimit(value);
+                      }}
+                      min="0"
+                      max={maxTokenLimit}
+                      placeholder={inheritedTokenLimit ? `最大 ${maxTokenLimit}k` : "不限制"}
+                    />
+                    {inheritedTokenLimit && maxTokenLimit && (
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        ⚠️ API服务限制：最大 {maxTokenLimit}k，当前值不能超过此限制
+                      </small>
+                    )}
+                    {!inheritedTokenLimit && (
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        当编程工具的请求tokens达到这个量时，在配置了其他规则的情况下，本条规则将失效，从而保护你的余额。例如：输入100表示100k即100,000个tokens
+                      </small>
+                    )}
+                  </div>
+
+                  {/* 重置时间字段 */}
+                  <div className="form-group">
+                    <label>Tokens超量自动重置间隔（小时）</label>
+                    <input
+                      type="number"
+                      value={selectedResetInterval || ''}
+                      onChange={(e) => setSelectedResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
+                      min="1"
+                      placeholder="不自动重置"
+                      disabled={inheritedTokenLimit}
+                    />
+                    {inheritedTokenLimit && (
+                      <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        此配置从API服务继承，不可修改
+                      </small>
+                    )}
+                    {!inheritedTokenLimit && (
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        设置后，系统将每隔指定小时数自动重置token计数。例如设置5小时，则每5小时重置一次
+                      </small>
+                    )}
+                  </div>
+
+                  {/* Token下一次重置时间基点字段 */}
+                  <div className="form-group">
+                    <label>Token下一次重置时间基点</label>
+                    <input
+                      type="datetime-local"
+                      value={selectedTokenResetBaseTime ? formatDateTimeLocal(selectedTokenResetBaseTime) : ''}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setSelectedTokenResetBaseTime(new Date(e.target.value));
+                        } else {
+                          setSelectedTokenResetBaseTime(undefined);
+                        }
+                      }}
+                      disabled={!selectedResetInterval || inheritedTokenLimit}
+                      className="datetime-picker-input"
+                    />
+                    {inheritedTokenLimit && (
+                      <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        此配置从API服务继承，不可修改
+                      </small>
+                    )}
+                    {!inheritedTokenLimit && (
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        配合"Tokens超量自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
+                      </small>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {/* 请求次数超量配置 */}
               <div className="form-group">
-                <label>Tokens超量自动重置间隔（小时）</label>
-                <input
-                  type="number"
-                  value={selectedResetInterval || ''}
-                  onChange={(e) => setSelectedResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
-                  min="1"
-                  placeholder="不自动重置"
-                  disabled={inheritedTokenLimit}
-                />
-                {inheritedTokenLimit && (
-                  <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    此配置从API服务继承，不可修改
-                  </small>
-                )}
-                {!inheritedTokenLimit && (
-                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    设置后，系统将每隔指定小时数自动重置token计数。例如设置5小时，则每5小时重置一次
-                  </small>
-                )}
+                <label style={{ display: 'flex', alignItems: 'center', cursor: inheritedRequestLimit ? 'not-allowed' : 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={showRequestLimit}
+                    onChange={(e) => setShowRequestLimit(e.target.checked)}
+                    disabled={inheritedRequestLimit}
+                    style={{ marginRight: '8px', cursor: inheritedRequestLimit ? 'not-allowed' : 'pointer', width: '16px', height: '16px' }}
+                  />
+                  <span>启用请求次数超量限制</span>
+                  {inheritedRequestLimit && (
+                    <small style={{ color: '#999', fontSize: '12px', marginLeft: '8px' }}>（从API服务继承，不可取消）</small>
+                  )}
+                </label>
               </div>
 
-              {/* Token下一次重置时间基点字段 */}
-              <div className="form-group">
-                <label>Token下一次重置时间基点</label>
-                <input
-                  type="datetime-local"
-                  value={selectedTokenResetBaseTime ? formatDateTimeLocal(selectedTokenResetBaseTime) : ''}
-                  onChange={(e) => {
-                    if (e.target.value) {
-                      setSelectedTokenResetBaseTime(new Date(e.target.value));
-                    } else {
-                      setSelectedTokenResetBaseTime(undefined);
-                    }
-                  }}
-                  disabled={!selectedResetInterval || inheritedTokenLimit}
-                  className="datetime-picker-input"
-                />
-                {inheritedTokenLimit && (
-                  <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    此配置从API服务继承，不可修改
-                  </small>
-                )}
-                {!inheritedTokenLimit && (
-                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    配合"Tokens超量自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
-                  </small>
-                )}
-              </div>
+              {showRequestLimit && (
+                <>
+                  {/* 请求次数超量字段 */}
+                  <div className="form-group">
+                    <label>请求次数超量</label>
+                    <input
+                      type="number"
+                      value={selectedRequestCountLimit || ''}
+                      onChange={(e) => {
+                        const value = e.target.value ? parseInt(e.target.value) : undefined;
+                        if (value !== undefined && maxRequestCountLimit !== undefined && value > maxRequestCountLimit) {
+                          toast.warning(`请求次数超量值不能超过API服务的限制 (${maxRequestCountLimit})`);
+                          return;
+                        }
+                        setSelectedRequestCountLimit(value);
+                      }}
+                      min="0"
+                      max={maxRequestCountLimit}
+                      placeholder={inheritedRequestLimit ? `最大 ${maxRequestCountLimit}` : "不限制"}
+                    />
+                    {inheritedRequestLimit && maxRequestCountLimit && (
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        ⚠️ API服务限制：最大 {maxRequestCountLimit}，当前值不能超过此限制
+                      </small>
+                    )}
+                    {!inheritedRequestLimit && (
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        当请求次数达到这个量时，在配置了其他规则的情况下，本条规则将失效
+                      </small>
+                    )}
+                  </div>
 
-              {/* 请求次数超量字段 */}
-              <div className="form-group">
-                <label>请求次数超量</label>
-                <input
-                  type="number"
-                  value={selectedRequestCountLimit || ''}
-                  onChange={(e) => {
-                    const value = e.target.value ? parseInt(e.target.value) : undefined;
-                    if (value !== undefined && maxRequestCountLimit !== undefined && value > maxRequestCountLimit) {
-                      toast.warning(`请求次数超量值不能超过API服务的限制 (${maxRequestCountLimit})`);
-                      return;
-                    }
-                    setSelectedRequestCountLimit(value);
-                  }}
-                  min="0"
-                  max={maxRequestCountLimit}
-                  placeholder={inheritedRequestLimit ? `最大 ${maxRequestCountLimit}` : "不限制"}
-                />
-                {inheritedRequestLimit && maxRequestCountLimit && (
-                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    ⚠️ API服务限制：最大 {maxRequestCountLimit}，当前值不能超过此限制
-                  </small>
-                )}
-                {!inheritedRequestLimit && (
-                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    当请求次数达到这个量时，在配置了其他规则的情况下，本条规则将失效
-                  </small>
-                )}
-              </div>
+                  {/* 请求次数自动重置间隔字段 */}
+                  <div className="form-group">
+                    <label>请求次数自动重置间隔（小时）</label>
+                    <input
+                      type="number"
+                      value={selectedRequestResetInterval || ''}
+                      onChange={(e) => setSelectedRequestResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
+                      min="1"
+                      placeholder="不自动重置"
+                      disabled={inheritedRequestLimit}
+                    />
+                    {inheritedRequestLimit && (
+                      <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        此配置从API服务继承，不可修改
+                      </small>
+                    )}
+                    {!inheritedRequestLimit && (
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        设置后，系统将每隔指定小时数自动重置请求次数计数。例如设置24小时，则每24小时重置一次
+                      </small>
+                    )}
+                  </div>
 
-              {/* 请求次数自动重置间隔字段 */}
-              <div className="form-group">
-                <label>请求次数自动重置间隔（小时）</label>
-                <input
-                  type="number"
-                  value={selectedRequestResetInterval || ''}
-                  onChange={(e) => setSelectedRequestResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
-                  min="1"
-                  placeholder="不自动重置"
-                  disabled={inheritedRequestLimit}
-                />
-                {inheritedRequestLimit && (
-                  <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    此配置从API服务继承，不可修改
-                  </small>
-                )}
-                {!inheritedRequestLimit && (
-                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    设置后，系统将每隔指定小时数自动重置请求次数计数。例如设置24小时，则每24小时重置一次
-                  </small>
-                )}
-              </div>
-
-              {/* 下一次重置时间基点字段 */}
-              <div className="form-group">
-                <label>下一次重置时间基点</label>
-                <input
-                  type="datetime-local"
-                  value={selectedRequestResetBaseTime ? formatDateTimeLocal(selectedRequestResetBaseTime) : ''}
-                  onChange={(e) => {
-                    if (e.target.value) {
-                      setSelectedRequestResetBaseTime(new Date(e.target.value));
-                    } else {
-                      setSelectedRequestResetBaseTime(undefined);
-                    }
-                  }}
-                  disabled={!selectedRequestResetInterval || inheritedRequestLimit}
-                  className="datetime-picker-input"
-                />
-                {inheritedRequestLimit && (
-                  <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    此配置从API服务继承，不可修改
-                  </small>
-                )}
-                {!inheritedRequestLimit && (
-                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    配合"请求次数自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
-                  </small>
-                )}
-              </div>
+                  {/* 下一次重置时间基点字段 */}
+                  <div className="form-group">
+                    <label>下一次重置时间基点</label>
+                    <input
+                      type="datetime-local"
+                      value={selectedRequestResetBaseTime ? formatDateTimeLocal(selectedRequestResetBaseTime) : ''}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setSelectedRequestResetBaseTime(new Date(e.target.value));
+                        } else {
+                          setSelectedRequestResetBaseTime(undefined);
+                        }
+                      }}
+                      disabled={!selectedRequestResetInterval || inheritedRequestLimit}
+                      className="datetime-picker-input"
+                    />
+                    {inheritedRequestLimit && (
+                      <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        此配置从API服务继承，不可修改
+                      </small>
+                    )}
+                    {!inheritedRequestLimit && (
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        配合"请求次数自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
+                      </small>
+                    )}
+                  </div>
+                </>
+              )}
 
               {/* 超时时间字段 */}
               <div className="form-group">

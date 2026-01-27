@@ -187,26 +187,43 @@ html {
   cursor: pointer;
 }
 
-/* Chrome, Edge, Safari - Make calendar picker indicator white and visible */
+/* Chrome, Edge, Safari - Light mode: dark icon, Dark mode: light icon */
 .datetime-picker-input::-webkit-calendar-picker-indicator {
   cursor: pointer;
   opacity: 1;
-  filter: brightness(0) invert(1);
+  filter: brightness(0);
   padding: 2px 4px;
 }
 
 .datetime-picker-input::-webkit-calendar-picker-indicator:hover {
-  filter: brightness(0.2) invert(1);
+  filter: brightness(0.3);
 }
 
-/* Firefox - Calendar picker indicator */
+/* Firefox - Light mode: dark icon, Dark mode: light icon */
 .datetime-picker-input::-moz-calendar-picker-indicator {
   cursor: pointer;
   opacity: 1;
-  filter: brightness(0) invert(1);
+  filter: brightness(0);
   padding: 2px 4px;
 }
 
 .datetime-picker-input::-moz-calendar-picker-indicator:hover {
+  filter: brightness(0.3);
+}
+
+/* Dark mode - Make calendar picker indicator light */
+[data-theme="dark"] .datetime-picker-input::-webkit-calendar-picker-indicator {
+  filter: brightness(0) invert(1);
+}
+
+[data-theme="dark"] .datetime-picker-input::-webkit-calendar-picker-indicator:hover {
+  filter: brightness(0.2) invert(1);
+}
+
+[data-theme="dark"] .datetime-picker-input::-moz-calendar-picker-indicator {
+  filter: brightness(0) invert(1);
+}
+
+[data-theme="dark"] .datetime-picker-input::-moz-calendar-picker-indicator:hover {
   filter: brightness(0.2) invert(1);
 }

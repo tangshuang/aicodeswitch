@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 import { DatabaseManager } from './database';
 import { ProxyServer } from './proxy-server';
 import type { AppConfig, LoginRequest, LoginResponse, AuthStatus } from '../types';
@@ -617,6 +618,82 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     }
     const text = await resp.text();
     res.type('text/plain').send(text);
+  }));
+
+  // Migration 相关端点
+  const getMigrationHashPath = () => path.join(dataDir, '.migration-hash');
+
+  // 查找 migration.md 文件的路径
+  const findMigrationPath = (): string | null => {
+    // 可能的路径列表
+    const possiblePaths = [
+      // 开发环境：src/server/main.ts -> public/migration.md
+      path.resolve(__dirname, '../../public/migration.md'),
+      // 生产环境：dist/server/main.js -> dist/ui/migration.md
+      path.resolve(__dirname, '../ui/migration.md'),
+    ];
+
+    for (const possiblePath of possiblePaths) {
+      if (fs.existsSync(possiblePath)) {
+        return possiblePath;
+      }
+    }
+
+    return null;
+  };
+
+  app.get('/api/migration', asyncHandler(async (_req, res) => {
+    try {
+      // 读取 migration.md 文件
+      const migrationPath = findMigrationPath();
+      if (!migrationPath) {
+        res.json({ shouldShow: false, content: '' });
+        return;
+      }
+
+      const content = fs.readFileSync(migrationPath, 'utf-8');
+
+      // 计算当前内容的 hash
+      const currentHash = createHash('sha256').update(content).digest('hex');
+
+      // 读取之前保存的 hash
+      const hashPath = getMigrationHashPath();
+      let savedHash = '';
+      if (fs.existsSync(hashPath)) {
+        savedHash = fs.readFileSync(hashPath, 'utf-8').trim();
+      }
+
+      // 如果 hash 不同，需要显示弹窗
+      const shouldShow = savedHash !== currentHash;
+
+      res.json({ shouldShow, content: shouldShow ? content : '' });
+    } catch (error) {
+      console.error('Failed to read migration file:', error);
+      res.json({ shouldShow: false, content: '' });
+    }
+  }));
+
+  app.post('/api/migration/ack', asyncHandler(async (_req, res) => {
+    try {
+      // 读取 migration.md 文件并计算 hash
+      const migrationPath = findMigrationPath();
+      if (!migrationPath) {
+        res.json({ success: false });
+        return;
+      }
+
+      const content = fs.readFileSync(migrationPath, 'utf-8');
+      const hash = createHash('sha256').update(content).digest('hex');
+
+      // 保存 hash 到文件
+      const hashPath = getMigrationHashPath();
+      fs.writeFileSync(hashPath, hash, 'utf-8');
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Failed to acknowledge migration:', error);
+      res.json({ success: false });
+    }
   }));
 };
 

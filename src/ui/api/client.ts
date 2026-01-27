@@ -71,6 +71,10 @@ interface BackendAPI {
 
   getRecommendVendorsMarkdown: () => Promise<string>;
   getReadmeMarkdown: () => Promise<string>;
+
+  // Migration 相关
+  getMigration: () => Promise<{ shouldShow: boolean; content: string }>;
+  acknowledgeMigration: () => Promise<{ success: boolean }>;
 }
 
 const buildUrl = (
@@ -210,4 +214,8 @@ export const api: BackendAPI = {
   getRecommendVendorsMarkdown: () => requestJson(buildUrl('/api/docs/recommend-vendors')),
 
   getReadmeMarkdown: () => requestJson(buildUrl('/api/docs/readme')),
+
+  // Migration 相关
+  getMigration: () => requestJson(buildUrl('/api/migration')),
+  acknowledgeMigration: () => requestJson(buildUrl('/api/migration/ack'), { method: 'POST' }),
 };
