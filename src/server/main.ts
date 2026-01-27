@@ -701,9 +701,10 @@ const start = async () => {
   fs.mkdirSync(dataDir, { recursive: true });
 
   const dbManager = new DatabaseManager(dataDir);
-  const proxyServer = new ProxyServer(dbManager, app);
-
+  // 必须先初始化数据库，否则会报错
   await dbManager.initialize();
+
+  const proxyServer = new ProxyServer(dbManager, app);
   // Initialize proxy server and register proxy routes last
   proxyServer.initialize();
 

@@ -6,6 +6,7 @@ const chalk = require('chalk');
 const boxen = require('boxen');
 const ora = require('ora');
 const { isServerRunning, getServerInfo } = require('./utils/get-server');
+const { findPidByPort } = require('./utils/port-utils');
 
 const PID_FILE = path.join(os.homedir(), '.aicodeswitch', 'server.pid');
 const LOG_FILE = path.join(os.homedir(), '.aicodeswitch', 'server.log');
@@ -23,13 +24,14 @@ const start = async (options = {}) => {
   console.log('\n');
 
   // 已经运行
-  if (isServerRunning()) {
-    const { host, port } = getServerInfo();
+  const { host, port } = getServerInfo();
+  if (isServerRunning() || await findPidByPort(port)) {
     if (!silent) {
       if (!silent) {
         console.log(boxen(
           chalk.yellow.bold('⚠ Server is already running!\n\n') +
-          chalk.white(`URL: `) + chalk.cyan.bold(`http://${host}:${port}`),
+          chalk.white(`URL: `) + chalk.cyan.bold(`http://${host}:${port}\n\n`) +
+          chalk.white('Use ') + chalk.cyan('aicos restart') + chalk.white(' to restart the server.\n'),
           {
             padding: 1,
             margin: 1,

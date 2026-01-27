@@ -14,126 +14,92 @@ const stop = async (options = {}) => {
 
   console.log('\n');
 
-  const { host, port } = getServerInfo();
+  const spinner = ora({ text: chalk.cyan('Stopping server...'), color: 'cyan' }).start();
 
-  if (!fs.existsSync(PID_FILE)) {
-    if (!silent) {
-      // PID 文件不存在，尝试通过端口检测进程
-      console.log(boxen(
-        chalk.yellow('⚠ PID file not found, checking port...'),
-        {
-          padding: 1,
-          margin: 1,
-          borderStyle: 'round',
-          borderColor: 'yellow'
-        }
-      ));
-    }
-
-    const spinner = ora({
-      text: chalk.cyan(`Checking port ${port}...`),
-      color: 'cyan'
-    }).start();
-
-    const pid = await findPidByPort(port);
-
-    if (pid) {
-      spinner.text = chalk.cyan(`Found process on port ${port}, stopping...`);
+  // 第一步：如果 PID 文件存在，优先通过 PID 文件停止服务器
+  if (fs.existsSync(PID_FILE)) {
+    try {
+      const pid = parseInt(fs.readFileSync(PID_FILE, 'utf-8'), 10);
 
       const processInfo = await getProcessInfo(pid);
       if (!silent) {
         console.log('\n' + chalk.gray(`Process found: ${chalk.white(pid)} (${chalk.gray(processInfo)})`));
       }
 
-      const killed = await killProcess(pid);
-
-      if (killed) {
-        spinner.succeed(chalk.green(`Process ${pid} terminated successfully`));
-        showStoppedMessage();
-      } else {
-        spinner.fail(chalk.red('Failed to terminate process'));
-      }
-    } else {
-      spinner.info(chalk.yellow(`No process found on port ${port}`));
-      if (!silent) {
-        console.log(boxen(
-          chalk.yellow.bold('⚠ Server is not running'),
-          {
-            padding: 1,
-            margin: 1,
-            borderStyle: 'round',
-            borderColor: 'yellow'
-          }
-        ));
-      }
-    }
-    if (!silent) {
-      console.log('\n');
-    }
-
-    if (callback) {
-      console.log(boxen(chalk.yellow.bold('⚠ Server is not running')));
-      callback();
-    }
-    return;
-  }
-
-  const spinner = ora({
-    text: chalk.cyan('Stopping server...'),
-    color: 'cyan'
-  }).start();
-
-  try {
-    const pid = parseInt(fs.readFileSync(PID_FILE, 'utf-8'), 10);
-
-    // 尝试终止进程
-    try {
+      // 尝试终止进程
       process.kill(pid, 'SIGTERM');
 
       // 等待进程停止
       let attempts = 0;
       const maxAttempts = 10;
 
-      const checkStopped = setInterval(() => {
-        attempts++;
-        try {
-          process.kill(pid, 0);
-          if (attempts >= maxAttempts) {
-            clearInterval(checkStopped);
-            // 强制终止
-            process.kill(pid, 'SIGKILL');
-            spinner.warn(chalk.yellow('Server forcefully stopped'));
-            fs.unlinkSync(PID_FILE);
-            if (!silent) {
-              showStoppedMessage();
+      await new Promise((resolve) => {
+        const checkStopped = setInterval(() => {
+          attempts++;
+          try {
+            process.kill(pid, 0);
+            if (attempts >= maxAttempts) {
+              clearInterval(checkStopped);
+              // 强制终止
+              process.kill(pid, 'SIGKILL');
+              spinner.warn(chalk.yellow(`PID ${pid} forcefully killed!`));
+              fs.unlinkSync(PID_FILE);
+              resolve();
             }
-            callback && callback();
+          } catch (err) {
+            spinner.succeed(chalk.green(`PID ${pid} killed!`));
+            // 进程已停止
+            clearInterval(checkStopped);
+            fs.unlinkSync(PID_FILE);
+            resolve();
           }
-        } catch (err) {
-          // 进程已停止
-          clearInterval(checkStopped);
-          spinner.succeed(chalk.green('Server stopped successfully'));
-          fs.unlinkSync(PID_FILE);
-          if (!silent) {
-            showStoppedMessage();
-          }
-          callback && callback();
-        }
-      }, 200);
-
-    } catch (err) {
+        }, 200);
+      });
+    }
+    catch (err) {
       // 进程不存在
-      spinner.warn(chalk.yellow('Process not found'));
+      if (err.code === 'ESRCH') {
+          spinner.warn(chalk.yellow(`PID ${pid} not found!`));
+      }
+      else {
+        spinner.fail(chalk.red(`\nError: ${err.message}\n`));
+      }
       fs.unlinkSync(PID_FILE);
+    }
+  }
+
+  // 第二步：如果 PID 文件不存在，通过端口检测进程并停止
+  const { port } = getServerInfo();
+  spinner.text = chalk.yellow(`⚠ Checking port... (port: ${port})`);
+  const pid = await findPidByPort(port);
+  if (pid) {
+    spinner.text = chalk.cyan(`Found process on port ${port}, stopping...`);
+
+    const processInfo = await getProcessInfo(pid);
+    if (!silent) {
+      console.log('\n' + chalk.gray(`Process found: ${chalk.white(pid)} (${chalk.gray(processInfo)})`));
+    }
+
+    const killed = await killProcess(pid);
+    if (killed) {
+      spinner.succeed(chalk.green(`Process ${pid} terminated successfully`));
       if (!silent) {
         showStoppedMessage();
       }
-      callback && callback();
     }
-  } catch (err) {
-    spinner.fail(chalk.red('Failed to stop server'));
-    console.log(chalk.red(`\nError: ${err.message}\n`));
+    else {
+      spinner.fail(chalk.red('Failed to terminate process'));
+    }
   }
+  else {
+    spinner.info(chalk.yellow(`No process found on port ${port}`));
+    if (!silent) {
+      showStoppedMessage();
+    }
+  }
+
+  // 第三步：(callback)
+  callback && callback();
 };
 
 const showStoppedMessage = () => {
