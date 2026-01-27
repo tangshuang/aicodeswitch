@@ -11,6 +11,14 @@ import os from 'os';
 import { isAuthEnabled, verifyAuthCode, generateToken, authMiddleware } from './auth';
 import { checkVersionUpdate } from './version-check';
 import { checkPortUsable } from './utils';
+import {
+  saveMetadata,
+  deleteMetadata,
+  checkClaudeConfigStatus,
+  checkCodexConfigStatus,
+  cleanupInvalidMetadata,
+  type ConfigMetadata
+} from './config-metadata';
 
 const dotenvPath = path.resolve(os.homedir(), '.aicodeswitch/aicodeswitch.conf');
 if (fs.existsSync(dotenvPath)) {
@@ -41,17 +49,31 @@ const writeClaudeConfig = async (dbManager: DatabaseManager): Promise<boolean> =
     // Claude Code settings.json
     const claudeDir = path.join(homeDir, '.claude');
     const claudeSettingsPath = path.join(claudeDir, 'settings.json');
-    const claudeSettingsBakPath = path.join(claudeDir, 'settings.json.bak');
-    const claudeJsonBakPath = path.join(homeDir, '.claude.json.bak');
+    const claudeSettingsBakPath = path.join(claudeDir, 'settings.json.aicodeswitch_backup');
+    const claudeJsonBakPath = path.join(homeDir, '.claude.json.aicodeswitch_backup');
 
-    // Check if any backup file already exists
-    if (fs.existsSync(claudeSettingsBakPath) || fs.existsSync(claudeJsonBakPath)) {
-      console.error('Claude backup files already exist, refusing to overwrite');
+    // 使用新的配置状态检测来判断是否可以写入
+    const configStatus = checkClaudeConfigStatus();
+
+    // 只有当当前配置已经是代理配置时，才拒绝写入
+    if (configStatus.isOverwritten) {
+      console.error('Claude config has already been overwritten. Please restore the original config first.');
       return false;
     }
 
-    if (fs.existsSync(claudeSettingsPath)) {
-      fs.renameSync(claudeSettingsPath, claudeSettingsBakPath);
+    // 如果 .aicodeswitch_backup 文件不存在，才进行备份（避免覆盖已有备份）
+    let originalSettingsHash: string | undefined = undefined;
+
+    if (!fs.existsSync(claudeSettingsBakPath)) {
+      // 计算原始配置文件的 hash(如果存在)
+      if (fs.existsSync(claudeSettingsPath)) {
+        originalSettingsHash = createHash('sha256').update(fs.readFileSync(claudeSettingsPath, 'utf-8')).digest('hex');
+        // 备份当前配置文件
+        fs.renameSync(claudeSettingsPath, claudeSettingsBakPath);
+      }
+    } else {
+      // .aicodeswitch_backup 已存在，直接使用现有的备份文件
+      console.log('Backup file already exists, skipping backup step');
     }
 
     if (!fs.existsSync(claudeDir)) {
@@ -71,8 +93,11 @@ const writeClaudeConfig = async (dbManager: DatabaseManager): Promise<boolean> =
     // Claude Code .claude.json
     const claudeJsonPath = path.join(homeDir, '.claude.json');
 
-    if (fs.existsSync(claudeJsonPath)) {
-      fs.renameSync(claudeJsonPath, claudeJsonBakPath);
+    // 同样处理 .claude.json 的备份
+    if (!fs.existsSync(claudeJsonBakPath)) {
+      if (fs.existsSync(claudeJsonPath)) {
+        fs.renameSync(claudeJsonPath, claudeJsonBakPath);
+      }
     }
 
     let claudeJson: any = {};
@@ -82,6 +107,27 @@ const writeClaudeConfig = async (dbManager: DatabaseManager): Promise<boolean> =
     claudeJson.hasCompletedOnboarding = true;
 
     fs.writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2));
+
+    // 保存元数据
+    const currentSettingsHash = createHash('sha256').update(fs.readFileSync(claudeSettingsPath, 'utf-8')).digest('hex');
+    const metadata: ConfigMetadata = {
+      configType: 'claude',
+      timestamp: Date.now(),
+      originalHash: originalSettingsHash,
+      proxyMarker: `http://${host}:${port}/claude-code`,
+      files: [
+        {
+          originalPath: claudeSettingsPath,
+          backupPath: claudeSettingsBakPath,
+          currentHash: currentSettingsHash
+        },
+        {
+          originalPath: claudeJsonPath,
+          backupPath: claudeJsonBakPath
+        }
+      ]
+    };
+    saveMetadata(metadata);
 
     return true;
   } catch (error) {
@@ -99,17 +145,31 @@ const writeCodexConfig = async (dbManager: DatabaseManager): Promise<boolean> =>
     // Codex config.toml
     const codexDir = path.join(homeDir, '.codex');
     const codexConfigPath = path.join(codexDir, 'config.toml');
-    const codexConfigBakPath = path.join(codexDir, 'config.toml.bak');
-    const codexAuthBakPath = path.join(codexDir, 'auth.json.bak');
+    const codexConfigBakPath = path.join(codexDir, 'config.toml.aicodeswitch_backup');
+    const codexAuthBakPath = path.join(codexDir, 'auth.json.aicodeswitch_backup');
 
-    // Check if any backup file already exists
-    if (fs.existsSync(codexConfigBakPath) || fs.existsSync(codexAuthBakPath)) {
-      console.error('Codex backup files already exist, refusing to overwrite');
+    // 使用新的配置状态检测来判断是否可以写入
+    const configStatus = checkCodexConfigStatus();
+
+    // 只有当当前配置已经是代理配置时，才拒绝写入
+    if (configStatus.isOverwritten) {
+      console.error('Codex config has already been overwritten. Please restore the original config first.');
       return false;
     }
 
-    if (fs.existsSync(codexConfigPath)) {
-      fs.renameSync(codexConfigPath, codexConfigBakPath);
+    // 如果 .aicodeswitch_backup 文件不存在，才进行备份（避免覆盖已有备份）
+    let originalConfigHash: string | undefined = undefined;
+
+    if (!fs.existsSync(codexConfigBakPath)) {
+      // 计算原始配置文件的 hash(如果存在)
+      if (fs.existsSync(codexConfigPath)) {
+        originalConfigHash = createHash('sha256').update(fs.readFileSync(codexConfigPath, 'utf-8')).digest('hex');
+        // 备份当前配置文件
+        fs.renameSync(codexConfigPath, codexConfigBakPath);
+      }
+    } else {
+      // .aicodeswitch_backup 已存在，直接使用现有的备份文件
+      console.log('Backup file already exists, skipping backup step');
     }
 
     if (!fs.existsSync(codexDir)) {
@@ -134,8 +194,11 @@ requires_openai_auth = true
     // Codex auth.json
     const codexAuthPath = path.join(codexDir, 'auth.json');
 
-    if (fs.existsSync(codexAuthPath)) {
-      fs.renameSync(codexAuthPath, codexAuthBakPath);
+    // 同样处理 auth.json 的备份
+    if (!fs.existsSync(codexAuthBakPath)) {
+      if (fs.existsSync(codexAuthPath)) {
+        fs.renameSync(codexAuthPath, codexAuthBakPath);
+      }
     }
 
     const codexAuth = {
@@ -143,6 +206,27 @@ requires_openai_auth = true
     };
 
     fs.writeFileSync(codexAuthPath, JSON.stringify(codexAuth, null, 2));
+
+    // 保存元数据
+    const currentConfigHash = createHash('sha256').update(fs.readFileSync(codexConfigPath, 'utf-8')).digest('hex');
+    const metadata: ConfigMetadata = {
+      configType: 'codex',
+      timestamp: Date.now(),
+      originalHash: originalConfigHash,
+      proxyMarker: `http://${host}:${port}/codex`,
+      files: [
+        {
+          originalPath: codexConfigPath,
+          backupPath: codexConfigBakPath,
+          currentHash: currentConfigHash
+        },
+        {
+          originalPath: codexAuthPath,
+          backupPath: codexAuthBakPath
+        }
+      ]
+    };
+    saveMetadata(metadata);
 
     return true;
   } catch (error) {
@@ -158,7 +242,7 @@ const restoreClaudeConfig = async (): Promise<boolean> => {
     // Restore Claude Code settings.json
     const claudeDir = path.join(homeDir, '.claude');
     const claudeSettingsPath = path.join(claudeDir, 'settings.json');
-    const claudeSettingsBakPath = path.join(claudeDir, 'settings.json.bak');
+    const claudeSettingsBakPath = path.join(claudeDir, 'settings.json.aicodeswitch_backup');
 
     if (fs.existsSync(claudeSettingsBakPath)) {
       if (fs.existsSync(claudeSettingsPath)) {
@@ -169,7 +253,7 @@ const restoreClaudeConfig = async (): Promise<boolean> => {
 
     // Restore Claude Code .claude.json
     const claudeJsonPath = path.join(homeDir, '.claude.json');
-    const claudeJsonBakPath = path.join(homeDir, '.claude.json.bak');
+    const claudeJsonBakPath = path.join(homeDir, '.claude.json.aicodeswitch_backup');
 
     if (fs.existsSync(claudeJsonBakPath)) {
       if (fs.existsSync(claudeJsonPath)) {
@@ -177,6 +261,9 @@ const restoreClaudeConfig = async (): Promise<boolean> => {
       }
       fs.renameSync(claudeJsonBakPath, claudeJsonPath);
     }
+
+    // 删除元数据
+    deleteMetadata('claude');
 
     return true;
   } catch (error) {
@@ -192,7 +279,7 @@ const restoreCodexConfig = async (): Promise<boolean> => {
     // Restore Codex config.toml
     const codexDir = path.join(homeDir, '.codex');
     const codexConfigPath = path.join(codexDir, 'config.toml');
-    const codexConfigBakPath = path.join(codexDir, 'config.toml.bak');
+    const codexConfigBakPath = path.join(codexDir, 'config.toml.aicodeswitch_backup');
 
     if (fs.existsSync(codexConfigBakPath)) {
       if (fs.existsSync(codexConfigPath)) {
@@ -203,7 +290,7 @@ const restoreCodexConfig = async (): Promise<boolean> => {
 
     // Restore Codex auth.json
     const codexAuthPath = path.join(codexDir, 'auth.json');
-    const codexAuthBakPath = path.join(codexDir, 'auth.json.bak');
+    const codexAuthBakPath = path.join(codexDir, 'auth.json.aicodeswitch_backup');
 
     if (fs.existsSync(codexAuthBakPath)) {
       if (fs.existsSync(codexAuthPath)) {
@@ -211,6 +298,9 @@ const restoreCodexConfig = async (): Promise<boolean> => {
       }
       fs.renameSync(codexAuthBakPath, codexAuthPath);
     }
+
+    // 删除元数据
+    deleteMetadata('codex');
 
     return true;
   } catch (error) {
@@ -221,11 +311,14 @@ const restoreCodexConfig = async (): Promise<boolean> => {
 
 const checkClaudeBackupExists = (): boolean => {
   try {
-    const homeDir = os.homedir();
-    const claudeSettingsBakPath = path.join(homeDir, '.claude', 'settings.json.bak');
-    const claudeJsonBakPath = path.join(homeDir, '.claude.json.bak');
+    // 清理可能的无效元数据
+    cleanupInvalidMetadata('claude');
 
-    return fs.existsSync(claudeSettingsBakPath) || fs.existsSync(claudeJsonBakPath);
+    // 使用新的配置状态检测
+    const status = checkClaudeConfigStatus();
+
+    // 返回是否已被覆盖(用于向后兼容)
+    return status.isOverwritten;
   } catch (error) {
     console.error('Failed to check Claude backup files:', error);
     return false;
@@ -234,11 +327,14 @@ const checkClaudeBackupExists = (): boolean => {
 
 const checkCodexBackupExists = (): boolean => {
   try {
-    const homeDir = os.homedir();
-    const codexConfigBakPath = path.join(homeDir, '.codex', 'config.toml.bak');
-    const codexAuthBakPath = path.join(homeDir, '.codex', 'auth.json.bak');
+    // 清理可能的无效元数据
+    cleanupInvalidMetadata('codex');
 
-    return fs.existsSync(codexConfigBakPath) || fs.existsSync(codexAuthBakPath);
+    // 使用新的配置状态检测
+    const status = checkCodexConfigStatus();
+
+    // 返回是否已被覆盖(用于向后兼容)
+    return status.isOverwritten;
   } catch (error) {
     console.error('Failed to check Codex backup files:', error);
     return false;
@@ -502,6 +598,17 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
 
   app.get('/api/check-backup/codex', (_req, res) => {
     res.json({ exists: checkCodexBackupExists() });
+  });
+
+  // 新的详细配置状态 API 端点
+  app.get('/api/config-status/claude', (_req, res) => {
+    const status = checkClaudeConfigStatus();
+    res.json(status);
+  });
+
+  app.get('/api/config-status/codex', (_req, res) => {
+    const status = checkCodexConfigStatus();
+    res.json(status);
   });
 
   app.post(
