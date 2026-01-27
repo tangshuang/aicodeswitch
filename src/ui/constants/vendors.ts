@@ -48,6 +48,12 @@ export default {
                 apiUrl: 'https://ark.cn-beijing.volces.com/api/coding/v3',
                 models: 'ark-code-latest',
             },
+            {
+                name: '付费API兼容Claude Code',
+                sourceType: 'claude-code',
+                apiUrl: 'https://ark.cn-beijing.volces.com/api/compatible',
+                models: 'doubao-seed-code-preview-251028',
+            },
         ],
     },
     aicodewith: {

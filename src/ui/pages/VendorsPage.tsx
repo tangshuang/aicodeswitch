@@ -142,7 +142,7 @@ function VendorsPage() {
 
   // 一键配置相关状态
   const [quickSetupVendorKey, setQuickSetupVendorKey] = useState<string>('');
-  const [quickSetupSourceTypes, setQuickSetupSourceTypes] = useState<SourceType[]>([]);
+  const [quickSetupSelectedIndices, setQuickSetupSelectedIndices] = useState<number[]>([]);
   const [quickSetupApiKey, setQuickSetupApiKey] = useState('');
 
   const recommendMd = useRecomandVendors();
@@ -375,13 +375,13 @@ function VendorsPage() {
       setQuickSetupVendorKey(vendorKey);
       const vendorConfig = vendorsConfig[vendorKey as keyof typeof vendorsConfig];
       if (vendorConfig && vendorConfig.services.length > 0) {
-        // 预选所有可用的源类型
-        setQuickSetupSourceTypes(vendorConfig.services.map(s => s.sourceType as SourceType));
+        // 预选所有可用的服务（使用索引）
+        setQuickSetupSelectedIndices(vendorConfig.services.map((_, index) => index));
       }
     } else {
       // 从按钮点击进入，清空表单
       setQuickSetupVendorKey('');
-      setQuickSetupSourceTypes([]);
+      setQuickSetupSelectedIndices([]);
     }
     setQuickSetupApiKey('');
     setShowQuickSetupModal(true);
@@ -400,7 +400,7 @@ function VendorsPage() {
       return;
     }
 
-    if (quickSetupSourceTypes.length === 0) {
+    if (quickSetupSelectedIndices.length === 0) {
       alert('请至少选择一个源类型');
       return;
     }
@@ -418,8 +418,8 @@ function VendorsPage() {
         description: vendorConfig.description,
       });
 
-      // 2. 批量创建API服务
-      const services = vendorConfig.services.filter(s => quickSetupSourceTypes.includes(s.sourceType as SourceType));
+      // 2. 批量创建API服务（根据选中的索引）
+      const services = vendorConfig.services.filter((_, index) => quickSetupSelectedIndices.includes(index));
       const servicePromises = services.map(async (serviceConfig) => {
         return api.createAPIService({
           vendorId: vendorResult.id,
@@ -437,7 +437,7 @@ function VendorsPage() {
       // 3. 刷新列表并关闭弹层
       await loadVendors();
       setShowQuickSetupModal(false);
-      alert(`配置成功! 已创建 ${quickSetupSourceTypes.length} 个API服务`);
+      alert(`配置成功! 已创建 ${quickSetupSelectedIndices.length} 个API服务`);
     } catch (error) {
       console.error('一键配置失败:', error);
       alert('配置失败，请检查输入信息');
@@ -1134,14 +1134,14 @@ function VendorsPage() {
                   onChange={(e) => {
                     const key = e.target.value;
                     setQuickSetupVendorKey(key);
-                    // 自动选择所有可用的服务类型
+                    // 自动选择所有可用的服务（使用索引）
                     if (key) {
                       const vendorConfig = vendorsConfig[key as keyof typeof vendorsConfig];
                       if (vendorConfig && vendorConfig.services.length > 0) {
-                        setQuickSetupSourceTypes(vendorConfig.services.map(s => s.sourceType as SourceType));
+                        setQuickSetupSelectedIndices(vendorConfig.services.map((_, index) => index));
                       }
                     } else {
-                      setQuickSetupSourceTypes([]);
+                      setQuickSetupSelectedIndices([]);
                     }
                   }}
                   required
@@ -1169,7 +1169,7 @@ function VendorsPage() {
                 }}>
                   {quickSetupVendorKey ? (
                     vendorsConfig[quickSetupVendorKey as keyof typeof vendorsConfig]?.services.map((service, index) => {
-                      const isChecked = quickSetupSourceTypes.includes(service.sourceType as SourceType);
+                      const isChecked = quickSetupSelectedIndices.includes(index);
                       return (
                         <label
                           key={index}
@@ -1202,11 +1202,10 @@ function VendorsPage() {
                             type="checkbox"
                             checked={isChecked}
                             onChange={(e) => {
-                              const sourceType = service.sourceType as SourceType;
                               if (e.target.checked) {
-                                setQuickSetupSourceTypes([...quickSetupSourceTypes, sourceType]);
+                                setQuickSetupSelectedIndices([...quickSetupSelectedIndices, index]);
                               } else {
-                                setQuickSetupSourceTypes(quickSetupSourceTypes.filter(st => st !== sourceType));
+                                setQuickSetupSelectedIndices(quickSetupSelectedIndices.filter(i => i !== index));
                               }
                             }}
                             style={{

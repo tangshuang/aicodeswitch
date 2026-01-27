@@ -203,6 +203,7 @@ function LogsPage() {
 
   useEffect(() => {
     loadVendorsAndServices();
+    loadAllCounts();
   }, []);
 
   const loadLogs = async () => {
@@ -250,6 +251,21 @@ function LogsPage() {
       setServices(servicesData);
     } catch (error) {
       console.error('Failed to load vendors and services:', error);
+    }
+  };
+
+  const loadAllCounts = async () => {
+    try {
+      const [requestCount, errorCount, sessionsCount] = await Promise.all([
+        api.getLogsCount(),
+        api.getErrorLogsCount(),
+        api.getSessionsCount()
+      ]);
+      setRequestLogsTotal(requestCount.count);
+      setErrorLogsTotal(errorCount.count);
+      setSessionsTotal(sessionsCount.count);
+    } catch (error) {
+      console.error('Failed to load counts:', error);
     }
   };
 
