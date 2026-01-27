@@ -1074,12 +1074,17 @@ export class ProxyServer {
     return length;
   }
 
+  /** 判断是否为 Claude 相关类型（使用 x-api-key 认证） */
   private isClaudeSource(sourceType: SourceType) {
-    return sourceType === 'claude-chat';
+    return sourceType === 'claude-chat' || sourceType === 'claude-code';
   }
 
   private isOpenAIChatSource(sourceType: SourceType) {
-    return sourceType === 'openai-chat' || sourceType === 'deepseek-chat';
+    return sourceType === 'openai-chat' || sourceType === 'openai-responses' || sourceType === 'deepseek-reasoning-chat';
+  }
+
+  private isChatType(sourceType: SourceType) {
+    return sourceType.endsWith('-chat');
   }
 
   /**
@@ -1149,7 +1154,7 @@ export class ProxyServer {
 
     // 如果请求中指定了 max_tokens，并且超过配置的限制，则限制为配置的最大值
     if (typeof requestedMaxTokens === 'number' && requestedMaxTokens > maxOutputLimit) {
-      console.log(`[Proxy] Limiting ${maxTokensFieldName} from ${requestedMaxTokens} to ${maxOutputLimit} for model ${model} in service ${service.name}`);
+      // console.log(`[Proxy] Limiting ${maxTokensFieldName} from ${requestedMaxTokens} to ${maxOutputLimit} for model ${model} in service ${service.name}`);
       result[maxTokensFieldName] = maxOutputLimit;
 
       // 如果使用了 max_completion_tokens，清理旧的 max_tokens 字段
@@ -1158,7 +1163,7 @@ export class ProxyServer {
       }
     } else if (requestedMaxTokens === undefined) {
       // 如果请求中没有指定 max_tokens，则使用配置的最大值
-      console.log(`[Proxy] Setting ${maxTokensFieldName} to ${maxOutputLimit} for model ${model} in service ${service.name}`);
+      // console.log(`[Proxy] Setting ${maxTokensFieldName} to ${maxOutputLimit} for model ${model} in service ${service.name}`);
       result[maxTokensFieldName] = maxOutputLimit;
     }
 
@@ -1197,10 +1202,19 @@ export class ProxyServer {
       headers.accept = 'text/event-stream';
     }
 
-    if (this.isClaudeSource(sourceType)) {
+    // 确定认证方式：优先使用服务配置的 authType，否则根据 sourceType 自动判断
+    const authType = service.authType || 'auto';
+    const useXApiKey = authType === 'x-api-key' || (authType === 'auto' && this.isClaudeSource(sourceType));
+
+    if (useXApiKey) {
+      // 使用 x-api-key 认证（适用于 claude-chat, claude-code 及某些需要 x-api-key 的 openai-chat 兼容 API）
       headers['x-api-key'] = service.apiKey;
-      headers['anthropic-version'] = headers['anthropic-version'] || '2023-06-01';
+      if (this.isClaudeSource(sourceType) || authType === 'x-api-key') {
+        // 仅在明确配置或 Claude 源时添加 anthropic-version
+        headers['anthropic-version'] = headers['anthropic-version'] || '2023-06-01';
+      }
     } else {
+      // 使用 Authorization 认证（适用于 openai-chat, openai-responses, deepseek-reasoning-chat 等）
       delete headers['anthropic-version'];
       delete headers['anthropic-beta'];
       headers.authorization = `Bearer ${service.apiKey}`;
@@ -1433,6 +1447,7 @@ export class ProxyServer {
         responseHeaders: responseHeadersForLog,
         responseBody: responseBodyForLog,
         streamChunks: streamChunksForLog,
+
         upstreamRequest: upstreamRequestForLog,
       });
 
@@ -1521,7 +1536,7 @@ export class ProxyServer {
 
       const config: AxiosRequestConfig = {
         method: req.method as any,
-        url: `${service.apiUrl}${mappedPath}`,
+        url: this.isChatType(sourceType) ? service.apiUrl : `${service.apiUrl}${mappedPath}`,
         headers: this.buildUpstreamHeaders(req, service, sourceType, streamRequested),
         timeout: rule.timeout || 3000000, // 默认300秒
         validateStatus: () => true,
@@ -1566,14 +1581,17 @@ export class ProxyServer {
       }
 
       // 记录实际发出的请求信息作为日志的一部分
-      const actualModel = requestBody?.model || '';
-      const maxTokensFieldName = this.getMaxTokensFieldName(actualModel);
-      const actualMaxTokens = requestBody?.[maxTokensFieldName] || requestBody?.max_tokens;
+      // const actualModel = requestBody?.model || '';
+      // const maxTokensFieldName = this.getMaxTokensFieldName(actualModel);
+      // const actualMaxTokens = requestBody?.[maxTokensFieldName] || requestBody?.max_tokens;
+      const upstreamHeaders = this.buildUpstreamHeaders(req, service, sourceType, streamRequested);
 
       upstreamRequestForLog = {
-        url: `${service.apiUrl}${mappedPath}`,
-        model: actualModel,
-        [maxTokensFieldName]: actualMaxTokens,
+        url: this.isChatType(sourceType) ? service.apiUrl : `${service.apiUrl}${mappedPath}`,
+        // model: actualModel,
+        // [maxTokensFieldName]: actualMaxTokens,
+        headers: upstreamHeaders,
+        body: requestBody || undefined,
       };
       if (actuallyUsedProxy) {
         upstreamRequestForLog.useProxy = true;
@@ -1696,7 +1714,18 @@ export class ProxyServer {
         responseBodyForLog = typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
 
         // 将 4xx/5xx 错误记录到错误日志
-        const errorDetail = responseData?.error || responseData?.message || JSON.stringify(responseData);
+        // 确保 errorDetail 总是字符串类型
+        let errorDetail: string;
+        if (typeof responseData?.error === 'string') {
+          errorDetail = responseData.error;
+        } else if (typeof responseData?.message === 'string') {
+          errorDetail = responseData.message;
+        } else if (responseData?.error) {
+          errorDetail = JSON.stringify(responseData.error);
+        } else {
+          errorDetail = JSON.stringify(responseData);
+        }
+
         await this.dbManager.addErrorLog({
           timestamp: Date.now(),
           method: req.method,

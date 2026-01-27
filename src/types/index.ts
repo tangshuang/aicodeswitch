@@ -9,9 +9,11 @@ export interface Vendor {
 }
 
 /** 供应商API接口的数据结构标准类型 */
-export type SourceType = 'openai-chat' | 'claude-chat' | 'deepseek-chat';
+export type SourceType = 'openai-chat' | 'openai-responses' | 'claude-chat' | 'claude-code' | 'deepseek-reasoning-chat';
 /** 路由的目标对象类型，目前，仅支持claude-code和codex */
 export type TargetType = 'claude-code' | 'codex';
+/** 认证方式类型 */
+export type AuthType = 'authorization' | 'x-api-key' | 'auto';
 
 /** 供应商API服务 */
 export interface APIService {
@@ -21,6 +23,7 @@ export interface APIService {
   apiUrl: string;
   apiKey: string;
   sourceType?: SourceType;
+  authType?: AuthType; // 认证方式，默认为 'auto'（根据 sourceType 自动判断）
   supportedModels?: string[];
   modelLimits?: Record<string, number>; // 模型名 -> 最大输出tokens映射
   enableProxy?: boolean; // 是否启用代理
@@ -106,10 +109,12 @@ export interface RequestLog {
   streamChunks?: string[];                         // stream chunks数组
   upstreamRequest?: {                              // 实际发送给后端的请求信息
     url: string;                                   // 实际请求的URL路径
-    model: string;                                 // 实际请求的模型名
-    max_tokens?: number;                           // 实际的 max_tokens 值
-    max_completion_tokens?: number;                // 实际的 max_completion_tokens 值
+    // model: string;                                 // 实际请求的模型名
+    // max_tokens?: number;                           // 实际的 max_tokens 值
+    // max_completion_tokens?: number;                // 实际的 max_completion_tokens 值
     useProxy?: boolean;                            // 是否使用了代理
+    headers?: Record<string, string>;              // 实际发送的请求头
+    body?: string;                                 // 实际发送的请求体
   };
 }
 

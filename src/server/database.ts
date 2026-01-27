@@ -245,6 +245,14 @@ export class DatabaseManager {
       this.db.exec('ALTER TABLE api_services ADD COLUMN request_reset_base_time INTEGER;');
       console.log('[DB] Migration completed: request_reset_base_time column added');
     }
+
+    // 检查api_services表是否有auth_type字段
+    const hasAuthType = columns.some((col: any) => col.name === 'auth_type');
+    if (!hasAuthType) {
+      console.log('[DB] Running migration: Adding auth_type column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN auth_type TEXT DEFAULT NULL;');
+      console.log('[DB] Migration completed: auth_type column added');
+    }
   }
 
   private async migrateMaxOutputTokensToModelLimits() {
@@ -468,6 +476,7 @@ export class DatabaseManager {
       apiUrl: row.api_url,
       apiKey: row.api_key,
       sourceType: row.source_type,
+      authType: row.auth_type,
       supportedModels: row.supported_models ? row.supported_models.split(',').map((model: string) => model.trim()).filter((model: string) => model.length > 0) : undefined,
       modelLimits: row.model_limits ? JSON.parse(row.model_limits) : undefined,
       enableProxy: row.enable_proxy === 1,
@@ -498,7 +507,7 @@ export class DatabaseManager {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, enable_proxy, enable_token_limit, token_limit, token_reset_interval, token_reset_base_time, enable_request_limit, request_count_limit, request_reset_interval, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, auth_type, supported_models, model_limits, enable_proxy, enable_token_limit, token_limit, token_reset_interval, token_reset_base_time, enable_request_limit, request_count_limit, request_reset_interval, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         id,
@@ -507,6 +516,7 @@ export class DatabaseManager {
         service.apiUrl,
         service.apiKey,
         service.sourceType || null,
+        service.authType || null,
         service.supportedModels ? service.supportedModels.join(',') : null,
         service.modelLimits ? JSON.stringify(service.modelLimits) : null,
         service.enableProxy ? 1 : 0,
@@ -528,7 +538,7 @@ export class DatabaseManager {
     const now = Date.now();
     const result = this.db
       .prepare(
-        'UPDATE api_services SET vendor_id = ?, name = ?, api_url = ?, api_key = ?, source_type = ?, supported_models = ?, model_limits = ?, enable_proxy = ?, enable_token_limit = ?, token_limit = ?, token_reset_interval = ?, token_reset_base_time = ?, enable_request_limit = ?, request_count_limit = ?, request_reset_interval = ?, request_reset_base_time = ?, updated_at = ? WHERE id = ?'
+        'UPDATE api_services SET vendor_id = ?, name = ?, api_url = ?, api_key = ?, source_type = ?, auth_type = ?, supported_models = ?, model_limits = ?, enable_proxy = ?, enable_token_limit = ?, token_limit = ?, token_reset_interval = ?, token_reset_base_time = ?, enable_request_limit = ?, request_count_limit = ?, request_reset_interval = ?, request_reset_base_time = ?, updated_at = ? WHERE id = ?'
       )
       .run(
         service.vendorId,
@@ -536,6 +546,7 @@ export class DatabaseManager {
         service.apiUrl,
         service.apiKey,
         service.sourceType || null,
+        service.authType || null,
         service.supportedModels ? service.supportedModels.join(',') : null,
         service.modelLimits ? JSON.stringify(service.modelLimits) : null,
         service.enableProxy !== undefined ? (service.enableProxy ? 1 : 0) : null,
@@ -1164,7 +1175,7 @@ export class DatabaseManager {
        for (const service of importData.apiServices) {
          this.db
            .prepare(
-             'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, enable_proxy, enable_token_limit, token_limit, token_reset_interval, token_reset_base_time, enable_request_limit, request_count_limit, request_reset_interval, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+             'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, auth_type, supported_models, model_limits, enable_proxy, enable_token_limit, token_limit, token_reset_interval, token_reset_base_time, enable_request_limit, request_count_limit, request_reset_interval, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
            )
            .run(
              service.id,
@@ -1173,6 +1184,7 @@ export class DatabaseManager {
              service.apiUrl,
              service.apiKey,
              service.sourceType || null,
+             service.authType || null,
              service.supportedModels ? service.supportedModels.join(',') : null,
              service.modelLimits ? JSON.stringify(service.modelLimits) : null,
              service.enableProxy ? 1 : 0,

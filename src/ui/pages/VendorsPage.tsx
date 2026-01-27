@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api } from '../api/client';
-import type { Vendor, APIService, SourceType } from '../../types';
+import type { Vendor, APIService, SourceType, AuthType } from '../../types';
 import vendorsConfig from '../constants/vendors';
-import { SOURCE_TYPE } from '../constants';
+import { SOURCE_TYPE, SOURCE_TYPE_MESSAGE, AUTH_TYPE, AUTH_TYPE_MESSAGE } from '../constants';
 import { useRecomandVendors } from '../hooks/docs';
 
 /**
@@ -135,12 +135,27 @@ function VendorsPage() {
   const [requestResetInterval, setRequestResetInterval] = useState<number | undefined>(undefined);
   const [requestResetBaseTime, setRequestResetBaseTime] = useState<Date | undefined>(undefined);
 
+  // 当前选择的数据源类型（用于动态显示API地址提示）
+  const [currentSourceType, setCurrentSourceType] = useState<SourceType>('openai-chat');
+  // 当前选择的认证方式（用于动态显示认证方式提示）
+  const [currentAuthType, setCurrentAuthType] = useState<AuthType>('auto');
+
   // 一键配置相关状态
   const [quickSetupVendorKey, setQuickSetupVendorKey] = useState<string>('');
   const [quickSetupSourceTypes, setQuickSetupSourceTypes] = useState<SourceType[]>([]);
   const [quickSetupApiKey, setQuickSetupApiKey] = useState('');
 
   const recommendMd = useRecomandVendors();
+
+  const constantVendors = useMemo(() => {
+    const overseaVendors = Object.keys(vendorsConfig).filter(key => vendorsConfig[key].is_oversea).map((key) => ({ ...vendorsConfig[key], key }));
+    const insideVendors = Object.keys(vendorsConfig).filter(key => !vendorsConfig[key].is_oversea).map((key) => ({ ...vendorsConfig[key], key }));
+    return [
+      ...insideVendors,
+      null,
+      ...overseaVendors,
+    ];
+  }, []);
 
   useEffect(() => {
     loadVendors();
@@ -244,6 +259,7 @@ function VendorsPage() {
     setRequestCountLimit(undefined);
     setRequestResetInterval(undefined);
     setRequestResetBaseTime(undefined);
+    setCurrentSourceType('openai-chat');
     setShowServiceModal(true);
   };
 
@@ -266,6 +282,8 @@ function VendorsPage() {
     setRequestResetBaseTime(
       (service as any).requestResetBaseTime ? new Date((service as any).requestResetBaseTime) : undefined
     );
+    setCurrentSourceType(service.sourceType || 'openai-chat');
+    setCurrentAuthType(service.authType || 'auto');
     setShowServiceModal(true);
   };
 
@@ -311,6 +329,7 @@ function VendorsPage() {
       apiUrl: formData.get('apiUrl') as string,
       apiKey: formData.get('apiKey') as string,
       sourceType: formData.get('sourceType') as SourceType,
+      authType: formData.get('authType') as AuthType || undefined,
       supportedModels: finalModels.length > 0 ? finalModels : undefined,
       modelLimits: Object.keys(finalModelLimits).length > 0 ? finalModelLimits : undefined,
       enableProxy: formData.get('enableProxy') === 'on',
@@ -400,20 +419,16 @@ function VendorsPage() {
       });
 
       // 2. 批量创建API服务
-      const servicePromises = quickSetupSourceTypes.map(async (sourceType) => {
-        const serviceConfig = vendorConfig.services.find(s => s.sourceType === sourceType);
-        if (!serviceConfig) {
-          console.warn(`未找到源类型 ${sourceType} 的配置`);
-          return null;
-        }
-
+      const services = vendorConfig.services.filter(s => quickSetupSourceTypes.includes(s.sourceType as SourceType));
+      const servicePromises = services.map(async (serviceConfig) => {
         return api.createAPIService({
           vendorId: vendorResult.id,
           name: serviceConfig.name,
           apiUrl: serviceConfig.apiUrl,
           apiKey: apiKey,
-          sourceType: sourceType,
+          sourceType: serviceConfig.sourceType,
           supportedModels: serviceConfig.models ? serviceConfig.models.split(',').map(m => m.trim()) : undefined,
+          modelLimits: serviceConfig.modelLimits || {},
         });
       });
 
@@ -631,7 +646,24 @@ function VendorsPage() {
                 <input type="text" name="name" defaultValue={editingService ? editingService.name : ''} required />
               </div>
               <div className="form-group">
-                <label>供应商API地址 <small>填写根路径，不需要 /v1 及后面的</small></label>
+                <label>数据源类型 <small>供应商接口返回的数据格式标准类型</small></label>
+                <select
+                  name="sourceType"
+                  defaultValue={editingService ? editingService.sourceType || '' : ''}
+                  onChange={(e) => setCurrentSourceType(e.target.value as SourceType)}
+                  required
+                >
+                  <option value="">请选择源类型</option>
+                  {Object.keys(SOURCE_TYPE).map((type) => (
+                    <option key={type} value={type}>{SOURCE_TYPE[type as keyof typeof SOURCE_TYPE]}</option>
+                  ))}
+                </select>
+                <small style={{ display: 'block', marginTop: '4px', color: 'var(--text-muted)' }}>
+                  {SOURCE_TYPE_MESSAGE[currentSourceType] || ''}
+                </small>
+              </div>
+              <div className="form-group">
+                <label>供应商API地址</label>
                 <input type="url" name="apiUrl" defaultValue={editingService ? editingService.apiUrl : ''} required />
               </div>
               <div className="form-group">
@@ -639,13 +671,19 @@ function VendorsPage() {
                 <input type="password" name="apiKey" defaultValue={editingService ? editingService.apiKey : ''} required />
               </div>
               <div className="form-group">
-                <label>数据源类型 <small>供应商接口返回的数据格式标准类型</small></label>
-                <select name="sourceType" defaultValue={editingService ? editingService.sourceType || '' : ''} required>
-                  <option value="">请选择源类型</option>
-                  {Object.keys(SOURCE_TYPE).map((type) => (
-                    <option key={type} value={type}>{SOURCE_TYPE[type as keyof typeof SOURCE_TYPE]}</option>
+                <label>API认证方式 <small>API 请求使用的认证方式</small></label>
+                <select
+                  name="authType"
+                  defaultValue={editingService ? editingService.authType || 'auto' : 'auto'}
+                  onChange={(e) => setCurrentAuthType(e.target.value as AuthType)}
+                >
+                  {Object.keys(AUTH_TYPE).map((type) => (
+                    <option key={type} value={type}>{AUTH_TYPE[type as keyof typeof AUTH_TYPE]}</option>
                   ))}
                 </select>
+                <small style={{ display: 'block', marginTop: '4px', color: 'var(--text-muted)' }}>
+                  {AUTH_TYPE_MESSAGE[currentAuthType] || ''}
+                </small>
               </div>
                <div className="form-group">
                  <label>支持的模型列表</label>
@@ -1108,10 +1146,10 @@ function VendorsPage() {
                   }}
                   required
                 >
-                  <option value="">请选择供应商</option>
-                  {Object.entries(vendorsConfig).map(([key, config]) => (
-                    <option key={key} value={key}>{config.name}</option>
-                  ))}
+                  <option value="" disabled>请选择供应商</option>
+                  {constantVendors.map((vendor: any) => vendor ? (
+                    <option key={vendor.key} value={vendor.key}>{vendor.name}</option>
+                  ) : (<option value="" disabled>--</option>))}
                 </select>
               </div>
               {vendorsConfig[quickSetupVendorKey]?.description ? (
@@ -1185,7 +1223,7 @@ function VendorsPage() {
                             color: isChecked ? 'var(--accent-primary)' : 'var(--text-primary)',
                             transition: 'all 0.2s ease'
                           }}>
-                            {SOURCE_TYPE[service.sourceType as keyof typeof SOURCE_TYPE]}
+                            {service.name} - {SOURCE_TYPE[service.sourceType as keyof typeof SOURCE_TYPE]}
                           </span>
                           {isChecked && (
                             <span style={{

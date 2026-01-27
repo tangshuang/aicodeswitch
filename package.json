@@ -37,7 +37,8 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:ui\"",
     "dev:ui": "vite",
-    "dev:server": "tsx watch --env-file=.env --tsconfig=tsconfig.server.json --clear-screen=false --watch-kill-signal=SIGINT src/server/main.ts",
+    "dev:server": "tsx --env-file=.env --tsconfig=tsconfig.server.json src/server/main.ts",
+    "dev:server:watch": "tsx watch --env-file=.env --tsconfig=tsconfig.server.json --clear-screen=false --watch-kill-signal=SIGINT src/server/main.ts",
     "build": "npm run build:ui && npm run build:server",
     "build:ui": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
