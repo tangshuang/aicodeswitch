@@ -34,7 +34,7 @@ export default {
     },
     doubao: {
         name: '豆包',
-        description: '字节旗下大模型 https://volcengine.com/L/RcHlm6yxj0w/  邀请码：Y58X463P',
+        description: '字节旗下大模型。Coding Plan一次性支持GLM、Kimi-K2、Deepseek多个国产模型 https://volcengine.com/L/RcHlm6yxj0w/  邀请码：Y58X463P',
         services: [
             {
                 name: 'Coding Plan Claude Code',
@@ -52,7 +52,7 @@ export default {
     },
     aicodewith: {
         name: 'AICodeWith',
-        description: '稳定的第三方中转 https://aicodewith.com',
+        description: '稳定的第三方中转 https://aicodewith.com/login?tab=register&invitation=QCA74W',
         services: [
             {
                 name: 'claudecode',

@@ -29,6 +29,25 @@ function formatDateTimeLocal(date: Date): string {
   return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
+/**
+ * 获取配置文件相关的API方法
+ */
+const getConfigApi = (targetType: 'claude-code' | 'codex') => {
+  return targetType === 'claude-code'
+    ? {
+        write: api.writeClaudeConfig,
+        restore: api.restoreClaudeConfig,
+        checkBackup: api.checkClaudeBackup,
+        toolName: 'Claude Code'
+      }
+    : {
+        write: api.writeCodexConfig,
+        restore: api.restoreCodexConfig,
+        checkBackup: api.checkCodexBackup,
+        toolName: 'Codex'
+      };
+};
+
 export default function RoutesPage() {
   const [routes, setRoutes] = useState<Route[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
@@ -63,6 +82,18 @@ export default function RoutesPage() {
     blacklistEntry?: ServiceBlacklistEntry;
   }>>({});
 
+  // 配置文件备份状态
+  const [backupStatus, setBackupStatus] = useState<{
+    'claude-code': boolean;
+    'codex': boolean;
+  }>({
+    'claude-code': false,
+    'codex': false
+  });
+
+  // 配置操作loading状态
+  const [isConfiguringRoute, setIsConfiguringRoute] = useState<string | null>(null);
+
   // FLIP动画相关
   const { recordPositions, applyAnimation } = useFlipAnimation();
   const routeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -72,7 +103,21 @@ export default function RoutesPage() {
     loadRoutes();
     loadVendors();
     loadAllServices();
+    checkBackupStatus();
   }, []);
+
+  // 添加页面刷新保护
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isConfiguringRoute) {
+        e.preventDefault();
+        e.returnValue = '正在配置路由，刷新页面可能导致配置不完整。';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isConfiguringRoute]);
 
   useEffect(() => {
     if (selectedRoute) {
@@ -133,33 +178,134 @@ export default function RoutesPage() {
     setAllServices(data);
   };
 
-  const handleActivateRoute = async (id: string) => {
-    // 记录当前被激活路由项的位置（First阶段）
-    const routeElement = routeRefs.current.get(id);
-    if (routeElement) {
-      recordPositions(id, routeElement);
+  const checkBackupStatus = async () => {
+    try {
+      const [claudeBackup, codexBackup] = await Promise.all([
+        api.checkClaudeBackup(),
+        api.checkCodexBackup()
+      ]);
+      setBackupStatus({
+        'claude-code': claudeBackup.exists,
+        'codex': codexBackup.exists
+      });
+    } catch (error) {
+      console.error('检查备份状态失败:', error);
+      // 失败时假设没有备份，避免误判
+      setBackupStatus({
+        'claude-code': false,
+        'codex': false
+      });
     }
+  };
 
-    activatingRouteIdRef.current = id;
-    await api.activateRoute(id);
-    await loadRoutes();
+  const handleActivateRoute = async (id: string) => {
+    const route = routes.find(r => r.id === id);
+    if (!route) return;
 
-    // 在下一帧应用动画（Invert和Play阶段）
-    if (routeElement) {
-      // 使用setTimeout确保DOM已经更新
-      setTimeout(() => {
-        const newRouteElement = routeRefs.current.get(id);
-        if (newRouteElement) {
-          applyAnimation(id, newRouteElement, 400);
+    // 重新检查备份状态，避免使用过期数据
+    await checkBackupStatus();
+    const needsConfigWrite = !backupStatus[route.targetType];
+
+    setIsConfiguringRoute(id);
+    let configWritten = false;
+
+    try {
+      // 步骤1：覆盖配置文件（如果需要）
+      if (needsConfigWrite) {
+        try {
+          const configApi = getConfigApi(route.targetType);
+          await configApi.write();
+          configWritten = true;
+        } catch (error: any) {
+          throw new Error(`配置文件覆盖失败: ${error.message || '未知错误'}`);
         }
-        activatingRouteIdRef.current = null;
-      }, 0);
+      }
+
+      // 步骤2：激活路由（使用现有的FLIP动画逻辑）
+      try {
+        // 记录当前被激活路由项的位置（First阶段）
+        const routeElement = routeRefs.current.get(id);
+        if (routeElement) {
+          recordPositions(id, routeElement);
+        }
+
+        activatingRouteIdRef.current = id;
+        await api.activateRoute(id);
+        await loadRoutes();
+        await checkBackupStatus();
+
+        // 在下一帧应用动画（Invert和Play阶段）
+        if (routeElement) {
+          // 使用setTimeout确保DOM已经更新
+          setTimeout(() => {
+            const newRouteElement = routeRefs.current.get(id);
+            if (newRouteElement) {
+              applyAnimation(id, newRouteElement, 400);
+            }
+            activatingRouteIdRef.current = null;
+          }, 0);
+        }
+      } catch (error: any) {
+        // 如果路由激活失败且刚刚覆盖了配置，尝试回滚
+        if (configWritten) {
+          try {
+            const configApi = getConfigApi(route.targetType);
+            await configApi.restore();
+            throw new Error(`路由激活失败，配置文件已回滚: ${error.message || '未知错误'}`);
+          } catch (rollbackError: any) {
+            throw new Error(
+              `路由激活失败且配置回滚失败！请手动检查配置文件。\n` +
+              `激活错误: ${error.message}\n` +
+              `回滚错误: ${rollbackError.message}`
+            );
+          }
+        }
+        throw new Error(`路由激活失败: ${error.message || '未知错误'}`);
+      }
+    } catch (error: any) {
+      console.error('激活路由失败:', error);
+      alert(error.message);
+    } finally {
+      setIsConfiguringRoute(null);
     }
   };
 
   const handleDeactivateRoute = async (id: string) => {
-    await api.deactivateRoute(id);
-    loadRoutes();
+    const route = routes.find(r => r.id === id);
+    if (!route) return;
+
+    const configApi = getConfigApi(route.targetType);
+    setIsConfiguringRoute(id);
+
+    try {
+      // 步骤1：先恢复配置文件
+      try {
+        await configApi.restore();
+      } catch (error: any) {
+        throw new Error(
+          `配置文件恢复失败: ${error.message || '未知错误'}\n\n` +
+          `路由未停用，请检查配置文件权限。`
+        );
+      }
+
+      // 步骤2：停用路由
+      try {
+        await api.deactivateRoute(id);
+        await loadRoutes();
+        await checkBackupStatus();
+      } catch (error: any) {
+        // 配置已恢复但路由停用失败
+        throw new Error(
+          `配置文件已恢复，但路由停用失败: ${error.message || '未知错误'}\n\n` +
+          `请刷新页面后重试。`
+        );
+      }
+    } catch (error: any) {
+      console.error('停用路由失败:', error);
+      alert(error.message);
+    } finally {
+      setIsConfiguringRoute(null);
+    }
   };
 
   const handleSaveRoute = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -487,7 +633,10 @@ export default function RoutesPage() {
                             e.stopPropagation();
                             handleActivateRoute(route.id);
                           }}
-                        >激活</button>
+                          disabled={isConfiguringRoute !== null}
+                        >
+                          {isConfiguringRoute === route.id ? '处理中...' : '激活'}
+                        </button>
                       ) : (
                         <button
                           className="btn btn-warning"
@@ -496,7 +645,10 @@ export default function RoutesPage() {
                             e.stopPropagation();
                             handleDeactivateRoute(route.id);
                           }}
-                        >停用</button>
+                          disabled={isConfiguringRoute !== null}
+                        >
+                          {isConfiguringRoute === route.id ? '处理中...' : '停用'}
+                        </button>
                       )}
                       <button
                         className="btn btn-secondary"
@@ -781,6 +933,78 @@ export default function RoutesPage() {
               </div>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* 配置文件自动管理说明 - 独立容器 */}
+      <div className="card" style={{ marginTop: '20px' }}>
+        <div className="toolbar">
+          <h3>📝 配置文件自动管理</h3>
+        </div>
+        <div style={{ padding: '20px', lineHeight: '1.8' }}>
+          <div style={{
+            background: '#e3f2fd',
+            padding: '15px',
+            borderRadius: '8px',
+            marginBottom: '15px',
+            borderLeft: '4px solid #2196f3'
+          }}>
+            <strong>💡 工作原理</strong>
+            <p style={{ marginTop: '8px', marginBottom: '0' }}>
+              激活路由时，系统会自动修改编程工具的配置文件，使其通过本代理服务器访问AI服务。
+              停用路由时，系统会自动恢复原始配置。
+            </p>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+            <div style={{
+              background: '#f1f8e9',
+              padding: '15px',
+              borderRadius: '8px',
+              borderLeft: '4px solid #8bc34a'
+            }}>
+              <strong>✓ 激活路由</strong>
+              <ul style={{ marginTop: '8px', paddingLeft: '20px', marginBottom: '0' }}>
+                <li>首次激活：自动备份并覆盖配置文件</li>
+                <li>再次激活：仅切换路由，不重复覆盖</li>
+              </ul>
+            </div>
+
+            <div style={{
+              background: '#fff3e0',
+              padding: '15px',
+              borderRadius: '8px',
+              borderLeft: '4px solid #ff9800'
+            }}>
+              <strong>○ 停用路由</strong>
+              <ul style={{ marginTop: '8px', paddingLeft: '20px', marginBottom: '0' }}>
+                <li>自动恢复原始配置文件</li>
+                <li>删除备份文件</li>
+              </ul>
+            </div>
+          </div>
+
+          <div style={{
+            marginTop: '15px',
+            padding: '12px 15px',
+            background: '#fff8e1',
+            borderRadius: '8px',
+            borderLeft: '4px solid #ffc107'
+          }}>
+            <strong>⚠️ 重要提示</strong>
+            <ul style={{ marginTop: '8px', paddingLeft: '20px', marginBottom: '0' }}>
+              <li>激活（首次）/停用路由后，<strong>必须重启对应的编程工具</strong>才能使配置生效</li>
+              <li>操作前建议关闭编程工具，避免配置冲突</li>
+            </ul>
+          </div>
+
+          <details style={{ marginTop: '15px', cursor: 'pointer' }}>
+            <summary style={{ fontWeight: 'bold', color: '#666' }}>📂 配置文件位置（点击展开）</summary>
+            <ul style={{ marginTop: '8px', paddingLeft: '20px', color: '#666' }}>
+              <li><strong>Claude Code:</strong> ~/.claude/settings.json, ~/.claude.json</li>
+              <li><strong>Codex:</strong> ~/.codex/config.toml, ~/.codex/auth.json</li>
+            </ul>
+          </details>
         </div>
       </div>
 

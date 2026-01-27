@@ -247,9 +247,6 @@ function AppContent() {
             <NavLink to="/vendors">🏭 供应商管理</NavLink>
           </li>
           <li>
-            <NavLink to="/write-config">🗄️ 覆盖配置文件</NavLink>
-          </li>
-          <li>
             <NavLink to="/statistics">📊 数据统计</NavLink>
           </li>
           <li>
