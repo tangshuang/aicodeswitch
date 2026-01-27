@@ -490,8 +490,8 @@ table th {
   width: 48px;
   height: 48px;
   border: none;
-  background: rgba(255, 255, 255, 0.95);
-  color: var(--text-muted);
+  background: var(--accent-light);
+  color: var(--text-primary);
   font-size: 32px;
   line-height: 1;
   cursor: pointer;

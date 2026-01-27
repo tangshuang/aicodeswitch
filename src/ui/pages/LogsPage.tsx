@@ -6,6 +6,8 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import JSONViewer from '../components/JSONViewer';
 import { TARGET_TYPE } from '../constants';
 import { Pagination } from '../components/Pagination';
+import { useConfirm } from '../components/Confirm';
+import { toast } from '../components/Toast';
 
 dayjs.extend(relativeTime);
 
@@ -161,6 +163,7 @@ function assembleStreamTextFromChunks(chunks: string[] | undefined, targetType?:
 type LogTab = 'request' | 'error' | 'sessions';
 
 function LogsPage() {
+  const { confirm } = useConfirm();
   const [activeTab, setActiveTab] = useState<LogTab>('request');
   const [requestLogs, setRequestLogs] = useState<RequestLog[]>([]);
   const [errorLogs, setErrorLogs] = useState<ErrorLog[]>([]);
@@ -190,7 +193,7 @@ function LogsPage() {
   const [loading, setLoading] = useState(false);
 
   // 自动刷新相关状态
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [autoRefresh, setAutoRefresh] = useState(false);
   const [countdown, setCountdown] = useState(10);
 
   // 筛选器相关state
@@ -314,19 +317,29 @@ function LogsPage() {
     const logType = logTypeMap[activeTab];
     const warningMessage = `确定要清空所有${logType}吗?\n\n⚠️ 警告:\n1. 此操作将永久删除所有${logType}记录\n2. 相关的统计数据也会被清空\n3. 此操作不可撤销\n\n是否继续?`;
 
-    if (confirm(warningMessage)) {
+    const confirmed = await confirm({
+      message: warningMessage,
+      title: '确认清空',
+      type: 'danger',
+      confirmText: '确认清空',
+      cancelText: '取消'
+    });
+
+    if (confirmed) {
       if (activeTab === 'request') {
         await api.clearLogs();
         setRequestLogs([]);
         setSelectedRequestLog(null);
         setRequestLogsPage(1);
         setRequestLogsTotal(0);
+        toast.success('请求日志已清空');
       } else if (activeTab === 'error') {
         await api.clearErrorLogs();
         setErrorLogs([]);
         setSelectedErrorLog(null);
         setErrorLogsPage(1);
         setErrorLogsTotal(0);
+        toast.success('错误日志已清空');
       } else if (activeTab === 'sessions') {
         await api.clearSessions();
         setSessions([]);
@@ -334,6 +347,7 @@ function LogsPage() {
         setSelectedSessionLogs([]);
         setSessionsPage(1);
         setSessionsTotal(0);
+        toast.success('会话已清空');
       }
     }
   };
@@ -998,10 +1012,10 @@ function LogsPage() {
                       marginTop: '10px',
                       maxHeight: '400px',
                       overflowY: 'auto',
-                      border: '1px solid #ddd',
+                      border: '1px solid var(--border-secondary)',
                       padding: '10px',
                       borderRadius: '4px',
-                      backgroundColor: '#f8f9fa'
+                      backgroundColor: 'var(--bg-assembled-text)'
                     }}>
                       <AssembledTextView chunks={selectedRequestLog.streamChunks} targetType={selectedRequestLog.targetType} />
                     </div>
@@ -1260,10 +1274,10 @@ function AssembledTextView({ chunks, targetType }: AssembledTextViewProps) {
         <details
           style={{
             marginBottom: '15px',
-            border: '1px solid #e0e0e0',
+            border: '1px solid var(--border-thinking-box)',
             borderRadius: '8px',
             padding: '10px',
-            backgroundColor: '#fff9e6'
+            backgroundColor: 'var(--bg-thinking-box)'
           }}
           open
         >
@@ -1271,7 +1285,7 @@ function AssembledTextView({ chunks, targetType }: AssembledTextViewProps) {
             style={{
               cursor: 'pointer',
               fontWeight: 'bold',
-              color: '#f39c12',
+              color: 'var(--text-thinking-title)',
               userSelect: 'none'
             }}
           >
@@ -1284,11 +1298,11 @@ function AssembledTextView({ chunks, targetType }: AssembledTextViewProps) {
               wordBreak: 'break-word',
               fontFamily: 'monospace',
               fontSize: '13px',
-              color: '#555',
-              backgroundColor: '#fff',
+              color: 'var(--text-thinking-content)',
+              backgroundColor: 'var(--bg-thinking-content)',
               padding: '10px',
               borderRadius: '4px',
-              border: '1px solid #f0e6d3'
+              border: '1px solid var(--border-thinking-content)'
             }}
           >
             {thinking}
@@ -1297,7 +1311,7 @@ function AssembledTextView({ chunks, targetType }: AssembledTextViewProps) {
       )}
       {text && (
         <div>
-          <div style={{ fontWeight: 'bold', marginBottom: '8px', color: '#333' }}>
+          <div style={{ fontWeight: 'bold', marginBottom: '8px', color: 'var(--text-reply-title)' }}>
             回复内容 ({text.length} 字符)
           </div>
           <pre
@@ -1306,11 +1320,11 @@ function AssembledTextView({ chunks, targetType }: AssembledTextViewProps) {
               wordBreak: 'break-word',
               fontFamily: 'monospace',
               fontSize: '13px',
-              color: '#333',
-              backgroundColor: '#fff',
+              color: 'var(--text-reply-content)',
+              backgroundColor: 'var(--bg-reply-content)',
               padding: '10px',
               borderRadius: '4px',
-              border: '1px solid #ddd'
+              border: '1px solid var(--border-reply-content)'
             }}
           >
             {text}

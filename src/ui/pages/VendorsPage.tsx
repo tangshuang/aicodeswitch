@@ -5,6 +5,8 @@ import type { Vendor, APIService, SourceType, AuthType } from '../../types';
 import vendorsConfig from '../constants/vendors';
 import { SOURCE_TYPE, SOURCE_TYPE_MESSAGE, AUTH_TYPE, AUTH_TYPE_MESSAGE } from '../constants';
 import { useRecomandVendors } from '../hooks/docs';
+import { useConfirm } from '../components/Confirm';
+import { toast } from '../components/Toast';
 
 /**
  * 将 Date 对象转换为 datetime-local input 所需的格式
@@ -110,6 +112,7 @@ function TagInput({ value = [], onChange, placeholder, inputValue, onInputChange
 
 
 function VendorsPage() {
+  const { confirm } = useConfirm();
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [services, setServices] = useState<APIService[]>([]);
   const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null);
@@ -215,13 +218,22 @@ function VendorsPage() {
   };
 
   const handleDeleteVendor = async (id: string) => {
-    if (confirm('确定要删除此供应商吗')) {
+    const confirmed = await confirm({
+      message: '确定要删除此供应商吗？',
+      title: '确认删除',
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消'
+    });
+
+    if (confirmed) {
       await api.deleteVendor(id);
       loadVendors();
       if (selectedVendor && selectedVendor.id === id) {
         setSelectedVendor(null);
         setServices([]);
       }
+      toast.success('供应商已删除');
     }
   };
 
@@ -290,11 +302,20 @@ function VendorsPage() {
 
 
   const handleDeleteService = async (id: string) => {
-    if (confirm('确定要删除此API服务吗')) {
+    const confirmed = await confirm({
+      message: '确定要删除此API服务吗？',
+      title: '确认删除',
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消'
+    });
+
+    if (confirmed) {
       await api.deleteAPIService(id);
       if (selectedVendor) {
         loadServices(selectedVendor.id);
       }
+      toast.success('API服务已删除');
     }
   };
 
@@ -396,18 +417,18 @@ function VendorsPage() {
     const apiKey = formData.get('apiKey') as string;
 
     if (!vendorKey || !apiKey) {
-      alert('请填写完整信息');
+      toast.warning('请填写完整信息');
       return;
     }
 
     if (quickSetupSelectedIndices.length === 0) {
-      alert('请至少选择一个源类型');
+      toast.warning('请至少选择一个源类型');
       return;
     }
 
     const vendorConfig = vendorsConfig[vendorKey as keyof typeof vendorsConfig];
     if (!vendorConfig) {
-      alert('未找到对应的供应商配置');
+      toast.error('未找到对应的供应商配置');
       return;
     }
 
@@ -437,10 +458,10 @@ function VendorsPage() {
       // 3. 刷新列表并关闭弹层
       await loadVendors();
       setShowQuickSetupModal(false);
-      alert(`配置成功! 已创建 ${quickSetupSelectedIndices.length} 个API服务`);
+      toast.success(`配置成功! 已创建 ${quickSetupSelectedIndices.length} 个API服务`);
     } catch (error) {
       console.error('一键配置失败:', error);
-      alert('配置失败，请检查输入信息');
+      toast.error('配置失败，请检查输入信息');
     }
   };
 

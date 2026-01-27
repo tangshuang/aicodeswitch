@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
 import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry } from '../../types';
 import { useFlipAnimation } from '../hooks/useFlipAnimation';
+import { useConfirm } from '../components/Confirm';
+import { toast } from '../components/Toast';
 
 const CONTENT_TYPE_OPTIONS = [
   { value: 'default', label: '默认' },
@@ -49,6 +51,7 @@ const getConfigApi = (targetType: 'claude-code' | 'codex') => {
 };
 
 export default function RoutesPage() {
+  const { confirm } = useConfirm();
   const [routes, setRoutes] = useState<Route[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -264,7 +267,7 @@ export default function RoutesPage() {
       }
     } catch (error: any) {
       console.error('激活路由失败:', error);
-      alert(error.message);
+      toast.error(error.message);
     } finally {
       setIsConfiguringRoute(null);
     }
@@ -302,7 +305,7 @@ export default function RoutesPage() {
       }
     } catch (error: any) {
       console.error('停用路由失败:', error);
-      alert(error.message);
+      toast.error(error.message);
     } finally {
       setIsConfiguringRoute(null);
     }
@@ -329,13 +332,22 @@ export default function RoutesPage() {
   };
 
   const handleDeleteRoute = async (id: string) => {
-    if (confirm('确定要删除此路由吗')) {
+    const confirmed = await confirm({
+      message: '确定要删除此路由吗？',
+      title: '确认删除',
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消'
+    });
+
+    if (confirmed) {
       await api.deleteRoute(id);
       loadRoutes();
       if (selectedRoute && selectedRoute.id === id) {
         setSelectedRoute(null);
         setRules([]);
       }
+      toast.success('路由已删除');
     }
   };
 
@@ -344,12 +356,12 @@ export default function RoutesPage() {
 
     // 验证超量值不超过API服务的限制
     if (selectedTokenLimit !== undefined && maxTokenLimit !== undefined && selectedTokenLimit > maxTokenLimit) {
-      alert(`Token超量值 (${selectedTokenLimit}k) 不能超过API服务的限制 (${maxTokenLimit}k)`);
+      toast.warning(`Token超量值 (${selectedTokenLimit}k) 不能超过API服务的限制 (${maxTokenLimit}k)`);
       return;
     }
 
     if (selectedRequestCountLimit !== undefined && maxRequestCountLimit !== undefined && selectedRequestCountLimit > maxRequestCountLimit) {
-      alert(`请求次数超量值 (${selectedRequestCountLimit}) 不能超过API服务的限制 (${maxRequestCountLimit})`);
+      toast.warning(`请求次数超量值 (${selectedRequestCountLimit}) 不能超过API服务的限制 (${maxRequestCountLimit})`);
       return;
     }
 
@@ -383,11 +395,20 @@ export default function RoutesPage() {
   };
 
   const handleDeleteRule = async (id: string) => {
-    if (confirm('确定要删除此路由吗')) {
+    const confirmed = await confirm({
+      message: '确定要删除此路由吗？',
+      title: '确认删除',
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消'
+    });
+
+    if (confirmed) {
       await api.deleteRule(id);
       if (selectedRoute) {
         loadRules(selectedRoute.id);
       }
+      toast.success('规则已删除');
     }
   };
 
@@ -415,8 +436,9 @@ export default function RoutesPage() {
       if (selectedRoute) {
         loadRules(selectedRoute.id);
       }
+      toast.success('已恢复');
     } catch (error: any) {
-      alert('恢复失败: ' + error.message);
+      toast.error('恢复失败: ' + error.message);
     }
   };
 
@@ -943,11 +965,11 @@ export default function RoutesPage() {
         </div>
         <div style={{ padding: '20px', lineHeight: '1.8' }}>
           <div style={{
-            background: '#e3f2fd',
+            background: 'var(--bg-info-blue)',
             padding: '15px',
             borderRadius: '8px',
             marginBottom: '15px',
-            borderLeft: '4px solid #2196f3'
+            borderLeft: '4px solid var(--border-info-blue)'
           }}>
             <strong>💡 工作原理</strong>
             <p style={{ marginTop: '8px', marginBottom: '0' }}>
@@ -958,10 +980,10 @@ export default function RoutesPage() {
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
             <div style={{
-              background: '#f1f8e9',
+              background: 'var(--bg-info-green)',
               padding: '15px',
               borderRadius: '8px',
-              borderLeft: '4px solid #8bc34a'
+              borderLeft: '4px solid var(--border-info-green)'
             }}>
               <strong>✓ 激活路由</strong>
               <ul style={{ marginTop: '8px', paddingLeft: '20px', marginBottom: '0' }}>
@@ -971,10 +993,10 @@ export default function RoutesPage() {
             </div>
 
             <div style={{
-              background: '#fff3e0',
+              background: 'var(--bg-info-orange)',
               padding: '15px',
               borderRadius: '8px',
-              borderLeft: '4px solid #ff9800'
+              borderLeft: '4px solid var(--border-info-orange)'
             }}>
               <strong>○ 停用路由</strong>
               <ul style={{ marginTop: '8px', paddingLeft: '20px', marginBottom: '0' }}>
@@ -987,9 +1009,9 @@ export default function RoutesPage() {
           <div style={{
             marginTop: '15px',
             padding: '12px 15px',
-            background: '#fff8e1',
+            background: 'var(--bg-info-yellow)',
             borderRadius: '8px',
-            borderLeft: '4px solid #ffc107'
+            borderLeft: '4px solid var(--border-info-yellow)'
           }}>
             <strong>⚠️ 重要提示</strong>
             <ul style={{ marginTop: '8px', paddingLeft: '20px', marginBottom: '0' }}>
@@ -1194,7 +1216,7 @@ export default function RoutesPage() {
                   onChange={(e) => {
                     const value = e.target.value ? parseInt(e.target.value) : undefined;
                     if (value !== undefined && maxTokenLimit !== undefined && value > maxTokenLimit) {
-                      alert(`Token超量值不能超过API服务的限制 (${maxTokenLimit}k)`);
+                      toast.warning(`Token超量值不能超过API服务的限制 (${maxTokenLimit}k)`);
                       return;
                     }
                     setSelectedTokenLimit(value);
@@ -1275,7 +1297,7 @@ export default function RoutesPage() {
                   onChange={(e) => {
                     const value = e.target.value ? parseInt(e.target.value) : undefined;
                     if (value !== undefined && maxRequestCountLimit !== undefined && value > maxRequestCountLimit) {
-                      alert(`请求次数超量值不能超过API服务的限制 (${maxRequestCountLimit})`);
+                      toast.warning(`请求次数超量值不能超过API服务的限制 (${maxRequestCountLimit})`);
                       return;
                     }
                     setSelectedRequestCountLimit(value);

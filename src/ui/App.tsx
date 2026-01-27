@@ -8,6 +8,8 @@ import SettingsPage from './pages/SettingsPage';
 import WriteConfigPage from './pages/WriteConfigPage';
 import UsagePage from './pages/UsagePage';
 import StatisticsPage from './pages/StatisticsPage';
+import { ToastContainer } from './components/Toast';
+import { ConfirmProvider } from './components/Confirm';
 import './styles/App.css';
 
 function AppContent() {
@@ -345,7 +347,10 @@ function AppContent() {
 function App() {
   return (
     <Router>
-      <AppContent />
+      <ConfirmProvider>
+        <AppContent />
+        <ToastContainer />
+      </ConfirmProvider>
     </Router>
   );
 }
