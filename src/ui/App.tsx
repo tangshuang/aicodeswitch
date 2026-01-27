@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { HashRouter as Router, Routes, Route, NavLink, useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
 import { api } from './api/client';
 import VendorsPage from './pages/VendorsPage';
 import RouteGroupsPage from './pages/RoutesPage';
@@ -8,6 +9,8 @@ import SettingsPage from './pages/SettingsPage';
 import WriteConfigPage from './pages/WriteConfigPage';
 import UsagePage from './pages/UsagePage';
 import StatisticsPage from './pages/StatisticsPage';
+import { ToastContainer } from './components/Toast';
+import { ConfirmProvider } from './components/Confirm';
 import './styles/App.css';
 
 function AppContent() {
@@ -27,6 +30,11 @@ function AppContent() {
   const [authCode, setAuthCode] = useState('');
   const [loginError, setLoginError] = useState('');
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+
+  // Migration 相关状态
+  const [showMigrationModal, setShowMigrationModal] = useState(false);
+  const [migrationContent, setMigrationContent] = useState('');
+  const [hasCheckedMigration, setHasCheckedMigration] = useState(false);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') || 'light';
@@ -96,6 +104,26 @@ function AppContent() {
     checkAuth();
   }, []);
 
+  // 检查 migration
+  useEffect(() => {
+    const checkMigration = async () => {
+      if (hasCheckedMigration) return;
+
+      try {
+        const migration = await api.getMigration();
+        if (migration.shouldShow && migration.content) {
+          setMigrationContent(migration.content);
+          setShowMigrationModal(true);
+        }
+        setHasCheckedMigration(true);
+      } catch (error) {
+        console.error('Failed to check migration:', error);
+      }
+    };
+
+    checkMigration();
+  }, [hasCheckedMigration]);
+
   useEffect(() => {
     const checkVendors = async () => {
       try {
@@ -122,6 +150,15 @@ function AppContent() {
   const handleVendorModalConfirm = () => {
     setShowVendorModal(false);
     navigate('/vendors');
+  };
+
+  const handleMigrationModalClose = async () => {
+    try {
+      await api.acknowledgeMigration();
+    } catch (error) {
+      console.error('Failed to acknowledge migration:', error);
+    }
+    setShowMigrationModal(false);
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -247,9 +284,6 @@ function AppContent() {
             <NavLink to="/vendors">🏭 供应商管理</NavLink>
           </li>
           <li>
-            <NavLink to="/write-config">🗄️ 覆盖配置文件</NavLink>
-          </li>
-          <li>
             <NavLink to="/statistics">📊 数据统计</NavLink>
           </li>
           <li>
@@ -341,6 +375,26 @@ function AppContent() {
           </div>
         </div>
       )}
+
+      {showMigrationModal && (
+        <div className="modal-overlay">
+          <div className="modal" style={{ maxWidth: '800px', maxHeight: '80vh', overflow: 'auto' }}>
+            <div className="modal-container">
+              <div className="modal-header">
+                <h2>📋 升级提示</h2>
+              </div>
+              <div className="modal-body">
+                <div className="markdown-content">
+                  <ReactMarkdown>{migrationContent}</ReactMarkdown>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-primary" onClick={handleMigrationModalClose}>我知道了</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -348,7 +402,10 @@ function AppContent() {
 function App() {
   return (
     <Router>
-      <AppContent />
+      <ConfirmProvider>
+        <AppContent />
+        <ToastContainer />
+      </ConfirmProvider>
     </Router>
   );
 }

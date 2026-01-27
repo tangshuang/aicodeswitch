@@ -4,23 +4,77 @@ const os = require('os');
 const chalk = require('chalk');
 const boxen = require('boxen');
 const ora = require('ora');
+const { findPidByPort, killProcess, getProcessInfo } = require('./utils/port-utils');
+const { getServerInfo } = require('./utils/get-server');
 
 const PID_FILE = path.join(os.homedir(), '.aicodeswitch', 'server.pid');
 
-const stop = () => {
+const stop = async (options = {}) => {
+  const { callback, silent } = options;
+
   console.log('\n');
 
+  const { host, port } = getServerInfo();
+
   if (!fs.existsSync(PID_FILE)) {
-    console.log(boxen(
-      chalk.yellow.bold('⚠ Server is not running'),
-      {
-        padding: 1,
-        margin: 1,
-        borderStyle: 'round',
-        borderColor: 'yellow'
+    if (!silent) {
+      // PID 文件不存在，尝试通过端口检测进程
+      console.log(boxen(
+        chalk.yellow('⚠ PID file not found, checking port...'),
+        {
+          padding: 1,
+          margin: 1,
+          borderStyle: 'round',
+          borderColor: 'yellow'
+        }
+      ));
+    }
+
+    const spinner = ora({
+      text: chalk.cyan(`Checking port ${port}...`),
+      color: 'cyan'
+    }).start();
+
+    const pid = await findPidByPort(port);
+
+    if (pid) {
+      spinner.text = chalk.cyan(`Found process on port ${port}, stopping...`);
+
+      const processInfo = await getProcessInfo(pid);
+      if (!silent) {
+        console.log('\n' + chalk.gray(`Process found: ${chalk.white(pid)} (${chalk.gray(processInfo)})`));
       }
-    ));
-    console.log('\n');
+
+      const killed = await killProcess(pid);
+
+      if (killed) {
+        spinner.succeed(chalk.green(`Process ${pid} terminated successfully`));
+        showStoppedMessage();
+      } else {
+        spinner.fail(chalk.red('Failed to terminate process'));
+      }
+    } else {
+      spinner.info(chalk.yellow(`No process found on port ${port}`));
+      if (!silent) {
+        console.log(boxen(
+          chalk.yellow.bold('⚠ Server is not running'),
+          {
+            padding: 1,
+            margin: 1,
+            borderStyle: 'round',
+            borderColor: 'yellow'
+          }
+        ));
+      }
+    }
+    if (!silent) {
+      console.log('\n');
+    }
+
+    if (callback) {
+      console.log(boxen(chalk.yellow.bold('⚠ Server is not running')));
+      callback();
+    }
     return;
   }
 
@@ -50,14 +104,20 @@ const stop = () => {
             process.kill(pid, 'SIGKILL');
             spinner.warn(chalk.yellow('Server forcefully stopped'));
             fs.unlinkSync(PID_FILE);
-            showStoppedMessage();
+            if (!silent) {
+              showStoppedMessage();
+            }
+            callback && callback();
           }
         } catch (err) {
           // 进程已停止
           clearInterval(checkStopped);
           spinner.succeed(chalk.green('Server stopped successfully'));
           fs.unlinkSync(PID_FILE);
-          showStoppedMessage();
+          if (!silent) {
+            showStoppedMessage();
+          }
+          callback && callback();
         }
       }, 200);
 
@@ -65,7 +125,10 @@ const stop = () => {
       // 进程不存在
       spinner.warn(chalk.yellow('Process not found'));
       fs.unlinkSync(PID_FILE);
-      showStoppedMessage();
+      if (!silent) {
+        showStoppedMessage();
+      }
+      callback && callback();
     }
   } catch (err) {
     spinner.fail(chalk.red('Failed to stop server'));
@@ -87,4 +150,4 @@ const showStoppedMessage = () => {
   console.log(chalk.white('Use ') + chalk.cyan('aicos start') + chalk.white(' to start the server again.\n'));
 };
 
-module.exports = stop();
+module.exports = stop;

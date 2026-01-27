@@ -9,25 +9,23 @@ import type {
   Route,
   Rule,
   RequestLog,
-  AccessLog,
   ErrorLog,
   AppConfig,
   ExportData,
   Statistics,
   ContentType,
   ServiceBlacklistEntry,
+  Session,
 } from '../types';
 
 export class DatabaseManager {
   private db: Database.Database;
   private logDb: Level<string, string>;
-  private accessLogDb: Level<string, string>;
   private errorLogDb: Level<string, string>;
   private blacklistDb: Level<string, string>;
 
   // 缓存机制：总数查询缓存
   private logsCountCache: { count: number; timestamp: number } | null = null;
-  private accessLogsCountCache: { count: number; timestamp: number } | null = null;
   private errorLogsCountCache: { count: number; timestamp: number } | null = null;
   private readonly CACHE_TTL = 1000; // 1秒缓存TTL
 
@@ -48,7 +46,6 @@ export class DatabaseManager {
     this.db.pragma('read_uncommitted = 0');
 
     this.logDb = new Level(path.join(dataPath, 'logs'), { valueEncoding: 'json' });
-    this.accessLogDb = new Level(path.join(dataPath, 'access-logs'), { valueEncoding: 'json' });
     this.errorLogDb = new Level(path.join(dataPath, 'error-logs'), { valueEncoding: 'json' });
     this.blacklistDb = new Level(path.join(dataPath, 'service-blacklist'), { valueEncoding: 'json' });
   }
@@ -248,6 +245,14 @@ export class DatabaseManager {
       this.db.exec('ALTER TABLE api_services ADD COLUMN request_reset_base_time INTEGER;');
       console.log('[DB] Migration completed: request_reset_base_time column added');
     }
+
+    // 检查api_services表是否有auth_type字段
+    const hasAuthType = columns.some((col: any) => col.name === 'auth_type');
+    if (!hasAuthType) {
+      console.log('[DB] Running migration: Adding auth_type column to api_services table');
+      this.db.exec('ALTER TABLE api_services ADD COLUMN auth_type TEXT DEFAULT NULL;');
+      console.log('[DB] Migration completed: auth_type column added');
+    }
   }
 
   private async migrateMaxOutputTokensToModelLimits() {
@@ -379,6 +384,21 @@ export class DatabaseManager {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        target_type TEXT NOT NULL CHECK(target_type IN ('claude-code', 'codex')),
+        title TEXT,
+        first_request_at INTEGER NOT NULL,
+        last_request_at INTEGER NOT NULL,
+        request_count INTEGER DEFAULT 1,
+        total_tokens INTEGER DEFAULT 0,
+        vendor_id TEXT,
+        vendor_name TEXT,
+        service_id TEXT,
+        service_name TEXT,
+        model TEXT
+      );
     `);
   }
 
@@ -456,6 +476,7 @@ export class DatabaseManager {
       apiUrl: row.api_url,
       apiKey: row.api_key,
       sourceType: row.source_type,
+      authType: row.auth_type,
       supportedModels: row.supported_models ? row.supported_models.split(',').map((model: string) => model.trim()).filter((model: string) => model.length > 0) : undefined,
       modelLimits: row.model_limits ? JSON.parse(row.model_limits) : undefined,
       enableProxy: row.enable_proxy === 1,
@@ -486,7 +507,7 @@ export class DatabaseManager {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, enable_proxy, enable_token_limit, token_limit, token_reset_interval, token_reset_base_time, enable_request_limit, request_count_limit, request_reset_interval, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, auth_type, supported_models, model_limits, enable_proxy, enable_token_limit, token_limit, token_reset_interval, token_reset_base_time, enable_request_limit, request_count_limit, request_reset_interval, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         id,
@@ -495,6 +516,7 @@ export class DatabaseManager {
         service.apiUrl,
         service.apiKey,
         service.sourceType || null,
+        service.authType || null,
         service.supportedModels ? service.supportedModels.join(',') : null,
         service.modelLimits ? JSON.stringify(service.modelLimits) : null,
         service.enableProxy ? 1 : 0,
@@ -516,7 +538,7 @@ export class DatabaseManager {
     const now = Date.now();
     const result = this.db
       .prepare(
-        'UPDATE api_services SET vendor_id = ?, name = ?, api_url = ?, api_key = ?, source_type = ?, supported_models = ?, model_limits = ?, enable_proxy = ?, enable_token_limit = ?, token_limit = ?, token_reset_interval = ?, token_reset_base_time = ?, enable_request_limit = ?, request_count_limit = ?, request_reset_interval = ?, request_reset_base_time = ?, updated_at = ? WHERE id = ?'
+        'UPDATE api_services SET vendor_id = ?, name = ?, api_url = ?, api_key = ?, source_type = ?, auth_type = ?, supported_models = ?, model_limits = ?, enable_proxy = ?, enable_token_limit = ?, token_limit = ?, token_reset_interval = ?, token_reset_base_time = ?, enable_request_limit = ?, request_count_limit = ?, request_reset_interval = ?, request_reset_base_time = ?, updated_at = ? WHERE id = ?'
       )
       .run(
         service.vendorId,
@@ -524,6 +546,7 @@ export class DatabaseManager {
         service.apiUrl,
         service.apiKey,
         service.sourceType || null,
+        service.authType || null,
         service.supportedModels ? service.supportedModels.join(',') : null,
         service.modelLimits ? JSON.stringify(service.modelLimits) : null,
         service.enableProxy !== undefined ? (service.enableProxy ? 1 : 0) : null,
@@ -940,38 +963,6 @@ export class DatabaseManager {
     this.logsCountCache = null;
   }
 
-  // Access log operations
-  async addAccessLog(log: Omit<AccessLog, 'id'>): Promise<string> {
-    const id = crypto.randomUUID();
-    await this.accessLogDb.put(id, JSON.stringify({ ...log, id }));
-    // 清除缓存
-    this.accessLogsCountCache = null;
-    return id;
-  }
-
-  async updateAccessLog(id: string, data: Partial<AccessLog>): Promise<void> {
-    const log = await this.accessLogDb.get(id);
-    const updatedLog = { ...JSON.parse(log), ...data };
-    await this.accessLogDb.put(id, JSON.stringify(updatedLog));
-  }
-
-  async getAccessLogs(limit: number = 100, offset: number = 0): Promise<AccessLog[]> {
-    const allLogs: AccessLog[] = [];
-    for await (const [, value] of this.accessLogDb.iterator()) {
-      allLogs.push(JSON.parse(value));
-    }
-    // Sort by timestamp in descending order (newest first)
-    allLogs.sort((a, b) => b.timestamp - a.timestamp);
-    // Apply offset and limit
-    return allLogs.slice(offset, offset + limit);
-  }
-
-  async clearAccessLogs(): Promise<void> {
-    await this.accessLogDb.clear();
-    // 清除缓存
-    this.accessLogsCountCache = null;
-  }
-
   // Error log operations
   async addErrorLog(log: Omit<ErrorLog, 'id'>): Promise<void> {
     const id = crypto.randomUUID();
@@ -1012,24 +1003,6 @@ export class DatabaseManager {
     }
 
     this.logsCountCache = { count, timestamp: now };
-    return count;
-  }
-
-  /**
-   * 获取访问日志总数（带缓存）
-   */
-  async getAccessLogsCount(): Promise<number> {
-    const now = Date.now();
-    if (this.accessLogsCountCache && now - this.accessLogsCountCache.timestamp < this.CACHE_TTL) {
-      return this.accessLogsCountCache.count;
-    }
-
-    let count = 0;
-    for await (const _ of this.accessLogDb.iterator()) {
-      count++;
-    }
-
-    this.accessLogsCountCache = { count, timestamp: now };
     return count;
   }
 
@@ -1202,7 +1175,7 @@ export class DatabaseManager {
        for (const service of importData.apiServices) {
          this.db
            .prepare(
-             'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, supported_models, model_limits, enable_proxy, enable_token_limit, token_limit, token_reset_interval, token_reset_base_time, enable_request_limit, request_count_limit, request_reset_interval, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+             'INSERT INTO api_services (id, vendor_id, name, api_url, api_key, source_type, auth_type, supported_models, model_limits, enable_proxy, enable_token_limit, token_limit, token_reset_interval, token_reset_base_time, enable_request_limit, request_count_limit, request_reset_interval, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
            )
            .run(
              service.id,
@@ -1211,6 +1184,7 @@ export class DatabaseManager {
              service.apiUrl,
              service.apiKey,
              service.sourceType || null,
+             service.authType || null,
              service.supportedModels ? service.supportedModels.join(',') : null,
              service.modelLimits ? JSON.stringify(service.modelLimits) : null,
              service.enableProxy ? 1 : 0,
@@ -1510,10 +1484,171 @@ export class DatabaseManager {
     }
   }
 
+  // Session operations
+  /**
+   * 创建或更新 session
+   * 当有新的请求日志时调用此方法来更新 session 信息
+   */
+  upsertSession(session: Omit<Session, 'requestCount' | 'totalTokens'> & { requestCount?: number; totalTokens?: number }): void {
+    const now = Date.now();
+    const existing = this.db.prepare('SELECT * FROM sessions WHERE id = ?').get(session.id) as any;
+
+    if (existing) {
+      // 更新现有 session
+      this.db.prepare(`
+        UPDATE sessions SET
+          last_request_at = ?,
+          request_count = request_count + 1,
+          total_tokens = total_tokens + ?,
+          vendor_id = ?,
+          vendor_name = ?,
+          service_id = ?,
+          service_name = ?,
+          model = ?
+        WHERE id = ?
+      `).run(
+        now,
+        session.totalTokens || 0,
+        session.vendorId || null,
+        session.vendorName || null,
+        session.serviceId || null,
+        session.serviceName || null,
+        session.model || null,
+        session.id
+      );
+    } else {
+      // 创建新 session
+      this.db.prepare(`
+        INSERT INTO sessions (id, target_type, title, first_request_at, last_request_at, request_count, total_tokens, vendor_id, vendor_name, service_id, service_name, model)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        session.id,
+        session.targetType,
+        session.title || null,
+        session.firstRequestAt,
+        now,
+        1,
+        session.totalTokens || 0,
+        session.vendorId || null,
+        session.vendorName || null,
+        session.serviceId || null,
+        session.serviceName || null,
+        session.model || null
+      );
+    }
+  }
+
+  /**
+   * 获取所有 sessions
+   */
+  getSessions(limit: number = 100, offset: number = 0): Session[] {
+    const rows = this.db.prepare('SELECT * FROM sessions ORDER BY last_request_at DESC LIMIT ? OFFSET ?').all(limit, offset) as any[];
+    return rows.map((row: any) => ({
+      id: row.id,
+      targetType: row.target_type,
+      title: row.title,
+      firstRequestAt: row.first_request_at,
+      lastRequestAt: row.last_request_at,
+      requestCount: row.request_count,
+      totalTokens: row.total_tokens,
+      vendorId: row.vendor_id,
+      vendorName: row.vendor_name,
+      serviceId: row.service_id,
+      serviceName: row.service_name,
+      model: row.model,
+    }));
+  }
+
+  /**
+   * 根据 session ID 获取 session
+   */
+  getSession(id: string): Session | null {
+    const row = this.db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as any;
+    if (!row) return null;
+    return {
+      id: row.id,
+      targetType: row.target_type,
+      title: row.title,
+      firstRequestAt: row.first_request_at,
+      lastRequestAt: row.last_request_at,
+      requestCount: row.request_count,
+      totalTokens: row.total_tokens,
+      vendorId: row.vendor_id,
+      vendorName: row.vendor_name,
+      serviceId: row.service_id,
+      serviceName: row.service_name,
+      model: row.model,
+    };
+  }
+
+  /**
+   * 获取 sessions 总数
+   */
+  getSessionsCount(): number {
+    const result = this.db.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number };
+    return result.count;
+  }
+
+  /**
+   * 删除指定 session
+   */
+  deleteSession(id: string): boolean {
+    const result = this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+    return result.changes > 0;
+  }
+
+  /**
+   * 清空所有 sessions
+   */
+  clearSessions(): void {
+    this.db.prepare('DELETE FROM sessions').run();
+  }
+
+  /**
+   * 获取指定 session 的请求日志
+   * @param sessionId session ID
+   * @param limit 限制数量
+   */
+  async getLogsBySessionId(sessionId: string, limit: number = 100): Promise<RequestLog[]> {
+    // 从 LevelDB 中读取所有日志
+    const allLogs: RequestLog[] = [];
+    for await (const [, value] of this.logDb.iterator()) {
+      const log = JSON.parse(value) as RequestLog;
+      // 检查日志是否属于该 session（通过 headers 中的 session_id 或 body 中的 metadata.user_id）
+      if (this.isLogBelongsToSession(log, sessionId)) {
+        allLogs.push(log);
+      }
+    }
+    // 按时间倒序排序并限制数量
+    allLogs.sort((a, b) => b.timestamp - a.timestamp);
+    return allLogs.slice(0, limit);
+  }
+
+  /**
+   * 检查日志是否属于指定 session
+   */
+  private isLogBelongsToSession(log: RequestLog, sessionId: string): boolean {
+    // 检查 headers 中的 session_id（Codex）
+    if (log.headers?.['session_id'] === sessionId) {
+      return true;
+    }
+    // 检查 body 中的 metadata.user_id（Claude Code）
+    if (log.body) {
+      try {
+        const body = JSON.parse(log.body);
+        if (body.metadata?.user_id === sessionId) {
+          return true;
+        }
+      } catch {
+        // 忽略解析错误
+      }
+    }
+    return false;
+  }
+
   close() {
     this.db.close();
     this.logDb.close();
-    this.accessLogDb.close();
     this.errorLogDb.close();
     this.blacklistDb.close();
   }

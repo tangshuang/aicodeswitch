@@ -76,20 +76,109 @@ export const mapStopReason = (finishReason?: string | null): string => {
   }
 };
 
+/**
+ * 检查模型是否需要使用 developer 角色而不是 system 角色
+ * 某些 OpenAI 兼容的 API (如 DeepSeek) 不支持 system 角色，需要使用 developer
+ */
+const shouldUseDeveloperRole = (model?: string): boolean => {
+  if (!model) return false;
+  const lowerModel = model.toLowerCase();
+  // DeepSeek 模型使用 developer 角色
+  if (lowerModel.includes('deepseek')) {
+    return true;
+  }
+  // 其他可能需要 developer 角色的模型可以在这里添加
+  // 例如:某些国内的 GPT 兼容 API
+  return false;
+};
+
+/**
+ * 智能修复 messages 数组，确保最后一条消息是 role: user
+ * OpenAI Chat API 要求对话必须以用户消息结束
+ *
+ * 处理场景：
+ * 1. 最后是 assistant 消息（带 tool_calls）：添加用户消息请求执行工具
+ * 2. 最后是 assistant 消息（不带 tool_calls）：添加用户继续提示
+ * 3. 最后是 tool 消息：添加用户消息请求处理工具结果
+ * 4. 最后是 system/developer 消息：添加初始用户消息
+ * 5. 最后已经是 user 消息：不处理
+ */
+const ensureLastMessageIsUser = (messages: any[]): void => {
+  if (!messages || messages.length === 0) {
+    return;
+  }
+
+  const lastMessage = messages[messages.length - 1];
+  const lastRole = lastMessage?.role;
+
+  // 如果最后一条已经是 user，无需处理
+  if (lastRole === 'user') {
+    return;
+  }
+
+  // 场景1: 最后是 assistant 消息且带有 tool_calls
+  // 这种情况下，通常后面应该跟 tool 消息，但如果没有，我们需要添加一个用户消息
+  if (lastRole === 'assistant' && lastMessage.tool_calls && Array.isArray(lastMessage.tool_calls) && lastMessage.tool_calls.length > 0) {
+    messages.push({
+      role: 'user',
+      content: 'Please proceed with the tool calls.'
+    });
+    return;
+  }
+
+  // 场景2: 最后是 assistant 消息（不带 tool_calls）
+  if (lastRole === 'assistant') {
+    messages.push({
+      role: 'user',
+      content: 'Please continue.'
+    });
+    return;
+  }
+
+  // 场景3: 最后是 tool 消息
+  if (lastRole === 'tool') {
+    messages.push({
+      role: 'user',
+      content: 'Please analyze the tool results and continue.'
+    });
+    return;
+  }
+
+  // 场景4: 最后是 system/developer 消息
+  if (lastRole === 'system' || lastRole === 'developer') {
+    messages.push({
+      role: 'user',
+      content: 'Hello, I need your assistance.'
+    });
+    return;
+  }
+
+  // 其他未知角色，添加通用用户消息
+  messages.push({
+    role: 'user',
+    content: 'Please continue.'
+  });
+};
+
 export const transformClaudeRequestToOpenAIChat = (body: ClaudeRequest, targetModel?: string) => {
   const messages: any[] = [];
+  const useDeveloperRole = shouldUseDeveloperRole(targetModel);
+  const systemRoleName = useDeveloperRole ? 'developer' : 'system';
 
   if (body.system) {
     const systemText = toTextContent(body.system);
     if (systemText) {
-      messages.push({ role: 'system', content: systemText });
+      messages.push({ role: systemRoleName, content: systemText });
     }
   }
 
   if (Array.isArray(body.messages)) {
     for (const message of body.messages) {
+      // 映射 system 角色到 developer (如果需要)
+      const mappedRole = (message.role === 'system' && useDeveloperRole) ? 'developer' : message.role;
+
       if (typeof message.content === 'string' || message.content === null) {
-        messages.push({ role: message.role, content: message.content });
+        messages.push({ role: mappedRole, content: message.content });
         continue;
       }
 
@@ -130,7 +219,7 @@ export const transformClaudeRequestToOpenAIChat = (body: ClaudeRequest, targetMo
 
         const content = textParts.length > 0 ? textParts.join('') : null;
         const openaiMessage: any = {
-          role: message.role,
+          role: mappedRole,
           content,
         };
 
@@ -142,6 +231,10 @@ export const transformClaudeRequestToOpenAIChat = (body: ClaudeRequest, targetMo
       }
     }
   }
+
+  // 智能修复：确保最后一条消息是 role: user
+  // OpenAI API 要求对话必须以用户消息结束
+  ensureLastMessageIsUser(messages);
 
   const openaiBody: any = {
     model: targetModel || body.model,

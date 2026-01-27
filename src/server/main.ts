@@ -3,12 +3,14 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 import { DatabaseManager } from './database';
 import { ProxyServer } from './proxy-server';
 import type { AppConfig, LoginRequest, LoginResponse, AuthStatus } from '../types';
 import os from 'os';
 import { isAuthEnabled, verifyAuthCode, generateToken, authMiddleware } from './auth';
 import { checkVersionUpdate } from './version-check';
+import { checkPortUsable } from './utils';
 
 const dotenvPath = path.resolve(os.homedir(), '.aicodeswitch/aicodeswitch.conf');
 if (fs.existsSync(dotenvPath)) {
@@ -415,25 +417,6 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
   );
 
   app.get(
-    '/api/access-logs',
-    asyncHandler(async (req, res) => {
-      const rawLimit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : NaN;
-      const rawOffset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : NaN;
-      const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
-      const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
-      const logs = await dbManager.getAccessLogs(limit, offset);
-      res.json(logs);
-    })
-  );
-  app.delete(
-    '/api/access-logs',
-    asyncHandler(async (_req, res) => {
-      await dbManager.clearAccessLogs();
-      res.json(true);
-    })
-  );
-
-  app.get(
     '/api/error-logs',
     asyncHandler(async (req, res) => {
       const rawLimit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : NaN;
@@ -456,14 +439,6 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     '/api/logs/count',
     asyncHandler(async (_req, res) => {
       const count = await dbManager.getLogsCount();
-      res.json({ count });
-    })
-  );
-
-  app.get(
-    '/api/access-logs/count',
-    asyncHandler(async (_req, res) => {
-      const count = await dbManager.getAccessLogsCount();
       res.json({ count });
     })
   );
@@ -566,6 +541,65 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     })
   );
 
+  // Sessions 相关端点
+  app.get(
+    '/api/sessions',
+    asyncHandler(async (req, res) => {
+      const rawLimit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : NaN;
+      const rawOffset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : NaN;
+      const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
+      const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
+      const sessions = dbManager.getSessions(limit, offset);
+      res.json(sessions);
+    })
+  );
+
+  app.get(
+    '/api/sessions/count',
+    asyncHandler(async (_req, res) => {
+      const count = dbManager.getSessionsCount();
+      res.json({ count });
+    })
+  );
+
+  app.get(
+    '/api/sessions/:id',
+    asyncHandler(async (req, res) => {
+      const session = dbManager.getSession(req.params.id);
+      if (!session) {
+        res.status(404).json({ error: 'Session not found' });
+        return;
+      }
+      res.json(session);
+    })
+  );
+
+  app.get(
+    '/api/sessions/:id/logs',
+    asyncHandler(async (req, res) => {
+      const rawLimit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : NaN;
+      const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
+      const logs = await dbManager.getLogsBySessionId(req.params.id, limit);
+      res.json(logs);
+    })
+  );
+
+  app.delete(
+    '/api/sessions/:id',
+    asyncHandler(async (req, res) => {
+      const result = dbManager.deleteSession(req.params.id);
+      res.json(result);
+    })
+  );
+
+  app.delete(
+    '/api/sessions',
+    asyncHandler(async (_req, res) => {
+      dbManager.clearSessions();
+      res.json(true);
+    })
+  );
+
   app.get('/api/docs/recommend-vendors', asyncHandler(async (_req, res) => {
     const resp = await fetch('https://unpkg.com/aicodeswitch/docs/vendors-recommand.md');
     if (!resp.ok) {
@@ -586,31 +620,116 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     res.type('text/plain').send(text);
   }));
 
-  app.use(express.static(path.resolve(__dirname, '../ui')));
+  // Migration 相关端点
+  const getMigrationHashPath = () => path.join(dataDir, '.migration-hash');
+
+  // 查找 migration.md 文件的路径
+  const findMigrationPath = (): string | null => {
+    // 可能的路径列表
+    const possiblePaths = [
+      // 开发环境：src/server/main.ts -> public/migration.md
+      path.resolve(__dirname, '../../public/migration.md'),
+      // 生产环境：dist/server/main.js -> dist/ui/migration.md
+      path.resolve(__dirname, '../ui/migration.md'),
+    ];
+
+    for (const possiblePath of possiblePaths) {
+      if (fs.existsSync(possiblePath)) {
+        return possiblePath;
+      }
+    }
+
+    return null;
+  };
+
+  app.get('/api/migration', asyncHandler(async (_req, res) => {
+    try {
+      // 读取 migration.md 文件
+      const migrationPath = findMigrationPath();
+      if (!migrationPath) {
+        res.json({ shouldShow: false, content: '' });
+        return;
+      }
+
+      const content = fs.readFileSync(migrationPath, 'utf-8');
+
+      // 计算当前内容的 hash
+      const currentHash = createHash('sha256').update(content).digest('hex');
+
+      // 读取之前保存的 hash
+      const hashPath = getMigrationHashPath();
+      let savedHash = '';
+      if (fs.existsSync(hashPath)) {
+        savedHash = fs.readFileSync(hashPath, 'utf-8').trim();
+      }
+
+      // 如果 hash 不同，需要显示弹窗
+      const shouldShow = savedHash !== currentHash;
+
+      res.json({ shouldShow, content: shouldShow ? content : '' });
+    } catch (error) {
+      console.error('Failed to read migration file:', error);
+      res.json({ shouldShow: false, content: '' });
+    }
+  }));
+
+  app.post('/api/migration/ack', asyncHandler(async (_req, res) => {
+    try {
+      // 读取 migration.md 文件并计算 hash
+      const migrationPath = findMigrationPath();
+      if (!migrationPath) {
+        res.json({ success: false });
+        return;
+      }
+
+      const content = fs.readFileSync(migrationPath, 'utf-8');
+      const hash = createHash('sha256').update(content).digest('hex');
+
+      // 保存 hash 到文件
+      const hashPath = getMigrationHashPath();
+      fs.writeFileSync(hashPath, hash, 'utf-8');
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Failed to acknowledge migration:', error);
+      res.json({ success: false });
+    }
+  }));
 };
 
 const start = async () => {
   fs.mkdirSync(dataDir, { recursive: true });
 
   const dbManager = new DatabaseManager(dataDir);
-  await dbManager.initialize();
-
   const proxyServer = new ProxyServer(dbManager, app);
+
+  await dbManager.initialize();
+  // Initialize proxy server and register proxy routes last
+  proxyServer.initialize();
 
   // Register admin routes first
   registerRoutes(dbManager, proxyServer);
+  await proxyServer.registerProxyRoutes();
 
-  // Initialize proxy server and register proxy routes last
-  await proxyServer.initialize();
+  app.use(express.static(path.resolve(__dirname, '../ui')));
 
-  const adminServer = app.listen(port, host, () => {
+  const isPortUsable = await checkPortUsable(port);
+  if (!isPortUsable) {
+    console.error(`端口 ${port} 已被占用，无法启动服务。请执行 aicos stop 后重启。`);
+    process.exit(1);
+  }
+
+  const server = app.listen(port, host, () => {
     console.log(`Admin server running on http://${host}:${port}`);
   });
 
   const shutdown = async () => {
     console.log('Shutting down server...');
     dbManager.close();
-    adminServer.close(() => process.exit(0));
+    server.close(() => {
+      console.log('Server stopped.');
+      process.exit(0);
+    });
   };
 
   process.on('SIGINT', shutdown);

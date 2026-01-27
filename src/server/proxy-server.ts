@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import axios, { AxiosRequestConfig } from 'axios';
 import { pipeline } from 'stream';
+import crypto from 'crypto';
 import { DatabaseManager } from './database';
 import {
   ClaudeToOpenAIChatEventTransform,
@@ -25,20 +26,6 @@ type ContentTypeDetector = {
 
 const SUPPORTED_TARGETS = ['claude-code', 'codex'];
 
-// 需要排除的路径模式（非业务请求）
-const IGNORED_PATHS = [
-  '/favicon.ico',
-  '/robots.txt',
-  '/sitemap.xml',
-];
-
-/**
- * 检查路径是否应该被忽略
- */
-function shouldIgnorePath(path: string): boolean {
-  return IGNORED_PATHS.some(ignored => path === ignored || path.startsWith(ignored + '?'));
-}
-
 export class ProxyServer {
   private app: express.Application;
   private dbManager: DatabaseManager;
@@ -48,6 +35,10 @@ export class ProxyServer {
   private rules?: Map<string, Rule[]> = new Map();
   private services?: Map<string, APIService> = new Map();
   private config: AppConfig;
+  // 请求去重缓存：用于防止同一个请求被重复计数（如网络重试）
+  // key: requestHash, value: timestamp
+  private requestDedupeCache = new Map<string, number>();
+  private readonly DEDUPE_CACHE_TTL = 60000; // 去重缓存1分钟过期
 
   constructor(dbManager: DatabaseManager, app: express.Application) {
     this.dbManager = dbManager;
@@ -55,132 +46,11 @@ export class ProxyServer {
     this.app = app;
   }
 
-  private setupMiddleware() {
-    // Access logging middleware
-    this.app.use(async (req: Request, res: Response, next: NextFunction) => {
-      // 忽略非业务请求
-      if (shouldIgnorePath(req.path)) {
-        return next();
-      }
-
-      // Capture client info
-      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || '';
-      const userAgent = req.headers['user-agent'] || '';
-
-      const startTime = Date.now();
-      const originalSend = res.send.bind(res);
-      const originalJson = res.json.bind(res);
-
-      const accessLog = this.dbManager.addAccessLog({
-        timestamp: Date.now(),
-        method: req.method,
-        path: req.path,
-        clientIp,
-        userAgent,
-      });
-
-      const updateLog = (res: Response | Error, data?: any) => {
-        const responseTime = Date.now() - startTime;
-        accessLog.then((accessLogId) => {
-          const updateData: any = {
-            responseTime,
-          };
-          let errorMessage: string = '';
-          if (res instanceof Error) {
-            updateData.error = res.message;
-            errorMessage = res.message;
-          }
-          else if (res.statusCode >= 400) {
-            updateData.statusCode = res.statusCode;
-            updateData.error = res.statusMessage;
-            // @ts-ignore
-            updateData.responseHeaders = this.normalizeResponseHeaders(res.headers || {});
-            errorMessage = res.statusMessage;
-          }
-          else {
-            updateData.statusCode = res.statusCode;
-            // @ts-ignore
-            updateData.responseHeaders = this.normalizeResponseHeaders(res.headers || {});
-            updateData.responseBody = data ? JSON.stringify(data) : undefined;
-          }
-          this.dbManager.updateAccessLog(accessLogId, updateData);
-          // 记录错误日志
-          if (res instanceof Error || res.statusCode >= 400) {
-            this.dbManager.addErrorLog({
-              timestamp: Date.now(),
-              method: req.method,
-              path: req.path,
-              statusCode: 503,
-              errorMessage,
-              requestHeaders: this.normalizeHeaders(req.headers),
-              requestBody: req.body ? JSON.stringify(req.body) : undefined,
-              responseBody: data ? JSON.stringify(data) : undefined,
-              // @ts-ignore
-              responseHeaders: res.headers ? this.normalizeResponseHeaders(res.headers) : undefined,
-              responseTime,
-            });
-          }
-        });
-      };
-
-      res.send = (data: any) => {
-        res.send = originalSend;
-        updateLog(res, data);
-        return originalSend(data);
-      };
-
-      res.json = (data: any) => {
-        res.json = originalJson;
-        updateLog(res, data);
-        return originalJson(data);
-      };
-
-      res.on('error', (err) => {
-        updateLog(err);
-      });
-
-      next();
-    });
-
-    // Logging middleware (legacy RequestLog)
-    this.app.use(async (req: Request, res: Response, next: NextFunction) => {
-      const startTime = Date.now();
-      const originalSend = res.send.bind(res);
-
-      // 忽略非业务请求，并且只记录支持的编程工具请求
-      if (!shouldIgnorePath(req.path) && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
-        res.send = (data: any) => {
-          res.send = originalSend;
-          if (!res.locals.skipLog && this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
-            const responseTime = Date.now() - startTime;
-            this.dbManager.addLog({
-              timestamp: Date.now(),
-              method: req.method,
-              path: req.path,
-              headers: this.normalizeHeaders(req.headers),
-              body: req.body ? JSON.stringify(req.body) : undefined,
-              statusCode: res.statusCode,
-              responseTime,
-            });
-          }
-
-          return res.send(data);
-        };
-      }
-
-      next();
-    });
-
-    // Fixed route handlers
-    this.app.use('/claude-code/', this.createFixedRouteHandler('claude-code'));
-    this.app.use('/claude-code', this.createFixedRouteHandler('claude-code'));
-    this.app.use('/codex/', this.createFixedRouteHandler('codex'));
-    this.app.use('/codex', this.createFixedRouteHandler('codex'));
-
+  initialize() {
     // Dynamic proxy middleware
     this.app.use(async (req: Request, res: Response, next: NextFunction) => {
-      // 根路径 / 不应该被代理中间件处理,应该传递给静态文件服务
-      if (req.path === '/') {
+      // 仅处理支持的目标路径
+      if (!SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
         return next();
       }
 
@@ -288,7 +158,7 @@ export class ProxyServer {
         console.error('All services failed');
 
         // 记录日志
-        if (this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
+        if (this.config?.enableLogging !== false && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
           await this.dbManager.addLog({
             timestamp: Date.now(),
             method: req.method,
@@ -330,7 +200,7 @@ export class ProxyServer {
         }
       } catch (error: any) {
         console.error('Proxy error:', error);
-        if (this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
+        if (this.config?.enableLogging !== false && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
           await this.dbManager.addLog({
             timestamp: Date.now(),
             method: req.method,
@@ -368,6 +238,14 @@ export class ProxyServer {
         }
       }
     });
+  }
+
+  private addProxyRoutes() {
+    // Fixed route handlers
+    this.app.use('/claude-code/', this.createFixedRouteHandler('claude-code'));
+    this.app.use('/claude-code', this.createFixedRouteHandler('claude-code'));
+    this.app.use('/codex/', this.createFixedRouteHandler('codex'));
+    this.app.use('/codex', this.createFixedRouteHandler('codex'));
   }
 
   private createFixedRouteHandler(targetType: 'claude-code' | 'codex') {
@@ -485,7 +363,7 @@ export class ProxyServer {
         console.error('All services failed');
 
         // 记录日志
-        if (this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
+        if (this.config?.enableLogging !== false && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
           await this.dbManager.addLog({
             timestamp: Date.now(),
             method: req.method,
@@ -527,7 +405,7 @@ export class ProxyServer {
         }
       } catch (error: any) {
         console.error(`Fixed route error for ${targetType}:`, error);
-        if (this.config?.enableLogging && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
+        if (this.config?.enableLogging !== false && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
           await this.dbManager.addLog({
             timestamp: Date.now(),
             method: req.method,
@@ -571,11 +449,22 @@ export class ProxyServer {
     return routeRules.sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0));
   }
 
-  private findMatchingRoute(_req: Request): Route | undefined {
-    // Find active route based on targetType - for now, return the first active route
-    // This can be extended later based on specific routing logic
+  private findMatchingRoute(req: Request): Route | undefined {
+    // 根据请求路径确定目标类型
+    let targetType: TargetType | undefined;
+    if (req.path.startsWith('/claude-code/')) {
+      targetType = 'claude-code';
+    } else if (req.path.startsWith('/codex/')) {
+      targetType = 'codex';
+    }
+
+    if (!targetType) {
+      return undefined;
+    }
+
+    // 返回匹配目标类型且处于活跃状态的路由
     const activeRoutes = this.getActiveRoutes();
-    return activeRoutes.find(route => route.isActive);
+    return activeRoutes.find(route => route.targetType === targetType && route.isActive);
   }
 
   private findRouteByTargetType(targetType: 'claude-code' | 'codex'): Route | undefined {
@@ -584,13 +473,104 @@ export class ProxyServer {
   }
 
   /**
+   * 计算请求内容的哈希值，用于去重
+   * 基于请求的关键字段生成唯一标识
+   */
+  private computeRequestHash(req: Request): string | null {
+    const body = req.body;
+    if (!body) return null;
+
+    // 提取关键信息用于哈希
+    const messages = body.messages;
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return null;
+    }
+
+    // 只使用最后几条消息的内容来生成哈希（避免整个历史过长）
+    const lastMessages = messages.slice(-3).map((msg: any) => ({
+      role: msg.role,
+      // 对消息内容进行简化处理，避免token差异导致哈希不同
+      content: this.normalizeMessageContent(msg.content)
+    }));
+
+    // 包含其他可能影响计费的字段
+    const keyFields = {
+      messages: lastMessages,
+      model: body.model,
+      stream: body.stream
+    };
+
+    return crypto.createHash('md5').update(JSON.stringify(keyFields)).digest('hex');
+  }
+
+  /**
+   * 规范化消息内容，去除细微差异
+   */
+  private normalizeMessageContent(content: any): string {
+    if (typeof content === 'string') {
+      // 去除首尾空白，限制长度
+      return content.trim().slice(0, 500);
+    }
+    if (Array.isArray(content)) {
+      // 对于数组类型内容（如图片+文本），只提取文本部分
+      const textParts = content
+        .filter((item: any) => item?.type === 'text')
+        .map((item: any) => item.text?.trim().slice(0, 500) || '')
+        .join('|');
+      return textParts;
+    }
+    return String(content || '').slice(0, 500);
+  }
+
+  /**
+   * 检查请求是否已经被处理过（去重）
+   */
+  private isRequestProcessed(hash: string | null): boolean {
+    if (!hash) return false;
+
+    const timestamp = this.requestDedupeCache.get(hash);
+    if (timestamp === undefined) {
+      // 未处理过，记录并返回false
+      this.requestDedupeCache.set(hash, Date.now());
+      return false;
+    }
+
+    // 检查是否过期
+    const now = Date.now();
+    if (now - timestamp > this.DEDUPE_CACHE_TTL) {
+      // 缓存已过期，视为新请求
+      this.requestDedupeCache.set(hash, now);
+      return false;
+    }
+
+    // 在缓存期内，视为重复请求
+    return true;
+  }
+
+  /**
+   * 清理过期的去重缓存
+   */
+  private cleanExpiredDedupeCache(): void {
+    const now = Date.now();
+    for (const [hash, timestamp] of this.requestDedupeCache.entries()) {
+      if (now - timestamp > this.DEDUPE_CACHE_TTL) {
+        this.requestDedupeCache.delete(hash);
+      }
+    }
+  }
+
+  /**
    * 根据GLM计费逻辑判断请求是否应该计费
    * 核心规则：
    * 1. 最后一条消息必须是 role: "user"
    * 2. 上一条消息不能是包含 tool_calls 的 assistant 消息（即不是工具回传）
+   * 3. 上一条消息应该是 assistant（正常的对话流程），而非连续的 user 消息
+   * 4. 避免历史消息重复计数：检查消息序列是否符合正常的对话模式
    */
-  private shouldChargeRequest(requestBody: any): boolean {
-    const messages = requestBody?.messages;
+  private shouldChargeRequest(req: Request): boolean {
+    const body = req.body;
+    const messages = body?.messages;
+
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return false;
     }
@@ -600,14 +580,61 @@ export class ProxyServer {
       return false;
     }
 
-    if (messages.length > 1) {
-      const previousMessage = messages[messages.length - 2];
-      if (previousMessage.role === 'assistant' && previousMessage.tool_calls) {
-        return false;
+    // 规则1：只有一条消息，这是新会话的开始，应该计费
+    if (messages.length === 1) {
+      return true;
+    }
+
+    const previousMessage = messages[messages.length - 2];
+
+    // 规则2：上一条消息是 assistant 且包含 tool_calls，说明这是工具回调，不应计费
+    if (previousMessage.role === 'assistant' && previousMessage.tool_calls) {
+      return false;
+    }
+
+    // 规则3：上一条消息不是 user，说明是正常的 user->assistant->user 流程，应该计费
+    if (previousMessage.role !== 'user') {
+      return true;
+    }
+
+    // 规则4：上一条消息也是 user（连续的 user 消息）
+    // 这种情况下需要进一步判断：
+    // - 如果倒数第三条是 assistant，可能是用户连续发送的消息，只计最后一条
+    // - 检查两条 user 消息的内容是否相同，相同则可能是历史重放
+    if (messages.length >= 3) {
+      const thirdLastMessage = messages[messages.length - 3];
+      // 正常的对话流程: ... assistant, user, user
+      // 这种情况说明最后一条 user 消息是在 assistant 之后的新消息，应该计费
+      if (thirdLastMessage.role === 'assistant') {
+        return true;
       }
     }
 
-    return true;
+    // 规则5：检查是否有连续的 user 消息内容相同（可能的重复）
+    const lastContent = this.normalizeMessageContent(lastMessage.content);
+    const prevContent = this.normalizeMessageContent(previousMessage.content);
+    if (lastContent === prevContent && lastContent.length > 0) {
+      // 两条连续的 user 消息内容相同，可能是重复，不应计费
+      return false;
+    }
+
+    // 规则6：如果上一条是 user，但没有 assistant 在中间，可能是异常的对话流
+    // 为了安全起见，检查再往前是否有 assistant
+    for (let i = messages.length - 3; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role === 'assistant') {
+        // 找到了最近的 assistant，说明当前是新的对话轮次，应该计费
+        return true;
+      }
+      if (msg.role === 'user') {
+        // 还是 user 消息，继续往前找
+        continue;
+      }
+      // 其他 role（如 system），继续
+    }
+
+    // 没有找到 assistant，可能是异常情况，不计费
+    return false;
   }
 
   /**
@@ -1047,12 +1074,17 @@ export class ProxyServer {
     return length;
   }
 
+  /** 判断是否为 Claude 相关类型（使用 x-api-key 认证） */
   private isClaudeSource(sourceType: SourceType) {
-    return sourceType === 'claude-chat';
+    return sourceType === 'claude-chat' || sourceType === 'claude-code';
   }
 
   private isOpenAIChatSource(sourceType: SourceType) {
-    return sourceType === 'openai-chat' || sourceType === 'deepseek-chat';
+    return sourceType === 'openai-chat' || sourceType === 'openai-responses' || sourceType === 'deepseek-reasoning-chat';
+  }
+
+  private isChatType(sourceType: SourceType) {
+    return sourceType.endsWith('-chat');
   }
 
   /**
@@ -1122,7 +1154,7 @@ export class ProxyServer {
 
     // 如果请求中指定了 max_tokens，并且超过配置的限制，则限制为配置的最大值
     if (typeof requestedMaxTokens === 'number' && requestedMaxTokens > maxOutputLimit) {
-      console.log(`[Proxy] Limiting ${maxTokensFieldName} from ${requestedMaxTokens} to ${maxOutputLimit} for model ${model} in service ${service.name}`);
+      // console.log(`[Proxy] Limiting ${maxTokensFieldName} from ${requestedMaxTokens} to ${maxOutputLimit} for model ${model} in service ${service.name}`);
       result[maxTokensFieldName] = maxOutputLimit;
 
       // 如果使用了 max_completion_tokens，清理旧的 max_tokens 字段
@@ -1131,7 +1163,7 @@ export class ProxyServer {
       }
     } else if (requestedMaxTokens === undefined) {
       // 如果请求中没有指定 max_tokens，则使用配置的最大值
-      console.log(`[Proxy] Setting ${maxTokensFieldName} to ${maxOutputLimit} for model ${model} in service ${service.name}`);
+      // console.log(`[Proxy] Setting ${maxTokensFieldName} to ${maxOutputLimit} for model ${model} in service ${service.name}`);
       result[maxTokensFieldName] = maxOutputLimit;
     }
 
@@ -1170,10 +1202,19 @@ export class ProxyServer {
       headers.accept = 'text/event-stream';
     }
 
-    if (this.isClaudeSource(sourceType)) {
+    // 确定认证方式：优先使用服务配置的 authType，否则根据 sourceType 自动判断
+    const authType = service.authType || 'auto';
+    const useXApiKey = authType === 'x-api-key' || (authType === 'auto' && this.isClaudeSource(sourceType));
+
+    if (useXApiKey) {
+      // 使用 x-api-key 认证（适用于 claude-chat, claude-code 及某些需要 x-api-key 的 openai-chat 兼容 API）
       headers['x-api-key'] = service.apiKey;
-      headers['anthropic-version'] = headers['anthropic-version'] || '2023-06-01';
+      if (this.isClaudeSource(sourceType) || authType === 'x-api-key') {
+        // 仅在明确配置或 Claude 源时添加 anthropic-version
+        headers['anthropic-version'] = headers['anthropic-version'] || '2023-06-01';
+      }
     } else {
+      // 使用 Authorization 认证（适用于 openai-chat, openai-responses, deepseek-reasoning-chat 等）
       delete headers['anthropic-version'];
       delete headers['anthropic-beta'];
       headers.authorization = `Bearer ${service.apiKey}`;
@@ -1253,6 +1294,61 @@ export class ProxyServer {
   }
 
   /**
+   * 从请求中提取 session ID（默认方法）
+   * Claude Code: metadata.user_id
+   * Codex: headers.session_id
+   */
+  private defaultExtractSessionId(request: Request, type: TargetType): string | null {
+    if (type === 'claude-code') {
+      // Claude Code 使用 metadata.user_id
+      return request.body?.metadata?.user_id || null;
+    } else if (type === 'codex') {
+      // Codex 使用 headers.session_id
+      const sessionId = request.headers['session_id'];
+      if (typeof sessionId === 'string') {
+        return sessionId;
+      }
+      if (Array.isArray(sessionId)) {
+        return sessionId[0] || null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 提取会话标题（默认方法）
+   * 对于新会话，尝试从第一条消息的内容中提取标题
+   */
+  private defaultExtractSessionTitle(request: Request, sessionId: string): string | undefined {
+    const existingSession = this.dbManager.getSession(sessionId);
+    if (existingSession) {
+      // 已存在的会话，保持原有标题
+      return existingSession.title;
+    }
+
+    // 新会话，从消息内容提取标题
+    const messages = request.body?.messages;
+    if (Array.isArray(messages) && messages.length > 0) {
+      // 查找第一条 user 消息
+      const firstUserMessage = messages.find((msg: any) => msg.role === 'user');
+      if (firstUserMessage) {
+        const content = firstUserMessage.content;
+        if (typeof content === 'string') {
+          // 截取前50个字符作为标题
+          return content.slice(0, 50).trim();
+        } else if (Array.isArray(content)) {
+          // 处理结构化内容（如图片+文本）
+          const textBlock = content.find((block: any) => block?.type === 'text');
+          if (textBlock?.text) {
+            return textBlock.text.slice(0, 50).trim();
+          }
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * 根据源工具类型和目标API类型,映射请求路径
    * @param sourceTool 源工具类型 (claude-code 或 codex)
    * @param targetSourceType 目标API的数据格式类型
@@ -1305,7 +1401,13 @@ export class ProxyServer {
     let actuallyUsedProxy = false; // 标记是否实际使用了代理
 
     const finalizeLog = async (statusCode: number, error?: string) => {
-      if (logged || !this.config?.enableLogging) return;
+      if (logged) return;
+
+      // 检查是否启用日志记录（默认启用）
+      const enableLogging = this.config?.enableLogging !== false; // 默认为 true
+      if (!enableLogging) {
+        return;
+      }
 
       // 只记录来自编程工具的请求
       if (!SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
@@ -1345,8 +1447,30 @@ export class ProxyServer {
         responseHeaders: responseHeadersForLog,
         responseBody: responseBodyForLog,
         streamChunks: streamChunksForLog,
+
         upstreamRequest: upstreamRequestForLog,
       });
+
+      // Session 索引逻辑
+      const sessionId = this.defaultExtractSessionId(req, targetType);
+      if (sessionId) {
+        const totalTokens = (usageForLog?.inputTokens || 0) + (usageForLog?.outputTokens || 0) +
+                           (usageForLog?.totalTokens || 0);
+        const sessionTitle = this.defaultExtractSessionTitle(req, sessionId);
+        this.dbManager.upsertSession({
+          id: sessionId,
+          targetType,
+          title: sessionTitle,
+          firstRequestAt: startTime,
+          lastRequestAt: Date.now(),
+          vendorId: service.vendorId,
+          vendorName: vendor?.name,
+          serviceId: service.id,
+          serviceName: service.name,
+          model: requestModel || rule.targetModel,
+          totalTokens,
+        });
+      }
 
       // 更新规则的token使用量（只在成功请求时更新）
       if (usageForLog && statusCode < 400) {
@@ -1357,8 +1481,17 @@ export class ProxyServer {
       }
 
       // 更新规则的请求次数（只在成功请求时更新）
-      if (statusCode < 400 && this.shouldChargeRequest(req.body)) {
-        this.dbManager.incrementRuleRequestCount(rule.id, 1);
+      if (statusCode < 400 && this.shouldChargeRequest(req)) {
+        // 计算请求哈希用于去重
+        const requestHash = this.computeRequestHash(req);
+        // 检查是否是重复请求（如网络重试）
+        if (!this.isRequestProcessed(requestHash)) {
+          this.dbManager.incrementRuleRequestCount(rule.id, 1);
+        }
+        // 定期清理过期缓存
+        if (Math.random() < 0.01) { // 1%概率清理，避免每次都清理
+          this.cleanExpiredDedupeCache();
+        }
       }
     };
 
@@ -1403,7 +1536,7 @@ export class ProxyServer {
 
       const config: AxiosRequestConfig = {
         method: req.method as any,
-        url: `${service.apiUrl}${mappedPath}`,
+        url: this.isChatType(sourceType) ? service.apiUrl : `${service.apiUrl}${mappedPath}`,
         headers: this.buildUpstreamHeaders(req, service, sourceType, streamRequested),
         timeout: rule.timeout || 3000000, // 默认300秒
         validateStatus: () => true,
@@ -1448,14 +1581,17 @@ export class ProxyServer {
       }
 
       // 记录实际发出的请求信息作为日志的一部分
-      const actualModel = requestBody?.model || '';
-      const maxTokensFieldName = this.getMaxTokensFieldName(actualModel);
-      const actualMaxTokens = requestBody?.[maxTokensFieldName] || requestBody?.max_tokens;
+      // const actualModel = requestBody?.model || '';
+      // const maxTokensFieldName = this.getMaxTokensFieldName(actualModel);
+      // const actualMaxTokens = requestBody?.[maxTokensFieldName] || requestBody?.max_tokens;
+      const upstreamHeaders = this.buildUpstreamHeaders(req, service, sourceType, streamRequested);
 
       upstreamRequestForLog = {
-        url: `${service.apiUrl}${mappedPath}`,
-        model: actualModel,
-        [maxTokensFieldName]: actualMaxTokens,
+        url: this.isChatType(sourceType) ? service.apiUrl : `${service.apiUrl}${mappedPath}`,
+        // model: actualModel,
+        // [maxTokensFieldName]: actualMaxTokens,
+        headers: upstreamHeaders,
+        body: requestBody || undefined,
       };
       if (actuallyUsedProxy) {
         upstreamRequestForLog.useProxy = true;
@@ -1576,6 +1712,33 @@ export class ProxyServer {
         usageForLog = this.extractTokenUsage(responseData?.usage);
         // 记录错误响应体
         responseBodyForLog = typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
+
+        // 将 4xx/5xx 错误记录到错误日志
+        // 确保 errorDetail 总是字符串类型
+        let errorDetail: string;
+        if (typeof responseData?.error === 'string') {
+          errorDetail = responseData.error;
+        } else if (typeof responseData?.message === 'string') {
+          errorDetail = responseData.message;
+        } else if (responseData?.error) {
+          errorDetail = JSON.stringify(responseData.error);
+        } else {
+          errorDetail = JSON.stringify(responseData);
+        }
+
+        await this.dbManager.addErrorLog({
+          timestamp: Date.now(),
+          method: req.method,
+          path: req.path,
+          statusCode: response.status,
+          errorMessage: `Upstream API returned ${response.status}: ${errorDetail}`,
+          errorStack: undefined,
+          requestHeaders: this.normalizeHeaders(req.headers),
+          requestBody: req.body ? JSON.stringify(req.body) : undefined,
+          responseHeaders: responseHeadersForLog,
+          responseBody: responseBodyForLog,
+        });
+
         this.copyResponseHeaders(responseHeaders, res);
         if (contentType.includes('application/json')) {
           res.status(response.status).json(responseData);
@@ -1622,7 +1785,19 @@ export class ProxyServer {
         ? 'Request timeout - the upstream API took too long to respond'
         : (error.message || 'Internal server error');
 
-      await finalizeLog(500, errorMessage);
+      // 将错误记录到错误日志
+      await this.dbManager.addErrorLog({
+        timestamp: Date.now(),
+        method: req.method,
+        path: req.path,
+        statusCode: isTimeout ? 504 : 500,
+        errorMessage: errorMessage,
+        errorStack: error.stack,
+        requestHeaders: this.normalizeHeaders(req.headers),
+        requestBody: req.body ? JSON.stringify(req.body) : undefined,
+      });
+
+      await finalizeLog(isTimeout ? 504 : 500, errorMessage);
 
       // 根据请求类型返回适当格式的错误响应
       const streamRequested = this.isStreamRequested(req, req.body || {});
@@ -1693,8 +1868,8 @@ export class ProxyServer {
     this.config = config;
   }
 
-  async initialize() {
-    this.setupMiddleware();
+  async registerProxyRoutes() {
+    this.addProxyRoutes();
     await this.reloadRoutes();
   }
 }

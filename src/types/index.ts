@@ -9,9 +9,11 @@ export interface Vendor {
 }
 
 /** 供应商API接口的数据结构标准类型 */
-export type SourceType = 'openai-chat' | 'claude-chat' | 'deepseek-chat';
+export type SourceType = 'openai-chat' | 'openai-responses' | 'claude-chat' | 'claude-code' | 'deepseek-reasoning-chat';
 /** 路由的目标对象类型，目前，仅支持claude-code和codex */
 export type TargetType = 'claude-code' | 'codex';
+/** 认证方式类型 */
+export type AuthType = 'authorization' | 'x-api-key' | 'auto';
 
 /** 供应商API服务 */
 export interface APIService {
@@ -21,6 +23,7 @@ export interface APIService {
   apiUrl: string;
   apiKey: string;
   sourceType?: SourceType;
+  authType?: AuthType; // 认证方式，默认为 'auto'（根据 sourceType 自动判断）
   supportedModels?: string[];
   modelLimits?: Record<string, number>; // 模型名 -> 最大输出tokens映射
   enableProxy?: boolean; // 是否启用代理
@@ -106,23 +109,13 @@ export interface RequestLog {
   streamChunks?: string[];                         // stream chunks数组
   upstreamRequest?: {                              // 实际发送给后端的请求信息
     url: string;                                   // 实际请求的URL路径
-    model: string;                                 // 实际请求的模型名
-    max_tokens?: number;                           // 实际的 max_tokens 值
-    max_completion_tokens?: number;                // 实际的 max_completion_tokens 值
+    // model: string;                                 // 实际请求的模型名
+    // max_tokens?: number;                           // 实际的 max_tokens 值
+    // max_completion_tokens?: number;                // 实际的 max_completion_tokens 值
     useProxy?: boolean;                            // 是否使用了代理
+    headers?: Record<string, string>;              // 实际发送的请求头
+    body?: string;                                 // 实际发送的请求体
   };
-}
-
-export interface AccessLog {
-  id: string;
-  timestamp: number;
-  method: string;
-  path: string;
-  clientIp?: string;
-  userAgent?: string;
-  statusCode?: number;
-  responseTime?: number;
-  error?: string;
 }
 
 export interface ErrorLog {
@@ -199,6 +192,22 @@ export interface LoginRequest {
 /** 登录响应 */
 export interface LoginResponse {
   token: string;
+}
+
+/** Session 会话信息 */
+export interface Session {
+  id: string;              // session ID (对于Claude Code是metadata.user_id，对于Codex是headers.session_id)
+  targetType: TargetType;  // 客户端类型 (claude-code 或 codex)
+  title?: string;          // 会话标题（从第一条消息内容提取）
+  firstRequestAt: number;  // 第一次请求时间
+  lastRequestAt: number;   // 最后一次请求时间
+  requestCount: number;    // 请求总数
+  totalTokens: number;     // 总token使用量
+  vendorId?: string;       // 最后使用的供应商ID
+  vendorName?: string;     // 最后使用的供应商名称
+  serviceId?: string;      // 最后使用的服务ID
+  serviceName?: string;    // 最后使用的服务名称
+  model?: string;          // 最后使用的模型
 }
 
 /** 统计数据 */

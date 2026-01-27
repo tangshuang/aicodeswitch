@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, AccessLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -42,10 +42,6 @@ interface BackendAPI {
   clearLogs: () => Promise<boolean>;
   getLogsCount: () => Promise<{ count: number }>;
 
-  getAccessLogs: (limit: number, offset: number) => Promise<AccessLog[]>;
-  clearAccessLogs: () => Promise<boolean>;
-  getAccessLogsCount: () => Promise<{ count: number }>;
-
   getErrorLogs: (limit: number, offset: number) => Promise<ErrorLog[]>;
   clearErrorLogs: () => Promise<boolean>;
   getErrorLogsCount: () => Promise<{ count: number }>;
@@ -65,8 +61,20 @@ interface BackendAPI {
 
   getStatistics: (days?: number) => Promise<Statistics>;
 
+  // Sessions 相关
+  getSessions: (limit?: number, offset?: number) => Promise<Session[]>;
+  getSessionsCount: () => Promise<{ count: number }>;
+  getSession: (id: string) => Promise<Session | null>;
+  getSessionLogs: (id: string, limit?: number) => Promise<RequestLog[]>;
+  deleteSession: (id: string) => Promise<boolean>;
+  clearSessions: () => Promise<boolean>;
+
   getRecommendVendorsMarkdown: () => Promise<string>;
   getReadmeMarkdown: () => Promise<string>;
+
+  // Migration 相关
+  getMigration: () => Promise<{ shouldShow: boolean; content: string }>;
+  acknowledgeMigration: () => Promise<{ success: boolean }>;
 }
 
 const buildUrl = (
@@ -164,14 +172,10 @@ export const api: BackendAPI = {
   getLogs: (limit, offset) => requestJson(buildUrl('/api/logs', { limit, offset })),
   clearLogs: () => requestJson(buildUrl('/api/logs'), { method: 'DELETE' }),
 
-  getAccessLogs: (limit, offset) => requestJson(buildUrl('/api/access-logs', { limit, offset })),
-  clearAccessLogs: () => requestJson(buildUrl('/api/access-logs'), { method: 'DELETE' }),
-
   getErrorLogs: (limit, offset) => requestJson(buildUrl('/api/error-logs', { limit, offset })),
   clearErrorLogs: () => requestJson(buildUrl('/api/error-logs'), { method: 'DELETE' }),
 
   getLogsCount: () => requestJson<{ count: number }>(buildUrl('/api/logs/count')),
-  getAccessLogsCount: () => requestJson<{ count: number }>(buildUrl('/api/access-logs/count')),
   getErrorLogsCount: () => requestJson<{ count: number }>(buildUrl('/api/error-logs/count')),
 
   getConfig: () => requestJson(buildUrl('/api/config')),
@@ -199,7 +203,19 @@ export const api: BackendAPI = {
 
   getStatistics: (days) => requestJson(buildUrl('/api/statistics', days ? { days } : undefined)),
 
+  // Sessions 相关
+  getSessions: (limit, offset) => requestJson(buildUrl('/api/sessions', { limit, offset })),
+  getSessionsCount: () => requestJson<{ count: number }>(buildUrl('/api/sessions/count')),
+  getSession: (id) => requestJson<Session | null>(buildUrl(`/api/sessions/${id}`)),
+  getSessionLogs: (id, limit) => requestJson(buildUrl(`/api/sessions/${id}/logs`, { limit })),
+  deleteSession: (id) => requestJson(buildUrl(`/api/sessions/${id}`), { method: 'DELETE' }),
+  clearSessions: () => requestJson(buildUrl('/api/sessions'), { method: 'DELETE' }),
+
   getRecommendVendorsMarkdown: () => requestJson(buildUrl('/api/docs/recommend-vendors')),
 
   getReadmeMarkdown: () => requestJson(buildUrl('/api/docs/readme')),
+
+  // Migration 相关
+  getMigration: () => requestJson(buildUrl('/api/migration')),
+  acknowledgeMigration: () => requestJson(buildUrl('/api/migration/ack'), { method: 'POST' }),
 };

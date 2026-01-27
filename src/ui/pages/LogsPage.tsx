@@ -1,37 +1,200 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { api } from '../api/client';
-import type { RequestLog, AccessLog, ErrorLog, Vendor, APIService } from '../../types';
+import type { RequestLog, ErrorLog, Vendor, APIService, Session } from '../../types';
 import dayjs from 'dayjs';
+import relativeTime from 'dayjs/plugin/relativeTime';
 import JSONViewer from '../components/JSONViewer';
 import { TARGET_TYPE } from '../constants';
 import { Pagination } from '../components/Pagination';
+import { useConfirm } from '../components/Confirm';
+import { toast } from '../components/Toast';
 
-type LogTab = 'request' | 'access' | 'error';
+dayjs.extend(relativeTime);
+
+/**
+ * 解析SSE事件行
+ */
+interface ParsedSSEEvent {
+  event?: string;
+  data?: any;
+  raw: string;
+}
+
+function parseSSEChunks(chunks: string[]): ParsedSSEEvent[] {
+  const events: ParsedSSEEvent[] = [];
+  let currentEvent: { event?: string; dataLines: string[]; rawLines: string[] } = {
+    dataLines: [],
+    rawLines: []
+  };
+
+  for (const chunk of chunks) {
+    const lines = chunk.split('\n');
+    for (const line of lines) {
+      currentEvent.rawLines.push(line);
+
+      if (!line.trim()) {
+        // 空行表示事件结束
+        if (currentEvent.event || currentEvent.dataLines.length > 0) {
+          const eventData = currentEvent.dataLines.length > 0
+            ? currentEvent.dataLines.join('\n')
+            : undefined;
+          const parsed: ParsedSSEEvent = {
+            event: currentEvent.event,
+            raw: currentEvent.rawLines.join('\n')
+          };
+          if (eventData) {
+            try {
+              parsed.data = JSON.parse(eventData);
+            } catch {
+              parsed.data = eventData;
+            }
+          }
+          events.push(parsed);
+        }
+        currentEvent = { dataLines: [], rawLines: [] };
+        continue;
+      }
+
+      if (line.startsWith('event:')) {
+        currentEvent.event = line.slice(6).trim();
+      } else if (line.startsWith('data:')) {
+        currentEvent.dataLines.push(line.slice(5).trim());
+      }
+    }
+  }
+
+  // 处理最后一个事件
+  if (currentEvent.event || currentEvent.dataLines.length > 0) {
+    const eventData = currentEvent.dataLines.length > 0
+      ? currentEvent.dataLines.join('\n')
+      : undefined;
+    const parsed: ParsedSSEEvent = {
+      event: currentEvent.event,
+      raw: currentEvent.rawLines.join('\n')
+    };
+    if (eventData) {
+      try {
+        parsed.data = JSON.parse(eventData);
+      } catch {
+        parsed.data = eventData;
+      }
+    }
+    events.push(parsed);
+  }
+
+  return events;
+}
+
+/**
+ * 从解析的SSE事件中组装完整文本
+ * 返回 { text, thinking } 结构
+ */
+function assembleStreamText(events: ParsedSSEEvent[], _targetType?: string): { text: string; thinking: string } {
+  let text = '';
+  let thinking = '';
+  let inThinkingBlock = false;
+  let inTextBlock = false;
+
+  for (const event of events) {
+    const data = event.data;
+    if (!data) continue;
+
+    // 处理Claude格式 (用于claude-code客户端)
+    if (event.event === 'content_block_start' && data.content_block) {
+      const blockType = data.content_block.type;
+      if (blockType === 'thinking') {
+        inThinkingBlock = true;
+      } else if (blockType === 'text') {
+        inTextBlock = true;
+      }
+      continue;
+    }
+
+    if (event.event === 'content_block_stop') {
+      inThinkingBlock = false;
+      inTextBlock = false;
+      continue;
+    }
+
+    if (event.event === 'content_block_delta' && data.delta) {
+      if (data.delta.type === 'text_delta' && inTextBlock) {
+        text += data.delta.text || '';
+      } else if (data.delta.type === 'thinking_delta' && inThinkingBlock) {
+        thinking += data.delta.thinking || '';
+      }
+      continue;
+    }
+
+    // 处理OpenAI格式 (用于codex客户端)
+    if (!event.event && data.choices) {
+      const delta = data.choices?.[0]?.delta;
+      if (delta) {
+        if (typeof delta.content === 'string') {
+          text += delta.content;
+        }
+        // 某些OpenAI兼容API可能使用thinking字段
+        if (delta.thinking && typeof delta.thinking.content === 'string') {
+          thinking += delta.thinking.content;
+        }
+      }
+    }
+
+    // 处理直接包含thinking的数据（DeepSeek等）
+    if (data.reasoning_content || data.thinking) {
+      thinking += data.reasoning_content || data.thinking || '';
+    }
+  }
+
+  return { text, thinking };
+}
+
+/**
+ * 从stream chunks组装完整文本
+ */
+function assembleStreamTextFromChunks(chunks: string[] | undefined, targetType?: string): { text: string; thinking: string } {
+  if (!chunks || chunks.length === 0) {
+    return { text: '', thinking: '' };
+  }
+
+  const events = parseSSEChunks(chunks);
+  return assembleStreamText(events, targetType);
+}
+
+type LogTab = 'request' | 'error' | 'sessions';
 
 function LogsPage() {
+  const { confirm } = useConfirm();
   const [activeTab, setActiveTab] = useState<LogTab>('request');
   const [requestLogs, setRequestLogs] = useState<RequestLog[]>([]);
-  const [accessLogs, setAccessLogs] = useState<AccessLog[]>([]);
   const [errorLogs, setErrorLogs] = useState<ErrorLog[]>([]);
   const [selectedRequestLog, setSelectedRequestLog] = useState<RequestLog | null>(null);
-  const [selectedAccessLog, setSelectedAccessLog] = useState<AccessLog | null>(null);
   const [selectedErrorLog, setSelectedErrorLog] = useState<ErrorLog | null>(null);
   const [chunksExpanded, setChunksExpanded] = useState<boolean>(false);
+  const [assembledTextExpanded, setAssembledTextExpanded] = useState<boolean>(true);
+
+  // Sessions 相关状态
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [selectedSession, setSelectedSession] = useState<Session | null>(null);
+  const [selectedSessionLogs, setSelectedSessionLogs] = useState<RequestLog[]>([]);
+  const [sessionsTotal, setSessionsTotal] = useState(0);
+  const [sessionsPage, setSessionsPage] = useState(1);
+  const [sessionsPageSize, setSessionsPageSize] = useState(20);
+  const [logsLoading, setLogsLoading] = useState(false);
 
   // 分页状态
   const [requestLogsPage, setRequestLogsPage] = useState(1);
   const [requestLogsPageSize, setRequestLogsPageSize] = useState(20);
   const [requestLogsTotal, setRequestLogsTotal] = useState(0);
 
-  const [accessLogsPage, setAccessLogsPage] = useState(1);
-  const [accessLogsPageSize, setAccessLogsPageSize] = useState(20);
-  const [accessLogsTotal, setAccessLogsTotal] = useState(0);
-
   const [errorLogsPage, setErrorLogsPage] = useState(1);
   const [errorLogsPageSize, setErrorLogsPageSize] = useState(20);
   const [errorLogsTotal, setErrorLogsTotal] = useState(0);
 
   const [loading, setLoading] = useState(false);
+
+  // 自动刷新相关状态
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [countdown, setCountdown] = useState(10);
 
   // 筛选器相关state
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -43,11 +206,42 @@ function LogsPage() {
 
   useEffect(() => {
     loadLogs();
-  }, [activeTab, requestLogsPage, requestLogsPageSize, accessLogsPage, accessLogsPageSize, errorLogsPage, errorLogsPageSize]);
+  }, [activeTab, requestLogsPage, requestLogsPageSize, errorLogsPage, errorLogsPageSize, sessionsPage, sessionsPageSize]);
 
   useEffect(() => {
     loadVendorsAndServices();
+    loadAllCounts();
   }, []);
+
+  // 自动刷新倒计时逻辑
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout | null = null;
+    let countdownId: NodeJS.Timeout | null = null;
+
+    if (autoRefresh) {
+      // 设置倒计时显示
+      countdownId = setInterval(() => {
+        setCountdown(prev => {
+          if (prev <= 1) {
+            // 倒计时结束，重置并刷新
+            return 10;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      // 每10秒刷新一次数据
+      intervalId = setInterval(() => {
+        loadLogs();
+        loadAllCounts();
+      }, 10000);
+    }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      if (countdownId) clearInterval(countdownId);
+    };
+  }, [autoRefresh, activeTab, requestLogsPage, requestLogsPageSize, errorLogsPage, errorLogsPageSize, sessionsPage, sessionsPageSize]);
 
   const loadLogs = async () => {
     setLoading(true);
@@ -60,14 +254,6 @@ function LogsPage() {
         ]);
         setRequestLogs(data);
         setRequestLogsTotal(countResult.count);
-      } else if (activeTab === 'access') {
-        const offset = (accessLogsPage - 1) * accessLogsPageSize;
-        const [data, countResult] = await Promise.all([
-          api.getAccessLogs(accessLogsPageSize, offset),
-          api.getAccessLogsCount()
-        ]);
-        setAccessLogs(data);
-        setAccessLogsTotal(countResult.count);
       } else if (activeTab === 'error') {
         const offset = (errorLogsPage - 1) * errorLogsPageSize;
         const [data, countResult] = await Promise.all([
@@ -76,6 +262,14 @@ function LogsPage() {
         ]);
         setErrorLogs(data);
         setErrorLogsTotal(countResult.count);
+      } else if (activeTab === 'sessions') {
+        const offset = (sessionsPage - 1) * sessionsPageSize;
+        const [data, countResult] = await Promise.all([
+          api.getSessions(sessionsPageSize, offset),
+          api.getSessionsCount()
+        ]);
+        setSessions(data);
+        setSessionsTotal(countResult.count);
       }
     } catch (error) {
       console.error('Failed to load logs:', error);
@@ -97,35 +291,63 @@ function LogsPage() {
     }
   };
 
+  const loadAllCounts = async () => {
+    try {
+      const [requestCount, errorCount, sessionsCount] = await Promise.all([
+        api.getLogsCount(),
+        api.getErrorLogsCount(),
+        api.getSessionsCount()
+      ]);
+      setRequestLogsTotal(requestCount.count);
+      setErrorLogsTotal(errorCount.count);
+      setSessionsTotal(sessionsCount.count);
+    } catch (error) {
+      console.error('Failed to load counts:', error);
+    }
+  };
+
   const handleClearLogs = async () => {
     const logTypeMap = {
       request: '请求日志',
       access: '访问日志',
-      error: '错误日志'
+      error: '错误日志',
+      sessions: '会话'
     };
 
     const logType = logTypeMap[activeTab];
     const warningMessage = `确定要清空所有${logType}吗?\n\n⚠️ 警告:\n1. 此操作将永久删除所有${logType}记录\n2. 相关的统计数据也会被清空\n3. 此操作不可撤销\n\n是否继续?`;
 
-    if (confirm(warningMessage)) {
+    const confirmed = await confirm({
+      message: warningMessage,
+      title: '确认清空',
+      type: 'danger',
+      confirmText: '确认清空',
+      cancelText: '取消'
+    });
+
+    if (confirmed) {
       if (activeTab === 'request') {
         await api.clearLogs();
         setRequestLogs([]);
         setSelectedRequestLog(null);
         setRequestLogsPage(1);
         setRequestLogsTotal(0);
-      } else if (activeTab === 'access') {
-        await api.clearAccessLogs();
-        setAccessLogs([]);
-        setSelectedAccessLog(null);
-        setAccessLogsPage(1);
-        setAccessLogsTotal(0);
+        toast.success('请求日志已清空');
       } else if (activeTab === 'error') {
         await api.clearErrorLogs();
         setErrorLogs([]);
         setSelectedErrorLog(null);
         setErrorLogsPage(1);
         setErrorLogsTotal(0);
+        toast.success('错误日志已清空');
+      } else if (activeTab === 'sessions') {
+        await api.clearSessions();
+        setSessions([]);
+        setSelectedSession(null);
+        setSelectedSessionLogs([]);
+        setSessionsPage(1);
+        setSessionsTotal(0);
+        toast.success('会话已清空');
       }
     }
   };
@@ -182,15 +404,6 @@ function LogsPage() {
     setRequestLogsPage(1); // 重置到第1页
   };
 
-  const handleAccessLogsPageChange = (page: number) => {
-    setAccessLogsPage(page);
-  };
-
-  const handleAccessLogsPageSizeChange = (size: number) => {
-    setAccessLogsPageSize(size);
-    setAccessLogsPage(1);
-  };
-
   const handleErrorLogsPageChange = (page: number) => {
     setErrorLogsPage(page);
   };
@@ -198,6 +411,102 @@ function LogsPage() {
   const handleErrorLogsPageSizeChange = (size: number) => {
     setErrorLogsPageSize(size);
     setErrorLogsPage(1);
+  };
+
+  // Sessions 相关函数
+  const handleSessionsPageChange = (page: number) => {
+    setSessionsPage(page);
+  };
+
+  const handleSessionsPageSizeChange = (size: number) => {
+    setSessionsPageSize(size);
+    setSessionsPage(1);
+  };
+
+  const handleSessionClick = async (session: Session) => {
+    setSelectedSession(session);
+    setLogsLoading(true);
+    try {
+      const logs = await api.getSessionLogs(session.id, 100);
+      setSelectedSessionLogs(logs);
+    } catch (error) {
+      console.error('Failed to load session logs:', error);
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
+  const formatDuration = (startTime: number, endTime: number) => {
+    const duration = endTime - startTime;
+    if (duration < 60000) {
+      return `${Math.floor(duration / 1000)}秒`;
+    } else if (duration < 3600000) {
+      return `${Math.floor(duration / 60000)}分钟`;
+    } else {
+      return `${Math.floor(duration / 3600000)}小时`;
+    }
+  };
+
+  const getTargetTypeBadge = (targetType: string) => {
+    if (targetType === 'claude-code') {
+      return <span className="badge badge-claude-code">Claude Code</span>;
+    } else if (targetType === 'codex') {
+      return <span className="badge badge-codex">Codex</span>;
+    }
+    return <span className="badge">{targetType}</span>;
+  };
+
+  const renderSessions = () => {
+    if (sessions.length === 0) {
+      return <div className="empty-state"><p>暂无会话记录</p></div>;
+    }
+
+    return (
+      <table>
+        <thead>
+          <tr>
+            <th>标题</th>
+            <th>客户端类型</th>
+            <th>请求数</th>
+            <th>Tokens</th>
+            <th>首次请求</th>
+            <th>最后请求</th>
+            <th>时长</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sessions.map((session) => (
+            <tr
+              key={session.id}
+              onClick={() => handleSessionClick(session)}
+              style={{ cursor: 'pointer', backgroundColor: selectedSession?.id === session.id ? 'var(--bg-selected)' : undefined }}
+            >
+              <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {session.title || session.id.slice(0, 8)}
+              </td>
+              <td>{getTargetTypeBadge(session.targetType)}</td>
+              <td>{session.requestCount}</td>
+              <td>{session.totalTokens.toLocaleString()}</td>
+              <td>{dayjs(session.firstRequestAt).format('MM-DD HH:mm')}</td>
+              <td>{dayjs(session.lastRequestAt).format('MM-DD HH:mm')}</td>
+              <td>{formatDuration(session.firstRequestAt, session.lastRequestAt)}</td>
+              <td>
+                <button
+                  className="btn btn-sm btn-secondary"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleSessionClick(session);
+                  }}
+                >
+                  查看
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
   };
 
   const renderRequestLogs = () => {
@@ -224,7 +533,7 @@ function LogsPage() {
               <td>{dayjs(log.timestamp).format('YYYY-MM-DD HH:mm:ss')}</td>
               <td>
                 {TARGET_TYPE[log.targetType!] ? (
-                  <span className="badge badge-info">
+                  <span className={`badge ${log.targetType === 'claude-code' ? 'badge-claude-code' : log.targetType === 'codex' ? 'badge-codex' : 'badge-info'}`}>
                     {TARGET_TYPE[log.targetType!]}
                   </span>
                 ) : '-'}
@@ -245,47 +554,6 @@ function LogsPage() {
               </td>
               <td>
                 <button className="btn btn-secondary" onClick={() => setSelectedRequestLog(log)}>详情</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    );
-  };
-
-  const renderAccessLogs = () => {
-    if (accessLogs.length === 0) {
-      return <div className="empty-state"><p>暂无访问日志</p></div>;
-    }
-
-    return (
-      <table>
-        <thead>
-          <tr>
-            <th>时间</th>
-            <th>方法</th>
-            <th>路径</th>
-            <th>状态</th>
-            <th>响应时间</th>
-            <th>客户端IP</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {accessLogs.map((log) => (
-            <tr key={log.id}>
-              <td>{dayjs(log.timestamp).format('YYYY-MM-DD HH:mm:ss')}</td>
-              <td><span className="badge badge-success">{log.method}</span></td>
-              <td>{log.path}</td>
-              <td>
-                <span className={`badge ${getStatusBadge(log.statusCode)}`}>
-                  {log.statusCode || '-'}
-                </span>
-              </td>
-              <td>{log.responseTime ? `${log.responseTime}ms` : '-'}</td>
-              <td style={{ fontSize: '12px' }}>{log.clientIp || '-'}</td>
-              <td>
-                <button className="btn btn-secondary" onClick={() => setSelectedAccessLog(log)}>详情</button>
               </td>
             </tr>
           ))}
@@ -360,20 +628,6 @@ function LogsPage() {
               请求日志 ({requestLogsTotal})
             </button>
             <button
-              onClick={() => setActiveTab('access')}
-              style={{
-                padding: '12px 24px',
-                border: 'none',
-                background: activeTab === 'access' ? '#3498db' : 'transparent',
-                color: activeTab === 'access' ? 'white' : '#7f8c8d',
-                cursor: 'pointer',
-                borderBottom: activeTab === 'access' ? '2px solid #2980b9' : '2px solid transparent',
-                fontWeight: activeTab === 'access' ? 'bold' : 'normal',
-              }}
-            >
-              访问日志 ({accessLogsTotal})
-            </button>
-            <button
               onClick={() => setActiveTab('error')}
               style={{
                 padding: '12px 24px',
@@ -387,17 +641,51 @@ function LogsPage() {
             >
               错误日志 ({errorLogsTotal})
             </button>
+            <button
+              onClick={() => setActiveTab('sessions')}
+              style={{
+                padding: '12px 24px',
+                border: 'none',
+                background: activeTab === 'sessions' ? '#9b59b6' : 'transparent',
+                color: activeTab === 'sessions' ? 'white' : '#7f8c8d',
+                cursor: 'pointer',
+                borderBottom: activeTab === 'sessions' ? '2px solid #8e44ad' : '2px solid transparent',
+                fontWeight: activeTab === 'sessions' ? 'bold' : 'normal',
+              }}
+            >
+              会话 ({sessionsTotal})
+            </button>
           </div>
         </div>
 
         <div className="toolbar">
           <h3>
-            {activeTab === 'access' && '访问日志列表'}
             {activeTab === 'error' && '错误日志列表'}
             {activeTab === 'request' && '请求日志列表'}
+            {activeTab === 'sessions' && '会话列表'}
           </h3>
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <button className="btn btn-primary" onClick={loadLogs}>刷新</button>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px', background: 'var(--bg-secondary)', borderRadius: '8px' }}>
+              <input
+                type="checkbox"
+                id="auto-refresh"
+                checked={autoRefresh}
+                onChange={(e) => {
+                  setAutoRefresh(e.target.checked);
+                  if (e.target.checked) {
+                    setCountdown(10);
+                  }
+                }}
+                style={{ cursor: 'pointer' }}
+              />
+              <label
+                htmlFor="auto-refresh"
+                style={{ cursor: 'pointer', fontSize: '14px', color: 'var(--text-primary)', userSelect: 'none' }}
+              >
+                自动刷新 {autoRefresh && `(⏱ ${countdown}s)`}
+              </label>
+            </div>
+            <button className="btn btn-primary" onClick={() => { loadLogs(); loadAllCounts(); setCountdown(10); }}>刷新</button>
             <button className="btn btn-danger" onClick={handleClearLogs}>清空日志</button>
           </div>
         </div>
@@ -549,24 +837,6 @@ function LogsPage() {
             )}
           </>
         )}
-        {activeTab === 'access' && (
-          <>
-            {loading ? (
-              <div className="empty-state"><p>加载中...</p></div>
-            ) : (
-              renderAccessLogs()
-            )}
-            {!loading && (
-              <Pagination
-                currentPage={accessLogsPage}
-                totalItems={accessLogsTotal}
-                pageSize={accessLogsPageSize}
-                onPageChange={handleAccessLogsPageChange}
-                onPageSizeChange={handleAccessLogsPageSizeChange}
-              />
-            )}
-          </>
-        )}
         {activeTab === 'error' && (
           <>
             {loading ? (
@@ -585,19 +855,38 @@ function LogsPage() {
             )}
           </>
         )}
+        {activeTab === 'sessions' && (
+          <>
+            {loading ? (
+              <div className="empty-state"><p>加载中...</p></div>
+            ) : (
+              renderSessions()
+            )}
+            {!loading && (
+              <Pagination
+                currentPage={sessionsPage}
+                totalItems={sessionsTotal}
+                pageSize={sessionsPageSize}
+                onPageChange={handleSessionsPageChange}
+                onPageSizeChange={handleSessionsPageSizeChange}
+              />
+            )}
+          </>
+        )}
       </div>
 
       {selectedRequestLog && (
-        <div className="modal-overlay">
+        <div className="modal-overlay" style={{ zIndex: selectedSession ? 1100 : 1000 }}>
           <button
             type="button"
             className="modal-close-btn"
             onClick={() => setSelectedRequestLog(null)}
             aria-label="关闭"
+            style={{ zIndex: selectedSession ? 1101 : 1001 }}
           >
             ×
           </button>
-          <div className="modal" style={{ width: '800px' }}>
+          <div className="modal" style={{ width: '800px', zIndex: selectedSession ? 1100 : 1000 }}>
             <div className="modal-container">
               <div className="modal-header">
                 <h2>请求详情</h2>
@@ -694,9 +983,16 @@ function LogsPage() {
                     <button
                       onClick={() => setChunksExpanded(!chunksExpanded)}
                       style={{ marginLeft: '10px', padding: '2px 8px', fontSize: '12px' }}
-                      className='btn btn-sm btn-primary'
+                      className='btn btn-sm btn-secondary'
                     >
                       {chunksExpanded ? '折叠' : '展开'}
+                    </button>
+                    <button
+                      onClick={() => setAssembledTextExpanded(!assembledTextExpanded)}
+                      style={{ marginLeft: '5px', padding: '2px 8px', fontSize: '12px' }}
+                      className='btn btn-sm btn-primary'
+                    >
+                      {assembledTextExpanded ? '隐藏拼装结果' : '查看拼装结果'}
                     </button>
                   </label>
                   {chunksExpanded && (
@@ -709,6 +1005,19 @@ function LogsPage() {
                           <JSONViewer data={chunk} collapsed={true} />
                         </div>
                       ))}
+                    </div>
+                  )}
+                  {assembledTextExpanded && (
+                    <div style={{
+                      marginTop: '10px',
+                      maxHeight: '400px',
+                      overflowY: 'auto',
+                      border: '1px solid var(--border-secondary)',
+                      padding: '10px',
+                      borderRadius: '4px',
+                      backgroundColor: 'var(--bg-assembled-text)'
+                    }}>
+                      <AssembledTextView chunks={selectedRequestLog.streamChunks} targetType={selectedRequestLog.targetType} />
                     </div>
                   )}
                 </div>
@@ -743,80 +1052,18 @@ function LogsPage() {
         </div>
       )}
 
-      {selectedAccessLog && (
-        <div className="modal-overlay">
-          <button
-            type="button"
-            className="modal-close-btn"
-            onClick={() => setSelectedAccessLog(null)}
-            aria-label="关闭"
-          >
-            ×
-          </button>
-          <div className="modal" style={{ minWidth: '600px' }}>
-            <div className="modal-container">
-              <div className="modal-header">
-                <h2>访问日志详情</h2>
-              </div>
-            <div>
-              <div className="form-group">
-                <label>ID</label>
-                <input type="text" value={selectedAccessLog.id} readOnly />
-              </div>
-              <div className="form-group">
-                <label>时间</label>
-                <input type="text" value={dayjs(selectedAccessLog.timestamp).format('YYYY-MM-DD HH:mm:ss')} readOnly />
-              </div>
-              <div className="form-group">
-                <label>请求方法</label>
-                <input type="text" value={selectedAccessLog.method} readOnly />
-              </div>
-              <div className="form-group">
-                <label>请求路径</label>
-                <input type="text" value={selectedAccessLog.path} readOnly />
-              </div>
-              <div className="form-group">
-                <label>状态码</label>
-                <input type="text" value={selectedAccessLog.statusCode || '-'} readOnly />
-              </div>
-              <div className="form-group">
-                <label>响应时间</label>
-                <input type="text" value={selectedAccessLog.responseTime ? `${selectedAccessLog.responseTime}ms` : '-'} readOnly />
-              </div>
-              <div className="form-group">
-                <label>客户端IP</label>
-                <input type="text" value={selectedAccessLog.clientIp || '-'} readOnly />
-              </div>
-              <div className="form-group">
-                <label>User Agent</label>
-                <textarea rows={2} value={selectedAccessLog.userAgent || '-'} readOnly />
-              </div>
-              {selectedAccessLog.error && (
-                <div className="form-group">
-                  <label>错误信息</label>
-                  <textarea rows={6} value={selectedAccessLog.error} readOnly style={{ color: '#e74c3c' }} />
-                </div>
-              )}
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setSelectedAccessLog(null)}>关闭</button>
-            </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {selectedErrorLog && (
-        <div className="modal-overlay">
+        <div className="modal-overlay" style={{ zIndex: selectedSession ? 1100 : 1000 }}>
           <button
             type="button"
             className="modal-close-btn"
             onClick={() => setSelectedErrorLog(null)}
             aria-label="关闭"
+            style={{ zIndex: selectedSession ? 1101 : 1001 }}
           >
             ×
           </button>
-          <div className="modal" style={{ minWidth: '600px' }}>
+          <div className="modal" style={{ minWidth: '600px', zIndex: selectedSession ? 1100 : 1000 }}>
             <div className="modal-container">
               <div className="modal-header">
                 <h2>错误日志详情</h2>
@@ -886,6 +1133,202 @@ function LogsPage() {
             </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {selectedSession && (
+        <div className="modal-overlay">
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={() => {
+              setSelectedSession(null);
+              setSelectedSessionLogs([]);
+            }}
+            aria-label="关闭"
+          >
+            ×
+          </button>
+          <div className="modal" style={{ width: '900px', maxWidth: '90vw' }}>
+            <div className="modal-container">
+              <div className="modal-header">
+                <h2>会话详情</h2>
+              </div>
+              <div>
+                <div className="form-group">
+                  <label>会话ID</label>
+                  <input type="text" value={selectedSession.id} readOnly />
+                </div>
+                <div className="form-group">
+                  <label>标题</label>
+                  <input type="text" value={selectedSession.title || '(无标题)'} readOnly />
+                </div>
+                <div className="form-group">
+                  <label>客户端类型</label>
+                  <input type="text" value={selectedSession.targetType === 'claude-code' ? 'Claude Code' : 'Codex'} readOnly />
+                </div>
+                <div style={{ display: 'flex', gap: '15px' }}>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>请求数</label>
+                    <input type="text" value={selectedSession.requestCount.toString()} readOnly />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>Tokens</label>
+                    <input type="text" value={selectedSession.totalTokens.toLocaleString()} readOnly />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>时长</label>
+                    <input type="text" value={formatDuration(selectedSession.firstRequestAt, selectedSession.lastRequestAt)} readOnly />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '15px' }}>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>首次请求</label>
+                    <input type="text" value={dayjs(selectedSession.firstRequestAt).format('YYYY-MM-DD HH:mm:ss')} readOnly />
+                  </div>
+                  <div className="form-group" style={{ flex: 1 }}>
+                    <label>最后请求</label>
+                    <input type="text" value={dayjs(selectedSession.lastRequestAt).format('YYYY-MM-DD HH:mm:ss')} readOnly />
+                  </div>
+                </div>
+
+                <h3 style={{ marginTop: '20px', marginBottom: '10px' }}>会话日志 ({selectedSessionLogs.length})</h3>
+                {logsLoading ? (
+                  <div style={{ textAlign: 'center', padding: '20px' }}>加载中...</div>
+                ) : selectedSessionLogs.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '20px', color: '#7f8c8d' }}>暂无日志</div>
+                ) : (
+                  <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+                    <table style={{ fontSize: '14px' }}>
+                      <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-card)' }}>
+                        <tr>
+                          <th>时间</th>
+                          <th>状态</th>
+                          <th>响应时间</th>
+                          <th>Tokens</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedSessionLogs.map((log) => (
+                          <tr key={log.id}>
+                            <td>{dayjs(log.timestamp).format('HH:mm:ss')}</td>
+                            <td>
+                              <span className={`badge ${getStatusBadge(log.statusCode)}`}>
+                                {log.statusCode || 'Error'}
+                              </span>
+                            </td>
+                            <td>{log.responseTime ? `${log.responseTime}ms` : '-'}</td>
+                            <td>
+                              {log.usage ? (
+                                <span>{log.usage.totalTokens || log.usage.inputTokens + log.usage.outputTokens}</span>
+                              ) : '-'}
+                            </td>
+                            <td>
+                              <button
+                                className="btn btn-sm btn-secondary"
+                                onClick={() => setSelectedRequestLog(log)}
+                              >
+                                详情
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary" onClick={() => {
+                  setSelectedSession(null);
+                  setSelectedSessionLogs([]);
+                }}>关闭</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 拼装文本展示组件
+ */
+interface AssembledTextViewProps {
+  chunks: string[];
+  targetType?: string;
+}
+
+function AssembledTextView({ chunks, targetType }: AssembledTextViewProps) {
+  const { text, thinking } = useMemo(() => assembleStreamTextFromChunks(chunks, targetType), [chunks, targetType]);
+
+  if (!text && !thinking) {
+    return <div style={{ color: '#7f8c8d', fontStyle: 'italic' }}>无法解析出文本内容</div>;
+  }
+
+  return (
+    <div className="assembled-text-view">
+      {thinking && (
+        <details
+          style={{
+            marginBottom: '15px',
+            border: '1px solid var(--border-thinking-box)',
+            borderRadius: '8px',
+            padding: '10px',
+            backgroundColor: 'var(--bg-thinking-box)'
+          }}
+          open
+        >
+          <summary
+            style={{
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              color: 'var(--text-thinking-title)',
+              userSelect: 'none'
+            }}
+          >
+            思考内容 ({thinking.length} 字符)
+          </summary>
+          <pre
+            style={{
+              marginTop: '10px',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              fontFamily: 'monospace',
+              fontSize: '13px',
+              color: 'var(--text-thinking-content)',
+              backgroundColor: 'var(--bg-thinking-content)',
+              padding: '10px',
+              borderRadius: '4px',
+              border: '1px solid var(--border-thinking-content)'
+            }}
+          >
+            {thinking}
+          </pre>
+        </details>
+      )}
+      {text && (
+        <div>
+          <div style={{ fontWeight: 'bold', marginBottom: '8px', color: 'var(--text-reply-title)' }}>
+            回复内容 ({text.length} 字符)
+          </div>
+          <pre
+            style={{
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              fontFamily: 'monospace',
+              fontSize: '13px',
+              color: 'var(--text-reply-content)',
+              backgroundColor: 'var(--bg-reply-content)',
+              padding: '10px',
+              borderRadius: '4px',
+              border: '1px solid var(--border-reply-content)'
+            }}
+          >
+            {text}
+          </pre>
         </div>
       )}
     </div>

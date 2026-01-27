@@ -1,10 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api } from '../api/client';
-import type { Vendor, APIService, SourceType } from '../../types';
+import type { Vendor, APIService, SourceType, AuthType } from '../../types';
 import vendorsConfig from '../constants/vendors';
-import { SOURCE_TYPE } from '../constants';
+import { SOURCE_TYPE, SOURCE_TYPE_MESSAGE, AUTH_TYPE, AUTH_TYPE_MESSAGE } from '../constants';
 import { useRecomandVendors } from '../hooks/docs';
+import { useConfirm } from '../components/Confirm';
+import { toast } from '../components/Toast';
 
 /**
  * 将 Date 对象转换为 datetime-local input 所需的格式
@@ -110,6 +112,7 @@ function TagInput({ value = [], onChange, placeholder, inputValue, onInputChange
 
 
 function VendorsPage() {
+  const { confirm } = useConfirm();
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [services, setServices] = useState<APIService[]>([]);
   const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null);
@@ -135,12 +138,27 @@ function VendorsPage() {
   const [requestResetInterval, setRequestResetInterval] = useState<number | undefined>(undefined);
   const [requestResetBaseTime, setRequestResetBaseTime] = useState<Date | undefined>(undefined);
 
+  // 当前选择的数据源类型（用于动态显示API地址提示）
+  const [currentSourceType, setCurrentSourceType] = useState<SourceType>('openai-chat');
+  // 当前选择的认证方式（用于动态显示认证方式提示）
+  const [currentAuthType, setCurrentAuthType] = useState<AuthType>('auto');
+
   // 一键配置相关状态
   const [quickSetupVendorKey, setQuickSetupVendorKey] = useState<string>('');
-  const [quickSetupSourceTypes, setQuickSetupSourceTypes] = useState<SourceType[]>([]);
+  const [quickSetupSelectedIndices, setQuickSetupSelectedIndices] = useState<number[]>([]);
   const [quickSetupApiKey, setQuickSetupApiKey] = useState('');
 
   const recommendMd = useRecomandVendors();
+
+  const constantVendors = useMemo(() => {
+    const overseaVendors = Object.keys(vendorsConfig).filter(key => vendorsConfig[key].is_oversea).map((key) => ({ ...vendorsConfig[key], key }));
+    const insideVendors = Object.keys(vendorsConfig).filter(key => !vendorsConfig[key].is_oversea).map((key) => ({ ...vendorsConfig[key], key }));
+    return [
+      ...insideVendors,
+      null,
+      ...overseaVendors,
+    ];
+  }, []);
 
   useEffect(() => {
     loadVendors();
@@ -200,13 +218,22 @@ function VendorsPage() {
   };
 
   const handleDeleteVendor = async (id: string) => {
-    if (confirm('确定要删除此供应商吗')) {
+    const confirmed = await confirm({
+      message: '确定要删除此供应商吗？',
+      title: '确认删除',
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消'
+    });
+
+    if (confirmed) {
       await api.deleteVendor(id);
       loadVendors();
       if (selectedVendor && selectedVendor.id === id) {
         setSelectedVendor(null);
         setServices([]);
       }
+      toast.success('供应商已删除');
     }
   };
 
@@ -244,6 +271,7 @@ function VendorsPage() {
     setRequestCountLimit(undefined);
     setRequestResetInterval(undefined);
     setRequestResetBaseTime(undefined);
+    setCurrentSourceType('openai-chat');
     setShowServiceModal(true);
   };
 
@@ -266,17 +294,28 @@ function VendorsPage() {
     setRequestResetBaseTime(
       (service as any).requestResetBaseTime ? new Date((service as any).requestResetBaseTime) : undefined
     );
+    setCurrentSourceType(service.sourceType || 'openai-chat');
+    setCurrentAuthType(service.authType || 'auto');
     setShowServiceModal(true);
   };
 
 
 
   const handleDeleteService = async (id: string) => {
-    if (confirm('确定要删除此API服务吗')) {
+    const confirmed = await confirm({
+      message: '确定要删除此API服务吗？',
+      title: '确认删除',
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消'
+    });
+
+    if (confirmed) {
       await api.deleteAPIService(id);
       if (selectedVendor) {
         loadServices(selectedVendor.id);
       }
+      toast.success('API服务已删除');
     }
   };
 
@@ -311,6 +350,7 @@ function VendorsPage() {
       apiUrl: formData.get('apiUrl') as string,
       apiKey: formData.get('apiKey') as string,
       sourceType: formData.get('sourceType') as SourceType,
+      authType: formData.get('authType') as AuthType || undefined,
       supportedModels: finalModels.length > 0 ? finalModels : undefined,
       modelLimits: Object.keys(finalModelLimits).length > 0 ? finalModelLimits : undefined,
       enableProxy: formData.get('enableProxy') === 'on',
@@ -356,13 +396,13 @@ function VendorsPage() {
       setQuickSetupVendorKey(vendorKey);
       const vendorConfig = vendorsConfig[vendorKey as keyof typeof vendorsConfig];
       if (vendorConfig && vendorConfig.services.length > 0) {
-        // 预选所有可用的源类型
-        setQuickSetupSourceTypes(vendorConfig.services.map(s => s.sourceType as SourceType));
+        // 预选所有可用的服务（使用索引）
+        setQuickSetupSelectedIndices(vendorConfig.services.map((_, index) => index));
       }
     } else {
       // 从按钮点击进入，清空表单
       setQuickSetupVendorKey('');
-      setQuickSetupSourceTypes([]);
+      setQuickSetupSelectedIndices([]);
     }
     setQuickSetupApiKey('');
     setShowQuickSetupModal(true);
@@ -377,18 +417,18 @@ function VendorsPage() {
     const apiKey = formData.get('apiKey') as string;
 
     if (!vendorKey || !apiKey) {
-      alert('请填写完整信息');
+      toast.warning('请填写完整信息');
       return;
     }
 
-    if (quickSetupSourceTypes.length === 0) {
-      alert('请至少选择一个源类型');
+    if (quickSetupSelectedIndices.length === 0) {
+      toast.warning('请至少选择一个源类型');
       return;
     }
 
     const vendorConfig = vendorsConfig[vendorKey as keyof typeof vendorsConfig];
     if (!vendorConfig) {
-      alert('未找到对应的供应商配置');
+      toast.error('未找到对应的供应商配置');
       return;
     }
 
@@ -399,21 +439,17 @@ function VendorsPage() {
         description: vendorConfig.description,
       });
 
-      // 2. 批量创建API服务
-      const servicePromises = quickSetupSourceTypes.map(async (sourceType) => {
-        const serviceConfig = vendorConfig.services.find(s => s.sourceType === sourceType);
-        if (!serviceConfig) {
-          console.warn(`未找到源类型 ${sourceType} 的配置`);
-          return null;
-        }
-
+      // 2. 批量创建API服务（根据选中的索引）
+      const services = vendorConfig.services.filter((_, index) => quickSetupSelectedIndices.includes(index));
+      const servicePromises = services.map(async (serviceConfig) => {
         return api.createAPIService({
           vendorId: vendorResult.id,
           name: serviceConfig.name,
           apiUrl: serviceConfig.apiUrl,
           apiKey: apiKey,
-          sourceType: sourceType,
+          sourceType: serviceConfig.sourceType,
           supportedModels: serviceConfig.models ? serviceConfig.models.split(',').map(m => m.trim()) : undefined,
+          modelLimits: serviceConfig.modelLimits || {},
         });
       });
 
@@ -422,10 +458,10 @@ function VendorsPage() {
       // 3. 刷新列表并关闭弹层
       await loadVendors();
       setShowQuickSetupModal(false);
-      alert(`配置成功! 已创建 ${quickSetupSourceTypes.length} 个API服务`);
+      toast.success(`配置成功! 已创建 ${quickSetupSelectedIndices.length} 个API服务`);
     } catch (error) {
       console.error('一键配置失败:', error);
-      alert('配置失败，请检查输入信息');
+      toast.error('配置失败，请检查输入信息');
     }
   };
 
@@ -631,7 +667,24 @@ function VendorsPage() {
                 <input type="text" name="name" defaultValue={editingService ? editingService.name : ''} required />
               </div>
               <div className="form-group">
-                <label>供应商API地址 <small>填写根路径，不需要 /v1 及后面的</small></label>
+                <label>数据源类型 <small>供应商接口返回的数据格式标准类型</small></label>
+                <select
+                  name="sourceType"
+                  defaultValue={editingService ? editingService.sourceType || '' : ''}
+                  onChange={(e) => setCurrentSourceType(e.target.value as SourceType)}
+                  required
+                >
+                  <option value="">请选择源类型</option>
+                  {Object.keys(SOURCE_TYPE).map((type) => (
+                    <option key={type} value={type}>{SOURCE_TYPE[type as keyof typeof SOURCE_TYPE]}</option>
+                  ))}
+                </select>
+                <small style={{ display: 'block', marginTop: '4px', color: 'var(--text-muted)' }}>
+                  {SOURCE_TYPE_MESSAGE[currentSourceType] || ''}
+                </small>
+              </div>
+              <div className="form-group">
+                <label>供应商API地址</label>
                 <input type="url" name="apiUrl" defaultValue={editingService ? editingService.apiUrl : ''} required />
               </div>
               <div className="form-group">
@@ -639,13 +692,19 @@ function VendorsPage() {
                 <input type="password" name="apiKey" defaultValue={editingService ? editingService.apiKey : ''} required />
               </div>
               <div className="form-group">
-                <label>数据源类型 <small>供应商接口返回的数据格式标准类型</small></label>
-                <select name="sourceType" defaultValue={editingService ? editingService.sourceType || '' : ''} required>
-                  <option value="">请选择源类型</option>
-                  {Object.keys(SOURCE_TYPE).map((type) => (
-                    <option key={type} value={type}>{SOURCE_TYPE[type as keyof typeof SOURCE_TYPE]}</option>
+                <label>API认证方式 <small>API 请求使用的认证方式</small></label>
+                <select
+                  name="authType"
+                  defaultValue={editingService ? editingService.authType || 'auto' : 'auto'}
+                  onChange={(e) => setCurrentAuthType(e.target.value as AuthType)}
+                >
+                  {Object.keys(AUTH_TYPE).map((type) => (
+                    <option key={type} value={type}>{AUTH_TYPE[type as keyof typeof AUTH_TYPE]}</option>
                   ))}
                 </select>
+                <small style={{ display: 'block', marginTop: '4px', color: 'var(--text-muted)' }}>
+                  {AUTH_TYPE_MESSAGE[currentAuthType] || ''}
+                </small>
               </div>
                <div className="form-group">
                  <label>支持的模型列表</label>
@@ -1096,22 +1155,22 @@ function VendorsPage() {
                   onChange={(e) => {
                     const key = e.target.value;
                     setQuickSetupVendorKey(key);
-                    // 自动选择所有可用的服务类型
+                    // 自动选择所有可用的服务（使用索引）
                     if (key) {
                       const vendorConfig = vendorsConfig[key as keyof typeof vendorsConfig];
                       if (vendorConfig && vendorConfig.services.length > 0) {
-                        setQuickSetupSourceTypes(vendorConfig.services.map(s => s.sourceType as SourceType));
+                        setQuickSetupSelectedIndices(vendorConfig.services.map((_, index) => index));
                       }
                     } else {
-                      setQuickSetupSourceTypes([]);
+                      setQuickSetupSelectedIndices([]);
                     }
                   }}
                   required
                 >
-                  <option value="">请选择供应商</option>
-                  {Object.entries(vendorsConfig).map(([key, config]) => (
-                    <option key={key} value={key}>{config.name}</option>
-                  ))}
+                  <option value="" disabled>请选择供应商</option>
+                  {constantVendors.map((vendor: any) => vendor ? (
+                    <option key={vendor.key} value={vendor.key}>{vendor.name}</option>
+                  ) : (<option value="" disabled>--</option>))}
                 </select>
               </div>
               {vendorsConfig[quickSetupVendorKey]?.description ? (
@@ -1131,7 +1190,7 @@ function VendorsPage() {
                 }}>
                   {quickSetupVendorKey ? (
                     vendorsConfig[quickSetupVendorKey as keyof typeof vendorsConfig]?.services.map((service, index) => {
-                      const isChecked = quickSetupSourceTypes.includes(service.sourceType as SourceType);
+                      const isChecked = quickSetupSelectedIndices.includes(index);
                       return (
                         <label
                           key={index}
@@ -1164,11 +1223,10 @@ function VendorsPage() {
                             type="checkbox"
                             checked={isChecked}
                             onChange={(e) => {
-                              const sourceType = service.sourceType as SourceType;
                               if (e.target.checked) {
-                                setQuickSetupSourceTypes([...quickSetupSourceTypes, sourceType]);
+                                setQuickSetupSelectedIndices([...quickSetupSelectedIndices, index]);
                               } else {
-                                setQuickSetupSourceTypes(quickSetupSourceTypes.filter(st => st !== sourceType));
+                                setQuickSetupSelectedIndices(quickSetupSelectedIndices.filter(i => i !== index));
                               }
                             }}
                             style={{
@@ -1185,7 +1243,7 @@ function VendorsPage() {
                             color: isChecked ? 'var(--accent-primary)' : 'var(--text-primary)',
                             transition: 'all 0.2s ease'
                           }}>
-                            {SOURCE_TYPE[service.sourceType as keyof typeof SOURCE_TYPE]}
+                            {service.name} - {SOURCE_TYPE[service.sourceType as keyof typeof SOURCE_TYPE]}
                           </span>
                           {isChecked && (
                             <span style={{

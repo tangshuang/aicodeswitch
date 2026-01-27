@@ -280,4 +280,4 @@ const update = async () => {
   console.log('\n');
 };
 
-module.exports = update();
+module.exports = update;

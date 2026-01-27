@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import type { AppConfig } from '../../types';
+import { toast } from '../components/Toast';
 
 function SettingsPage() {
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -28,10 +29,10 @@ function SettingsPage() {
 
     const success = await api.updateConfig(newConfig);
     if (success) {
-      alert('配置保存成功');
+      toast.success('配置保存成功');
       loadConfig();
     } else {
-      alert('配置保存失败');
+      toast.error('配置保存失败');
     }
   };
 
@@ -47,10 +48,10 @@ function SettingsPage() {
 
     const success = await api.updateConfig(newConfig);
     if (success) {
-      alert('日志配置保存成功');
+      toast.success('日志配置保存成功');
       loadConfig();
     } else {
-      alert('日志配置保存失败');
+      toast.error('日志配置保存失败');
     }
   };
 
@@ -67,45 +68,45 @@ function SettingsPage() {
 
     const success = await api.updateConfig(newConfig);
     if (success) {
-      alert('代理配置保存成功');
+      toast.success('代理配置保存成功');
       loadConfig();
     } else {
-      alert('代理配置保存失败');
+      toast.error('代理配置保存失败');
     }
   };
 
   const handleExport = async () => {
     if (!password) {
-      alert('请输入密码');
+      toast.warning('请输入密码');
       return;
     }
 
     try {
       const data = await api.exportData(password);
       setExportedData(data);
-      alert('导出成功,请复制下方数据');
+      toast.success('导出成功,请复制下方数据');
     } catch (error: any) {
-      alert('导出失败: ' + error.message);
+      toast.error('导出失败: ' + error.message);
     }
   };
 
   const handleImport = async () => {
     if (!password || !importData) {
-      alert('请输入密码和导入数据');
+      toast.warning('请输入密码和导入数据');
       return;
     }
 
     try {
       const success = await api.importData(importData, password);
       if (success) {
-        alert('导入成功');
+        toast.success('导入成功');
         setImportData('');
         setPassword('');
       } else {
-        alert('导入失败,请检查密码是否正确');
+        toast.error('导入失败,请检查密码是否正确');
       }
     } catch (error: any) {
-      alert('导入失败: ' + error.message);
+      toast.error('导入失败: ' + error.message);
     }
   };
 
@@ -262,7 +263,7 @@ function SettingsPage() {
               style={{ marginTop: '10px' }}
               onClick={() => {
                 navigator.clipboard.writeText(exportedData);
-                alert('已复制到剪贴板');
+                toast.success('已复制到剪贴板');
               }}
             >
               复制到剪贴板

@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
 import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry } from '../../types';
 import { useFlipAnimation } from '../hooks/useFlipAnimation';
+import { useConfirm } from '../components/Confirm';
+import { toast } from '../components/Toast';
 
 const CONTENT_TYPE_OPTIONS = [
   { value: 'default', label: '默认' },
@@ -29,7 +31,27 @@ function formatDateTimeLocal(date: Date): string {
   return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
+/**
+ * 获取配置文件相关的API方法
+ */
+const getConfigApi = (targetType: 'claude-code' | 'codex') => {
+  return targetType === 'claude-code'
+    ? {
+        write: api.writeClaudeConfig,
+        restore: api.restoreClaudeConfig,
+        checkBackup: api.checkClaudeBackup,
+        toolName: 'Claude Code'
+      }
+    : {
+        write: api.writeCodexConfig,
+        restore: api.restoreCodexConfig,
+        checkBackup: api.checkCodexBackup,
+        toolName: 'Codex'
+      };
+};
+
 export default function RoutesPage() {
+  const { confirm } = useConfirm();
   const [routes, setRoutes] = useState<Route[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -63,6 +85,22 @@ export default function RoutesPage() {
     blacklistEntry?: ServiceBlacklistEntry;
   }>>({});
 
+  // 超量配置展开状态
+  const [showTokenLimit, setShowTokenLimit] = useState(false);
+  const [showRequestLimit, setShowRequestLimit] = useState(false);
+
+  // 配置文件备份状态
+  const [backupStatus, setBackupStatus] = useState<{
+    'claude-code': boolean;
+    'codex': boolean;
+  }>({
+    'claude-code': false,
+    'codex': false
+  });
+
+  // 配置操作loading状态
+  const [isConfiguringRoute, setIsConfiguringRoute] = useState<string | null>(null);
+
   // FLIP动画相关
   const { recordPositions, applyAnimation } = useFlipAnimation();
   const routeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -72,7 +110,21 @@ export default function RoutesPage() {
     loadRoutes();
     loadVendors();
     loadAllServices();
+    checkBackupStatus();
   }, []);
+
+  // 添加页面刷新保护
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isConfiguringRoute) {
+        e.preventDefault();
+        e.returnValue = '正在配置路由，刷新页面可能导致配置不完整。';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isConfiguringRoute]);
 
   useEffect(() => {
     if (selectedRoute) {
@@ -133,33 +185,134 @@ export default function RoutesPage() {
     setAllServices(data);
   };
 
-  const handleActivateRoute = async (id: string) => {
-    // 记录当前被激活路由项的位置（First阶段）
-    const routeElement = routeRefs.current.get(id);
-    if (routeElement) {
-      recordPositions(id, routeElement);
+  const checkBackupStatus = async () => {
+    try {
+      const [claudeBackup, codexBackup] = await Promise.all([
+        api.checkClaudeBackup(),
+        api.checkCodexBackup()
+      ]);
+      setBackupStatus({
+        'claude-code': claudeBackup.exists,
+        'codex': codexBackup.exists
+      });
+    } catch (error) {
+      console.error('检查备份状态失败:', error);
+      // 失败时假设没有备份，避免误判
+      setBackupStatus({
+        'claude-code': false,
+        'codex': false
+      });
     }
+  };
 
-    activatingRouteIdRef.current = id;
-    await api.activateRoute(id);
-    await loadRoutes();
+  const handleActivateRoute = async (id: string) => {
+    const route = routes.find(r => r.id === id);
+    if (!route) return;
 
-    // 在下一帧应用动画（Invert和Play阶段）
-    if (routeElement) {
-      // 使用setTimeout确保DOM已经更新
-      setTimeout(() => {
-        const newRouteElement = routeRefs.current.get(id);
-        if (newRouteElement) {
-          applyAnimation(id, newRouteElement, 400);
+    // 重新检查备份状态，避免使用过期数据
+    await checkBackupStatus();
+    const needsConfigWrite = !backupStatus[route.targetType];
+
+    setIsConfiguringRoute(id);
+    let configWritten = false;
+
+    try {
+      // 步骤1：覆盖配置文件（如果需要）
+      if (needsConfigWrite) {
+        try {
+          const configApi = getConfigApi(route.targetType);
+          await configApi.write();
+          configWritten = true;
+        } catch (error: any) {
+          throw new Error(`配置文件覆盖失败: ${error.message || '未知错误'}`);
         }
-        activatingRouteIdRef.current = null;
-      }, 0);
+      }
+
+      // 步骤2：激活路由（使用现有的FLIP动画逻辑）
+      try {
+        // 记录当前被激活路由项的位置（First阶段）
+        const routeElement = routeRefs.current.get(id);
+        if (routeElement) {
+          recordPositions(id, routeElement);
+        }
+
+        activatingRouteIdRef.current = id;
+        await api.activateRoute(id);
+        await loadRoutes();
+        await checkBackupStatus();
+
+        // 在下一帧应用动画（Invert和Play阶段）
+        if (routeElement) {
+          // 使用setTimeout确保DOM已经更新
+          setTimeout(() => {
+            const newRouteElement = routeRefs.current.get(id);
+            if (newRouteElement) {
+              applyAnimation(id, newRouteElement, 400);
+            }
+            activatingRouteIdRef.current = null;
+          }, 0);
+        }
+      } catch (error: any) {
+        // 如果路由激活失败且刚刚覆盖了配置，尝试回滚
+        if (configWritten) {
+          try {
+            const configApi = getConfigApi(route.targetType);
+            await configApi.restore();
+            throw new Error(`路由激活失败，配置文件已回滚: ${error.message || '未知错误'}`);
+          } catch (rollbackError: any) {
+            throw new Error(
+              `路由激活失败且配置回滚失败！请手动检查配置文件。\n` +
+              `激活错误: ${error.message}\n` +
+              `回滚错误: ${rollbackError.message}`
+            );
+          }
+        }
+        throw new Error(`路由激活失败: ${error.message || '未知错误'}`);
+      }
+    } catch (error: any) {
+      console.error('激活路由失败:', error);
+      toast.error(error.message);
+    } finally {
+      setIsConfiguringRoute(null);
     }
   };
 
   const handleDeactivateRoute = async (id: string) => {
-    await api.deactivateRoute(id);
-    loadRoutes();
+    const route = routes.find(r => r.id === id);
+    if (!route) return;
+
+    const configApi = getConfigApi(route.targetType);
+    setIsConfiguringRoute(id);
+
+    try {
+      // 步骤1：先恢复配置文件
+      try {
+        await configApi.restore();
+      } catch (error: any) {
+        throw new Error(
+          `配置文件恢复失败: ${error.message || '未知错误'}\n\n` +
+          `路由未停用，请检查配置文件权限。`
+        );
+      }
+
+      // 步骤2：停用路由
+      try {
+        await api.deactivateRoute(id);
+        await loadRoutes();
+        await checkBackupStatus();
+      } catch (error: any) {
+        // 配置已恢复但路由停用失败
+        throw new Error(
+          `配置文件已恢复，但路由停用失败: ${error.message || '未知错误'}\n\n` +
+          `请刷新页面后重试。`
+        );
+      }
+    } catch (error: any) {
+      console.error('停用路由失败:', error);
+      toast.error(error.message);
+    } finally {
+      setIsConfiguringRoute(null);
+    }
   };
 
   const handleSaveRoute = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -183,13 +336,22 @@ export default function RoutesPage() {
   };
 
   const handleDeleteRoute = async (id: string) => {
-    if (confirm('确定要删除此路由吗')) {
+    const confirmed = await confirm({
+      message: '确定要删除此路由吗？',
+      title: '确认删除',
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消'
+    });
+
+    if (confirmed) {
       await api.deleteRoute(id);
       loadRoutes();
       if (selectedRoute && selectedRoute.id === id) {
         setSelectedRoute(null);
         setRules([]);
       }
+      toast.success('路由已删除');
     }
   };
 
@@ -198,12 +360,12 @@ export default function RoutesPage() {
 
     // 验证超量值不超过API服务的限制
     if (selectedTokenLimit !== undefined && maxTokenLimit !== undefined && selectedTokenLimit > maxTokenLimit) {
-      alert(`Token超量值 (${selectedTokenLimit}k) 不能超过API服务的限制 (${maxTokenLimit}k)`);
+      toast.warning(`Token超量值 (${selectedTokenLimit}k) 不能超过API服务的限制 (${maxTokenLimit}k)`);
       return;
     }
 
     if (selectedRequestCountLimit !== undefined && maxRequestCountLimit !== undefined && selectedRequestCountLimit > maxRequestCountLimit) {
-      alert(`请求次数超量值 (${selectedRequestCountLimit}) 不能超过API服务的限制 (${maxRequestCountLimit})`);
+      toast.warning(`请求次数超量值 (${selectedRequestCountLimit}) 不能超过API服务的限制 (${maxRequestCountLimit})`);
       return;
     }
 
@@ -237,11 +399,20 @@ export default function RoutesPage() {
   };
 
   const handleDeleteRule = async (id: string) => {
-    if (confirm('确定要删除此路由吗')) {
+    const confirmed = await confirm({
+      message: '确定要删除此路由吗？',
+      title: '确认删除',
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消'
+    });
+
+    if (confirmed) {
       await api.deleteRule(id);
       if (selectedRoute) {
         loadRules(selectedRoute.id);
       }
+      toast.success('规则已删除');
     }
   };
 
@@ -269,8 +440,9 @@ export default function RoutesPage() {
       if (selectedRoute) {
         loadRules(selectedRoute.id);
       }
+      toast.success('已恢复');
     } catch (error: any) {
-      alert('恢复失败: ' + error.message);
+      toast.error('恢复失败: ' + error.message);
     }
   };
 
@@ -322,6 +494,10 @@ export default function RoutesPage() {
           setMaxRequestCountLimit(undefined);
           setInheritedRequestLimit(false);
         }
+
+        // 如果规则有配置超量限制，则展开对应的字段
+        setShowTokenLimit(!!rule.tokenLimit);
+        setShowRequestLimit(!!rule.requestCountLimit);
       }, 0);
     }
     setShowRuleModal(true);
@@ -411,6 +587,8 @@ export default function RoutesPage() {
     setInheritedRequestLimit(false);
     setMaxTokenLimit(undefined);
     setMaxRequestCountLimit(undefined);
+    setShowTokenLimit(false);
+    setShowRequestLimit(false);
     setShowRuleModal(true);
   };
 
@@ -468,7 +646,7 @@ export default function RoutesPage() {
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ fontWeight: 500 }}>{route.name}</div>
-                      {route.isActive && <span className="badge badge-warning"
+                      {route.isActive && <span className={`badge ${route.targetType === 'claude-code' ? 'badge-claude-code' : 'badge-codex'}`}
                         style={{
                           position: 'absolute',
                           top: -16,
@@ -487,7 +665,10 @@ export default function RoutesPage() {
                             e.stopPropagation();
                             handleActivateRoute(route.id);
                           }}
-                        >激活</button>
+                          disabled={isConfiguringRoute !== null}
+                        >
+                          {isConfiguringRoute === route.id ? '处理中...' : '激活'}
+                        </button>
                       ) : (
                         <button
                           className="btn btn-warning"
@@ -496,7 +677,10 @@ export default function RoutesPage() {
                             e.stopPropagation();
                             handleDeactivateRoute(route.id);
                           }}
-                        >停用</button>
+                          disabled={isConfiguringRoute !== null}
+                        >
+                          {isConfiguringRoute === route.id ? '处理中...' : '停用'}
+                        </button>
                       )}
                       <button
                         className="btn btn-secondary"
@@ -784,6 +968,78 @@ export default function RoutesPage() {
         </div>
       </div>
 
+      {/* 配置文件自动管理说明 - 独立容器 */}
+      <div className="card" style={{ marginTop: '20px' }}>
+        <div className="toolbar">
+          <h3>📝 配置文件自动管理</h3>
+        </div>
+        <div style={{ padding: '20px', lineHeight: '1.8' }}>
+          <div style={{
+            background: 'var(--bg-info-blue)',
+            padding: '15px',
+            borderRadius: '8px',
+            marginBottom: '15px',
+            borderLeft: '4px solid var(--border-info-blue)'
+          }}>
+            <strong>💡 工作原理</strong>
+            <p style={{ marginTop: '8px', marginBottom: '0' }}>
+              激活路由时，系统会自动修改编程工具的配置文件，使其通过本代理服务器访问AI服务。
+              停用路由时，系统会自动恢复原始配置。
+            </p>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+            <div style={{
+              background: 'var(--bg-info-green)',
+              padding: '15px',
+              borderRadius: '8px',
+              borderLeft: '4px solid var(--border-info-green)'
+            }}>
+              <strong>✓ 激活路由</strong>
+              <ul style={{ marginTop: '8px', paddingLeft: '20px', marginBottom: '0' }}>
+                <li>首次激活：自动备份并覆盖配置文件</li>
+                <li>再次激活：仅切换路由，不重复覆盖</li>
+              </ul>
+            </div>
+
+            <div style={{
+              background: 'var(--bg-info-orange)',
+              padding: '15px',
+              borderRadius: '8px',
+              borderLeft: '4px solid var(--border-info-orange)'
+            }}>
+              <strong>○ 停用路由</strong>
+              <ul style={{ marginTop: '8px', paddingLeft: '20px', marginBottom: '0' }}>
+                <li>自动恢复原始配置文件</li>
+                <li>删除备份文件</li>
+              </ul>
+            </div>
+          </div>
+
+          <div style={{
+            marginTop: '15px',
+            padding: '12px 15px',
+            background: 'var(--bg-info-yellow)',
+            borderRadius: '8px',
+            borderLeft: '4px solid var(--border-info-yellow)'
+          }}>
+            <strong>⚠️ 重要提示</strong>
+            <ul style={{ marginTop: '8px', paddingLeft: '20px', marginBottom: '0' }}>
+              <li>激活（首次）/停用路由后，<strong>必须重启对应的编程工具</strong>才能使配置生效</li>
+              <li>操作前建议关闭编程工具，避免配置冲突</li>
+            </ul>
+          </div>
+
+          <details style={{ marginTop: '15px', cursor: 'pointer' }}>
+            <summary style={{ fontWeight: 'bold', color: '#666' }}>📂 配置文件位置（点击展开）</summary>
+            <ul style={{ marginTop: '8px', paddingLeft: '20px', color: '#666' }}>
+              <li><strong>Claude Code:</strong> ~/.claude/settings.json, ~/.claude.json</li>
+              <li><strong>Codex:</strong> ~/.codex/config.toml, ~/.codex/auth.json</li>
+            </ul>
+          </details>
+        </div>
+      </div>
+
       {showRouteModal && (
         <div className="modal-overlay">
           <button
@@ -918,9 +1174,11 @@ export default function RoutesPage() {
                         );
                         setMaxTokenLimit(service.tokenLimit);
                         setInheritedTokenLimit(true);
+                        setShowTokenLimit(true); // 自动展开
                       } else {
                         setMaxTokenLimit(undefined);
                         setInheritedTokenLimit(false);
+                        setShowTokenLimit(false); // 收起
                       }
 
                       // 如果API服务启用了请求次数超量限制，自动填充并设置最大值
@@ -932,9 +1190,11 @@ export default function RoutesPage() {
                         );
                         setMaxRequestCountLimit(service.requestCountLimit);
                         setInheritedRequestLimit(true);
+                        setShowRequestLimit(true); // 自动展开
                       } else {
                         setMaxRequestCountLimit(undefined);
                         setInheritedRequestLimit(false);
+                        setShowRequestLimit(false); // 收起
                       }
                     }
                   }}
@@ -961,167 +1221,209 @@ export default function RoutesPage() {
                 </select>
               </div>
 
-              {/* Tokens超量字段 */}
+              {/* Tokens超量配置 */}
               <div className="form-group">
-                <label>Tokens超量（单位：k）</label>
-                <input
-                  type="number"
-                  value={selectedTokenLimit || ''}
-                  onChange={(e) => {
-                    const value = e.target.value ? parseInt(e.target.value) : undefined;
-                    if (value !== undefined && maxTokenLimit !== undefined && value > maxTokenLimit) {
-                      alert(`Token超量值不能超过API服务的限制 (${maxTokenLimit}k)`);
-                      return;
-                    }
-                    setSelectedTokenLimit(value);
-                  }}
-                  min="0"
-                  max={maxTokenLimit}
-                  placeholder={inheritedTokenLimit ? `最大 ${maxTokenLimit}k` : "不限制"}
-                />
-                {inheritedTokenLimit && maxTokenLimit && (
-                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    ⚠️ API服务限制：最大 {maxTokenLimit}k，当前值不能超过此限制
-                  </small>
-                )}
-                {!inheritedTokenLimit && (
-                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    当编程工具的请求tokens达到这个量时，在配置了其他规则的情况下，本条规则将失效，从而保护你的余额。例如：输入100表示100k即100,000个tokens
-                  </small>
-                )}
+                <label style={{ display: 'flex', alignItems: 'center', cursor: inheritedTokenLimit ? 'not-allowed' : 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={showTokenLimit}
+                    onChange={(e) => setShowTokenLimit(e.target.checked)}
+                    disabled={inheritedTokenLimit}
+                    style={{ marginRight: '8px', cursor: inheritedTokenLimit ? 'not-allowed' : 'pointer', width: '16px', height: '16px' }}
+                  />
+                  <span>启用Tokens超量限制</span>
+                  {inheritedTokenLimit && (
+                    <small style={{ color: '#999', fontSize: '12px', marginLeft: '8px' }}>（从API服务继承，不可取消）</small>
+                  )}
+                </label>
               </div>
 
-              {/* 重置时间字段 */}
+              {showTokenLimit && (
+                <>
+                  {/* Tokens超量字段 */}
+                  <div className="form-group">
+                    <label>Tokens超量（单位：k）</label>
+                    <input
+                      type="number"
+                      value={selectedTokenLimit || ''}
+                      onChange={(e) => {
+                        const value = e.target.value ? parseInt(e.target.value) : undefined;
+                        if (value !== undefined && maxTokenLimit !== undefined && value > maxTokenLimit) {
+                          toast.warning(`Token超量值不能超过API服务的限制 (${maxTokenLimit}k)`);
+                          return;
+                        }
+                        setSelectedTokenLimit(value);
+                      }}
+                      min="0"
+                      max={maxTokenLimit}
+                      placeholder={inheritedTokenLimit ? `最大 ${maxTokenLimit}k` : "不限制"}
+                    />
+                    {inheritedTokenLimit && maxTokenLimit && (
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        ⚠️ API服务限制：最大 {maxTokenLimit}k，当前值不能超过此限制
+                      </small>
+                    )}
+                    {!inheritedTokenLimit && (
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        当编程工具的请求tokens达到这个量时，在配置了其他规则的情况下，本条规则将失效，从而保护你的余额。例如：输入100表示100k即100,000个tokens
+                      </small>
+                    )}
+                  </div>
+
+                  {/* 重置时间字段 */}
+                  <div className="form-group">
+                    <label>Tokens超量自动重置间隔（小时）</label>
+                    <input
+                      type="number"
+                      value={selectedResetInterval || ''}
+                      onChange={(e) => setSelectedResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
+                      min="1"
+                      placeholder="不自动重置"
+                      disabled={inheritedTokenLimit}
+                    />
+                    {inheritedTokenLimit && (
+                      <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        此配置从API服务继承，不可修改
+                      </small>
+                    )}
+                    {!inheritedTokenLimit && (
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        设置后，系统将每隔指定小时数自动重置token计数。例如设置5小时，则每5小时重置一次
+                      </small>
+                    )}
+                  </div>
+
+                  {/* Token下一次重置时间基点字段 */}
+                  <div className="form-group">
+                    <label>Token下一次重置时间基点</label>
+                    <input
+                      type="datetime-local"
+                      value={selectedTokenResetBaseTime ? formatDateTimeLocal(selectedTokenResetBaseTime) : ''}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setSelectedTokenResetBaseTime(new Date(e.target.value));
+                        } else {
+                          setSelectedTokenResetBaseTime(undefined);
+                        }
+                      }}
+                      disabled={!selectedResetInterval || inheritedTokenLimit}
+                      className="datetime-picker-input"
+                    />
+                    {inheritedTokenLimit && (
+                      <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        此配置从API服务继承，不可修改
+                      </small>
+                    )}
+                    {!inheritedTokenLimit && (
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        配合"Tokens超量自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
+                      </small>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {/* 请求次数超量配置 */}
               <div className="form-group">
-                <label>Tokens超量自动重置间隔（小时）</label>
-                <input
-                  type="number"
-                  value={selectedResetInterval || ''}
-                  onChange={(e) => setSelectedResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
-                  min="1"
-                  placeholder="不自动重置"
-                  disabled={inheritedTokenLimit}
-                />
-                {inheritedTokenLimit && (
-                  <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    此配置从API服务继承，不可修改
-                  </small>
-                )}
-                {!inheritedTokenLimit && (
-                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    设置后，系统将每隔指定小时数自动重置token计数。例如设置5小时，则每5小时重置一次
-                  </small>
-                )}
+                <label style={{ display: 'flex', alignItems: 'center', cursor: inheritedRequestLimit ? 'not-allowed' : 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={showRequestLimit}
+                    onChange={(e) => setShowRequestLimit(e.target.checked)}
+                    disabled={inheritedRequestLimit}
+                    style={{ marginRight: '8px', cursor: inheritedRequestLimit ? 'not-allowed' : 'pointer', width: '16px', height: '16px' }}
+                  />
+                  <span>启用请求次数超量限制</span>
+                  {inheritedRequestLimit && (
+                    <small style={{ color: '#999', fontSize: '12px', marginLeft: '8px' }}>（从API服务继承，不可取消）</small>
+                  )}
+                </label>
               </div>
 
-              {/* Token下一次重置时间基点字段 */}
-              <div className="form-group">
-                <label>Token下一次重置时间基点</label>
-                <input
-                  type="datetime-local"
-                  value={selectedTokenResetBaseTime ? formatDateTimeLocal(selectedTokenResetBaseTime) : ''}
-                  onChange={(e) => {
-                    if (e.target.value) {
-                      setSelectedTokenResetBaseTime(new Date(e.target.value));
-                    } else {
-                      setSelectedTokenResetBaseTime(undefined);
-                    }
-                  }}
-                  disabled={!selectedResetInterval || inheritedTokenLimit}
-                  className="datetime-picker-input"
-                />
-                {inheritedTokenLimit && (
-                  <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    此配置从API服务继承，不可修改
-                  </small>
-                )}
-                {!inheritedTokenLimit && (
-                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    配合"Tokens超量自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
-                  </small>
-                )}
-              </div>
+              {showRequestLimit && (
+                <>
+                  {/* 请求次数超量字段 */}
+                  <div className="form-group">
+                    <label>请求次数超量</label>
+                    <input
+                      type="number"
+                      value={selectedRequestCountLimit || ''}
+                      onChange={(e) => {
+                        const value = e.target.value ? parseInt(e.target.value) : undefined;
+                        if (value !== undefined && maxRequestCountLimit !== undefined && value > maxRequestCountLimit) {
+                          toast.warning(`请求次数超量值不能超过API服务的限制 (${maxRequestCountLimit})`);
+                          return;
+                        }
+                        setSelectedRequestCountLimit(value);
+                      }}
+                      min="0"
+                      max={maxRequestCountLimit}
+                      placeholder={inheritedRequestLimit ? `最大 ${maxRequestCountLimit}` : "不限制"}
+                    />
+                    {inheritedRequestLimit && maxRequestCountLimit && (
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        ⚠️ API服务限制：最大 {maxRequestCountLimit}，当前值不能超过此限制
+                      </small>
+                    )}
+                    {!inheritedRequestLimit && (
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        当请求次数达到这个量时，在配置了其他规则的情况下，本条规则将失效
+                      </small>
+                    )}
+                  </div>
 
-              {/* 请求次数超量字段 */}
-              <div className="form-group">
-                <label>请求次数超量</label>
-                <input
-                  type="number"
-                  value={selectedRequestCountLimit || ''}
-                  onChange={(e) => {
-                    const value = e.target.value ? parseInt(e.target.value) : undefined;
-                    if (value !== undefined && maxRequestCountLimit !== undefined && value > maxRequestCountLimit) {
-                      alert(`请求次数超量值不能超过API服务的限制 (${maxRequestCountLimit})`);
-                      return;
-                    }
-                    setSelectedRequestCountLimit(value);
-                  }}
-                  min="0"
-                  max={maxRequestCountLimit}
-                  placeholder={inheritedRequestLimit ? `最大 ${maxRequestCountLimit}` : "不限制"}
-                />
-                {inheritedRequestLimit && maxRequestCountLimit && (
-                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    ⚠️ API服务限制：最大 {maxRequestCountLimit}，当前值不能超过此限制
-                  </small>
-                )}
-                {!inheritedRequestLimit && (
-                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    当请求次数达到这个量时，在配置了其他规则的情况下，本条规则将失效
-                  </small>
-                )}
-              </div>
+                  {/* 请求次数自动重置间隔字段 */}
+                  <div className="form-group">
+                    <label>请求次数自动重置间隔（小时）</label>
+                    <input
+                      type="number"
+                      value={selectedRequestResetInterval || ''}
+                      onChange={(e) => setSelectedRequestResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
+                      min="1"
+                      placeholder="不自动重置"
+                      disabled={inheritedRequestLimit}
+                    />
+                    {inheritedRequestLimit && (
+                      <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        此配置从API服务继承，不可修改
+                      </small>
+                    )}
+                    {!inheritedRequestLimit && (
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        设置后，系统将每隔指定小时数自动重置请求次数计数。例如设置24小时，则每24小时重置一次
+                      </small>
+                    )}
+                  </div>
 
-              {/* 请求次数自动重置间隔字段 */}
-              <div className="form-group">
-                <label>请求次数自动重置间隔（小时）</label>
-                <input
-                  type="number"
-                  value={selectedRequestResetInterval || ''}
-                  onChange={(e) => setSelectedRequestResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
-                  min="1"
-                  placeholder="不自动重置"
-                  disabled={inheritedRequestLimit}
-                />
-                {inheritedRequestLimit && (
-                  <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    此配置从API服务继承，不可修改
-                  </small>
-                )}
-                {!inheritedRequestLimit && (
-                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    设置后，系统将每隔指定小时数自动重置请求次数计数。例如设置24小时，则每24小时重置一次
-                  </small>
-                )}
-              </div>
-
-              {/* 下一次重置时间基点字段 */}
-              <div className="form-group">
-                <label>下一次重置时间基点</label>
-                <input
-                  type="datetime-local"
-                  value={selectedRequestResetBaseTime ? formatDateTimeLocal(selectedRequestResetBaseTime) : ''}
-                  onChange={(e) => {
-                    if (e.target.value) {
-                      setSelectedRequestResetBaseTime(new Date(e.target.value));
-                    } else {
-                      setSelectedRequestResetBaseTime(undefined);
-                    }
-                  }}
-                  disabled={!selectedRequestResetInterval || inheritedRequestLimit}
-                  className="datetime-picker-input"
-                />
-                {inheritedRequestLimit && (
-                  <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    此配置从API服务继承，不可修改
-                  </small>
-                )}
-                {!inheritedRequestLimit && (
-                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    配合"请求次数自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
-                  </small>
-                )}
-              </div>
+                  {/* 下一次重置时间基点字段 */}
+                  <div className="form-group">
+                    <label>下一次重置时间基点</label>
+                    <input
+                      type="datetime-local"
+                      value={selectedRequestResetBaseTime ? formatDateTimeLocal(selectedRequestResetBaseTime) : ''}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setSelectedRequestResetBaseTime(new Date(e.target.value));
+                        } else {
+                          setSelectedRequestResetBaseTime(undefined);
+                        }
+                      }}
+                      disabled={!selectedRequestResetInterval || inheritedRequestLimit}
+                      className="datetime-picker-input"
+                    />
+                    {inheritedRequestLimit && (
+                      <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        此配置从API服务继承，不可修改
+                      </small>
+                    )}
+                    {!inheritedRequestLimit && (
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        配合"请求次数自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
+                      </small>
+                    )}
+                  </div>
+                </>
+              )}
 
               {/* 超时时间字段 */}
               <div className="form-group">

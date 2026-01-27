@@ -83,7 +83,10 @@ export class SSEParserTransform extends Transform {
 
 export class SSESerializerTransform extends Transform {
   constructor() {
-    super({ writableObjectMode: true });
+    super({
+      writableObjectMode: true,  // 接收对象
+      readableObjectMode: false, // 输出字符串/Buffer
+    });
   }
 
   _transform(event: SSEEvent, _encoding: BufferEncoding, callback: (error?: Error | null) => void) {
