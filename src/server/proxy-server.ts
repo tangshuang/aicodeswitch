@@ -1235,13 +1235,42 @@ export class ProxyServer {
     });
   }
 
+  /**
+   * 对敏感的 header 值进行脱敏处理
+   * @param key header 键（小写）
+   * @param value header 值
+   * @returns 脱敏后的值，如果 header 是敏感的则返回 32 个 *
+   */
+  private sanitizeHeaderValue(key: string, value: string): string {
+    // 需要脱敏的敏感 header 列表（不区分大小写）
+    const sensitiveHeaders = [
+      'authorization',        // Bearer token
+      'x-api-key',           // API key
+      'api-key',             // API key
+      'apikey',              // API key
+      'x-openai-api-key',    // OpenAI API key
+      'openai-api-key',      // OpenAI API key
+      'anthropic-api-key',   // Anthropic API key
+      'access-token',         // Access token
+      'x-anthropic-api-key', // Anthropic API key
+      'refresh-token',      // Refresh token
+    ];
+
+    // 检查是否是敏感 header
+    if (sensitiveHeaders.includes(key)) {
+      return '********************************';
+    }
+
+    return value;
+  }
+
   private normalizeHeaders(headers: Request['headers']) {
     const normalized: Record<string, string> = {};
     for (const [key, value] of Object.entries(headers)) {
       if (typeof value === 'string') {
-        normalized[key] = value;
+        normalized[key] = this.sanitizeHeaderValue(key.toLowerCase(), value);
       } else if (Array.isArray(value)) {
-        normalized[key] = value.join(', ');
+        normalized[key] = this.sanitizeHeaderValue(key.toLowerCase(), value.join(', '));
       }
     }
     return normalized;
@@ -1252,11 +1281,11 @@ export class ProxyServer {
     for (const [key, value] of Object.entries(headers)) {
       if (value !== null && value !== undefined) {
         if (typeof value === 'string') {
-          normalized[key] = value;
+          normalized[key] = this.sanitizeHeaderValue(key.toLowerCase(), value);
         } else if (Array.isArray(value)) {
-          normalized[key] = value.join(', ');
+          normalized[key] = this.sanitizeHeaderValue(key.toLowerCase(), value.join(', '));
         } else {
-          normalized[key] = String(value);
+          normalized[key] = this.sanitizeHeaderValue(key.toLowerCase(), String(value));
         }
       }
     }
