@@ -3,6 +3,17 @@ import { api } from '../api/client';
 
 type ConfigType = 'claude' | 'codex';
 
+interface ConfigStatus {
+  isOverwritten: boolean;
+  isModified: boolean;
+  hasBackup: boolean;
+  metadata?: {
+    configType: string;
+    timestamp: number;
+    proxyMarker: string;
+  };
+}
+
 function WriteConfigPage() {
   const [isWriting, setIsWriting] = useState<{[key in ConfigType]: boolean}>({
     claude: false,
@@ -12,29 +23,29 @@ function WriteConfigPage() {
     claude: false,
     codex: false
   });
-  const [hasBackup, setHasBackup] = useState<{[key in ConfigType]: boolean}>({
-    claude: false,
-    codex: false
+  const [configStatus, setConfigStatus] = useState<{[key in ConfigType]: ConfigStatus | null}>({
+    claude: null,
+    codex: null
   });
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    checkBackups();
+    checkConfigStatus();
   }, []);
 
-  const checkBackups = async () => {
+  const checkConfigStatus = async () => {
     try {
-      const [claudeBackup, codexBackup] = await Promise.all([
-        api.checkClaudeBackup(),
-        api.checkCodexBackup()
+      const [claudeStatus, codexStatus] = await Promise.all([
+        api.getClaudeConfigStatus(),
+        api.getCodexConfigStatus()
       ]);
 
-      setHasBackup({
-        claude: claudeBackup.exists,
-        codex: codexBackup.exists
+      setConfigStatus({
+        claude: claudeStatus,
+        codex: codexStatus
       });
     } catch (error) {
-      console.error('Failed to check backups:', error);
+      console.error('Failed to check config status:', error);
     }
   };
 
@@ -48,8 +59,8 @@ function WriteConfigPage() {
         : await api.writeCodexConfig();
 
       if (result) {
-        setMessage(`${type === 'claude' ? 'Claude Code' : 'Codex'}配置文件写入成功！原始文件已备份为 .bak 文件。`);
-        await checkBackups(); // 重新检查备份状态
+        setMessage(`${type === 'claude' ? 'Claude Code' : 'Codex'}配置文件写入成功！原始文件已备份为 .aicodeswitch_backup 文件。`);
+        await checkConfigStatus(); // 重新检查配置状态
       } else {
         setMessage(`写入失败: 操作未成功`);
       }
@@ -71,7 +82,7 @@ function WriteConfigPage() {
 
       if (result) {
         setMessage(`${type === 'claude' ? 'Claude Code' : 'Codex'}配置文件已从备份恢复！`);
-        await checkBackups(); // 重新检查备份状态
+        await checkConfigStatus(); // 重新检查配置状态
       } else {
         setMessage(`恢复失败: 操作未成功`);
       }
@@ -80,6 +91,42 @@ function WriteConfigPage() {
     } finally {
       setIsRestoring(prev => ({ ...prev, [type]: false }));
     }
+  };
+
+  const renderStatusInfo = (type: ConfigType) => {
+    const status = configStatus[type];
+    if (!status) return null;
+
+    const displayName = type === 'claude' ? 'Claude Code' : 'Codex';
+
+    // 如果已被覆盖且被修改
+    if (status.isOverwritten && status.isModified) {
+      return (
+        <p style={{ color: '#f39c12', fontSize: '12px', marginTop: '10px' }}>
+          ⚠️ 检测到{displayName}配置已被修改,但备份文件仍然存在。建议先恢复原始配置,再重新写入以确保配置正确。
+        </p>
+      );
+    }
+
+    // 如果已被覆盖且未被修改
+    if (status.isOverwritten && !status.isModified) {
+      return (
+        <p style={{ color: '#27ae60', fontSize: '12px', marginTop: '10px' }}>
+          ✓ {displayName}配置已正确设置为代理模式,且未被修改。
+        </p>
+      );
+    }
+
+    // 如果未被覆盖但有备份(可能是用户手动恢复了)
+    if (!status.isOverwritten && status.hasBackup) {
+      return (
+        <p style={{ color: '#e74c3c', fontSize: '12px', marginTop: '10px' }}>
+          ⚠️ 检测到配置状态不一致。备份文件存在但当前配置不是代理配置,请先恢复或手动删除备份文件。
+        </p>
+      );
+    }
+
+    return null;
   };
 
   return (
@@ -92,7 +139,7 @@ function WriteConfigPage() {
       <div className="card" style={{ marginBottom: '20px' }}>
         <h3>Claude Code配置</h3>
         <p style={{ color: '#7f8c8d', marginBottom: '15px' }}>
-          为Claude Code工具写入配置文件。原始文件将被备份为.bak文件。
+          为Claude Code工具写入配置文件。原始文件将被备份为.aicodeswitch_backup文件。
         </p>
 
         <div style={{ marginBottom: '15px' }}>
@@ -107,7 +154,7 @@ function WriteConfigPage() {
           <button
             className="btn btn-primary"
             onClick={() => handleWriteConfig('claude')}
-            disabled={isWriting.claude || hasBackup.claude}
+            disabled={isWriting.claude || (configStatus.claude?.isOverwritten ?? false)}
           >
             {isWriting.claude ? '写入中...' : '写入Claude Code配置'}
           </button>
@@ -115,21 +162,17 @@ function WriteConfigPage() {
           <button
             className="btn btn-secondary"
             onClick={() => handleRestoreConfig('claude')}
-            disabled={isRestoring.claude || !hasBackup.claude}
+            disabled={isRestoring.claude || !(configStatus.claude?.hasBackup ?? false)}
           >
             {isRestoring.claude ? '恢复中...' : '恢复Claude Code配置'}
           </button>
         </div>
 
-        {!hasBackup.claude && (
-          <p style={{ color: '#95a5a6', fontSize: '12px', marginTop: '10px' }}>
-            没有找到备份文件,恢复功能不可用
-          </p>
-        )}
+        {renderStatusInfo('claude')}
 
-        {hasBackup.claude && (
+        {configStatus.claude?.isOverwritten && !configStatus.claude?.isModified && (
           <p style={{ color: '#e74c3c', fontSize: '12px', marginTop: '10px' }}>
-            ⚠️ 备份文件已存在,为避免覆盖原始备份,请先恢复或手动删除备份文件后再写入
+            ⚠️ 配置已被覆盖,如需重新写入请先恢复原始配置
           </p>
         )}
       </div>
@@ -137,7 +180,7 @@ function WriteConfigPage() {
       <div className="card">
         <h3>Codex配置</h3>
         <p style={{ color: '#7f8c8d', marginBottom: '15px' }}>
-          为Codex工具写入配置文件。原始文件将被备份为.bak文件。
+          为Codex工具写入配置文件。原始文件将被备份为.aicodeswitch_backup文件。
         </p>
 
         <div style={{ marginBottom: '15px' }}>
@@ -152,7 +195,7 @@ function WriteConfigPage() {
           <button
             className="btn btn-primary"
             onClick={() => handleWriteConfig('codex')}
-            disabled={isWriting.codex || hasBackup.codex}
+            disabled={isWriting.codex || (configStatus.codex?.isOverwritten ?? false)}
           >
             {isWriting.codex ? '写入中...' : '写入Codex配置'}
           </button>
@@ -160,21 +203,17 @@ function WriteConfigPage() {
           <button
             className="btn btn-secondary"
             onClick={() => handleRestoreConfig('codex')}
-            disabled={isRestoring.codex || !hasBackup.codex}
+            disabled={isRestoring.codex || !(configStatus.codex?.hasBackup ?? false)}
           >
             {isRestoring.codex ? '恢复中...' : '恢复Codex配置'}
           </button>
         </div>
 
-        {!hasBackup.codex && (
-          <p style={{ color: '#95a5a6', fontSize: '12px', marginTop: '10px' }}>
-            没有找到备份文件,恢复功能不可用
-          </p>
-        )}
+        {renderStatusInfo('codex')}
 
-        {hasBackup.codex && (
+        {configStatus.codex?.isOverwritten && !configStatus.codex?.isModified && (
           <p style={{ color: '#e74c3c', fontSize: '12px', marginTop: '10px' }}>
-            ⚠️ 备份文件已存在,为避免覆盖原始备份,请先恢复或手动删除备份文件后再写入
+            ⚠️ 配置已被覆盖,如需重新写入请先恢复原始配置
           </p>
         )}
       </div>

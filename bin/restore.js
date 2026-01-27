@@ -17,7 +17,7 @@ const restoreClaudeConfig = () => {
     const homeDir = os.homedir();
     const claudeDir = path.join(homeDir, '.claude');
     const claudeSettingsPath = path.join(claudeDir, 'settings.json');
-    const claudeSettingsBakPath = path.join(claudeDir, 'settings.json.bak');
+    const claudeSettingsBakPath = path.join(claudeDir, 'settings.json.aicodeswitch_backup');
 
     // Restore settings.json
     if (fs.existsSync(claudeSettingsBakPath)) {
@@ -27,7 +27,7 @@ const restoreClaudeConfig = () => {
       fs.renameSync(claudeSettingsBakPath, claudeSettingsPath);
       results.restored.push('settings.json');
     } else {
-      results.notFound.push('settings.json.bak');
+      results.notFound.push('settings.json.aicodeswitch_backup');
     }
   } catch (err) {
     results.errors.push({ file: 'settings.json', error: err.message });
@@ -36,7 +36,7 @@ const restoreClaudeConfig = () => {
   try {
     const homeDir = os.homedir();
     const claudeJsonPath = path.join(homeDir, '.claude.json');
-    const claudeJsonBakPath = path.join(homeDir, '.claude.json.bak');
+    const claudeJsonBakPath = path.join(homeDir, '.claude.json.aicodeswitch_backup');
 
     // Restore .claude.json
     if (fs.existsSync(claudeJsonBakPath)) {
@@ -46,7 +46,7 @@ const restoreClaudeConfig = () => {
       fs.renameSync(claudeJsonBakPath, claudeJsonPath);
       results.restored.push('.claude.json');
     } else {
-      results.notFound.push('.claude.json.bak');
+      results.notFound.push('.claude.json.aicodeswitch_backup');
     }
   } catch (err) {
     results.errors.push({ file: '.claude.json', error: err.message });
@@ -67,7 +67,7 @@ const restoreCodexConfig = () => {
     const homeDir = os.homedir();
     const codexDir = path.join(homeDir, '.codex');
     const codexConfigPath = path.join(codexDir, 'config.toml');
-    const codexConfigBakPath = path.join(codexDir, 'config.toml.bak');
+    const codexConfigBakPath = path.join(codexDir, 'config.toml.aicodeswitch_backup');
 
     // Restore config.toml
     if (fs.existsSync(codexConfigBakPath)) {
@@ -77,7 +77,7 @@ const restoreCodexConfig = () => {
       fs.renameSync(codexConfigBakPath, codexConfigPath);
       results.restored.push('config.toml');
     } else {
-      results.notFound.push('config.toml.bak');
+      results.notFound.push('config.toml.aicodeswitch_backup');
     }
   } catch (err) {
     results.errors.push({ file: 'config.toml', error: err.message });
@@ -86,7 +86,7 @@ const restoreCodexConfig = () => {
   try {
     const homeDir = os.homedir();
     const codexAuthPath = path.join(homeDir, '.codex', 'auth.json');
-    const codexAuthBakPath = path.join(homeDir, '.codex', 'auth.json.bak');
+    const codexAuthBakPath = path.join(homeDir, '.codex', 'auth.json.aicodeswitch_backup');
 
     // Restore auth.json
     if (fs.existsSync(codexAuthBakPath)) {
@@ -96,7 +96,7 @@ const restoreCodexConfig = () => {
       fs.renameSync(codexAuthBakPath, codexAuthPath);
       results.restored.push('auth.json');
     } else {
-      results.notFound.push('auth.json.bak');
+      results.notFound.push('auth.json.aicodeswitch_backup');
     }
   } catch (err) {
     results.errors.push({ file: 'auth.json', error: err.message });

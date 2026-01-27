@@ -58,6 +58,27 @@ interface BackendAPI {
   restoreCodexConfig: () => Promise<boolean>;
   checkClaudeBackup: () => Promise<{ exists: boolean }>;
   checkCodexBackup: () => Promise<{ exists: boolean }>;
+  // 新的详细配置状态 API
+  getClaudeConfigStatus: () => Promise<{
+    isOverwritten: boolean;
+    isModified: boolean;
+    hasBackup: boolean;
+    metadata?: {
+      configType: string;
+      timestamp: number;
+      proxyMarker: string;
+    };
+  }>;
+  getCodexConfigStatus: () => Promise<{
+    isOverwritten: boolean;
+    isModified: boolean;
+    hasBackup: boolean;
+    metadata?: {
+      configType: string;
+      timestamp: number;
+      proxyMarker: string;
+    };
+  }>;
 
   getStatistics: (days?: number) => Promise<Statistics>;
 
@@ -200,6 +221,9 @@ export const api: BackendAPI = {
   restoreCodexConfig: () => requestJson(buildUrl('/api/restore-config/codex'), { method: 'POST' }),
   checkClaudeBackup: () => requestJson(buildUrl('/api/check-backup/claude')),
   checkCodexBackup: () => requestJson(buildUrl('/api/check-backup/codex')),
+  // 新的详细配置状态 API
+  getClaudeConfigStatus: () => requestJson(buildUrl('/api/config-status/claude')),
+  getCodexConfigStatus: () => requestJson(buildUrl('/api/config-status/codex')),
 
   getStatistics: (days) => requestJson(buildUrl('/api/statistics', days ? { days } : undefined)),
 
