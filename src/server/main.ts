@@ -658,10 +658,17 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
 
       // 读取之前保存的 hash
       const hashPath = getMigrationHashPath();
-      let savedHash = '';
-      if (fs.existsSync(hashPath)) {
-        savedHash = fs.readFileSync(hashPath, 'utf-8').trim();
+
+      // 如果 hash 文件不存在，说明是第一次安装
+      if (!fs.existsSync(hashPath)) {
+        // 第一次安装，直接保存当前 hash，不显示弹窗
+        fs.writeFileSync(hashPath, currentHash, 'utf-8');
+        res.json({ shouldShow: false, content: '' });
+        return;
       }
+
+      // 读取已保存的 hash
+      const savedHash = fs.readFileSync(hashPath, 'utf-8').trim();
 
       // 如果 hash 不同，需要显示弹窗
       const shouldShow = savedHash !== currentHash;
