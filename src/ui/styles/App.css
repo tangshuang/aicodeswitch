@@ -698,6 +698,7 @@ table th {
   right: 20px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
 }
 
@@ -712,6 +713,20 @@ table th {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.version-info {
+  font-size: 12px;
+  color: var(--text-sidebar);
+  opacity: 0.7;
+  font-family: 'Monaco', 'Menlo', monospace;
+  font-weight: 500;
+  user-select: none;
+  transition: opacity 0.3s ease;
+}
+
+.version-info:hover {
+  opacity: 1;
 }
 
 .theme-toggle button:hover {

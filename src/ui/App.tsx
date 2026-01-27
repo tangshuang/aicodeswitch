@@ -329,6 +329,11 @@ function AppContent() {
           >
             {theme === 'dark' ? '🌙' : '☀️'}
           </button>
+          {currentVersion && (
+            <div className="version-info">
+              v{currentVersion}
+            </div>
+          )}
         </div>
       </nav>
       <main className="main-content">
