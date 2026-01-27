@@ -189,6 +189,10 @@ function LogsPage() {
 
   const [loading, setLoading] = useState(false);
 
+  // 自动刷新相关状态
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [countdown, setCountdown] = useState(10);
+
   // 筛选器相关state
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [services, setServices] = useState<APIService[]>([]);
@@ -205,6 +209,36 @@ function LogsPage() {
     loadVendorsAndServices();
     loadAllCounts();
   }, []);
+
+  // 自动刷新倒计时逻辑
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout | null = null;
+    let countdownId: NodeJS.Timeout | null = null;
+
+    if (autoRefresh) {
+      // 设置倒计时显示
+      countdownId = setInterval(() => {
+        setCountdown(prev => {
+          if (prev <= 1) {
+            // 倒计时结束，重置并刷新
+            return 10;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      // 每10秒刷新一次数据
+      intervalId = setInterval(() => {
+        loadLogs();
+        loadAllCounts();
+      }, 10000);
+    }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      if (countdownId) clearInterval(countdownId);
+    };
+  }, [autoRefresh, activeTab, requestLogsPage, requestLogsPageSize, errorLogsPage, errorLogsPageSize, sessionsPage, sessionsPageSize]);
 
   const loadLogs = async () => {
     setLoading(true);
@@ -616,8 +650,28 @@ function LogsPage() {
             {activeTab === 'request' && '请求日志列表'}
             {activeTab === 'sessions' && '会话列表'}
           </h3>
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <button className="btn btn-primary" onClick={loadLogs}>刷新</button>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px', background: 'var(--bg-secondary)', borderRadius: '8px' }}>
+              <input
+                type="checkbox"
+                id="auto-refresh"
+                checked={autoRefresh}
+                onChange={(e) => {
+                  setAutoRefresh(e.target.checked);
+                  if (e.target.checked) {
+                    setCountdown(10);
+                  }
+                }}
+                style={{ cursor: 'pointer' }}
+              />
+              <label
+                htmlFor="auto-refresh"
+                style={{ cursor: 'pointer', fontSize: '14px', color: 'var(--text-primary)', userSelect: 'none' }}
+              >
+                自动刷新 {autoRefresh && `(⏱ ${countdown}s)`}
+              </label>
+            </div>
+            <button className="btn btn-primary" onClick={() => { loadLogs(); loadAllCounts(); setCountdown(10); }}>刷新</button>
             <button className="btn btn-danger" onClick={handleClearLogs}>清空日志</button>
           </div>
         </div>
