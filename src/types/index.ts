@@ -12,6 +12,37 @@ export interface Vendor {
 export type SourceType = 'openai-chat' | 'openai-responses' | 'claude-chat' | 'claude-code' | 'deepseek-reasoning-chat';
 /** 路由的目标对象类型，目前，仅支持claude-code和codex */
 export type TargetType = 'claude-code' | 'codex';
+
+/** Skills 管理相关类型 */
+export interface InstalledSkill {
+  id: string;
+  name: string;
+  description?: string;
+  targets: TargetType[];
+}
+
+export interface SkillCatalogItem {
+  id: string;
+  name: string;
+  description?: string;
+  tags?: string[];
+  url?: string;
+}
+
+export interface SkillInstallRequest {
+  skillId: string;
+  targetType: TargetType;
+  name?: string;
+  description?: string;
+  tags?: string[];
+}
+
+export interface SkillInstallResponse {
+  success: boolean;
+  message?: string;
+  installedSkill?: InstalledSkill;
+}
+
 /** 认证方式类型 */
 export type AuthType = 'authorization' | 'x-api-key' | 'auto';
 

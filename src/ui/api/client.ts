@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -92,6 +92,11 @@ interface BackendAPI {
 
   getRecommendVendorsMarkdown: () => Promise<string>;
   getReadmeMarkdown: () => Promise<string>;
+
+  // Skills 管理相关
+  getInstalledSkills: () => Promise<InstalledSkill[]>;
+  searchSkills: (query: string) => Promise<SkillCatalogItem[]>;
+  installSkill: (skill: SkillCatalogItem, targetType: TargetType) => Promise<SkillInstallResponse>;
 
   // Migration 相关
   getMigration: () => Promise<{ shouldShow: boolean; content: string }>;
@@ -238,6 +243,23 @@ export const api: BackendAPI = {
   getRecommendVendorsMarkdown: () => requestJson(buildUrl('/api/docs/recommend-vendors')),
 
   getReadmeMarkdown: () => requestJson(buildUrl('/api/docs/readme')),
+
+  // Skills 管理相关
+  getInstalledSkills: () => requestJson(buildUrl('/api/skills/installed')),
+  searchSkills: (query) => requestJson(buildUrl('/api/skills/search'), {
+    method: 'POST',
+    body: JSON.stringify({ query })
+  }),
+  installSkill: (skill, targetType) => requestJson(buildUrl('/api/skills/install'), {
+    method: 'POST',
+    body: JSON.stringify({
+      skillId: skill.id,
+      name: skill.name,
+      description: skill.description,
+      tags: skill.tags,
+      targetType,
+    })
+  }),
 
   // Migration 相关
   getMigration: () => requestJson(buildUrl('/api/migration')),

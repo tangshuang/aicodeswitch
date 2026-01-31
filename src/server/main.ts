@@ -6,7 +6,7 @@ import path from 'path';
 import { createHash } from 'crypto';
 import { DatabaseManager } from './database';
 import { ProxyServer } from './proxy-server';
-import type { AppConfig, LoginRequest, LoginResponse, AuthStatus } from '../types';
+import type { AppConfig, LoginRequest, LoginResponse, AuthStatus, InstalledSkill, SkillCatalogItem, SkillInstallRequest, SkillInstallResponse, TargetType } from '../types';
 import os from 'os';
 import { isAuthEnabled, verifyAuthCode, generateToken, authMiddleware } from './auth';
 import { checkVersionUpdate } from './version-check';
@@ -19,6 +19,7 @@ import {
   cleanupInvalidMetadata,
   type ConfigMetadata
 } from './config-metadata';
+import { SKILLSMP_API_KEY } from './config';
 
 const dotenvPath = path.resolve(os.homedir(), '.aicodeswitch/aicodeswitch.conf');
 if (fs.existsSync(dotenvPath)) {
@@ -341,6 +342,75 @@ const checkCodexBackupExists = (): boolean => {
   }
 };
 
+const getSkillsDir = (targetType: TargetType): string => {
+  const baseDir = targetType === 'claude-code' ? '.claude' : '.codex';
+  return path.join(os.homedir(), baseDir, 'skills');
+};
+
+const readSkillMetadata = (skillDir: string): Partial<SkillCatalogItem> => {
+  const metaFiles = ['skill.json', 'metadata.json', 'package.json'];
+
+  for (const fileName of metaFiles) {
+    const filePath = path.join(skillDir, fileName);
+    if (!fs.existsSync(filePath)) {
+      continue;
+    }
+
+    try {
+      const rawContent = fs.readFileSync(filePath, 'utf-8');
+      const data = JSON.parse(rawContent) as any;
+      return {
+        name: data.name,
+        description: data.description,
+        tags: Array.isArray(data.tags) ? data.tags : Array.isArray(data.keywords) ? data.keywords : undefined,
+      };
+    } catch (error) {
+      console.error('Failed to parse skill metadata:', error);
+    }
+  }
+
+  return {};
+};
+
+const listInstalledSkills = (): InstalledSkill[] => {
+  const result = new Map<string, InstalledSkill>();
+  const targets: TargetType[] = ['claude-code', 'codex'];
+
+  targets.forEach((targetType) => {
+    const skillsDir = getSkillsDir(targetType);
+
+    if (!fs.existsSync(skillsDir)) {
+      return;
+    }
+
+    const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+    entries.filter(entry => entry.isDirectory()).forEach(entry => {
+      const skillId = entry.name;
+      const skillDir = path.join(skillsDir, skillId);
+      const metadata = readSkillMetadata(skillDir);
+      const existing = result.get(skillId);
+
+      const name = metadata.name || skillId;
+      const description = metadata.description || undefined;
+
+      if (existing) {
+        if (!existing.targets.includes(targetType)) {
+          existing.targets.push(targetType);
+        }
+      } else {
+        result.set(skillId, {
+          id: skillId,
+          name,
+          description,
+          targets: [targetType],
+        });
+      }
+    });
+  });
+
+  return Array.from(result.values()).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+};
+
 const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) => {
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
@@ -557,6 +627,124 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
         await proxyServer.updateConfig(config);
       }
       res.json(result);
+    })
+  );
+
+  // Skills 管理相关
+  app.get('/api/skills/installed', (_req, res) => {
+    const skills = listInstalledSkills();
+    res.json(skills);
+  });
+
+  app.post(
+    '/api/skills/search',
+    asyncHandler(async (req, res) => {
+      const { query } = req.body as { query?: string };
+      if (!query || !query.trim()) {
+        res.status(400).json({ error: 'Query is required' });
+        return;
+      }
+
+      if (!SKILLSMP_API_KEY) {
+        res.status(500).json({ error: 'SKILLSMP_API_KEY 未配置' });
+        return;
+      }
+
+      const url = `https://skillsmp.com/api/v1/skills/ai-search?q=${encodeURIComponent(query.trim())}`;
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${SKILLSMP_API_KEY}`,
+        },
+      });
+
+      if (!response.ok) {
+        let errorMessage = 'Skills 搜索失败';
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody?.error?.message || errorMessage;
+        } catch (error) {
+          errorMessage = await response.text();
+        }
+        res.status(response.status).json({ error: errorMessage });
+        return;
+      }
+
+      const data = await response.json();
+      const results = (data?.data?.data || [])
+        .map((item: any) => item?.skill)
+        .filter(Boolean)
+        .map((skill: any) => {
+          const tags: any[] = [
+            skill.author ? `作者: ${skill.author}` : null,
+            typeof skill.stars === 'number' ? `⭐ ${skill.stars}` : null,
+          ].filter(Boolean);
+
+          const result: SkillCatalogItem = {
+            id: skill.id,
+            name: skill.name || skill.id,
+            description: skill.description,
+            tags: tags.length > 0 ? tags : [],
+            url: skill.githubUrl || skill.skillUrl,
+          };
+
+          return result;
+        });
+
+      res.json(results);
+    })
+  );
+
+  app.post(
+    '/api/skills/install',
+    asyncHandler(async (req, res) => {
+      const { skillId, targetType, name, description, tags } = req.body as SkillInstallRequest;
+
+      if (!skillId || !targetType) {
+        const response: SkillInstallResponse = {
+          success: false,
+          message: '缺少 Skill 或安装目标信息',
+        };
+        res.status(400).json(response);
+        return;
+      }
+
+      if (targetType !== 'claude-code' && targetType !== 'codex') {
+        const response: SkillInstallResponse = {
+          success: false,
+          message: '无效的安装目标类型',
+        };
+        res.status(400).json(response);
+        return;
+      }
+
+      const targetDir = getSkillsDir(targetType);
+      const skillDir = path.join(targetDir, skillId);
+
+      if (!fs.existsSync(skillDir)) {
+        fs.mkdirSync(skillDir, { recursive: true });
+      }
+
+      const metadata = {
+        id: skillId,
+        name: name || skillId,
+        description,
+        tags,
+        createdAt: Date.now(),
+      };
+
+      fs.writeFileSync(path.join(skillDir, 'skill.json'), JSON.stringify(metadata, null, 2));
+
+      const response: SkillInstallResponse = {
+        success: true,
+        installedSkill: {
+          id: skillId,
+          name: name || skillId,
+          description,
+          targets: [targetType],
+        }
+      };
+
+      res.json(response);
     })
   );
 

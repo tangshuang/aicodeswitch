@@ -110,6 +110,7 @@ aicos version            # Show current version information
 - Main app: `App.tsx` - Navigation and layout
 - Pages:
   - `VendorsPage.tsx` - Manage AI service vendors
+  - `SkillsPage.tsx` - Manage global Skills and discovery
   - `RoutesPage.tsx` - Configure routing rules
   - `LogsPage.tsx` - View request/access/error logs
   - `SettingsPage.tsx` - Application settings
@@ -155,6 +156,10 @@ aicos version            # Show current version information
 - Writes/ restores Codex config files (`~/.codex/config.toml`, `~/.codex/auth.json`)
 - Exports/ imports encrypted configuration data
 
+### Skills Management
+- Lists global Skills for Claude Code and Codex
+- Provides discovery search (discover/return toggle button) and installs Skills into target tool directories
+
 ### Logging
 - Request logs: Detailed API call records with token usage
 - Access logs: System access records
@@ -166,7 +171,8 @@ aicos version            # Show current version information
 2. **Data Directory**: Default: `~/.aicodeswitch/data/` (SQLite3 database)
 3. **Config File**: `~/.aicodeswitch/aicodeswitch.conf` (HOST, PORT, AUTH)
 4. **Dev Ports**: UI (4568), Server (4567) - configured in `vite.config.ts` and `server/main.ts`
-5. **API Endpoints**: All routes are prefixed with `/api/` except proxy routes (`/claude-code/`, `/codex/`)
+5. **Skills Search**: `SKILLSMP_API_KEY` is required for Skills discovery via SkillsMP
+6. **API Endpoints**: All routes are prefixed with `/api/` except proxy routes (`/claude-code/`, `/codex/`)
 
 ## Build and Deployment
 
@@ -190,3 +196,4 @@ aicos version            # Show current version information
 * 前端依赖库安装在devDependencies中，请使用yarn install --dev安装。
 * 所有对话请使用中文。生成代码中的文案及相关注释根据代码原本的语言生成。
 * 在服务端，直接使用 __dirname 来获取当前目录，不要使用 process.cwd()
+* 每次有新的变化时，你需要更新 CLAUDE.md 来让文档保持最新。
