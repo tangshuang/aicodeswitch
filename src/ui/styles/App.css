@@ -1126,6 +1126,7 @@ table th {
   color: var(--text-muted);
   font-size: 14px;
   line-height: 1.6;
+  flex: 1;
 }
 
 .skill-tags {
@@ -1185,6 +1186,7 @@ table th {
 .skills-result-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
 }
 
 .badge-secondary {

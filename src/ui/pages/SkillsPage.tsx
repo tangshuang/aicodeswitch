@@ -182,12 +182,7 @@ function SkillsPage() {
             {searchResults.map((skill) => {
               return (
                 <div className="card skill-card" key={skill.id}>
-                  <div>
-                    <div className="skill-title">{skill.name}</div>
-                    <div className="skill-description">
-                      {skill.description || '暂无描述'}
-                    </div>
-                  </div>
+                  <div className="skill-title">{skill.name}</div>
                   {skill.tags && skill.tags.length > 0 && (
                     <div className="skill-tags">
                       {skill.tags.map((tag) => (
@@ -195,6 +190,9 @@ function SkillsPage() {
                       ))}
                     </div>
                   )}
+                  <div className="skill-description">
+                    {skill.description || '暂无描述'}
+                  </div>
                   <div className="skills-result-actions">
                     {skill.url ? (
                       <a
