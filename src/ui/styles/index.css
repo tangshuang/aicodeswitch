@@ -5,6 +5,8 @@
 }
 
 :root {
+  --primary-color: #14532D;
+  --error-color: #DC2626;
   /* Light Mode Colors - Tech Dark Green Theme */
   --bg-primary: linear-gradient(135deg, #F7FEE7 0%, #F0FDF4 100%);
   --bg-secondary: rgba(255, 255, 255, 0.95);

@@ -9,6 +9,7 @@ import SettingsPage from './pages/SettingsPage';
 import WriteConfigPage from './pages/WriteConfigPage';
 import UsagePage from './pages/UsagePage';
 import StatisticsPage from './pages/StatisticsPage';
+import SkillsPage from './pages/SkillsPage';
 import { ToastContainer } from './components/Toast';
 import { ConfirmProvider } from './components/Confirm';
 import './styles/App.css';
@@ -284,6 +285,9 @@ function AppContent() {
             <NavLink to="/vendors">🏭 供应商管理</NavLink>
           </li>
           <li>
+            <NavLink to="/skills">🧩 Skills 管理</NavLink>
+          </li>
+          <li>
             <NavLink to="/statistics">📊 数据统计</NavLink>
           </li>
           <li>
@@ -342,6 +346,7 @@ function AppContent() {
             <Route path="/statistics" element={<StatisticsPage />} />
             <Route path="/routes" element={<RouteGroupsPage />} />
             <Route path="/vendors" element={<VendorsPage />} />
+            <Route path="/skills" element={<SkillsPage />} />
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/write-config" element={<WriteConfigPage />} />
             <Route path="/settings" element={<SettingsPage />} />

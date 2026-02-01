@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -92,6 +92,16 @@ interface BackendAPI {
 
   getRecommendVendorsMarkdown: () => Promise<string>;
   getReadmeMarkdown: () => Promise<string>;
+
+  // Skills 管理相关
+  getInstalledSkills: () => Promise<InstalledSkill[]>;
+  searchSkills: (query: string) => Promise<SkillCatalogItem[]>;
+  getSkillDetails: (skillId: string) => Promise<SkillDetail | null>;
+  installSkill: (skill: SkillCatalogItem, targetType?: TargetType) => Promise<SkillInstallResponse>;
+  enableSkill: (skillId: string, targetType: TargetType) => Promise<{ success: boolean; error?: string }>;
+  disableSkill: (skillId: string, targetType: TargetType) => Promise<{ success: boolean; error?: string }>;
+  deleteSkill: (skillId: string) => Promise<{ success: boolean; error?: string }>;
+  createLocalSkill: (data: { name: string; description: string; instruction: string; link?: string; targets: TargetType[] }) => Promise<SkillInstallResponse>;
 
   // Migration 相关
   getMigration: () => Promise<{ shouldShow: boolean; content: string }>;
@@ -238,6 +248,40 @@ export const api: BackendAPI = {
   getRecommendVendorsMarkdown: () => requestJson(buildUrl('/api/docs/recommend-vendors')),
 
   getReadmeMarkdown: () => requestJson(buildUrl('/api/docs/readme')),
+
+  // Skills 管理相关
+  getInstalledSkills: () => requestJson(buildUrl('/api/skills/installed')),
+  searchSkills: (query) => requestJson(buildUrl('/api/skills/search'), {
+    method: 'POST',
+    body: JSON.stringify({ query })
+  }),
+  getSkillDetails: (skillId) => requestJson<SkillDetail | null>(buildUrl(`/api/skills/${skillId}/details`)),
+  installSkill: (skill, targetType) => requestJson(buildUrl('/api/skills/install'), {
+    method: 'POST',
+    body: JSON.stringify({
+      skillId: skill.id,
+      name: skill.name,
+      description: skill.description,
+      tags: skill.tags,
+      ...(targetType ? { targetType } : {}),
+      githubUrl: skill.url,
+    })
+  }),
+  enableSkill: (skillId: string, targetType: TargetType) => requestJson(buildUrl(`/api/skills/${skillId}/enable`), {
+    method: 'POST',
+    body: JSON.stringify({ targetType })
+  }),
+  disableSkill: (skillId: string, targetType: TargetType) => requestJson(buildUrl(`/api/skills/${skillId}/disable`), {
+    method: 'POST',
+    body: JSON.stringify({ targetType })
+  }),
+  deleteSkill: (skillId: string) => requestJson(buildUrl(`/api/skills/${skillId}`), {
+    method: 'DELETE'
+  }),
+  createLocalSkill: (data) => requestJson(buildUrl('/api/skills/create-local'), {
+    method: 'POST',
+    body: JSON.stringify(data)
+  }),
 
   // Migration 相关
   getMigration: () => requestJson(buildUrl('/api/migration')),

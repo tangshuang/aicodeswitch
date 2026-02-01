@@ -112,7 +112,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
 }
 
 // 便捷函数（用于在非组件中调用）
-export async function confirm(options: ConfirmOptions): Promise<boolean> {
+export async function confirm(_options: ConfirmOptions): Promise<boolean> {
   // 这个函数需要在 ConfirmProvider 包裹的组件树中使用 useConfirm hook
   throw new Error('confirm function must be called within a component wrapped by ConfirmProvider');
 }
