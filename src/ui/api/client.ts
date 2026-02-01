@@ -97,10 +97,11 @@ interface BackendAPI {
   getInstalledSkills: () => Promise<InstalledSkill[]>;
   searchSkills: (query: string) => Promise<SkillCatalogItem[]>;
   getSkillDetails: (skillId: string) => Promise<SkillDetail | null>;
-  installSkill: (skill: SkillCatalogItem, targetType: TargetType) => Promise<SkillInstallResponse>;
+  installSkill: (skill: SkillCatalogItem, targetType?: TargetType) => Promise<SkillInstallResponse>;
   enableSkill: (skillId: string, targetType: TargetType) => Promise<{ success: boolean; error?: string }>;
   disableSkill: (skillId: string, targetType: TargetType) => Promise<{ success: boolean; error?: string }>;
   deleteSkill: (skillId: string) => Promise<{ success: boolean; error?: string }>;
+  createLocalSkill: (data: { name: string; description: string; instruction: string; link?: string; targets: TargetType[] }) => Promise<SkillInstallResponse>;
 
   // Migration 相关
   getMigration: () => Promise<{ shouldShow: boolean; content: string }>;
@@ -262,7 +263,7 @@ export const api: BackendAPI = {
       name: skill.name,
       description: skill.description,
       tags: skill.tags,
-      targetType,
+      ...(targetType ? { targetType } : {}),
       githubUrl: skill.url,
     })
   }),
@@ -276,6 +277,10 @@ export const api: BackendAPI = {
   }),
   deleteSkill: (skillId: string) => requestJson(buildUrl(`/api/skills/${skillId}`), {
     method: 'DELETE'
+  }),
+  createLocalSkill: (data) => requestJson(buildUrl('/api/skills/create-local'), {
+    method: 'POST',
+    body: JSON.stringify(data)
   }),
 
   // Migration 相关

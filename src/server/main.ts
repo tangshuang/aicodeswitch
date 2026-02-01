@@ -1205,6 +1205,91 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     })
   );
 
+  app.post(
+    '/api/skills/create-local',
+    asyncHandler(async (req, res) => {
+      const { name, description, instruction, link, targets } = req.body as {
+        name: string;
+        description: string;
+        instruction: string;
+        link?: string;
+        targets: TargetType[];
+      };
+
+      if (!name?.trim()) {
+        res.status(400).json({ success: false, message: '请填写 Skill 名称' });
+        return;
+      }
+      if (!description?.trim()) {
+        res.status(400).json({ success: false, message: '请填写描述' });
+        return;
+      }
+      if (!instruction?.trim()) {
+        res.status(400).json({ success: false, message: '请填写指令' });
+        return;
+      }
+      if (!targets || targets.length === 0) {
+        res.status(400).json({ success: false, message: '请至少选择一个安装目标' });
+        return;
+      }
+
+      const skillDir = getSkillDirByName(name);
+      const sanitizedDirName = path.basename(skillDir);
+
+      if (fs.existsSync(skillDir)) {
+        res.status(200).json({ success: false, message: `Skill "${name}" 已存在` });
+        return;
+      }
+
+      fs.mkdirSync(skillDir, { recursive: true });
+
+      const skillMdContent = `---
+name: ${sanitizedDirName}
+description: ${description.trim()}
+---
+
+# ${name.trim()}
+
+${description.trim()}
+
+## 指令
+
+${instruction}
+`;
+      fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skillMdContent, 'utf-8');
+
+      const metadata = {
+        id: sanitizedDirName,
+        name: name.trim(),
+        description: description.trim(),
+        tags: [],
+        targets: targets,
+        enabledTargets: [],
+        githubUrl: link || '',
+        skillPath: '',
+        installedAt: Date.now(),
+      };
+
+      fs.writeFileSync(path.join(skillDir, 'skill.json'), JSON.stringify(metadata, null, 2));
+
+      const response: SkillInstallResponse = {
+        success: true,
+        installedSkill: {
+          id: sanitizedDirName,
+          name: metadata.name,
+          description: metadata.description,
+          targets: metadata.targets,
+          enabledTargets: [],
+          githubUrl: link || '',
+          skillPath: '',
+          installedAt: metadata.installedAt,
+        }
+      };
+
+      res.json(response);
+    })
+  );
+
   // 获取skill详细信息（用于显示和安装）
   app.get(
     '/api/skills/:skillId/details',

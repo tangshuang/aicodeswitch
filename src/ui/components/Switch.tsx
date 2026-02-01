@@ -80,7 +80,7 @@ export function SkillSwitch({ skillId, targetType, enabled, onChange, disabled }
         onChange={(checked) => onChange(skillId, targetType, checked)}
         disabled={disabled}
         label={label}
-        labelPosition="left"
+        labelPosition="right"
       />
     </div>
   );
