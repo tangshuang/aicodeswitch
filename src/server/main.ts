@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { DatabaseManager } from './database';
 import { ProxyServer } from './proxy-server';
 import type { AppConfig, LoginRequest, LoginResponse, AuthStatus, InstalledSkill, SkillCatalogItem, SkillInstallRequest, SkillInstallResponse, TargetType } from '../types';
@@ -29,6 +30,41 @@ if (fs.existsSync(dotenvPath)) {
 const host = process.env.HOST || '127.0.0.1';
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
 const dataDir = process.env.DATA_DIR ? path.resolve(process.cwd(), process.env.DATA_DIR) : path.join(os.homedir(), '.aicodeswitch/data');
+
+let globalProxyConfig: { enabled: boolean; url: string; username?: string; password?: string } | null = null;
+
+function updateProxyConfig(config: AppConfig): void {
+  if (config.proxyEnabled && config.proxyUrl) {
+    globalProxyConfig = {
+      enabled: true,
+      url: config.proxyUrl,
+      username: config.proxyUsername,
+      password: config.proxyPassword,
+    };
+  } else {
+    globalProxyConfig = null;
+  }
+}
+
+function getProxyAgent() {
+  if (!globalProxyConfig?.enabled || !globalProxyConfig.url) {
+    return null;
+  }
+
+  try {
+    const url = globalProxyConfig.url;
+    const proxyUrl = url.startsWith('http') ? url : `http://${url}`;
+
+    if (globalProxyConfig.username && globalProxyConfig.password) {
+      const proxyUrlWithAuth = proxyUrl.replace('://', `://${encodeURIComponent(globalProxyConfig.username)}:${encodeURIComponent(globalProxyConfig.password)}@`);
+      return proxyUrlWithAuth;
+    }
+
+    return proxyUrl;
+  } catch {
+    return null;
+  }
+}
 
 const app = express();
 app.use(cors());
@@ -475,13 +511,28 @@ function parseGitHubUrl(githubUrl: string, subPath?: string): GitHubRepoInfo {
 const MAX_RETRY_COUNT = 3;
 const RETRY_DELAY_MS = 1000;
 
-// 带重试的fetch包装函数
+// 带重试的fetch包装函数，支持代理
 async function fetchWithRetry(url: string, options: RequestInit = {}, retryCount = MAX_RETRY_COUNT): Promise<globalThis.Response> {
   let lastError: Error | null = null;
 
+  // 获取代理配置
+  const proxyUrl = getProxyAgent();
+
   for (let i = 0; i < retryCount; i++) {
     try {
-      const response = await fetch(url, options);
+      const fetchOptions: RequestInit = { ...options };
+
+      // 如果启用了代理，添加 agent
+      if (proxyUrl) {
+        try {
+          (fetchOptions as any).agent = new HttpsProxyAgent(proxyUrl);
+          console.log(`使用代理请求: ${url}`);
+        } catch (agentError) {
+          console.warn('创建代理 agent 失败，将跳过代理:', agentError);
+        }
+      }
+
+      const response = await fetch(url, fetchOptions);
 
       // 如果是403限流错误，等待后重试
       if (response.status === 403) {
@@ -608,13 +659,11 @@ function verifyDownload(targetDir: string): { valid: boolean; filesCount: number
     return { valid: false, filesCount: 0, error: '目标目录不存在' };
   }
 
-  // 检查必要的文件是否存在
-  const requiredFiles = ['skill.json'];
-  for (const file of requiredFiles) {
-    const filePath = path.join(targetDir, file);
-    if (!fs.existsSync(filePath)) {
-      return { valid: false, filesCount: 0, error: `缺少必要文件: ${file}` };
-    }
+  const hasSkillJson = fs.existsSync(path.join(targetDir, 'skill.json'));
+  const hasSkillMd = fs.existsSync(path.join(targetDir, 'SKILL.md'));
+
+  if (!hasSkillJson && !hasSkillMd) {
+    return { valid: false, filesCount: 0, error: '缺少必要文件: skill.json 或 SKILL.md' };
   }
 
   // 统计下载的文件数量
@@ -742,6 +791,8 @@ const listInstalledSkills = (): InstalledSkill[] => {
 };
 
 const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) => {
+  updateProxyConfig(dbManager.getConfig());
+
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
   // 鉴权相关路由 - 公开访问
@@ -955,6 +1006,7 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
       const result = dbManager.updateConfig(config);
       if (result) {
         await proxyServer.updateConfig(config);
+        updateProxyConfig(config);
       }
       res.json(result);
     })
@@ -1102,6 +1154,23 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
         }
       } else {
         fs.mkdirSync(skillDir, { recursive: true });
+      }
+
+      if (githubUrl) {
+        const downloadResult = await downloadSkillFromGitHub(
+          githubUrl,
+          skillPath || '',
+          skillDir
+        );
+
+        if (!downloadResult.success) {
+          const response: SkillInstallResponse = {
+            success: false,
+            message: `下载失败: ${downloadResult.error}`,
+          };
+          res.status(500).json(response);
+          return;
+        }
       }
 
       const metadata = {

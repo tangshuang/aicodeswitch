@@ -161,18 +161,18 @@ function SkillsPage() {
         setInstallState((prev) => ({
           ...prev,
           status: 'error',
-          message: response.message || '安装失败',
+          message: response.message ? `${response.message}。如多次失败，可尝试在设置中配置代理` : '安装失败，请稍后重试',
         }));
-        toast.error(response.message || '安装失败');
+        toast.error(response.message ? `${response.message}。如多次失败，可尝试在设置中配置代理` : '安装失败，请稍后重试');
       }
     } catch (error) {
       console.error('Failed to install skill:', error);
       setInstallState((prev) => ({
         ...prev,
         status: 'error',
-        message: '安装失败，请稍后重试',
+        message: '安装失败，请稍后重试。如多次失败，可尝试在设置中配置代理',
       }));
-      toast.error('安装失败，请稍后重试');
+      toast.error('安装失败，请稍后重试。如多次失败，可尝试在设置中配置代理');
     } finally {
       setTimeout(() => {
         setInstallState((prev) => ({
