@@ -19,6 +19,10 @@ export interface InstalledSkill {
   name: string;
   description?: string;
   targets: TargetType[];
+  enabledTargets: TargetType[];
+  githubUrl?: string;
+  skillPath?: string;
+  installedAt: number;
 }
 
 export interface SkillCatalogItem {
@@ -34,6 +38,20 @@ export interface SkillInstallRequest {
   targetType: TargetType;
   name?: string;
   description?: string;
+  tags?: string[];
+  githubUrl?: string;
+  skillPath?: string;
+}
+
+export interface SkillDetail {
+  id: string;
+  name: string;
+  description?: string;
+  author?: string;
+  stars?: number;
+  githubUrl?: string;
+  skillPath?: string;
+  readme?: string;
   tags?: string[];
 }
 

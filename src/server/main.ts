@@ -342,70 +342,400 @@ const checkCodexBackupExists = (): boolean => {
   }
 };
 
-const getSkillsDir = (targetType: TargetType): string => {
-  const baseDir = targetType === 'claude-code' ? '.claude' : '.codex';
-  return path.join(os.homedir(), baseDir, 'skills');
+const getCentralSkillsDir = (): string => {
+  return path.join(os.homedir(), '.aicodeswitch', 'skills');
 };
 
-const readSkillMetadata = (skillDir: string): Partial<SkillCatalogItem> => {
-  const metaFiles = ['skill.json', 'metadata.json', 'package.json'];
+function sanitizeDirName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .substring(0, 100);
+}
 
-  for (const fileName of metaFiles) {
-    const filePath = path.join(skillDir, fileName);
-    if (!fs.existsSync(filePath)) {
-      continue;
+function getSkillDirByName(name: string): string {
+  const sanitizedName = sanitizeDirName(name);
+  const centralDir = getCentralSkillsDir();
+  return path.join(centralDir, sanitizedName);
+}
+
+const getSkillSymlinkPath = (skillId: string, targetType: TargetType): string => {
+  const baseDir = targetType === 'claude-code' ? '.claude' : '.codex';
+  return path.join(os.homedir(), baseDir, 'skills', skillId);
+};
+
+function isSkillSymlinkExists(skillId: string, targetType: TargetType): boolean {
+  const symlinkPath = getSkillSymlinkPath(skillId, targetType);
+
+  try {
+    const stats = fs.lstatSync(symlinkPath);
+    return stats.isSymbolicLink();
+  } catch (error) {
+    return false;
+  }
+}
+
+async function createSkillSymlink(skillId: string, targetType: TargetType): Promise<{ success: boolean; error?: string }> {
+  try {
+    const centralDir = getCentralSkillsDir();
+    const skillDir = path.join(centralDir, skillId);
+    const symlinkPath = getSkillSymlinkPath(skillId, targetType);
+
+    if (!fs.existsSync(skillDir)) {
+      return { success: false, error: 'Skill目录不存在' };
     }
 
-    try {
-      const rawContent = fs.readFileSync(filePath, 'utf-8');
-      const data = JSON.parse(rawContent) as any;
-      return {
-        name: data.name,
-        description: data.description,
-        tags: Array.isArray(data.tags) ? data.tags : Array.isArray(data.keywords) ? data.keywords : undefined,
-      };
-    } catch (error) {
-      console.error('Failed to parse skill metadata:', error);
+    const targetBaseDir = path.dirname(symlinkPath);
+    if (!fs.existsSync(targetBaseDir)) {
+      fs.mkdirSync(targetBaseDir, { recursive: true });
+    }
+
+    if (fs.existsSync(symlinkPath)) {
+      if (fs.lstatSync(symlinkPath).isSymbolicLink()) {
+        fs.unlinkSync(symlinkPath);
+      } else {
+        return { success: false, error: '目标路径已存在非软链接文件' };
+      }
+    }
+
+    const relativePath = path.relative(targetBaseDir, skillDir);
+
+    if (process.platform === 'win32') {
+      fs.symlinkSync(skillDir, symlinkPath, 'junction');
+    } else {
+      fs.symlinkSync(relativePath, symlinkPath);
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+async function removeSkillSymlink(skillId: string, targetType: TargetType): Promise<{ success: boolean; error?: string }> {
+  try {
+    const symlinkPath = getSkillSymlinkPath(skillId, targetType);
+
+    if (!fs.existsSync(symlinkPath)) {
+      return { success: true };
+    }
+
+    const stats = fs.lstatSync(symlinkPath);
+    if (stats.isSymbolicLink()) {
+      fs.unlinkSync(symlinkPath);
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+// GitHub URL解析工具函数
+interface GitHubRepoInfo {
+  owner: string;
+  repo: string;
+  path: string;
+}
+
+function parseGitHubUrl(githubUrl: string, subPath?: string): GitHubRepoInfo {
+  // 解析各种GitHub URL格式
+  const patterns = [
+    // https://github.com/owner/repo/tree/{ref}/path/to/dir
+    /github\.com\/([^\/]+)\/([^\/]+)(?:\/tree\/[^\/]+)?\/(.*)/,
+    // git@github.com:owner/repo.git
+    /git@github\.com:([^\/]+)\/([^\/]+)(?:\.git)?$/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = githubUrl.match(pattern);
+    if (match) {
+      let owner = match[1];
+      let repo = match[2];
+      let repoPath = match[3] || '';
+
+      // 移除.git后缀（如果存在）
+      if (repo.endsWith('.git')) {
+        repo = repo.slice(0, -4);
+      }
+
+      // 拼接完整路径
+      const fullPath = subPath ? path.join(repoPath, subPath) : repoPath;
+
+      return { owner, repo, path: fullPath };
     }
   }
 
-  return {};
-};
+  throw new Error(`无法解析GitHub URL: ${githubUrl}`);
+}
+
+// 重试配置
+const MAX_RETRY_COUNT = 3;
+const RETRY_DELAY_MS = 1000;
+
+// 带重试的fetch包装函数
+async function fetchWithRetry(url: string, options: RequestInit = {}, retryCount = MAX_RETRY_COUNT): Promise<globalThis.Response> {
+  let lastError: Error | null = null;
+
+  for (let i = 0; i < retryCount; i++) {
+    try {
+      const response = await fetch(url, options);
+
+      // 如果是403限流错误，等待后重试
+      if (response.status === 403) {
+        const resetTime = response.headers.get('X-RateLimit-Reset');
+        const waitTime = resetTime
+          ? Math.max(parseInt(resetTime) * 1000 - Date.now(), RETRY_DELAY_MS)
+          : RETRY_DELAY_MS * (i + 1);
+
+        console.warn(`GitHub API限流，等待 ${Math.ceil(waitTime / 1000)} 秒后重试...`);
+        await new Promise(resolve => setTimeout(resolve, Math.min(waitTime, 30000)));
+        continue;
+      }
+
+      return response;
+    } catch (error) {
+      lastError = error as Error;
+      console.warn(`请求失败 (${i + 1}/${retryCount}):`, error);
+
+      if (i < retryCount - 1) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * (i + 1)));
+      }
+    }
+  }
+
+  throw lastError || new Error('请求失败');
+}
+
+// 使用GitHub Contents API获取目录内容
+async function getGitHubContents(owner: string, repo: string, filePath: string, ref?: string): Promise<any[]> {
+  let apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`;
+
+  if (ref) {
+    apiUrl += `?ref=${ref}`;
+  }
+
+  const response = await fetchWithRetry(apiUrl, {
+    headers: {
+      'Accept': 'application/vnd.github.v3+json',
+      'User-Agent': 'AICodeSwitch-SkillsManager',
+    },
+  });
+
+  if (!response.ok) {
+    if (response.status === 403) {
+      // API限流
+      const resetTime = response.headers.get('X-RateLimit-Reset');
+      throw new Error(`GitHub API限流，请稍后再试${resetTime ? `（${new Date(parseInt(resetTime) * 1000).toLocaleTimeString()}）` : ''}`);
+    }
+    if (response.status === 404) {
+      throw new Error(`路径不存在: ${filePath}`);
+    }
+    throw new Error(`GitHub API错误: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+
+  // Contents API对单个文件返回对象，对目录返回数组
+  return Array.isArray(data) ? data : [data];
+}
+
+// 下载单个文件（带重试）
+async function downloadFile(downloadUrl: string, targetPath: string, retryCount = MAX_RETRY_COUNT): Promise<void> {
+  let lastError: Error | null = null;
+
+  for (let i = 0; i < retryCount; i++) {
+    try {
+      const response = await fetchWithRetry(downloadUrl);
+
+      if (!response.ok) {
+        throw new Error(`下载失败: ${response.status} ${response.statusText}`);
+      }
+
+      const content = await response.text();
+
+      // 确保目标目录存在
+      const dir = path.dirname(targetPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      fs.writeFileSync(targetPath, content, 'utf-8');
+      return;
+    } catch (error) {
+      lastError = error as Error;
+      console.warn(`文件下载失败 (${i + 1}/${retryCount}):`, downloadUrl);
+
+      if (i < retryCount - 1) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * (i + 1)));
+      }
+    }
+  }
+
+  throw lastError || new Error('文件下载失败');
+}
+
+// 递归下载目录内容
+async function downloadDirectory(owner: string, repo: string, contents: any[], basePath: string, ref?: string): Promise<number> {
+  let downloadedCount = 0;
+
+  for (const item of contents) {
+    const relativePath = item.path ? item.path.split('/').slice(-1)[0] : item.name;
+    const targetPath = path.join(basePath, relativePath);
+
+    if (item.type === 'file') {
+      // 下载文件
+      if (item.download_url) {
+        await downloadFile(item.download_url, targetPath);
+        downloadedCount++;
+      }
+    } else if (item.type === 'dir') {
+      // 递归下载子目录
+      const subContents = await getGitHubContents(owner, repo, item.path, ref);
+      const subCount = await downloadDirectory(owner, repo, subContents, targetPath, ref);
+      downloadedCount += subCount;
+    }
+  }
+
+  return downloadedCount;
+}
+
+// 验证下载完整性
+function verifyDownload(targetDir: string): { valid: boolean; filesCount: number; error?: string } {
+  if (!fs.existsSync(targetDir)) {
+    return { valid: false, filesCount: 0, error: '目标目录不存在' };
+  }
+
+  // 检查必要的文件是否存在
+  const requiredFiles = ['skill.json'];
+  for (const file of requiredFiles) {
+    const filePath = path.join(targetDir, file);
+    if (!fs.existsSync(filePath)) {
+      return { valid: false, filesCount: 0, error: `缺少必要文件: ${file}` };
+    }
+  }
+
+  // 统计下载的文件数量
+  let filesCount = 0;
+  try {
+    const countFiles = (dir: string) => {
+      const items = fs.readdirSync(dir, { withFileTypes: true });
+      for (const item of items) {
+        if (item.isFile()) {
+          filesCount++;
+        } else if (item.isDirectory()) {
+          countFiles(path.join(dir, item.name));
+        }
+      }
+    };
+    countFiles(targetDir);
+  } catch (error) {
+    return { valid: false, filesCount: 0, error: '无法读取目录' };
+  }
+
+  if (filesCount === 0) {
+    return { valid: false, filesCount: 0, error: '下载的文件为空' };
+  }
+
+  return { valid: true, filesCount };
+}
+
+// 从GitHub下载指定路径的skill
+async function downloadSkillFromGitHub(githubUrl: string, skillPath: string, targetDir: string): Promise<{ success: boolean; filesDownloaded: number; error?: string }> {
+  try {
+    // 解析GitHub URL
+    const { owner, repo, path: repoPath } = parseGitHubUrl(githubUrl, skillPath);
+
+    // 构造完整路径
+    const fullPath = repoPath || skillPath;
+
+    if (!fullPath) {
+      throw new Error('无效的skill路径');
+    }
+
+    // 获取目录内容
+    const contents = await getGitHubContents(owner, repo, fullPath);
+
+    if (contents.length === 0) {
+      throw new Error('目录为空');
+    }
+
+    // 确保目标目录存在
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+
+    // 递归下载所有文件
+    const filesDownloaded = await downloadDirectory(owner, repo, contents, targetDir);
+
+    if (filesDownloaded === 0) {
+      throw new Error('未能下载任何文件');
+    }
+
+    // 验证下载完整性
+    const verification = verifyDownload(targetDir);
+    if (!verification.valid) {
+      // 清理不完整的下载
+      fs.rmSync(targetDir, { recursive: true, force: true });
+      throw new Error(`下载验证失败: ${verification.error}`);
+    }
+
+    return { success: true, filesDownloaded };
+  } catch (error: any) {
+    return { success: false, filesDownloaded: 0, error: error.message };
+  }
+}
 
 const listInstalledSkills = (): InstalledSkill[] => {
   const result = new Map<string, InstalledSkill>();
-  const targets: TargetType[] = ['claude-code', 'codex'];
+  const centralDir = getCentralSkillsDir();
 
-  targets.forEach((targetType) => {
-    const skillsDir = getSkillsDir(targetType);
+  if (!fs.existsSync(centralDir)) {
+    return [];
+  }
 
-    if (!fs.existsSync(skillsDir)) {
+  const entries = fs.readdirSync(centralDir, { withFileTypes: true });
+  entries.filter(entry => entry.isDirectory()).forEach(entry => {
+    const skillId = entry.name;
+    const skillDir = path.join(centralDir, skillId);
+    const metadataPath = path.join(skillDir, 'skill.json');
+
+    if (!fs.existsSync(metadataPath)) {
       return;
     }
 
-    const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
-    entries.filter(entry => entry.isDirectory()).forEach(entry => {
-      const skillId = entry.name;
-      const skillDir = path.join(skillsDir, skillId);
-      const metadata = readSkillMetadata(skillDir);
-      const existing = result.get(skillId);
+    try {
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
 
-      const name = metadata.name || skillId;
-      const description = metadata.description || undefined;
+      const enabledTargets: TargetType[] = [];
 
-      if (existing) {
-        if (!existing.targets.includes(targetType)) {
-          existing.targets.push(targetType);
+      ['claude-code', 'codex'].forEach((targetType) => {
+        if (isSkillSymlinkExists(skillId, targetType as TargetType)) {
+          enabledTargets.push(targetType as TargetType);
         }
+      });
+
+      const existing = result.get(skillId);
+      if (existing) {
+        existing.targets = [...new Set([...existing.targets, ...(metadata.targets || [])])];
+        existing.enabledTargets = enabledTargets;
       } else {
         result.set(skillId, {
           id: skillId,
-          name,
-          description,
-          targets: [targetType],
+          name: metadata.name || skillId,
+          description: metadata.description,
+          targets: metadata.targets || [],
+          enabledTargets: enabledTargets,
+          githubUrl: metadata.githubUrl,
+          skillPath: metadata.skillPath,
+          installedAt: metadata.installedAt || Date.now(),
         });
       }
-    });
+    } catch (error) {
+      console.error(`Failed to parse skill metadata for ${skillId}:`, error);
+    }
   });
 
   return Array.from(result.values()).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
@@ -697,39 +1027,93 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
   app.post(
     '/api/skills/install',
     asyncHandler(async (req, res) => {
-      const { skillId, targetType, name, description, tags } = req.body as SkillInstallRequest;
+      const { skillId, name, description, tags, githubUrl, skillPath } = req.body as SkillInstallRequest & { githubUrl?: string; skillPath?: string };
 
-      if (!skillId || !targetType) {
+      if (!skillId) {
         const response: SkillInstallResponse = {
           success: false,
-          message: '缺少 Skill 或安装目标信息',
+          message: '缺少 Skill ID',
         };
         res.status(400).json(response);
         return;
       }
 
-      if (targetType !== 'claude-code' && targetType !== 'codex') {
-        const response: SkillInstallResponse = {
-          success: false,
-          message: '无效的安装目标类型',
-        };
-        res.status(400).json(response);
-        return;
-      }
+      const skillName = name || skillId;
+      const skillDir = getSkillDirByName(skillName);
+      const sanitizedDirName = path.basename(skillDir);
 
-      const targetDir = getSkillsDir(targetType);
-      const skillDir = path.join(targetDir, skillId);
+      if (fs.existsSync(skillDir)) {
+        const existingSkillJson = path.join(skillDir, 'skill.json');
+        let existingMetadata: any = null;
+        if (fs.existsSync(existingSkillJson)) {
+          try {
+            existingMetadata = JSON.parse(fs.readFileSync(existingSkillJson, 'utf-8'));
+          } catch (e) {
+            // 忽略解析错误
+          }
+        }
 
-      if (!fs.existsSync(skillDir)) {
+        if (githubUrl) {
+          const downloadResult = await downloadSkillFromGitHub(
+            githubUrl,
+            skillPath || '',
+            skillDir
+          );
+
+          if (!downloadResult.success) {
+            const response: SkillInstallResponse = {
+              success: false,
+              message: `下载失败: ${downloadResult.error}`,
+            };
+            res.status(500).json(response);
+            return;
+          }
+
+          const metadata = {
+            id: sanitizedDirName,
+            name: name || existingMetadata?.name || skillId,
+            description: description || existingMetadata?.description,
+            tags: tags || existingMetadata?.tags,
+            githubUrl,
+            skillPath,
+            targets: [...(existingMetadata?.targets || [])],
+            enabledTargets: [...(existingMetadata?.enabledTargets || [])],
+            installedAt: existingMetadata?.installedAt || Date.now(),
+            updatedAt: Date.now(),
+            filesDownloaded: downloadResult.filesDownloaded,
+          };
+          fs.writeFileSync(path.join(skillDir, 'skill.json'), JSON.stringify(metadata, null, 2));
+
+          const response: SkillInstallResponse = {
+            success: true,
+            installedSkill: {
+              id: sanitizedDirName,
+              name: metadata.name,
+              description: metadata.description,
+              targets: metadata.targets,
+              enabledTargets: metadata.enabledTargets,
+              githubUrl,
+              skillPath,
+              installedAt: metadata.installedAt,
+            }
+          };
+          res.json(response);
+          return;
+        }
+      } else {
         fs.mkdirSync(skillDir, { recursive: true });
       }
 
       const metadata = {
-        id: skillId,
+        id: sanitizedDirName,
         name: name || skillId,
         description,
         tags,
-        createdAt: Date.now(),
+        targets: [],
+        enabledTargets: [],
+        githubUrl,
+        skillPath,
+        installedAt: Date.now(),
       };
 
       fs.writeFileSync(path.join(skillDir, 'skill.json'), JSON.stringify(metadata, null, 2));
@@ -737,14 +1121,167 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
       const response: SkillInstallResponse = {
         success: true,
         installedSkill: {
-          id: skillId,
-          name: name || skillId,
-          description,
-          targets: [targetType],
+          id: sanitizedDirName,
+          name: metadata.name,
+          description: metadata.description,
+          targets: [],
+          enabledTargets: [],
+          githubUrl,
+          skillPath,
+          installedAt: metadata.installedAt,
         }
       };
 
       res.json(response);
+    })
+  );
+
+  // 获取skill详细信息（用于显示和安装）
+  app.get(
+    '/api/skills/:skillId/details',
+    asyncHandler(async (req, res) => {
+      const { skillId } = req.params;
+
+      if (!SKILLSMP_API_KEY) {
+        res.status(500).json({ error: 'SKILLSMP_API_KEY 未配置' });
+        return;
+      }
+
+      try {
+        const url = `https://skillsmp.com/api/v1/skills/${skillId}`;
+        const response = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${SKILLSMP_API_KEY}`,
+          },
+        });
+
+        if (!response.ok) {
+          res.status(response.status).json({ error: '获取skill详情失败' });
+          return;
+        }
+
+        const data = await response.json();
+        const skill = data?.data;
+
+        if (!skill) {
+          res.status(404).json({ error: 'Skill不存在' });
+          return;
+        }
+
+        res.json({
+          id: skill.id,
+          name: skill.name,
+          description: skill.description,
+          author: skill.author,
+          stars: skill.stars,
+          githubUrl: skill.githubUrl || skill.skillUrl,
+          skillPath: skill.skillPath || '',
+          readme: skill.readme,
+          tags: skill.tags || [],
+        });
+      } catch (error: any) {
+        console.error('获取skill详情失败:', error);
+        res.status(500).json({ error: error.message });
+      }
+    })
+  );
+
+  app.post(
+    '/api/skills/:skillId/enable',
+    asyncHandler(async (req, res) => {
+      const { skillId } = req.params;
+      const { targetType } = req.body as { targetType: TargetType };
+
+      if (!targetType || (targetType !== 'claude-code' && targetType !== 'codex')) {
+        res.status(400).json({ success: false, error: '无效的目标类型' });
+        return;
+      }
+
+      const centralDir = getCentralSkillsDir();
+      const skillDir = path.join(centralDir, skillId);
+
+      if (!fs.existsSync(skillDir)) {
+        res.status(404).json({ success: false, error: 'Skill不存在' });
+        return;
+      }
+
+      const symlinkResult = await createSkillSymlink(skillId, targetType);
+
+      if (!symlinkResult.success) {
+        res.status(500).json({ success: false, error: symlinkResult.error });
+        return;
+      }
+
+      const metadataPath = path.join(skillDir, 'skill.json');
+      if (fs.existsSync(metadataPath)) {
+        const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+        if (!metadata.enabledTargets) {
+          metadata.enabledTargets = [];
+        }
+        if (!metadata.enabledTargets.includes(targetType)) {
+          metadata.enabledTargets.push(targetType);
+        }
+        fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+      }
+
+      res.json({ success: true });
+    })
+  );
+
+  app.post(
+    '/api/skills/:skillId/disable',
+    asyncHandler(async (req, res) => {
+      const { skillId } = req.params;
+      const { targetType } = req.body as { targetType: TargetType };
+
+      if (!targetType || (targetType !== 'claude-code' && targetType !== 'codex')) {
+        res.status(400).json({ success: false, error: '无效的目标类型' });
+        return;
+      }
+
+      const symlinkResult = await removeSkillSymlink(skillId, targetType);
+
+      if (!symlinkResult.success) {
+        res.status(500).json({ success: false, error: symlinkResult.error });
+        return;
+      }
+
+      const centralDir = getCentralSkillsDir();
+      const skillDir = path.join(centralDir, skillId);
+      const metadataPath = path.join(skillDir, 'skill.json');
+
+      if (fs.existsSync(metadataPath)) {
+        const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+        if (metadata.enabledTargets) {
+          metadata.enabledTargets = metadata.enabledTargets.filter((t: TargetType) => t !== targetType);
+          fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+        }
+      }
+
+      res.json({ success: true });
+    })
+  );
+
+  app.delete(
+    '/api/skills/:skillId',
+    asyncHandler(async (req, res) => {
+      const { skillId } = req.params;
+
+      const centralDir = getCentralSkillsDir();
+      const skillDir = path.join(centralDir, skillId);
+
+      if (!fs.existsSync(skillDir)) {
+        res.status(404).json({ success: false, error: 'Skill不存在' });
+        return;
+      }
+
+      ['claude-code', 'codex'].forEach(async (targetType) => {
+        await removeSkillSymlink(skillId, targetType as TargetType);
+      });
+
+      fs.rmSync(skillDir, { recursive: true, force: true });
+
+      res.json({ success: true });
     })
   );
 

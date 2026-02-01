@@ -1193,3 +1193,32 @@ table th {
   background: rgba(15, 81, 50, 0.15);
   color: var(--text-primary);
 }
+
+.switch {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  border-radius: 12px;
+  border: none;
+  cursor: pointer;
+  background-color: #4b5563;
+  transition: background-color 0.2s;
+}
+
+.switch.active {
+  background-color: var(--primary-color);
+}
+
+.switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.switch:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--primary-color);
+}
+
+.switch::-moz-focus-inner {
+  border: 0;
+}

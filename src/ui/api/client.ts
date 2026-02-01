@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -96,7 +96,11 @@ interface BackendAPI {
   // Skills 管理相关
   getInstalledSkills: () => Promise<InstalledSkill[]>;
   searchSkills: (query: string) => Promise<SkillCatalogItem[]>;
+  getSkillDetails: (skillId: string) => Promise<SkillDetail | null>;
   installSkill: (skill: SkillCatalogItem, targetType: TargetType) => Promise<SkillInstallResponse>;
+  enableSkill: (skillId: string, targetType: TargetType) => Promise<{ success: boolean; error?: string }>;
+  disableSkill: (skillId: string, targetType: TargetType) => Promise<{ success: boolean; error?: string }>;
+  deleteSkill: (skillId: string) => Promise<{ success: boolean; error?: string }>;
 
   // Migration 相关
   getMigration: () => Promise<{ shouldShow: boolean; content: string }>;
@@ -250,6 +254,7 @@ export const api: BackendAPI = {
     method: 'POST',
     body: JSON.stringify({ query })
   }),
+  getSkillDetails: (skillId) => requestJson<SkillDetail | null>(buildUrl(`/api/skills/${skillId}/details`)),
   installSkill: (skill, targetType) => requestJson(buildUrl('/api/skills/install'), {
     method: 'POST',
     body: JSON.stringify({
@@ -258,7 +263,19 @@ export const api: BackendAPI = {
       description: skill.description,
       tags: skill.tags,
       targetType,
+      githubUrl: skill.url,
     })
+  }),
+  enableSkill: (skillId: string, targetType: TargetType) => requestJson(buildUrl(`/api/skills/${skillId}/enable`), {
+    method: 'POST',
+    body: JSON.stringify({ targetType })
+  }),
+  disableSkill: (skillId: string, targetType: TargetType) => requestJson(buildUrl(`/api/skills/${skillId}/disable`), {
+    method: 'POST',
+    body: JSON.stringify({ targetType })
+  }),
+  deleteSkill: (skillId: string) => requestJson(buildUrl(`/api/skills/${skillId}`), {
+    method: 'DELETE'
   }),
 
   // Migration 相关
