@@ -130,17 +130,19 @@ const writeClaudeConfig = async (dbManager: DatabaseManager): Promise<boolean> =
     // Claude Code .claude.json
     const claudeJsonPath = path.join(homeDir, '.claude.json');
 
-    // 同样处理 .claude.json 的备份
+    // 先读取原文件内容（如果存在）
+    let claudeJson: any = {};
+    if (fs.existsSync(claudeJsonPath)) {
+      claudeJson = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8'));
+    }
+
+    // 然后处理备份
     if (!fs.existsSync(claudeJsonBakPath)) {
       if (fs.existsSync(claudeJsonPath)) {
         fs.renameSync(claudeJsonPath, claudeJsonBakPath);
       }
     }
 
-    let claudeJson: any = {};
-    if (fs.existsSync(claudeJsonPath)) {
-      claudeJson = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8'));
-    }
     claudeJson.hasCompletedOnboarding = true;
 
     fs.writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2));
