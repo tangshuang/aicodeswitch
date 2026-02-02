@@ -165,6 +165,12 @@ aicos version            # Show current version information
 - Access logs: System access records
 - Error logs: Error and exception records
 
+### Usage Limits Auto-Sync
+- **Service-Level Limits**: API services can have token and request count limits configured
+- **Auto-Sync to Rules**: When an API service's usage limits are modified, all rules using that service are automatically updated with the new limits
+- **Inheritance Detection**: When editing a rule, the system detects if the rule's limits match the service's limits and displays them as "inherited" (read-only)
+- **Manual Override**: Rules can be configured with custom limits that differ from the service defaults
+
 ## Development Tips
 
 1. **Environment Variables**: Copy `.env.example` to `.env` and modify as needed

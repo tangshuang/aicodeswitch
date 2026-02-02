@@ -567,7 +567,74 @@ export class DatabaseManager {
       console.log(`[DB] Updated service ${id}: ${service.name} -> ${service.apiUrl}`);
     }
 
+    // 如果更新成功，检查是否需要同步更新关联规则的超量限制
+    if (result.changes > 0) {
+      this.syncRulesWithServiceLimits(id, service);
+    }
+
     return result.changes > 0;
+  }
+
+  /**
+   * 同步更新使用该服务的规则的超量限制
+   * 当API服务的超量限制修改时，自动更新所有使用该服务的规则
+   */
+  private syncRulesWithServiceLimits(serviceId: string, service: Partial<APIService>): void {
+    // 获取所有使用该服务的规则
+    const rules = this.db.prepare('SELECT id FROM rules WHERE target_service_id = ?').all(serviceId) as any[];
+
+    if (rules.length === 0) {
+      return; // 没有规则使用此服务，无需同步
+    }
+
+    const now = Date.now();
+    const ruleIds = rules.map(r => r.id);
+
+    // Token超量限制同步
+    if (service.enableTokenLimit !== undefined || service.tokenLimit !== undefined ||
+        service.tokenResetInterval !== undefined || service.tokenResetBaseTime !== undefined) {
+
+      // 获取当前服务的最新配置
+      const currentService = this.db.prepare('SELECT enable_token_limit, token_limit, token_reset_interval, token_reset_base_time FROM api_services WHERE id = ?').get(serviceId) as any;
+
+      if (currentService && currentService.enable_token_limit === 1) {
+        // 启用了Token超量限制，同步到所有规则
+        this.db.prepare(
+          'UPDATE rules SET token_limit = ?, reset_interval = ?, token_reset_base_time = ?, updated_at = ? WHERE target_service_id = ?'
+        ).run(
+          currentService.token_limit,
+          currentService.token_reset_interval,
+          currentService.token_reset_base_time,
+          now,
+          serviceId
+        );
+
+        console.log(`[DB] Synced token limits for ${ruleIds.length} rule(s) using service ${serviceId}`);
+      }
+    }
+
+    // 请求次数超量限制同步
+    if (service.enableRequestLimit !== undefined || service.requestCountLimit !== undefined ||
+        service.requestResetInterval !== undefined || service.requestResetBaseTime !== undefined) {
+
+      // 获取当前服务的最新配置
+      const currentService = this.db.prepare('SELECT enable_request_limit, request_count_limit, request_reset_interval, request_reset_base_time FROM api_services WHERE id = ?').get(serviceId) as any;
+
+      if (currentService && currentService.enable_request_limit === 1) {
+        // 启用了请求次数超量限制，同步到所有规则
+        this.db.prepare(
+          'UPDATE rules SET request_count_limit = ?, request_reset_interval = ?, request_reset_base_time = ?, updated_at = ? WHERE target_service_id = ?'
+        ).run(
+          currentService.request_count_limit,
+          currentService.request_reset_interval,
+          currentService.request_reset_base_time,
+          now,
+          serviceId
+        );
+
+        console.log(`[DB] Synced request count limits for ${ruleIds.length} rule(s) using service ${serviceId}`);
+      }
+    }
   }
 
   deleteAPIService(id: string): boolean {

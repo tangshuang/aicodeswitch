@@ -473,7 +473,7 @@ function VendorsPage() {
       </div>
 
       <div style={{ display: 'flex', gap: '20px' }}>
-        <div className="card" style={{ flex: '0 0 33%' }}>
+        <div className="card" style={{ flex: '0 0 25%', minWidth: 400 }}>
           <div className="toolbar">
             <h3>供应商列表</h3>
             <div style={{ display: 'flex', gap: '10px' }}>

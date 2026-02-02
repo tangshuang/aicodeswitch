@@ -378,7 +378,7 @@ export default function RoutesPage() {
       replacedModel: selectedReplacedModel || undefined,
       sortOrder: selectedSortOrder,
       timeout: selectedTimeout ? selectedTimeout * 1000 : undefined, // 转换为毫秒
-      tokenLimit: selectedTokenLimit ? selectedTokenLimit * 1000 : undefined, // 转换为实际token数
+      tokenLimit: selectedTokenLimit || undefined, // k值（与Service保持一致）
       resetInterval: selectedResetInterval,
       tokenResetBaseTime: selectedTokenResetBaseTime ? selectedTokenResetBaseTime.getTime() : undefined,
       requestCountLimit: selectedRequestCountLimit,
@@ -467,7 +467,7 @@ export default function RoutesPage() {
         setSelectedReplacedModel(rule.replacedModel || '');
         setSelectedSortOrder(rule.sortOrder || 0);
         setSelectedTimeout(rule.timeout ? rule.timeout / 1000 : undefined); // 转换为秒
-        setSelectedTokenLimit(rule.tokenLimit ? rule.tokenLimit / 1000 : undefined); // 转换为k值
+        setSelectedTokenLimit(rule.tokenLimit || undefined); // k值（与Service保持一致）
         setSelectedResetInterval(rule.resetInterval);
         setSelectedTokenResetBaseTime(
           (rule as any).tokenResetBaseTime ? new Date((rule as any).tokenResetBaseTime) : undefined
@@ -479,9 +479,16 @@ export default function RoutesPage() {
         );
 
         // 设置API服务的限制值和继承状态
+        // 只有当规则的限制值与 API 服务的值完全一致时，才显示为继承状态
         if (service.enableTokenLimit && service.tokenLimit) {
           setMaxTokenLimit(service.tokenLimit);
-          setInheritedTokenLimit(true);
+          // 检查规则的限制是否与 API 服务一致
+          // 规则必须有完整的配置才认为是继承的
+          const isTokenInherited = rule.tokenLimit === service.tokenLimit &&
+                                   rule.resetInterval === (service.tokenResetInterval || undefined) &&
+                                   rule.tokenLimit !== null &&
+                                   rule.resetInterval !== null;
+          setInheritedTokenLimit(isTokenInherited);
         } else {
           setMaxTokenLimit(undefined);
           setInheritedTokenLimit(false);
@@ -489,7 +496,13 @@ export default function RoutesPage() {
 
         if (service.enableRequestLimit && service.requestCountLimit) {
           setMaxRequestCountLimit(service.requestCountLimit);
-          setInheritedRequestLimit(true);
+          // 检查规则的限制是否与 API 服务一致
+          // 规则必须有完整的配置才认为是继承的
+          const isRequestInherited = rule.requestCountLimit === service.requestCountLimit &&
+                                     rule.requestResetInterval === (service.requestResetInterval || undefined) &&
+                                     rule.requestCountLimit !== null &&
+                                     rule.requestResetInterval !== null;
+          setInheritedRequestLimit(isRequestInherited);
         } else {
           setMaxRequestCountLimit(undefined);
           setInheritedRequestLimit(false);
@@ -518,9 +531,9 @@ export default function RoutesPage() {
       }
     }
 
-    // 2. 检查token限制
+    // 2. 检查token限制（tokenLimit单位是k，需要乘以1000转换为实际token数）
     if (rule.tokenLimit && rule.totalTokensUsed !== undefined) {
-      if (rule.totalTokensUsed >= rule.tokenLimit) {
+      if (rule.totalTokensUsed >= rule.tokenLimit * 1000) {
         issues.push('Token超限');
       }
     }
@@ -547,7 +560,7 @@ export default function RoutesPage() {
     const warnings: string[] = [];
 
     if (rule.tokenLimit && rule.totalTokensUsed !== undefined) {
-      const usagePercent = (rule.totalTokensUsed / rule.tokenLimit) * 100;
+      const usagePercent = (rule.totalTokensUsed / (rule.tokenLimit * 1000)) * 100;
       if (usagePercent >= 80) {
         warnings.push(`Token ${usagePercent.toFixed(0)}%`);
       }
@@ -600,7 +613,7 @@ export default function RoutesPage() {
       </div>
 
       <div style={{ display: 'flex', gap: '20px' }}>
-        <div className="card" style={{ flex: '0 0 33%' }}>
+        <div className="card" style={{ flex: '0 0 25%', minWidth: 300 }}>
           <div className="toolbar">
             <h3>路由</h3>
             <button className="btn btn-primary" onClick={() => setShowRouteModal(true)}>新建</button>
@@ -892,11 +905,11 @@ export default function RoutesPage() {
                             {rule.tokenLimit ? (
                               <>
                                 <span style={{
-                                  color: rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit ? 'red' : 'inherit'
+                                  color: rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit * 1000 ? 'red' : 'inherit'
                                 }}>
-                                  {((rule.totalTokensUsed || 0) / 1000).toFixed(1)}K/{(rule.tokenLimit / 1000).toFixed(0)}K
+                                  {((rule.totalTokensUsed || 0) / 1000).toFixed(1)}K/{rule.tokenLimit.toFixed(0)}K
                                 </span>
-                                {rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit ? (
+                                {rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit * 1000 ? (
                                   <span style={{ color: 'red', marginLeft: '4px', fontWeight: 'bold', fontSize: '11px' }}>超限</span>
                                 ) : null}
                               </>
@@ -1167,6 +1180,7 @@ export default function RoutesPage() {
                     if (service) {
                       // 如果API服务启用了Token超量限制，自动填充并设置最大值
                       if (service.enableTokenLimit && service.tokenLimit) {
+                        // API服务的tokenLimit已经是k值，直接使用
                         setSelectedTokenLimit(service.tokenLimit);
                         setSelectedResetInterval(service.tokenResetInterval);
                         setSelectedTokenResetBaseTime(
@@ -1223,19 +1237,31 @@ export default function RoutesPage() {
 
               {/* Tokens超量配置 */}
               <div className="form-group">
-                <label style={{ display: 'flex', alignItems: 'center', cursor: inheritedTokenLimit ? 'not-allowed' : 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={showTokenLimit}
-                    onChange={(e) => setShowTokenLimit(e.target.checked)}
-                    disabled={inheritedTokenLimit}
-                    style={{ marginRight: '8px', cursor: inheritedTokenLimit ? 'not-allowed' : 'pointer', width: '16px', height: '16px' }}
-                  />
-                  <span>启用Tokens超量限制</span>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', cursor: inheritedTokenLimit ? 'not-allowed' : 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={showTokenLimit}
+                      onChange={(e) => setShowTokenLimit(e.target.checked)}
+                      disabled={inheritedTokenLimit}
+                      style={{ marginRight: '8px', cursor: inheritedTokenLimit ? 'not-allowed' : 'pointer', width: '16px', height: '16px' }}
+                    />
+                    <span>启用Tokens超量限制</span>
+                    {inheritedTokenLimit && (
+                      <small style={{ color: '#999', fontSize: '12px', marginLeft: '8px' }}>（从API服务继承）</small>
+                    )}
+                  </label>
                   {inheritedTokenLimit && (
-                    <small style={{ color: '#999', fontSize: '12px', marginLeft: '8px' }}>（从API服务继承，不可取消）</small>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-secondary"
+                      onClick={() => setInheritedTokenLimit(false)}
+                      style={{ padding: '4px 12px', fontSize: '12px' }}
+                    >
+                      自定义限制
+                    </button>
                   )}
-                </label>
+                </div>
               </div>
 
               {showTokenLimit && (
@@ -1253,21 +1279,23 @@ export default function RoutesPage() {
                           return;
                         }
                         setSelectedTokenLimit(value);
+                        // 如果值改变，自动解除继承状态
+                        if (inheritedTokenLimit && value !== maxTokenLimit) {
+                          setInheritedTokenLimit(false);
+                        }
                       }}
                       min="0"
                       max={maxTokenLimit}
-                      placeholder={inheritedTokenLimit ? `最大 ${maxTokenLimit}k` : "不限制"}
+                      placeholder={maxTokenLimit ? `最大 ${maxTokenLimit}k` : "不限制"}
                     />
-                    {inheritedTokenLimit && maxTokenLimit && (
+                    {maxTokenLimit && (
                       <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
                         ⚠️ API服务限制：最大 {maxTokenLimit}k，当前值不能超过此限制
                       </small>
                     )}
-                    {!inheritedTokenLimit && (
-                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                        当编程工具的请求tokens达到这个量时，在配置了其他规则的情况下，本条规则将失效，从而保护你的余额。例如：输入100表示100k即100,000个tokens
-                      </small>
-                    )}
+                    <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                      当编程工具的请求tokens达到这个量时，在配置了其他规则的情况下，本条规则将失效，从而保护你的余额。例如：输入100表示100k即100,000个tokens
+                    </small>
                   </div>
 
                   {/* 重置时间字段 */}
@@ -1276,21 +1304,19 @@ export default function RoutesPage() {
                     <input
                       type="number"
                       value={selectedResetInterval || ''}
-                      onChange={(e) => setSelectedResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
+                      onChange={(e) => {
+                        setSelectedResetInterval(e.target.value ? parseInt(e.target.value) : undefined);
+                        // 如果值改变，自动解除继承状态
+                        if (inheritedTokenLimit) {
+                          setInheritedTokenLimit(false);
+                        }
+                      }}
                       min="1"
                       placeholder="不自动重置"
-                      disabled={inheritedTokenLimit}
                     />
-                    {inheritedTokenLimit && (
-                      <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                        此配置从API服务继承，不可修改
-                      </small>
-                    )}
-                    {!inheritedTokenLimit && (
-                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                        设置后，系统将每隔指定小时数自动重置token计数。例如设置5小时，则每5小时重置一次
-                      </small>
-                    )}
+                    <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                      设置后，系统将每隔指定小时数自动重置token计数。例如设置5小时，则每5小时重置一次
+                    </small>
                   </div>
 
                   {/* Token下一次重置时间基点字段 */}
@@ -1305,39 +1331,48 @@ export default function RoutesPage() {
                         } else {
                           setSelectedTokenResetBaseTime(undefined);
                         }
+                        // 如果值改变，自动解除继承状态
+                        if (inheritedTokenLimit) {
+                          setInheritedTokenLimit(false);
+                        }
                       }}
-                      disabled={!selectedResetInterval || inheritedTokenLimit}
+                      disabled={!selectedResetInterval}
                       className="datetime-picker-input"
                     />
-                    {inheritedTokenLimit && (
-                      <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                        此配置从API服务继承，不可修改
-                      </small>
-                    )}
-                    {!inheritedTokenLimit && (
-                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                        配合"Tokens超量自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
-                      </small>
-                    )}
+                    <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                      配合"Tokens超量自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
+                    </small>
                   </div>
                 </>
               )}
 
               {/* 请求次数超量配置 */}
               <div className="form-group">
-                <label style={{ display: 'flex', alignItems: 'center', cursor: inheritedRequestLimit ? 'not-allowed' : 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={showRequestLimit}
-                    onChange={(e) => setShowRequestLimit(e.target.checked)}
-                    disabled={inheritedRequestLimit}
-                    style={{ marginRight: '8px', cursor: inheritedRequestLimit ? 'not-allowed' : 'pointer', width: '16px', height: '16px' }}
-                  />
-                  <span>启用请求次数超量限制</span>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', cursor: inheritedRequestLimit ? 'not-allowed' : 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={showRequestLimit}
+                      onChange={(e) => setShowRequestLimit(e.target.checked)}
+                      disabled={inheritedRequestLimit}
+                      style={{ marginRight: '8px', cursor: inheritedRequestLimit ? 'not-allowed' : 'pointer', width: '16px', height: '16px' }}
+                    />
+                    <span>启用请求次数超量限制</span>
+                    {inheritedRequestLimit && (
+                      <small style={{ color: '#999', fontSize: '12px', marginLeft: '8px' }}>（从API服务继承）</small>
+                    )}
+                  </label>
                   {inheritedRequestLimit && (
-                    <small style={{ color: '#999', fontSize: '12px', marginLeft: '8px' }}>（从API服务继承，不可取消）</small>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-secondary"
+                      onClick={() => setInheritedRequestLimit(false)}
+                      style={{ padding: '4px 12px', fontSize: '12px' }}
+                    >
+                      自定义限制
+                    </button>
                   )}
-                </label>
+                </div>
               </div>
 
               {showRequestLimit && (
@@ -1355,21 +1390,23 @@ export default function RoutesPage() {
                           return;
                         }
                         setSelectedRequestCountLimit(value);
+                        // 如果值改变，自动解除继承状态
+                        if (inheritedRequestLimit && value !== maxRequestCountLimit) {
+                          setInheritedRequestLimit(false);
+                        }
                       }}
                       min="0"
                       max={maxRequestCountLimit}
-                      placeholder={inheritedRequestLimit ? `最大 ${maxRequestCountLimit}` : "不限制"}
+                      placeholder={maxRequestCountLimit ? `最大 ${maxRequestCountLimit}` : "不限制"}
                     />
-                    {inheritedRequestLimit && maxRequestCountLimit && (
+                    {maxRequestCountLimit && (
                       <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
                         ⚠️ API服务限制：最大 {maxRequestCountLimit}，当前值不能超过此限制
                       </small>
                     )}
-                    {!inheritedRequestLimit && (
-                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                        当请求次数达到这个量时，在配置了其他规则的情况下，本条规则将失效
-                      </small>
-                    )}
+                    <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                      当请求次数达到这个量时，在配置了其他规则的情况下，本条规则将失效
+                    </small>
                   </div>
 
                   {/* 请求次数自动重置间隔字段 */}
@@ -1378,21 +1415,19 @@ export default function RoutesPage() {
                     <input
                       type="number"
                       value={selectedRequestResetInterval || ''}
-                      onChange={(e) => setSelectedRequestResetInterval(e.target.value ? parseInt(e.target.value) : undefined)}
+                      onChange={(e) => {
+                        setSelectedRequestResetInterval(e.target.value ? parseInt(e.target.value) : undefined);
+                        // 如果值改变，自动解除继承状态
+                        if (inheritedRequestLimit) {
+                          setInheritedRequestLimit(false);
+                        }
+                      }}
                       min="1"
                       placeholder="不自动重置"
-                      disabled={inheritedRequestLimit}
                     />
-                    {inheritedRequestLimit && (
-                      <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                        此配置从API服务继承，不可修改
-                      </small>
-                    )}
-                    {!inheritedRequestLimit && (
-                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                        设置后，系统将每隔指定小时数自动重置请求次数计数。例如设置24小时，则每24小时重置一次
-                      </small>
-                    )}
+                    <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                      设置后，系统将每隔指定小时数自动重置请求次数计数。例如设置24小时，则每24小时重置一次
+                    </small>
                   </div>
 
                   {/* 下一次重置时间基点字段 */}
@@ -1407,20 +1442,17 @@ export default function RoutesPage() {
                         } else {
                           setSelectedRequestResetBaseTime(undefined);
                         }
+                        // 如果值改变，自动解除继承状态
+                        if (inheritedRequestLimit) {
+                          setInheritedRequestLimit(false);
+                        }
                       }}
-                      disabled={!selectedRequestResetInterval || inheritedRequestLimit}
+                      disabled={!selectedRequestResetInterval}
                       className="datetime-picker-input"
                     />
-                    {inheritedRequestLimit && (
-                      <small style={{ color: '#999', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                        此配置从API服务继承，不可修改
-                      </small>
-                    )}
-                    {!inheritedRequestLimit && (
-                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                        配合"请求次数自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
-                      </small>
-                    )}
+                    <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                      配合"请求次数自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
+                    </small>
                   </div>
                 </>
               )}

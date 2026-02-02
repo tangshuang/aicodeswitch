@@ -18,9 +18,8 @@ const stop = async (options = {}) => {
 
   // 第一步：如果 PID 文件存在，优先通过 PID 文件停止服务器
   if (fs.existsSync(PID_FILE)) {
+    const pid = parseInt(fs.readFileSync(PID_FILE, 'utf-8'), 10);
     try {
-      const pid = parseInt(fs.readFileSync(PID_FILE, 'utf-8'), 10);
-
       const processInfo = await getProcessInfo(pid);
       if (!silent) {
         console.log('\n' + chalk.gray(`Process found: ${chalk.white(pid)} (${chalk.gray(processInfo)})`));
