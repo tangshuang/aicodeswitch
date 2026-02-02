@@ -22,14 +22,17 @@ import {
 } from './config-metadata';
 import { SKILLSMP_API_KEY } from './config';
 
-const dotenvPath = path.resolve(os.homedir(), '.aicodeswitch/aicodeswitch.conf');
+const appDir = path.join(os.homedir(), '.aicodeswitch');
+const dataDir = path.join(appDir, 'data');
+const dotenvPath = path.resolve(appDir, 'aicodeswitch.conf');
+const migrationHashFilePath = path.join(appDir, 'migration-hash');
+
 if (fs.existsSync(dotenvPath)) {
   dotenv.config({ path: dotenvPath });
 }
 
 const host = process.env.HOST || '127.0.0.1';
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
-const dataDir = process.env.DATA_DIR ? path.resolve(process.cwd(), process.env.DATA_DIR) : path.join(os.homedir(), '.aicodeswitch/data');
 
 let globalProxyConfig: { enabled: boolean; url: string; username?: string; password?: string } | null = null;
 
@@ -1608,9 +1611,6 @@ ${instruction}
     res.type('text/plain').send(text);
   }));
 
-  // Migration 相关端点
-  const getMigrationHashPath = () => path.join(dataDir, '.migration-hash');
-
   // 查找 migration.md 文件的路径
   const findMigrationPath = (): string | null => {
     // 可能的路径列表
@@ -1639,24 +1639,21 @@ ${instruction}
         return;
       }
 
-      const content = fs.readFileSync(migrationPath, 'utf-8');
+      const content = fs.readFileSync(migrationPath, 'utf-8').trim();
 
       // 计算当前内容的 hash
       const currentHash = createHash('sha256').update(content).digest('hex');
 
-      // 读取之前保存的 hash
-      const hashPath = getMigrationHashPath();
-
       // 如果 hash 文件不存在，说明是第一次安装
-      if (!fs.existsSync(hashPath)) {
+      if (!fs.existsSync(migrationHashFilePath)) {
         // 第一次安装，直接保存当前 hash，不显示弹窗
-        fs.writeFileSync(hashPath, currentHash, 'utf-8');
+        fs.writeFileSync(migrationHashFilePath, currentHash, 'utf-8');
         res.json({ shouldShow: false, content: '' });
         return;
       }
 
       // 读取已保存的 hash
-      const savedHash = fs.readFileSync(hashPath, 'utf-8').trim();
+      const savedHash = fs.readFileSync(migrationHashFilePath, 'utf-8').trim();
 
       // 如果 hash 不同，需要显示弹窗
       const shouldShow = savedHash !== currentHash;
@@ -1677,12 +1674,11 @@ ${instruction}
         return;
       }
 
-      const content = fs.readFileSync(migrationPath, 'utf-8');
+      const content = fs.readFileSync(migrationPath, 'utf-8').trim();
       const hash = createHash('sha256').update(content).digest('hex');
 
       // 保存 hash 到文件
-      const hashPath = getMigrationHashPath();
-      fs.writeFileSync(hashPath, hash, 'utf-8');
+      fs.writeFileSync(migrationHashFilePath, hash, 'utf-8');
 
       res.json({ success: true });
     } catch (error) {
