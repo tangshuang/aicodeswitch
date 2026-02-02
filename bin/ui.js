@@ -7,19 +7,24 @@ const { getServerInfo } = require('./utils/get-server');
 
 const openBrowser = (url) => {
   let command;
+  let args;
 
   if (os.platform() === 'darwin') {
     command = 'open';
+    args = [url];
   } else if (os.platform() === 'win32') {
-    command = 'start';
+    command = 'cmd';
+    args = ['/c', 'start', '', url]; // 空字符串作为窗口标题
   } else {
     // Linux and others
     command = 'xdg-open';
+    args = [url];
   }
 
-  const child = spawn(command, [url], {
+  const child = spawn(command, args, {
     detached: true,
-    stdio: 'ignore'
+    stdio: 'ignore',
+    shell: os.platform() === 'win32' // Windows 需要 shell
   });
 
   child.unref();
