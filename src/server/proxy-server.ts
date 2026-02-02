@@ -684,8 +684,8 @@ export class ProxyServer {
         this.dbManager.checkAndResetRuleIfNeeded(rule.id);
         this.dbManager.checkAndResetRequestCountIfNeeded(rule.id);
 
-        // 检查token限制
-        if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit) {
+        // 检查token限制（tokenLimit单位是k，需要乘以1000转换为实际token数）
+        if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit * 1000) {
           continue; // 跳过超限规则
         }
 
@@ -717,8 +717,8 @@ export class ProxyServer {
       this.dbManager.checkAndResetRuleIfNeeded(rule.id);
       this.dbManager.checkAndResetRequestCountIfNeeded(rule.id);
 
-      // 检查token限制
-      if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit) {
+      // 检查token限制（tokenLimit单位是k，需要乘以1000转换为实际token数）
+      if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit * 1000) {
         continue; // 跳过超限规则
       }
 
@@ -748,8 +748,8 @@ export class ProxyServer {
       this.dbManager.checkAndResetRuleIfNeeded(rule.id);
       this.dbManager.checkAndResetRequestCountIfNeeded(rule.id);
 
-      // 检查token限制
-      if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit) {
+      // 检查token限制（tokenLimit单位是k，需要乘以1000转换为实际token数）
+      if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit * 1000) {
         continue; // 跳过超限规则
       }
 
@@ -800,9 +800,9 @@ export class ProxyServer {
     // 5. 过滤掉超过限制的规则（仅在有多个候选规则时）
     if (candidates.length > 1) {
       const filteredCandidates = candidates.filter(rule => {
-        // 检查token限制
+        // 检查token限制（tokenLimit单位是k，需要乘以1000转换为实际token数）
         if (rule.tokenLimit && rule.totalTokensUsed !== undefined) {
-          if (rule.totalTokensUsed >= rule.tokenLimit) {
+          if (rule.totalTokensUsed >= rule.tokenLimit * 1000) {
             return false;
           }
         }
@@ -1663,9 +1663,49 @@ export class ProxyServer {
             void finalizeLog(res.statusCode);
           });
 
-          pipeline(response.data, parser, eventCollector, converter, serializer, res, (error) => {
+          // 监听 res 的错误事件
+          res.on('error', (err) => {
+            console.error('[Proxy] Response stream error:', err);
+          });
+
+          pipeline(response.data, parser, eventCollector, converter, serializer, res, async (error) => {
             if (error) {
-              void finalizeLog(500, error.message);
+              console.error('[Proxy] Pipeline error for claude-code:', error);
+
+              // 记录到错误日志
+              try {
+                await this.dbManager.addErrorLog({
+                  timestamp: Date.now(),
+                  method: req.method,
+                  path: req.path,
+                  statusCode: 500,
+                  errorMessage: error.message || 'Stream processing error',
+                  errorStack: error.stack,
+                  requestHeaders: this.normalizeHeaders(req.headers),
+                  requestBody: req.body ? JSON.stringify(req.body) : undefined,
+                });
+              } catch (logError) {
+                console.error('[Proxy] Failed to log error:', logError);
+              }
+
+              // 尝试向客户端发送错误事件
+              try {
+                if (!res.writableEnded) {
+                  const errorEvent = `event: error\ndata: ${JSON.stringify({
+                    type: 'error',
+                    error: {
+                      type: 'api_error',
+                      message: 'Stream processing error occurred'
+                    }
+                  })}\n\n`;
+                  res.write(errorEvent);
+                  res.end();
+                }
+              } catch (writeError) {
+                console.error('[Proxy] Failed to send error event:', writeError);
+              }
+
+              await finalizeLog(500, error.message);
             }
           });
           return;
@@ -1698,9 +1738,45 @@ export class ProxyServer {
             void finalizeLog(res.statusCode);
           });
 
-          pipeline(response.data, parser, eventCollector, converter, serializer, res, (error) => {
+          // 监听 res 的错误事件
+          res.on('error', (err) => {
+            console.error('[Proxy] Response stream error:', err);
+          });
+
+          pipeline(response.data, parser, eventCollector, converter, serializer, res, async (error) => {
             if (error) {
-              void finalizeLog(500, error.message);
+              console.error('[Proxy] Pipeline error for codex:', error);
+
+              // 记录到错误日志
+              try {
+                await this.dbManager.addErrorLog({
+                  timestamp: Date.now(),
+                  method: req.method,
+                  path: req.path,
+                  statusCode: 500,
+                  errorMessage: error.message || 'Stream processing error',
+                  errorStack: error.stack,
+                  requestHeaders: this.normalizeHeaders(req.headers),
+                  requestBody: req.body ? JSON.stringify(req.body) : undefined,
+                });
+              } catch (logError) {
+                console.error('[Proxy] Failed to log error:', logError);
+              }
+
+              // 尝试向客户端发送错误事件
+              try {
+                if (!res.writableEnded) {
+                  const errorEvent = `data: ${JSON.stringify({
+                    error: 'Stream processing error occurred'
+                  })}\n\n`;
+                  res.write(errorEvent);
+                  res.end();
+                }
+              } catch (writeError) {
+                console.error('[Proxy] Failed to send error event:', writeError);
+              }
+
+              await finalizeLog(500, error.message);
             }
           });
           return;
@@ -1711,6 +1787,12 @@ export class ProxyServer {
         responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
 
         this.copyResponseHeaders(responseHeaders, res);
+
+        // 监听 res 的错误事件
+        res.on('error', (err) => {
+          console.error('[Proxy] Response stream error:', err);
+        });
+
         res.on('finish', () => {
           streamChunksForLog = eventCollector.getChunks();
           // 尝试从event collector中提取usage信息
@@ -1720,9 +1802,28 @@ export class ProxyServer {
           }
           void finalizeLog(res.statusCode);
         });
-        pipeline(response.data, eventCollector, res, (error) => {
+
+        pipeline(response.data, eventCollector, res, async (error) => {
           if (error) {
-            void finalizeLog(500, error.message);
+            console.error('[Proxy] Pipeline error (default stream):', error);
+
+            // 记录到错误日志
+            try {
+              await this.dbManager.addErrorLog({
+                timestamp: Date.now(),
+                method: req.method,
+                path: req.path,
+                statusCode: 500,
+                errorMessage: error.message || 'Stream processing error',
+                errorStack: error.stack,
+                requestHeaders: this.normalizeHeaders(req.headers),
+                requestBody: req.body ? JSON.stringify(req.body) : undefined,
+              });
+            } catch (logError) {
+              console.error('[Proxy] Failed to log error:', logError);
+            }
+
+            await finalizeLog(500, error.message);
           }
         });
         return;

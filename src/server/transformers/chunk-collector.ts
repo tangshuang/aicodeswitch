@@ -16,19 +16,39 @@ export interface SSEEvent {
  */
 export class ChunkCollectorTransform extends Transform {
   private chunks: string[] = [];
+  private errorEmitted = false;
 
   constructor() {
-    super();
+    super({ writableObjectMode: true, readableObjectMode: true });
+
+    this.on('error', (err) => {
+      console.error('[ChunkCollectorTransform] Stream error:', err);
+      this.errorEmitted = true;
+    });
   }
 
-  _transform(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void) {
-    // 收集chunk数据
-    this.chunks.push(chunk.toString('utf8'));
+  _transform(chunk: any, _encoding: BufferEncoding, callback: (error?: Error | null) => void) {
+    if (this.errorEmitted) {
+      callback();
+      return;
+    }
 
-    // 将chunk传递给下一个stream
-    this.push(chunk);
+    try {
+      // 收集chunk数据 - 支持对象和Buffer/string
+      if (typeof chunk === 'object' && chunk !== null && !Buffer.isBuffer(chunk)) {
+        this.chunks.push(JSON.stringify(chunk));
+      } else {
+        this.chunks.push(chunk.toString('utf8'));
+      }
 
-    callback();
+      // 将chunk传递给下一个stream
+      this.push(chunk);
+
+      callback();
+    } catch (error) {
+      console.error('[ChunkCollectorTransform] Error in _transform:', error);
+      callback();
+    }
   }
 
   /**
@@ -58,27 +78,76 @@ export class SSEEventCollectorTransform extends Transform {
     rawLines: []
   };
   private events: SSEEvent[] = [];
+  private errorEmitted = false;
 
   constructor() {
-    super();
+    super({ writableObjectMode: true, readableObjectMode: true });
+
+    this.on('error', (err) => {
+      console.error('[SSEEventCollectorTransform] Stream error:', err);
+      this.errorEmitted = true;
+    });
   }
 
-  _transform(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void) {
-    this.buffer += chunk.toString('utf8');
-    this.processBuffer();
-    // 将chunk传递给下一个stream
-    this.push(chunk);
-    callback();
+  _transform(chunk: any, _encoding: BufferEncoding, callback: (error?: Error | null) => void) {
+    if (this.errorEmitted) {
+      callback();
+      return;
+    }
+
+    try {
+      // 如果是对象（来自 SSEParserTransform），先转换为字符串格式进行处理
+      if (typeof chunk === 'object' && chunk !== null) {
+        const sseEvent = chunk as { event?: string; id?: string; data?: any };
+        const lines: string[] = [];
+        if (sseEvent.event) lines.push(`event: ${sseEvent.event}`);
+        if (sseEvent.id) lines.push(`id: ${sseEvent.id}`);
+        if (sseEvent.data !== undefined) {
+          if (typeof sseEvent.data === 'string') {
+            lines.push(`data: ${sseEvent.data}`);
+          } else {
+            lines.push(`data: ${JSON.stringify(sseEvent.data)}`);
+          }
+        }
+        if (lines.length > 0) {
+          this.currentEvent.rawLines.push(...lines);
+          if (sseEvent.event) this.currentEvent.event = sseEvent.event;
+          if (sseEvent.id) this.currentEvent.id = sseEvent.id;
+          if (sseEvent.data !== undefined) {
+            const dataStr = typeof sseEvent.data === 'string' ? sseEvent.data : JSON.stringify(sseEvent.data);
+            this.currentEvent.dataLines.push(dataStr);
+          }
+          this.flushEvent();
+        }
+        // 将原始对象传递给下一个stream
+        this.push(chunk);
+      } else {
+        // Buffer/string 模式
+        this.buffer += chunk.toString('utf8');
+        this.processBuffer();
+        // 将chunk传递给下一个stream
+        this.push(chunk);
+      }
+      callback();
+    } catch (error) {
+      console.error('[SSEEventCollectorTransform] Error in _transform:', error);
+      callback();
+    }
   }
 
   _flush(callback: (error?: Error | null) => void) {
-    // 处理剩余的buffer
-    if (this.buffer.trim()) {
-      this.processBuffer();
+    try {
+      // 处理剩余的buffer
+      if (this.buffer.trim()) {
+        this.processBuffer();
+      }
+      // 刷新最后一个事件
+      this.flushEvent();
+      callback();
+    } catch (error) {
+      console.error('[SSEEventCollectorTransform] Error in _flush:', error);
+      callback();
     }
-    // 刷新最后一个事件
-    this.flushEvent();
-    callback();
   }
 
   private processBuffer() {

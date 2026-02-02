@@ -71,8 +71,8 @@ function getProxyAgent() {
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: 'Infinity' }));
+app.use(express.urlencoded({ extended: true, limit: 'Infinity' }));
 
 const asyncHandler =
   (handler: (req: Request, res: Response, next: NextFunction) => Promise<void> | void) =>
@@ -1731,6 +1731,18 @@ const start = async () => {
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error(err);
   res.status(500).json({ error: err.message || 'Internal server error' });
+});
+
+// 全局未捕获异常处理 - 防止服务崩溃
+process.on('uncaughtException', (error: Error) => {
+  console.error('[Uncaught Exception] 服务遇到未捕获的异常:', error);
+  console.error('[Uncaught Exception] 堆栈信息:', error.stack);
+  // 不退出进程，继续运行
+});
+
+process.on('unhandledRejection', (reason: unknown) => {
+  console.error('[Unhandled Rejection] 服务遇到未处理的 Promise 拒绝:', reason);
+  // 不退出进程，继续运行
 });
 
 start().catch((error) => {
