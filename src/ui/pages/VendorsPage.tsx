@@ -481,31 +481,12 @@ function VendorsPage() {
               <button
                 className="btn btn-secondary"
                 style={{
-                  background: 'linear-gradient(135deg, #2563EB 0%, #F97316 100%)',
+                  background: '#2563EB',
                   color: '#FFFFFF',
-                  boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)',
                   border: 'none',
-                  transition: 'all 0.3s ease',
                   cursor: 'pointer',
-                  fontWeight: '600',
-                  letterSpacing: '0.5px'
                 }}
                 onClick={handleRecommend}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = '0 8px 20px rgba(37, 99, 235, 0.4)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(37, 99, 235, 0.3)';
-                }}
-                onFocus={(e) => {
-                  e.currentTarget.style.outline = '2px solid #2563EB';
-                  e.currentTarget.style.outlineOffset = '2px';
-                }}
-                onBlur={(e) => {
-                  e.currentTarget.style.outline = 'none';
-                }}
               >
                 推荐
               </button>

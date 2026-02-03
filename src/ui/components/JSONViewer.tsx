@@ -6,11 +6,83 @@ interface JSONViewerProps {
   collapsed?: boolean;
 }
 
+// 敏感字段列表（不区分大小写）
+const SENSITIVE_KEYS = [
+  'authorization',
+  'x-api-key',
+  'api-key',
+  'apikey',
+  'x-auth-token',
+  'auth-token',
+  'bearer',
+  'token',
+  'secret',
+  'password',
+  'api_secret',
+  'access_token',
+  'refresh_token',
+  'session_token',
+  'private_key',
+  'client_secret',
+];
+
+/**
+ * 检查键名是否为敏感字段
+ */
+const isSensitiveKey = (key: string): boolean => {
+  const lowerKey = key.toLowerCase();
+  return SENSITIVE_KEYS.some(sensitive => lowerKey.includes(sensitive));
+};
+
+/**
+ * 脱敏处理敏感数据
+ */
+const maskSensitiveValue = (value: string): string => {
+  if (!value || value.length <= 8) {
+    return '***';
+  }
+  // 保留前4个字符和后4个字符，中间用星号代替
+  return `${value.slice(0, 4)}${'*'.repeat(Math.min(value.length - 8, 20))}${value.slice(-4)}`;
+};
+
+/**
+ * 递归清理对象中的敏感数据
+ */
+const sanitizeData = (data: any): any => {
+  if (data === null || data === undefined) {
+    return data;
+  }
+
+  // 处理数组
+  if (Array.isArray(data)) {
+    return data.map(item => sanitizeData(item));
+  }
+
+  // 处理对象
+  if (typeof data === 'object') {
+    const sanitized: any = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (isSensitiveKey(key)) {
+        // 对敏感字段进行脱敏
+        sanitized[key] = typeof value === 'string' ? maskSensitiveValue(value) : '***';
+      } else if (typeof value === 'object') {
+        // 递归处理嵌套对象
+        sanitized[key] = sanitizeData(value);
+      } else {
+        sanitized[key] = value;
+      }
+    }
+    return sanitized;
+  }
+
+  return data;
+};
+
 const JSONViewer: React.FC<JSONViewerProps> = ({ data, title, collapsed = false }) => {
   const [isExpanded, setIsExpanded] = useState(!collapsed);
   const [copySuccess, setCopySuccess] = useState(false);
 
-  // 格式化 JSON 数据
+  // 格式化 JSON 数据（带脱敏处理）
   const formatJSON = (input: string | Record<string, any> | any[]): string => {
     try {
       let jsonData: any;
@@ -19,7 +91,9 @@ const JSONViewer: React.FC<JSONViewerProps> = ({ data, title, collapsed = false 
       } else {
         jsonData = input;
       }
-      return JSON.stringify(jsonData, null, 2);
+      // 对敏感数据进行脱敏处理
+      const sanitizedData = sanitizeData(jsonData);
+      return JSON.stringify(sanitizedData, null, 2);
     } catch (error) {
       return typeof input === 'string' ? input : String(input);
     }

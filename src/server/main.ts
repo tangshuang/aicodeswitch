@@ -880,6 +880,7 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
   app.delete('/api/rules/:id', (req, res) => res.json(dbManager.deleteRule(req.params.id)));
   app.put('/api/rules/:id/reset-tokens', (req, res) => res.json(dbManager.resetRuleTokenUsage(req.params.id)));
   app.put('/api/rules/:id/reset-requests', (req, res) => res.json(dbManager.resetRuleRequestCount(req.params.id)));
+  app.put('/api/rules/:id/toggle-disable', (req, res) => res.json(dbManager.toggleRuleDisabled(req.params.id)));
 
   // 解除规则的黑名单状态
   app.put(

@@ -247,7 +247,7 @@ export default function RoutesPage() {
           setTimeout(() => {
             const newRouteElement = routeRefs.current.get(id);
             if (newRouteElement) {
-              applyAnimation(id, newRouteElement, 400);
+              applyAnimation(id, newRouteElement, 250);
             }
             activatingRouteIdRef.current = null;
           }, 0);
@@ -443,6 +443,18 @@ export default function RoutesPage() {
       toast.success('已恢复');
     } catch (error: any) {
       toast.error('恢复失败: ' + error.message);
+    }
+  };
+
+  const handleToggleRuleDisable = async (id: string) => {
+    try {
+      const result = await api.toggleRuleDisable(id);
+      if (selectedRoute) {
+        loadRules(selectedRoute.id);
+      }
+      toast.success(result.isDisabled ? '规则已屏蔽' : '规则已启用');
+    } catch (error: any) {
+      toast.error('操作失败: ' + error.message);
     }
   };
 
@@ -642,18 +654,7 @@ export default function RoutesPage() {
                     borderRadius: '8px',
                     cursor: 'pointer',
                     border: '1px solid var(--border-primary)',
-                    transition: 'all 0.2s ease',
                     position: 'relative',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (selectedRoute?.id !== route.id) {
-                      e.currentTarget.style.backgroundColor = 'var(--bg-route-item-hover)';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (selectedRoute?.id !== route.id) {
-                      e.currentTarget.style.backgroundColor = 'var(--bg-route-item)';
-                    }
                   }}
                 >
                   <div>
@@ -824,6 +825,18 @@ export default function RoutesPage() {
                             !ruleStatus.reason?.includes('Token超限') &&
                             !ruleStatus.reason?.includes('次数超限');
 
+                          // 如果规则被屏蔽，显示屏蔽状态
+                          if (rule.isDisabled) {
+                            return (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ color: '#6c757d', fontWeight: 'bold', fontSize: '14px' }}>⊘</span>
+                                <span style={{ fontSize: '13px', color: '#6c757d', fontWeight: 'bold' }}>
+                                  已屏蔽
+                                </span>
+                              </div>
+                            );
+                          }
+
                           return (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -938,7 +951,14 @@ export default function RoutesPage() {
                         </div>
                       </td>
                       <td>
-                        <div className="action-buttons">
+                        <div className="action-buttons" style={{ justifyContent: 'flex-end' }}>
+                          <button
+                            className={`btn ${rule.isDisabled ? 'btn-success' : 'btn-warning'}`}
+                            onClick={() => handleToggleRuleDisable(rule.id)}
+                            title={rule.isDisabled ? '启用规则' : '临时屏蔽规则'}
+                          >
+                            {rule.isDisabled ? '启用' : '屏蔽'}
+                          </button>
                           <button className="btn btn-secondary" onClick={() => handleEditRule(rule)}>编辑</button>
                           {/* {rule.tokenLimit && (
                             <button className="btn btn-info" onClick={() => handleResetTokens(rule.id)}>重置Token</button>
@@ -1141,18 +1161,6 @@ export default function RoutesPage() {
                 </div>
               )}
 
-              {/* 新增：排序字段 */}
-              <div className="form-group">
-                <label>排序（值越大优先级越高）</label>
-                <input
-                  type="number"
-                  value={selectedSortOrder}
-                  onChange={(e) => setSelectedSortOrder(parseInt(e.target.value) || 0)}
-                  min="0"
-                  max="1000"
-                />
-              </div>
-
               <div className="form-group">
                 <label>供应商</label>
                 <select
@@ -1264,7 +1272,7 @@ export default function RoutesPage() {
                 </div>
               </div>
 
-              {showTokenLimit && (
+              {showTokenLimit && !inheritedTokenLimit && (
                 <>
                   {/* Tokens超量字段 */}
                   <div className="form-group">
@@ -1287,6 +1295,7 @@ export default function RoutesPage() {
                       min="0"
                       max={maxTokenLimit}
                       placeholder={maxTokenLimit ? `最大 ${maxTokenLimit}k` : "不限制"}
+                      disabled={inheritedTokenLimit}
                     />
                     {maxTokenLimit && (
                       <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
@@ -1313,6 +1322,7 @@ export default function RoutesPage() {
                       }}
                       min="1"
                       placeholder="不自动重置"
+                      disabled={inheritedTokenLimit}
                     />
                     <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
                       设置后，系统将每隔指定小时数自动重置token计数。例如设置5小时，则每5小时重置一次
@@ -1336,7 +1346,7 @@ export default function RoutesPage() {
                           setInheritedTokenLimit(false);
                         }
                       }}
-                      disabled={!selectedResetInterval}
+                      disabled={!selectedResetInterval || inheritedTokenLimit}
                       className="datetime-picker-input"
                     />
                     <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
@@ -1375,7 +1385,7 @@ export default function RoutesPage() {
                 </div>
               </div>
 
-              {showRequestLimit && (
+              {showRequestLimit && !inheritedRequestLimit && (
                 <>
                   {/* 请求次数超量字段 */}
                   <div className="form-group">
@@ -1398,6 +1408,7 @@ export default function RoutesPage() {
                       min="0"
                       max={maxRequestCountLimit}
                       placeholder={maxRequestCountLimit ? `最大 ${maxRequestCountLimit}` : "不限制"}
+                      disabled={inheritedRequestLimit}
                     />
                     {maxRequestCountLimit && (
                       <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
@@ -1424,6 +1435,7 @@ export default function RoutesPage() {
                       }}
                       min="1"
                       placeholder="不自动重置"
+                      disabled={inheritedRequestLimit}
                     />
                     <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
                       设置后，系统将每隔指定小时数自动重置请求次数计数。例如设置24小时，则每24小时重置一次
@@ -1447,7 +1459,7 @@ export default function RoutesPage() {
                           setInheritedRequestLimit(false);
                         }
                       }}
-                      disabled={!selectedRequestResetInterval}
+                      disabled={!selectedRequestResetInterval || inheritedRequestLimit}
                       className="datetime-picker-input"
                     />
                     <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
@@ -1470,6 +1482,18 @@ export default function RoutesPage() {
                 <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
                   设置此规则的API请求超时时间。不设置则使用默认值300秒（5分钟）
                 </small>
+              </div>
+
+              {/* 排序字段 */}
+              <div className="form-group">
+                <label>排序（值越大优先级越高）</label>
+                <input
+                  type="number"
+                  value={selectedSortOrder}
+                  onChange={(e) => setSelectedSortOrder(parseInt(e.target.value) || 0)}
+                  min="0"
+                  max="1000"
+                />
               </div>
 
               <div className="modal-footer">

@@ -178,7 +178,9 @@ export const transformClaudeRequestToOpenAIChat = (body: ClaudeRequest, targetMo
       const mappedRole = (message.role === 'system' && useDeveloperRole) ? 'developer' : message.role;
 
       if (typeof message.content === 'string' || message.content === null) {
-        messages.push({ role: mappedRole, content: message.content });
+        // 处理 content 为 null 的情况，使用空字符串替代
+        const content = message.content === null ? '' : message.content;
+        messages.push({ role: mappedRole, content });
         continue;
       }
 
@@ -217,7 +219,8 @@ export const transformClaudeRequestToOpenAIChat = (body: ClaudeRequest, targetMo
           }
         }
 
-        const content = textParts.length > 0 ? textParts.join('') : null;
+        // 避免 content 为 null，使用空字符串替代
+        const content = textParts.length > 0 ? textParts.join('') : '';
         const openaiMessage: any = {
           role: mappedRole,
           content,
