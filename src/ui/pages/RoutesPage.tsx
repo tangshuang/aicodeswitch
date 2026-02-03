@@ -4,6 +4,7 @@ import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntr
 import { useFlipAnimation } from '../hooks/useFlipAnimation';
 import { useConfirm } from '../components/Confirm';
 import { toast } from '../components/Toast';
+import { useRulesStatus } from '../hooks/useRulesStatus';
 
 const CONTENT_TYPE_OPTIONS = [
   { value: 'default', label: '默认' },
@@ -52,6 +53,7 @@ const getConfigApi = (targetType: 'claude-code' | 'codex') => {
 
 export default function RoutesPage() {
   const { confirm } = useConfirm();
+  const { ruleStatuses, isConnected: wsConnected } = useRulesStatus();
   const [routes, setRoutes] = useState<Route[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -533,6 +535,16 @@ export default function RoutesPage() {
     const blacklistStatus = blacklistStatuses[rule.id];
     const issues: string[] = [];
 
+    // 0. 首先检查是否正在使用（从 WebSocket 状态）
+    const wsStatus = ruleStatuses[rule.id];
+    if (wsStatus?.status === 'in_use') {
+      return {
+        status: 'in_use',
+        label: '使用中',
+        reason: '正在处理请求'
+      };
+    }
+
     // 1. 检查黑名单（包括timeout）
     if (blacklistStatus?.isBlacklisted) {
       const entry = blacklistStatus.blacklistEntry;
@@ -544,15 +556,25 @@ export default function RoutesPage() {
     }
 
     // 2. 检查token限制（tokenLimit单位是k，需要乘以1000转换为实际token数）
-    if (rule.tokenLimit && rule.totalTokensUsed !== undefined) {
-      if (rule.totalTokensUsed >= rule.tokenLimit * 1000) {
+    // 使用 WebSocket 实时数据，如果有的话
+    const currentTokensUsed = wsStatus?.totalTokensUsed !== undefined
+      ? wsStatus.totalTokensUsed
+      : rule.totalTokensUsed;
+
+    if (rule.tokenLimit && currentTokensUsed !== undefined) {
+      if (currentTokensUsed >= rule.tokenLimit * 1000) {
         issues.push('Token超限');
       }
     }
 
     // 3. 检查请求次数限制
-    if (rule.requestCountLimit && rule.totalRequestsUsed !== undefined) {
-      if (rule.totalRequestsUsed >= rule.requestCountLimit) {
+    // 使用 WebSocket 实时数据，如果有的话
+    const currentRequestsUsed = wsStatus?.totalRequestsUsed !== undefined
+      ? wsStatus.totalRequestsUsed
+      : rule.totalRequestsUsed;
+
+    if (rule.requestCountLimit && currentRequestsUsed !== undefined) {
+      if (currentRequestsUsed >= rule.requestCountLimit) {
         issues.push('次数超限');
       }
     }
@@ -571,15 +593,15 @@ export default function RoutesPage() {
     // 检查警告状态
     const warnings: string[] = [];
 
-    if (rule.tokenLimit && rule.totalTokensUsed !== undefined) {
-      const usagePercent = (rule.totalTokensUsed / (rule.tokenLimit * 1000)) * 100;
+    if (rule.tokenLimit && currentTokensUsed !== undefined) {
+      const usagePercent = (currentTokensUsed / (rule.tokenLimit * 1000)) * 100;
       if (usagePercent >= 80) {
         warnings.push(`Token ${usagePercent.toFixed(0)}%`);
       }
     }
 
-    if (rule.requestCountLimit && rule.totalRequestsUsed !== undefined) {
-      const usagePercent = (rule.totalRequestsUsed / rule.requestCountLimit) * 100;
+    if (rule.requestCountLimit && currentRequestsUsed !== undefined) {
+      const usagePercent = (currentRequestsUsed / rule.requestCountLimit) * 100;
       if (usagePercent >= 80) {
         warnings.push(`次数 ${usagePercent.toFixed(0)}%`);
       }
@@ -816,7 +838,7 @@ export default function RoutesPage() {
                           <span>{rule.targetModel || '透传模型'}</span>
                         </div>
                       </td>
-                      <td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
                         {/* 新增：状态列 */}
                         {(() => {
                           const ruleStatus = getRuleStatus(rule);
@@ -849,10 +871,25 @@ export default function RoutesPage() {
                                 {ruleStatus.status === 'error' && (
                                   <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '14px' }}>✗</span>
                                 )}
+                                {ruleStatus.status === 'in_use' && (
+                                  <>
+                                    <span
+                                      style={{
+                                        color: '#007bff',
+                                        fontWeight: 'bold',
+                                        fontSize: '14px',
+                                        animation: 'pulse 1.5s ease-in-out infinite',
+                                      }}
+                                    >
+                                        ●
+                                      </span>
+                                    </>
+                                )}
                                 <span style={{
                                   fontSize: '13px',
                                   color: ruleStatus.status === 'success' ? '#28a745' :
                                          ruleStatus.status === 'warning' ? '#ffc107' :
+                                         ruleStatus.status === 'in_use' ? '#007bff' :
                                          '#dc3545',
                                   fontWeight: ruleStatus.status !== 'success' ? 'bold' : 'normal'
                                 }}>
@@ -917,14 +954,21 @@ export default function RoutesPage() {
                             <span style={{ fontWeight: 'bold', fontSize: '12px' }}>Token:</span>
                             {rule.tokenLimit ? (
                               <>
+                                {/* 使用 WebSocket 实时数据 */}
                                 <span style={{
-                                  color: rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit * 1000 ? 'red' : 'inherit'
+                                  color: (() => {
+                                    const currentTokensUsed = ruleStatuses[rule.id]?.totalTokensUsed ?? rule.totalTokensUsed;
+                                    return currentTokensUsed && rule.tokenLimit && currentTokensUsed >= rule.tokenLimit * 1000 ? 'red' : 'inherit';
+                                  })()
                                 }}>
-                                  {((rule.totalTokensUsed || 0) / 1000).toFixed(1)}K/{rule.tokenLimit.toFixed(0)}K
+                                  {(((ruleStatuses[rule.id]?.totalTokensUsed ?? rule.totalTokensUsed) || 0) / 1000).toFixed(1)}K/{rule.tokenLimit.toFixed(0)}K
                                 </span>
-                                {rule.totalTokensUsed && rule.tokenLimit && rule.totalTokensUsed >= rule.tokenLimit * 1000 ? (
-                                  <span style={{ color: 'red', marginLeft: '4px', fontWeight: 'bold', fontSize: '11px' }}>超限</span>
-                                ) : null}
+                                {(() => {
+                                  const currentTokensUsed = ruleStatuses[rule.id]?.totalTokensUsed ?? rule.totalTokensUsed;
+                                  return currentTokensUsed && rule.tokenLimit && currentTokensUsed >= rule.tokenLimit * 1000 ? (
+                                    <span style={{ color: 'red', marginLeft: '4px', fontWeight: 'bold', fontSize: '11px' }}>超限</span>
+                                  ) : null;
+                                })()}
                               </>
                             ) : (
                               <span style={{ color: '#999' }}>不限制</span>
@@ -935,14 +979,21 @@ export default function RoutesPage() {
                             <span style={{ fontWeight: 'bold', fontSize: '12px' }}>次数:</span>
                             {rule.requestCountLimit ? (
                               <>
+                                {/* 使用 WebSocket 实时数据 */}
                                 <span style={{
-                                  color: rule.totalRequestsUsed && rule.requestCountLimit && rule.totalRequestsUsed >= rule.requestCountLimit ? 'red' : 'inherit'
+                                  color: (() => {
+                                    const currentRequestsUsed = ruleStatuses[rule.id]?.totalRequestsUsed ?? rule.totalRequestsUsed;
+                                    return currentRequestsUsed && rule.requestCountLimit && currentRequestsUsed >= rule.requestCountLimit ? 'red' : 'inherit';
+                                  })()
                                 }}>
-                                  {rule.totalRequestsUsed || 0}/{rule.requestCountLimit}
+                                  {(ruleStatuses[rule.id]?.totalRequestsUsed ?? rule.totalRequestsUsed) || 0}/{rule.requestCountLimit}
                                 </span>
-                                {rule.totalRequestsUsed && rule.requestCountLimit && rule.totalRequestsUsed >= rule.requestCountLimit ? (
-                                  <span style={{ color: 'red', marginLeft: '4px', fontWeight: 'bold', fontSize: '11px' }}>超限</span>
-                                ) : null}
+                                {(() => {
+                                  const currentRequestsUsed = ruleStatuses[rule.id]?.totalRequestsUsed ?? rule.totalRequestsUsed;
+                                  return currentRequestsUsed && rule.requestCountLimit && currentRequestsUsed >= rule.requestCountLimit ? (
+                                    <span style={{ color: 'red', marginLeft: '4px', fontWeight: 'bold', fontSize: '11px' }}>超限</span>
+                                  ) : null;
+                                })()}
                               </>
                             ) : (
                               <span style={{ color: '#999' }}>不限制</span>

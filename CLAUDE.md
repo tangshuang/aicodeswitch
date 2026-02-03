@@ -164,6 +164,9 @@ aicos version            # Show current version information
 - Request logs: Detailed API call records with token usage
 - Access logs: System access records
 - Error logs: Error and exception records (includes upstream request information when available)
+- **Data Sanitization**:
+  - Sensitive authentication fields (api_key, authorization, password, secret, etc.) are automatically masked in the UI
+  - Technical fields like `max_tokens`, `input_tokens`, `output_tokens` are NOT masked - they are legitimate API parameters
 - **Session Management**:
   - Tracks user sessions based on session ID (Claude Code: `metadata.user_id`, Codex: `headers.session_id`)
   - Auto-generates session title from first user message content:

@@ -10,6 +10,7 @@ import {
   SSESerializerTransform,
 } from './transformers/streaming';
 import { SSEEventCollectorTransform } from './transformers/chunk-collector';
+import { rulesStatusBroadcaster } from './rules-status-service';
 import {
   extractTokenUsageFromClaudeUsage,
   extractTokenUsageFromOpenAIUsage,
@@ -1475,6 +1476,9 @@ export class ProxyServer {
     let upstreamRequestForLog: RequestLog['upstreamRequest'] | undefined;
     let actuallyUsedProxy = false; // 标记是否实际使用了代理
 
+    // 标记规则正在使用
+    rulesStatusBroadcaster.markRuleInUse(route.id, rule.id);
+
     const finalizeLog = async (statusCode: number, error?: string) => {
       if (logged) return;
 
@@ -1552,6 +1556,16 @@ export class ProxyServer {
         const totalTokens = (usageForLog.inputTokens || 0) + (usageForLog.outputTokens || 0);
         if (totalTokens > 0) {
           this.dbManager.incrementRuleTokenUsage(rule.id, totalTokens);
+
+          // 获取更新后的规则数据并广播
+          const updatedRule = this.dbManager.getRule(rule.id);
+          if (updatedRule) {
+            rulesStatusBroadcaster.broadcastUsageUpdate(
+              rule.id,
+              updatedRule.totalTokensUsed || 0,
+              updatedRule.totalRequestsUsed || 0
+            );
+          }
         }
       }
 
@@ -1562,6 +1576,16 @@ export class ProxyServer {
         // 检查是否是重复请求（如网络重试）
         if (!this.isRequestProcessed(requestHash)) {
           this.dbManager.incrementRuleRequestCount(rule.id, 1);
+
+          // 获取更新后的规则数据并广播
+          const updatedRule = this.dbManager.getRule(rule.id);
+          if (updatedRule) {
+            rulesStatusBroadcaster.broadcastUsageUpdate(
+              rule.id,
+              updatedRule.totalTokensUsed || 0,
+              updatedRule.totalRequestsUsed || 0
+            );
+          }
         }
         // 定期清理过期缓存
         if (Math.random() < 0.01) { // 1%概率清理，避免每次都清理

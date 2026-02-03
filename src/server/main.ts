@@ -14,6 +14,7 @@ import { checkVersionUpdate } from './version-check';
 import { checkPortUsable } from './utils';
 import { getToolsInstallationStatus } from './tools-service';
 import { createToolInstallationWSServer } from './websocket-service';
+import { createRulesStatusWSServer } from './rules-status-service';
 import {
   saveMetadata,
   deleteMetadata,
@@ -1733,13 +1734,20 @@ const start = async () => {
   });
 
   // 创建 WebSocket 服务器用于工具安装
-  const wss = createToolInstallationWSServer();
+  const toolInstallWss = createToolInstallationWSServer();
+
+  // 创建 WebSocket 服务器用于规则状态
+  const rulesStatusWss = createRulesStatusWSServer();
 
   // 将 WebSocket 服务器附加到 HTTP 服务器
   server.on('upgrade', (request, socket, head) => {
     if (request.url === '/api/tools/install') {
-      wss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
-        wss.emit('connection', ws, request);
+      toolInstallWss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
+        toolInstallWss.emit('connection', ws, request);
+      });
+    } else if (request.url === '/api/rules/status') {
+      rulesStatusWss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
+        rulesStatusWss.emit('connection', ws, request);
       });
     } else {
       socket.destroy();
@@ -1747,6 +1755,7 @@ const start = async () => {
   });
 
   console.log(`WebSocket server for tool installation attached to ws://${host}:${port}/api/tools/install`);
+  console.log(`WebSocket server for rules status attached to ws://${host}:${port}/api/rules/status`);
 
   const shutdown = async () => {
     console.log('Shutting down server...');
