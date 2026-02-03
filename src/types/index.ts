@@ -326,3 +326,28 @@ export interface Statistics {
     recentErrors: number; // 最近24小时
   };
 }
+
+/** 工具安装状态 */
+export interface ToolInstallationStatus {
+  claudeCode: {
+    installed: boolean;
+    version?: string;
+    installCommand?: string;
+  };
+  codex: {
+    installed: boolean;
+    version?: string;
+    installCommand?: string;
+  };
+}
+
+/** 安装请求 */
+export interface InstallToolRequest {
+  tool: 'claude-code' | 'codex';
+}
+
+/** 安装响应 */
+export interface InstallToolResponse {
+  success: boolean;
+  message?: string;
+}

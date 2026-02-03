@@ -7,6 +7,7 @@ interface JSONViewerProps {
 }
 
 // 敏感字段列表（不区分大小写）
+// 注意：这里使用精确匹配或特定前缀/后缀匹配，避免误伤 max_tokens 等字段
 const SENSITIVE_KEYS = [
   'authorization',
   'x-api-key',
@@ -14,13 +15,16 @@ const SENSITIVE_KEYS = [
   'apikey',
   'x-auth-token',
   'auth-token',
-  'bearer',
-  'token',
+  // 移除 'token' 因为它太宽泛，会匹配到 max_tokens、input_tokens、output_tokens 等字段
+  // 'token',
   'secret',
   'password',
   'api_secret',
-  'access_token',
-  'refresh_token',
+  // 只匹配以下特定的 token 相关字段（鉴权类）
+  'jwt',
+  'csrf_token',
+  'xsrf_token',
+  'auth_token',
   'session_token',
   'private_key',
   'client_secret',
@@ -28,10 +32,27 @@ const SENSITIVE_KEYS = [
 
 /**
  * 检查键名是否为敏感字段
+ * 使用精确匹配或特定的前缀/后缀匹配规则
  */
 const isSensitiveKey = (key: string): boolean => {
   const lowerKey = key.toLowerCase();
-  return SENSITIVE_KEYS.some(sensitive => lowerKey.includes(sensitive));
+  // 精确匹配
+  if (SENSITIVE_KEYS.some(sensitive => lowerKey === sensitive)) {
+    return true;
+  }
+  // 特定前缀匹配（如 api_key, api_secret 等）
+  if (lowerKey.startsWith('api_') && (lowerKey.endsWith('_key') || lowerKey.endsWith('_secret'))) {
+    return true;
+  }
+  // 特定后缀匹配（鉴权相关的字段）
+  if (lowerKey.endsWith('_token') || lowerKey.endsWith('_key') || lowerKey.endsWith('_secret')) {
+    // 排除 max_tokens、input_tokens、output_tokens 等技术字段
+    const exclusionPatterns = ['max_tokens', 'input_tokens', 'output_tokens', 'completion_tokens', 'prompt_tokens', 'cachereadinputtokens', 'totaltokens'];
+    if (!exclusionPatterns.some(pattern => lowerKey.replace(/_/g, '').includes(pattern.replace(/_/g, '')))) {
+      return true;
+    }
+  }
+  return false;
 };
 
 /**

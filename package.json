@@ -59,7 +59,8 @@
     "https-proxy-agent": "^7.0.6",
     "jsonwebtoken": "^9.0.3",
     "level": "^8.0.0",
-    "ora": "^5.4.1"
+    "ora": "^5.4.1",
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.9",

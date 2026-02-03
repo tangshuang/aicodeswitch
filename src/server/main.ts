@@ -12,6 +12,9 @@ import os from 'os';
 import { isAuthEnabled, verifyAuthCode, generateToken, authMiddleware } from './auth';
 import { checkVersionUpdate } from './version-check';
 import { checkPortUsable } from './utils';
+import { getToolsInstallationStatus } from './tools-service';
+import { createToolInstallationWSServer } from './websocket-service';
+import { createRulesStatusWSServer } from './rules-status-service';
 import {
   saveMetadata,
   deleteMetadata,
@@ -1687,6 +1690,20 @@ ${instruction}
       res.json({ success: false });
     }
   }));
+
+  // 工具安装检测相关路由
+  app.get('/api/tools/status', asyncHandler(async (_req, res) => {
+    console.log('[API] GET /api/tools/status - 获取工具安装状态');
+    try {
+      const status = await getToolsInstallationStatus();
+      console.log('[API] 工具安装状态:', status);
+      res.json(status);
+    } catch (error) {
+      console.error('[API] 获取工具状态失败:', error);
+      res.status(500).json({ error: '获取工具状态失败' });
+    }
+  }));
+
 };
 
 const start = async () => {
@@ -1715,6 +1732,30 @@ const start = async () => {
   const server = app.listen(port, host, () => {
     console.log(`Admin server running on http://${host}:${port}`);
   });
+
+  // 创建 WebSocket 服务器用于工具安装
+  const toolInstallWss = createToolInstallationWSServer();
+
+  // 创建 WebSocket 服务器用于规则状态
+  const rulesStatusWss = createRulesStatusWSServer();
+
+  // 将 WebSocket 服务器附加到 HTTP 服务器
+  server.on('upgrade', (request, socket, head) => {
+    if (request.url === '/api/tools/install') {
+      toolInstallWss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
+        toolInstallWss.emit('connection', ws, request);
+      });
+    } else if (request.url === '/api/rules/status') {
+      rulesStatusWss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
+        rulesStatusWss.emit('connection', ws, request);
+      });
+    } else {
+      socket.destroy();
+    }
+  });
+
+  console.log(`WebSocket server for tool installation attached to ws://${host}:${port}/api/tools/install`);
+  console.log(`WebSocket server for rules status attached to ws://${host}:${port}/api/rules/status`);
 
   const shutdown = async () => {
     console.log('Shutting down server...');
