@@ -99,7 +99,26 @@ aicos version            # Show current version information
 #### 3. Transformers - `server/transformers/`
 - **streaming.ts**: SSE parsing/serialization and event transformation
 - **claude-openai.ts**: Claude ↔ OpenAI Chat format conversion
+  - Image content block conversion (Claude ↔ OpenAI formats)
+  - Tool choice mapping (auto/any/tool ↔ auto/none/required)
+  - Stop reason mapping (including max_thinking_length)
+  - System prompt handling (string and array formats)
+  - Thinking/Reasoning content conversion
 - **chunk-collector.ts**: Collects streaming chunks for logging
+
+**API 转换功能**：
+转换器实现了以下 API 格式之间的双向转换：
+- **Claude Messages API** ↔ **OpenAI Chat Completions API**
+- **Claude Messages API** ↔ **OpenAI Responses API**
+- **DeepSeek Chat** ↔ 其他格式（支持 developer 角色映射）
+
+**支持的转换内容**：
+- 文本内容 (text)
+- 图像内容 (image ↔ image_url)
+- 工具调用 (tool_use ↔ tool_calls)
+- 工具结果 (tool_result)
+- 思考内容 (thinking ↔ reasoning/thinking)
+- 系统提示词 (system - 支持字符串和数组格式)
 
 #### 4. Database - `server/database.ts`
 - SQLite3 database wrapper

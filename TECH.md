@@ -10,184 +10,306 @@ AI semantic search powered by Cloudflare AI
 Parameter	Type	Required	Description
 q	string	✓	AI search query
 
-Code Examples
+---
 
-const response = await fetch(
-  'https://skillsmp.com/api/v1/skills/ai-search?q=How+to+create+a+web+scraper',
-  {
-    headers: {
-      'Authorization': 'Bearer sk_live_skillsmp_SNqsutoSiH51g-7-E0zVFVuugcnXfQbxCqfDI786TI0'
-    }
-  }
-);
+## Thinking/Reasoning 功能实现
 
-const data = await response.json();
-console.log(data.data.skills);
+### 概述
 
-Responses example:
+实现了 Claude 与 OpenAI 系列 API（Chat Completions、Responses、DeepSeek）之间的 thinking/reasoning 功能的双向转换。
+
+### 设计思路
+
+1. **统一抽象**：Claude 的 `thinking` 配置与 OpenAI 的 `reasoning` 配置虽有语义差异，但核心概念相似
+2. **智能映射**：根据不同 API 规范进行自适应转换
+3. **流式支持**：完整支持流式响应中的 thinking 内容转换
+
+### 关键实现
+
+#### 1. 请求配置转换
+
+| 源格式 | 目标 API | 转换逻辑 |
+|--------|----------|----------|
+| `thinking: { type: "enabled" }` | OpenAI Chat | `thinking: { type: "enabled" }` |
+| `thinking: { type: "enabled" }` | OpenAI Responses | `thinking: { type: "enabled" }, reasoning: { effort: "medium" }` |
+| `thinking: { type: "disabled" }` | OpenAI Responses | `thinking: { type: "disabled" }, reasoning: { effort: "minimal" }` |
+| `thinking: { type: "auto" }` | OpenAI Responses | `thinking: { type: "auto" }, reasoning: { effort: "low" }` |
+| `reasoning_effort: "high"` | OpenAI Responses | `reasoning: { effort: "high" }` |
+
+#### 2. Content Block 处理
+
+- **Claude → OpenAI**：thinking content block 转换为特殊标记文本 `<thinking>...</thinking>`
+- **OpenAI → Claude**：识别多种格式（`message.thinking`、`reasoning.summary`、`output[].content`）并转换为 thinking block
+
+#### 3. 流式事件转换
+
+**OpenAI → Claude**：
+- `delta.thinking.content` → `thinking_delta` 事件
+- `response.reasoning_text.delta` → `thinking_delta` 事件
+- `response.reasoning_summary_text.delta` → `thinking_delta` 事件
+- `response.output_text.delta` → `text_delta` 事件
+
+**Claude → OpenAI**：
+- `thinking_delta` → `delta.thinking.content`
+
+### 文件位置
+
+- `src/server/transformers/claude-openai.ts` - 请求/响应转换
+- `src/server/transformers/streaming.ts` - 流式事件转换
+
+### 注意事项
+
+1. **类型安全**：使用 `(any)` 类型断言避免 TypeScript 类型错误
+2. **向后兼容**：保持对旧格式响应的支持
+3. **错误处理**：流式转换器中捕获异常避免中断整个流
+
+---
+
+## API 转换架构
+
+### 概述
+
+AI Code Switch 实现了多种 AI API 格式之间的双向转换，支持 Claude、OpenAI Chat Completions、OpenAI Responses、DeepSeek 等主流 API。
+
+### 支持的 API 格式
+
+| API 类型 | 端点 | 主要用途 | 状态 |
+|---------|------|----------|------|
+| **Claude Messages API** | `/v1/messages` | Anthropic 官方 API | ✅ 完整支持 |
+| **OpenAI Chat Completions** | `/v1/chat/completions` | OpenAI 对话 API | ✅ 完整支持 |
+| **OpenAI Responses API** | `/v1/responses` | OpenAI 新一代响应接口 | ✅ 完整支持 |
+| **DeepSeek Chat** | `/v1/chat/completions` | DeepSeek 对话 API | ✅ 完整支持（developer 角色） |
+
+### API 转换矩阵
+
+| 源 API | 目标 API | 转换函数 | 支持状态 |
+|--------|----------|----------|----------|
+| Claude Messages | OpenAI Chat | [`transformClaudeRequestToOpenAIChat()`](src/server/transformers/claude-openai.ts#L278) | ✅ 完整 |
+| Claude Messages | OpenAI Responses | `transformClaudeRequestToOpenAIChat()` + reasoning 映射 | ✅ 完整 |
+| Claude Messages | DeepSeek Chat | `transformClaudeRequestToOpenAIChat()` + developer 角色映射 | ✅ 完整 |
+| OpenAI Chat | Claude Messages | [`transformOpenAIChatResponseToClaude()`](src/server/transformers/claude-openai.ts#L363) | ✅ 完整 |
+| OpenAI Responses | Claude Messages | 流式事件转换 + [`transformResponsesToChatCompletions()`](src/server/transformers/claude-openai.ts#L584) | ✅ 完整 |
+| DeepSeek Chat | Claude Messages | `transformOpenAIChatResponseToClaude()` | ✅ 完整 |
+| OpenAI Chat | OpenAI Responses | [`transformChatCompletionsToResponses()`](src/server/transformers/claude-openai.ts#L511) | ✅ 新增 |
+| OpenAI Responses | OpenAI Chat | [`transformResponsesToChatCompletions()`](src/server/transformers/claude-openai.ts#L584) | ✅ 新增 |
+
+### 内容块转换
+
+#### 文本内容 (Text)
+```typescript
+// Claude
+{ type: "text", text: "Hello" }
+
+// OpenAI
+{ type: "text", text: "Hello" } // 或直接 "Hello"
+```
+
+#### 图像内容 (Image)
+```typescript
+// Claude
 {
-    "success": true,
-    "data": {
-        "object": "vector_store.search_results.page",
-        "search_query": "How to create a web scraper",
-        "data": [
-            {
-                "file_id": "b941f4a570315d69f10272c602473c47f04bdd75fb714311ed36ea5b7029b1e5",
-                "filename": "skills/mattb543-asheville-event-feed-claude-event-scraper-skill-md.md",
-                "score": 0.58138084,
-                "skill": {
-                    "id": "mattb543-asheville-event-feed-claude-event-scraper-skill-md",
-                    "name": "event-scraper",
-                    "author": "MattB543",
-                    "description": "Create new event scraping scripts for websites. Use when adding a new event source to the Asheville Event Feed. ALWAYS start by detecting the CMS/platform and trying known API endpoints first. Browser scraping is NOT supported (Vercel limitation). Handles API-based, HTML/JSON-LD, and hybrid patterns with comprehensive testing workflows.",
-                    "githubUrl": "https://github.com/MattB543/asheville-event-feed/tree/main/claude/event-scraper",
-                    "skillUrl": "https://skillsmp.com/skills/mattb543-asheville-event-feed-claude-event-scraper-skill-md",
-                    "stars": 5,
-                    "updatedAt": 1768598524
-                }
-            },
-            {
-                "file_id": "34e6c58d525232653f2adfdf8bc5abf9b50eb9128b5abe68a630d656ca9801c9",
-                "filename": "skills/dvorkinguy-claude-skills-agents-skills-apify-scraper-builder-skill-md.md",
-                "score": 0.5716883
-            },
-            {
-                "file_id": "7dcf28e65a11cb6fb0e205bc9b3ad1ce9007724f809632ccd81f42c3167bd688",
-                "filename": "skills/honeyspoon-nix-config-config-opencode-skill-web-scraper-skill-md.md",
-                "score": 0.5999056,
-                "skill": {
-                    "id": "honeyspoon-nix-config-config-opencode-skill-web-scraper-skill-md",
-                    "name": "web-scraper",
-                    "author": "honeyspoon",
-                    "description": "This skill should be used when users need to scrape content from websites, extract text from web pages, crawl and follow links, or download documentation from online sources. It features concurrent URL processing, automatic deduplication, content filtering, domain restrictions, and proper directory hierarchy based on URL structure. Use for documentation gathering, content extraction, web archival, or research data collection.",
-                    "githubUrl": "https://github.com/honeyspoon/nix_config/tree/main/config/opencode/skill/web-scraper",
-                    "skillUrl": "https://skillsmp.com/skills/honeyspoon-nix-config-config-opencode-skill-web-scraper-skill-md",
-                    "stars": 0,
-                    "updatedAt": 1769614394
-                }
-            },
-            {
-                "file_id": "1f2f1810d2d63396a79130bbb59849ad776fdcc6242e57120528d626d7da4adc",
-                "filename": "skills/igosuki-claude-skills-web-scraper-skill-md.md",
-                "score": 0.5999056,
-                "skill": {
-                    "id": "igosuki-claude-skills-web-scraper-skill-md",
-                    "name": "web-scraper",
-                    "author": "Igosuki",
-                    "description": "This skill should be used when users need to scrape content from websites, extract text from web pages, crawl and follow links, or download documentation from online sources. It features concurrent URL processing, automatic deduplication, content filtering, domain restrictions, and proper directory hierarchy based on URL structure. Use for documentation gathering, content extraction, web archival, or research data collection.",
-                    "githubUrl": "https://github.com/Igosuki/claude-skills/tree/main/web-scraper",
-                    "skillUrl": "https://skillsmp.com/skills/igosuki-claude-skills-web-scraper-skill-md",
-                    "stars": 1,
-                    "updatedAt": 1761052646
-                }
-            },
-            {
-                "file_id": "8bc3072e2ca3c703aae8ec4cb48be2a3c0826d96b4f22585788d34f1ddd9cbda",
-                "filename": "skills/breverdbidder-life-os-skills-website-to-vite-scraper-skill-md.md",
-                "score": 0.5806182,
-                "skill": {
-                    "id": "breverdbidder-life-os-skills-website-to-vite-scraper-skill-md",
-                    "name": "website-to-vite-scraper",
-                    "author": "breverdbidder",
-                    "description": "Multi-provider website scraper that converts any website (including CSR/SPA) to deployable static sites. Uses Playwright, Apify RAG Browser, Crawl4AI, and Firecrawl for comprehensive scraping. Triggers on requests to clone, reverse-engineer, or convert websites.",
-                    "githubUrl": "https://github.com/breverdbidder/life-os/tree/main/skills/website-to-vite-scraper",
-                    "skillUrl": "https://skillsmp.com/skills/breverdbidder-life-os-skills-website-to-vite-scraper-skill-md",
-                    "stars": 2,
-                    "updatedAt": 1769767370
-                }
-            },
-            {
-                "file_id": "8ed6e980ab048ac58d8c7d3bd3238fdc4cda3d25f17bc97b4dc4cfb2cf34cd35",
-                "filename": "skills/leobrival-serum-plugins-official-plugins-crawler-skills-website-crawler-skill-md.md",
-                "score": 0.5535727,
-                "skill": {
-                    "id": "leobrival-serum-plugins-official-plugins-crawler-skills-website-crawler-skill-md",
-                    "name": "website-crawler",
-                    "author": "leobrival",
-                    "description": "High-performance web crawler for discovering and mapping website structure. Use when users ask to crawl a website, map site structure, discover pages, find all URLs on a site, analyze link relationships, or generate site reports. Supports sitemap discovery, checkpoint/resume, rate limiting, and HTML report generation.",
-                    "githubUrl": "https://github.com/leobrival/serum-plugins-official/tree/main/plugins/crawler/skills/website-crawler",
-                    "skillUrl": "https://skillsmp.com/skills/leobrival-serum-plugins-official-plugins-crawler-skills-website-crawler-skill-md",
-                    "stars": 1,
-                    "updatedAt": 1769437425
-                }
-            },
-            {
-                "file_id": "efa5af3ef929da6b1db4f194da6d639600db620612b508e425099947215f480a",
-                "filename": "skills/hokupod-sitepanda-assets-skill-md.md",
-                "score": 0.57184756,
-                "skill": {
-                    "id": "hokupod-sitepanda-assets-skill-md",
-                    "name": "sitepanda",
-                    "author": "hokupod",
-                    "description": "Scrape websites with a headless browser and extract main readable content as Markdown. Use this skill when the user asks to retrieve, analyze, or summarize content from a URL or website.",
-                    "githubUrl": "https://github.com/hokupod/sitepanda/tree/main/assets",
-                    "skillUrl": "https://skillsmp.com/skills/hokupod-sitepanda-assets-skill-md",
-                    "stars": 10,
-                    "updatedAt": 1768397847
-                }
-            },
-            {
-                "file_id": "e74a45c1d4c2646144b1019bb8a4e52aa4352c52a1b35566234a68bf057c666a",
-                "filename": "skills/vanman2024-ai-dev-marketplace-plugins-rag-pipeline-skills-web-scraping-tools-skill-md.md",
-                "score": 0.55511314
-            },
-            {
-                "file_id": "9b11ec7c719303b2999eaf4fa535a26ffcf718ea773f579e5e6b5b8d046cce12",
-                "filename": "skills/nathanvale-side-quest-marketplace-plugins-scraper-toolkit-skills-playwright-scraper-skill-md.md",
-                "score": 0.54990166,
-                "skill": {
-                    "id": "nathanvale-side-quest-marketplace-plugins-scraper-toolkit-skills-playwright-scraper-skill-md",
-                    "name": "playwright-scraper",
-                    "author": "nathanvale",
-                    "description": "Production-proven Playwright web scraping patterns with selector-first approach and robust error handling.\nUse when users need to build web scrapers, extract data from websites, automate browser interactions,\nor ask about Playwright selectors, text extraction (innerText vs textContent), regex patterns for HTML,\nfallback hierarchies, or scraping best practices.",
-                    "githubUrl": "https://github.com/nathanvale/side-quest-marketplace/tree/main/plugins/scraper-toolkit/skills/playwright-scraper",
-                    "skillUrl": "https://skillsmp.com/skills/nathanvale-side-quest-marketplace-plugins-scraper-toolkit-skills-playwright-scraper-skill-md",
-                    "stars": 2,
-                    "updatedAt": 1769733906
-                }
-            },
-            {
-                "file_id": "42348180a6ffcff196f8aa2b23797a0868a891174655e0c4df3245b4bfc530a0",
-                "filename": "skills/salberg87-authenticated-scrape-skill-md.md",
-                "score": 0.5437498,
-                "skill": {
-                    "id": "salberg87-authenticated-scrape-skill-md",
-                    "name": "authenticated-scrape",
-                    "author": "Salberg87",
-                    "description": "Scrape data from authenticated websites by capturing network requests with auth headers automatically. Use when the user wants to extract data from logged-in pages, private dashboards, or authenticated APIs.",
-                    "githubUrl": "https://github.com/Salberg87/authenticated-scrape",
-                    "skillUrl": "https://skillsmp.com/skills/salberg87-authenticated-scrape-skill-md",
-                    "stars": 0,
-                    "updatedAt": 1767684913
-                }
-            }
-        ],
-        "has_more": false,
-        "next_page": null
-    },
-    "meta": {
-        "requestId": "f841d8bc-3d77-4a00-9899-4df8b4e52c86",
-        "responseTimeMs": 3327
-    }
+  type: "image",
+  source: { type: "base64", media_type: "image/jpeg", data: "..." }
 }
 
-Error Handling
-The API uses standard HTTP status codes and returns error details in JSON format.
-
-Error Code	HTTP	Description
-MISSING_API_KEY	401	API key not provided
-INVALID_API_KEY	401	Invalid API key
-MISSING_QUERY	400	Missing required query parameter
-INTERNAL_ERROR	500	Internal server error
-Error Response Example:
-
-json
-
-Copy
+// OpenAI
 {
-  "success": false,
-  "error": {
-    "code": "INVALID_API_KEY",
-    "message": "The provided API key is invalid"
-  }
+  type: "image_url",
+  image_url: { url: "data:image/jpeg;base64,...", detail: "auto" }
 }
+```
+**转换函数**: [`convertClaudeImageToOpenAI()`](src/server/transformers/claude-openai.ts#L35), [`convertOpenAIImageToClaude()`](src/server/transformers/claude-openai.ts#L79)
+
+#### 思考内容 (Thinking)
+```typescript
+// Claude
+{ type: "thinking", thinking: "Let me analyze..." }
+
+// OpenAI Chat
+{ thinking: { content: "Let me analyze..." } } // 或 delta.thinking.content
+
+// OpenAI Responses
+{ type: "thinking", text: "Let me analyze..." } // 在 output[].content 中
+```
+
+#### 工具调用 (Tool Calls)
+```typescript
+// Claude
+{ type: "tool_use", id: "call_123", name: "get_weather", input: {...} }
+
+// OpenAI
+{
+  tool_calls: [{
+    id: "call_123",
+    type: "function",
+    function: { name: "get_weather", arguments: "{...}" }
+  }]
+}
+```
+
+#### 工具结果 (Tool Results)
+```typescript
+// Claude
+{ type: "tool_result", tool_use_id: "call_123", content: "..." }
+
+// OpenAI
+{ role: "tool", tool_call_id: "call_123", content: "..." }
+```
+
+### 参数转换映射
+
+#### 温度参数 (Temperature)
+- 所有 API: `0.0 - 2.0` (OpenAI) / `0.0 - 1.0` (Claude)
+- 直接传递，需注意范围差异
+
+#### 停止序列 (Stop Sequences)
+```typescript
+// Claude
+{ stop_sequences: ["END", "STOP"] }
+
+// OpenAI
+{ stop: ["END", "STOP"] } // 或 "END"
+```
+
+#### Token 限制
+```typescript
+// Claude
+{ max_tokens: 4096 }
+
+// OpenAI Chat
+{ max_tokens: 4096 }
+
+// OpenAI Responses
+{ max_output_tokens: 4096 }
+```
+
+#### 工具选择 (Tool Choice)
+```typescript
+// Claude
+{ tool_choice: "any" } // 或 { type: "tool", name: "func_name" }
+
+// OpenAI
+{ tool_choice: "required" } // 或 { type: "function", function: { name: "func_name" } }
+```
+**转换函数**: [`mapClaudeToolChoiceToOpenAI()`](src/server/transformers/claude-openai.ts#L136)
+
+### Stop Reason 映射
+
+#### OpenAI → Claude
+| OpenAI finish_reason | Claude stop_reason |
+|---------------------|-------------------|
+| `stop` | `end_turn` |
+| `length` | `max_tokens` |
+| `tool_calls` | `tool_use` |
+| `content_filter` | `content_filter` |
+
+**转换函数**: [`mapStopReason()`](src/server/transformers/claude-openai.ts#L187)
+
+#### Claude → OpenAI
+| Claude stop_reason | OpenAI finish_reason |
+|-------------------|---------------------|
+| `end_turn` | `stop` |
+| `max_tokens` | `length` |
+| `max_thinking_length` | `length` |
+| `tool_use` | `tool_calls` |
+| `stop_sequence` | `stop` |
+| `content_filter` | `content_filter` |
+
+**转换函数**: [`mapClaudeStopReasonToOpenAI()`](src/server/transformers/claude-openai.ts#L207)
+
+### 流式事件转换
+
+#### OpenAI Chat → Claude
+| OpenAI Chat Event | Claude Event | 转换位置 |
+|------------------|--------------|----------|
+| `data.choices[0].delta.content` | `content_block_delta` (text_delta) | [`OpenAIToClaudeEventTransform`](src/server/transformers/streaming.ts#L175) |
+| `data.choices[0].delta.thinking.content` | `content_block_delta` (thinking_delta) | [`OpenAIToClaudeEventTransform`](src/server/transformers/streaming.ts#L334) |
+| `data.choices[0].delta.tool_calls` | `content_block_delta` (input_json_delta) | [`OpenAIToClaudeEventTransform`](src/server/transformers/streaming.ts#L354) |
+| `data.choices[0].finish_reason` | `message_delta` (stop_reason) | [`OpenAIToClaudeEventTransform`](src/server/transformers/streaming.ts#L504) |
+
+#### OpenAI Responses → Claude
+| Responses Event | Claude Event | 转换位置 |
+|----------------|--------------|----------|
+| `response.reasoning_text.delta` | `content_block_delta` (thinking_delta) | [`handleResponsesAPIEvent()`](src/server/transformers/streaming.ts#L408) |
+| `response.reasoning_summary_text.delta` | `content_block_delta` (thinking_delta) | [`handleResponsesAPIEvent()`](src/server/transformers/streaming.ts#L429) |
+| `response.output_text.delta` | `content_block_delta` (text_delta) | [`handleResponsesAPIEvent()`](src/server/transformers/streaming.ts#L450) |
+| `response.refusal.delta` | `content_block_delta` (text_delta) | [`handleResponsesAPIEvent()`](src/server/transformers/streaming.ts#L471) |
+| `response.completed/failed/incomplete` | `message_stop` | [`handleResponsesAPIEvent()`](src/server/transformers/streaming.ts#L500) |
+
+#### Claude → OpenAI Chat
+| Claude Event | OpenAI Chat Event | 转换位置 |
+|--------------|------------------|----------|
+| `content_block_delta` (text_delta) | `data.choices[0].delta.content` | [`ClaudeToOpenAIChatEventTransform`](src/server/transformers/streaming.ts#L622) |
+| `content_block_delta` (thinking_delta) | `data.choices[0].delta.thinking.content` | [`ClaudeToOpenAIChatEventTransform`](src/server/transformers/streaming.ts#L628) |
+| `content_block_delta` (input_json_delta) | `data.choices[0].delta.tool_calls` | [`ClaudeToOpenAIChatEventTransform`](src/server/transformers/streaming.ts#L594) |
+| `message_delta` (stop_reason) | `data.choices[0].finish_reason` | [`ClaudeToOpenAIChatEventTransform`](src/server/transformers/streaming.ts#L632) |
+
+### Token Usage 转换
+
+```typescript
+// OpenAI 格式
+{
+  prompt_tokens: 100,
+  completion_tokens: 50,
+  total_tokens: 150,
+  prompt_tokens_details: { cached_tokens: 20 }
+}
+
+// Claude 格式
+{
+  input_tokens: 80,          // prompt - cached
+  output_tokens: 50,
+  cache_read_input_tokens: 20  // cached
+}
+```
+**转换函数**: [`convertOpenAIUsageToClaude()`](src/server/transformers/claude-openai.ts#L173)
+
+### 特殊处理
+
+#### DeepSeek Developer 角色
+某些 OpenAI 兼容 API（如 DeepSeek）不支持 `system` 角色，需要使用 `developer` 角色。
+
+**检测函数**: [`shouldUseDeveloperRole()`](src/server/transformers/claude-openai.ts#L229)
+
+#### System 提示词数组
+Claude 支持数组格式的 system 提示词（包含缓存控制），转换时会提取文本内容。
+
+**处理位置**: [`transformClaudeRequestToOpenAIChat()`](src/server/transformers/claude-openai.ts#L169)
+
+### 文件结构
+
+```
+src/server/transformers/
+├── claude-openai.ts       # 请求/响应转换
+│   ├── transformClaudeRequestToOpenAIChat()
+│   ├── transformOpenAIChatResponseToClaude()
+│   ├── transformClaudeResponseToOpenAIChat()
+│   ├── transformChatCompletionsToResponses()
+│   ├── transformResponsesToChatCompletions()
+│   ├── convertClaudeImageToOpenAI()
+│   ├── convertOpenAIImageToClaude()
+│   ├── mapClaudeToolChoiceToOpenAI()
+│   ├── mapStopReason()
+│   └── mapClaudeStopReasonToOpenAI()
+└── streaming.ts            # 流式事件转换
+    ├── SSEParserTransform              # SSE 解析
+    ├── SSESerializerTransform          # SSE 序列化
+    ├── OpenAIToClaudeEventTransform    # OpenAI → Claude 流式
+    ├── ClaudeToOpenAIChatEventTransform # Claude → OpenAI 流式
+    └── handleResponsesAPIEvent()       # Responses API 事件处理
+```
+
+### 开发注意事项
+
+1. **类型安全**：转换函数使用 `any` 类型处理动态 API 格式
+2. **向后兼容**：保持对旧版本 API 响应的支持
+3. **错误恢复**：流式转换器捕获异常避免中断整个流
+4. **性能优化**：使用数组格式构建消息（当包含图像时）
+5. **完整测试**：覆盖所有转换路径和边界情况
+
+### 相关文档
+
+- [Claude API Schema](schemes/claude.schema.md) - Claude 官方 API 规范
+- [OpenAI API Schema](schemes/openai.schema.md) - OpenAI 官方 API 规范
+- [CLAUDE.md](CLAUDE.md) - 项目架构文档
+
