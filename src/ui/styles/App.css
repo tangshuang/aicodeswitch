@@ -705,6 +705,26 @@ table th {
   gap: 12px;
 }
 
+.github-link {
+  background: none;
+  border: none;
+  color: var(--text-sidebar);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 8px;
+  transition: all 0.3s ease-out;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.8;
+  margin-left: auto;
+}
+
+.github-link:hover {
+  background: rgba(255, 255, 255, 0.15);
+  opacity: 1;
+}
+
 .theme-toggle button {
   background: none;
   border: none;

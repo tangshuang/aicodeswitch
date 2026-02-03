@@ -164,6 +164,14 @@ aicos version            # Show current version information
 - Request logs: Detailed API call records with token usage
 - Access logs: System access records
 - Error logs: Error and exception records (includes upstream request information when available)
+- **Session Management**:
+  - Tracks user sessions based on session ID (Claude Code: `metadata.user_id`, Codex: `headers.session_id`)
+  - Auto-generates session title from first user message content:
+    - Extracts text from first user message
+    - Cleans up whitespace and newlines
+    - Intelligently truncates at word boundaries (max 100 chars)
+    - Adds "..." for truncated titles
+  - Records first request time, last request time, request count, and total tokens per session
 
 ### Usage Limits Auto-Sync
 - **Service-Level Limits**: API services can have token and request count limits configured

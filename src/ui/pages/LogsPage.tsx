@@ -160,6 +160,94 @@ function assembleStreamTextFromChunks(chunks: string[] | undefined, targetType?:
   return assembleStreamText(events, targetType);
 }
 
+/**
+ * 从日志组装完整的响应体JSON
+ */
+function assembleResponseBody(log: RequestLog): any | null {
+  console.log('[assembleResponseBody] log:', {
+    id: log.id,
+    hasResponseBody: !!log.responseBody,
+    responseBodyLength: log.responseBody?.length,
+    hasStreamChunks: !!log.streamChunks,
+    streamChunksLength: log.streamChunks?.length,
+    targetType: log.targetType
+  });
+
+  // 如果有 responseBody，直接返回（非 stream 请求）
+  if (log.responseBody) {
+    try {
+      const parsed = JSON.parse(log.responseBody);
+      console.log('[assembleResponseBody] returning parsed responseBody');
+      return parsed;
+    } catch {
+      console.log('[assembleResponseBody] returning raw responseBody (parse failed)');
+      return log.responseBody;
+    }
+  }
+
+  // 如果有 streamChunks，组装完整的响应体
+  if (log.streamChunks && log.streamChunks.length > 0) {
+    console.log('[assembleResponseBody] processing streamChunks:', log.streamChunks.length);
+    const { text, thinking } = assembleStreamTextFromChunks(log.streamChunks, log.targetType);
+    console.log('[assembleResponseBody] assembled text:', { textLength: text.length, thinkingLength: thinking.length });
+
+    // 根据目标类型构建合适的响应体结构
+    if (log.targetType === 'claude-code') {
+      // Claude Code 格式
+      const content: any[] = [];
+      if (thinking) {
+        content.push({ type: 'thinking', thinking: thinking });
+      }
+      if (text) {
+        content.push({ type: 'text', text: text });
+      }
+      // 如果既没有 thinking 也没有 text，添加一个占位符
+      if (content.length === 0) {
+        content.push({ type: 'text', text: '(空内容 - 可能响应未完成或解析失败)' });
+      }
+      const result = {
+        type: 'message',
+        role: 'assistant',
+        content,
+        model: log.targetModel || log.requestModel,
+        usage: log.usage
+      };
+      console.log('[assembleResponseBody] returning claude-code format with', content.length, 'content blocks');
+      return result;
+    } else if (log.targetType === 'codex') {
+      // Codex (OpenAI) 格式
+      const result = {
+        id: log.id,
+        object: 'chat.completion',
+        created: Math.floor(log.timestamp / 1000),
+        model: log.targetModel || log.requestModel,
+        choices: [{
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: text || thinking || '(空内容 - 可能响应未完成或解析失败)'
+          },
+          finish_reason: 'stop'
+        }],
+        usage: log.usage
+      };
+      console.log('[assembleResponseBody] returning codex format');
+      return result;
+    }
+
+    // 通用格式
+    const result = {
+      content: text || thinking || '(空内容 - 可能响应未完成或解析失败)',
+      usage: log.usage
+    };
+    console.log('[assembleResponseBody] returning generic format');
+    return result;
+  }
+
+  console.log('[assembleResponseBody] no responseBody or streamChunks, returning null');
+  return null;
+}
+
 type LogTab = 'request' | 'error' | 'sessions';
 
 function LogsPage() {
@@ -892,6 +980,15 @@ function LogsPage() {
                 <h2>请求详情</h2>
               </div>
             <div>
+              {/* 调试信息 */}
+              {console.log('[RequestLogDetail] selectedRequestLog:', {
+                id: selectedRequestLog.id,
+                hasResponseBody: !!selectedRequestLog.responseBody,
+                responseBodyLength: selectedRequestLog.responseBody?.length,
+                hasStreamChunks: !!selectedRequestLog.streamChunks,
+                streamChunksLength: selectedRequestLog.streamChunks?.length,
+                targetType: selectedRequestLog.targetType
+              })}
               <div className="form-group">
                 <label>日志ID</label>
                 <input type="text" value={selectedRequestLog.id} readOnly />
@@ -970,12 +1067,31 @@ function LogsPage() {
                   <JSONViewer data={selectedRequestLog.responseHeaders} collapsed />
                 </div>
               )}
-              {selectedRequestLog.responseBody && (
-                <div className="form-group">
-                  <label>响应体</label>
-                  <JSONViewer data={selectedRequestLog.responseBody} />
-                </div>
-              )}
+              {(() => {
+                const assembledBody = assembleResponseBody(selectedRequestLog);
+                console.log('[RequestLogDetail] assembledBody:', assembledBody);
+                if (!assembledBody) {
+                  return (
+                    <div className="form-group">
+                      <label>响应体</label>
+                      <div style={{ padding: '10px', color: '#7f8c8d', fontStyle: 'italic' }}>
+                        无响应体数据
+                        {selectedRequestLog.streamChunks === undefined && selectedRequestLog.responseBody === undefined && (
+                          <div style={{ marginTop: '5px', fontSize: '12px', color: '#e74c3c' }}>
+                            ⚠️ 该日志不包含响应数据（可能是旧版本记录）
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="form-group">
+                    <label>响应体</label>
+                    <JSONViewer data={assembledBody} />
+                  </div>
+                );
+              })()}
               {selectedRequestLog.streamChunks && selectedRequestLog.streamChunks.length > 0 && (
                 <div className="form-group">
                   <label>

@@ -1355,6 +1355,7 @@ export class ProxyServer {
   /**
    * 提取会话标题（默认方法）
    * 对于新会话，尝试从第一条消息的内容中提取标题
+   * 优化：使用第一条用户消息的完整内容，并智能截取
    */
   private defaultExtractSessionTitle(request: Request, sessionId: string): string | undefined {
     const existingSession = this.dbManager.getSession(sessionId);
@@ -1370,19 +1371,56 @@ export class ProxyServer {
       const firstUserMessage = messages.find((msg: any) => msg.role === 'user');
       if (firstUserMessage) {
         const content = firstUserMessage.content;
+        let rawText = '';
+
         if (typeof content === 'string') {
-          // 截取前50个字符作为标题
-          return content.slice(0, 50).trim();
+          rawText = content;
         } else if (Array.isArray(content)) {
           // 处理结构化内容（如图片+文本）
           const textBlock = content.find((block: any) => block?.type === 'text');
           if (textBlock?.text) {
-            return textBlock.text.slice(0, 50).trim();
+            rawText = textBlock.text;
           }
+        }
+
+        if (rawText) {
+          return this.formatSessionTitle(rawText);
         }
       }
     }
     return undefined;
+  }
+
+  /**
+   * 格式化会话标题
+   * - 去除多余空白和换行符
+   * - 智能截取，在单词边界处截断
+   * - 限制最大长度为100个字符
+   */
+  private formatSessionTitle(text: string): string {
+    // 去除多余空白和换行符，替换为单个空格
+    let formatted = text
+      .replace(/\s+/g, ' ')  // 多个空白字符替换为单个空格
+      .replace(/[\r\n]+/g, ' ')  // 换行符替换为空格
+      .trim();
+
+    // 限制最大长度
+    const maxLength = 100;
+    if (formatted.length <= maxLength) {
+      return formatted;
+    }
+
+    // 在单词边界处截断
+    let truncated = formatted.slice(0, maxLength);
+    const lastSpaceIndex = truncated.lastIndexOf(' ');
+
+    if (lastSpaceIndex > maxLength * 0.7) {
+      // 如果最后一个空格位置在长度的70%之后，在空格处截断
+      truncated = truncated.slice(0, lastSpaceIndex);
+    }
+
+    // 添加省略号
+    return truncated.trim() + '...';
   }
 
   /**
@@ -1668,6 +1706,7 @@ export class ProxyServer {
             }
             // 收集stream chunks（每个chunk是一个完整的SSE事件）
             streamChunksForLog = eventCollector.getChunks();
+            console.log('[Proxy] Stream request finished, collected chunks:', streamChunksForLog?.length || 0);
             void finalizeLog(res.statusCode);
           });
 
@@ -1744,6 +1783,7 @@ export class ProxyServer {
               }
             }
             streamChunksForLog = eventCollector.getChunks();
+            console.log('[Proxy] Codex stream request finished, collected chunks:', streamChunksForLog?.length || 0);
             void finalizeLog(res.statusCode);
           });
 
@@ -1805,6 +1845,7 @@ export class ProxyServer {
 
         res.on('finish', () => {
           streamChunksForLog = eventCollector.getChunks();
+          console.log('[Proxy] Default stream request finished, collected chunks:', streamChunksForLog?.length || 0);
           // 尝试从event collector中提取usage信息
           const extractedUsage = eventCollector.extractUsage();
           if (extractedUsage) {
@@ -1905,6 +1946,7 @@ export class ProxyServer {
         usageForLog = this.extractTokenUsage(responseData?.usage);
         // 记录原始响应体
         responseBodyForLog = typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
+        console.log('[Proxy] Non-stream response logged, body length:', responseBodyForLog?.length || 0);
         this.copyResponseHeaders(responseHeaders, res);
         if (contentType.includes('application/json')) {
           res.status(response.status).json(responseData);
