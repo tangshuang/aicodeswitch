@@ -139,7 +139,7 @@ aicos version            # Show current version information
   - `image-understanding`: Requests with image content
   - `thinking`: Requests with reasoning/thinking signals
   - `long-context`: Requests with large context (≥12000 chars or ≥8000 max tokens)
-  - `background`: Background/priority requests
+  - `background`: Background/priority requests, including `/count_tokens` endpoint requests and token counting requests with `{"role": "user", "content": "count"}`
   - `default`: All other requests
 
 ### Request Transformation

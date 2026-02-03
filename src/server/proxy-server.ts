@@ -837,6 +837,11 @@ export class ProxyServer {
     const body = req.body;
     if (!body) return 'default';
 
+    // 检查是否为 count_tokens 请求（后台类型）
+    if (req.path.includes('/count_tokens')) {
+      return 'background';
+    }
+
     const explicitType = this.getExplicitContentType(req, body);
     if (explicitType) {
       return explicitType;
@@ -972,6 +977,20 @@ export class ProxyServer {
   }
 
   private hasBackgroundSignal(body: any): boolean {
+    // 检测 count tokens 请求：messages 只有一条，role 为 "user"，content 为 "count"
+    const messages = body?.messages;
+    if (Array.isArray(messages) && messages.length === 1) {
+      const firstMessage = messages[0];
+      if (
+        firstMessage?.role === 'user' &&
+        (firstMessage?.content === 'count' ||
+         (typeof firstMessage?.content === 'string' && firstMessage.content.trim() === 'count'))
+      ) {
+        return true;
+      }
+    }
+
+    // 检测其他后台信号
     const candidates = [
       body?.background,
       body?.metadata?.background,
