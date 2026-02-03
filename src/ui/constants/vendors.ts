@@ -33,8 +33,8 @@ export default {
         ],
     },
     doubao: {
-        name: '豆包',
-        description: '字节旗下大模型。Coding Plan一次性支持GLM、Kimi-K2、Deepseek多个国产模型 https://volcengine.com/L/RcHlm6yxj0w/  邀请码：Y58X463P',
+        name: '火山方舟（豆包）',
+        description: '字节旗下大模型平台。Coding Plan一次性支持GLM、Kimi-K2、Deepseek多个国产模型 https://volcengine.com/L/RcHlm6yxj0w/  邀请码：Y58X463P',
         services: [
             {
                 name: 'Coding Plan Claude Code',
@@ -52,6 +52,12 @@ export default {
                 name: '付费API兼容Claude Code',
                 sourceType: 'claude-code',
                 apiUrl: 'https://ark.cn-beijing.volces.com/api/compatible',
+                models: 'doubao-seed-code-preview-251028',
+            },
+            {
+                name: '付费API兼容Codex',
+                sourceType: 'openai-responses',
+                apiUrl: 'https://ark.cn-beijing.volces.com/api/v3',
                 models: 'doubao-seed-code-preview-251028',
             },
         ],

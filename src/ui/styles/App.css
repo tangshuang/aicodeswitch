@@ -720,13 +720,13 @@ table th {
 /* Update Notification Styles */
 .update-notification {
   position: absolute;
-  bottom: 80px;
+  bottom: 48px;
   left: 20px;
   right: 20px;
   background: rgba(16, 185, 129, 0.15);
   border: 1px solid rgba(16, 185, 129, 0.4);
   border-radius: 12px;
-  padding: 12px;
+  padding: 8px;
   animation: slideUp 0.3s ease-out;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   margin-bottom: 12px;
@@ -747,7 +747,6 @@ table th {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 8px;
 }
 
 .update-icon {

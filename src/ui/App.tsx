@@ -390,6 +390,11 @@ function AppContent() {
         </ul>
 
         {hasUpdate && (
+          <a
+            href="https://npmjs.com/package/aicodeswitch"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
           <div className="update-notification">
             <div className="update-notification-content">
               <span className="update-icon">⬆️</span>
@@ -404,15 +409,8 @@ function AppContent() {
                 </div>
               </div>
             </div>
-            <a
-              href="https://npmjs.com/package/aicodeswitch"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="update-link"
-            >
-              查看详情
-            </a>
           </div>
+          </a>
         )}
 
         <div className="theme-toggle">

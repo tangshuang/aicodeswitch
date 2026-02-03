@@ -1,7 +1,8 @@
 import { Transform } from 'stream';
 import crypto from 'crypto';
-import { convertOpenAIUsageToClaude, mapStopReason } from './claude-openai';
+import { convertOpenAIUsageToClaude, mapStopReason as mapOpenAIToClaudeStopReason } from './claude-openai';
 
+// 导出 SSEEvent 类型供其他模块使用
 export type SSEEvent = {
   event?: string;
   id?: string;
@@ -219,6 +220,14 @@ export class OpenAIToClaudeEventTransform extends Transform {
         return;
       }
 
+      // 检查是否是 OpenAI Responses API 的事件
+      // Responses API 事件类型如：response.reasoning_text.delta, response.output_text.delta 等
+      if (event.event && event.event.startsWith('response.')) {
+        this.handleResponsesAPIEvent(event);
+        callback();
+        return;
+      }
+
       const chunk = event.data;
       if (!chunk) {
         callback();
@@ -299,7 +308,7 @@ export class OpenAIToClaudeEventTransform extends Transform {
     if (!delta) return;
 
     if (typeof choice?.finish_reason === 'string') {
-      this.stopReason = mapStopReason(choice.finish_reason);
+      this.stopReason = mapOpenAIToClaudeStopReason(choice.finish_reason);
     }
 
     if (typeof delta.content === 'string') {
@@ -322,6 +331,7 @@ export class OpenAIToClaudeEventTransform extends Transform {
       });
     }
 
+    // 处理 OpenAI Chat Completions API 的 thinking content
     if (typeof delta.thinking?.content === 'string') {
       this.ensureMessageStart();
       if (this.thinkingBlockIndex === null) {
@@ -390,6 +400,115 @@ export class OpenAIToClaudeEventTransform extends Transform {
     }
   }
 
+  // 处理 OpenAI Responses API 的流式事件
+  private handleResponsesAPIEvent(event: SSEEvent) {
+    const type = event.event;
+    const data = event.data;
+
+    // 处理 reasoning 文本增量（完整推理过程）
+    if (type === 'response.reasoning_text.delta' && data?.delta) {
+      this.ensureMessageStart();
+      if (this.thinkingBlockIndex === null) {
+        this.thinkingBlockIndex = this.assignContentBlockIndex();
+        this.pushEvent('content_block_start', {
+          type: 'content_block_start',
+          index: this.thinkingBlockIndex,
+          content_block: { type: 'thinking', thinking: '' },
+        });
+      }
+      this.pushEvent('content_block_delta', {
+        type: 'content_block_delta',
+        index: this.thinkingBlockIndex,
+        delta: {
+          type: 'thinking_delta',
+          thinking: data.delta,
+        },
+      });
+    }
+
+    // 处理 reasoning summary 文本增量（推理摘要）
+    if (type === 'response.reasoning_summary_text.delta' && data?.delta) {
+      this.ensureMessageStart();
+      if (this.thinkingBlockIndex === null) {
+        this.thinkingBlockIndex = this.assignContentBlockIndex();
+        this.pushEvent('content_block_start', {
+          type: 'content_block_start',
+          index: this.thinkingBlockIndex,
+          content_block: { type: 'thinking', thinking: '' },
+        });
+      }
+      this.pushEvent('content_block_delta', {
+        type: 'content_block_delta',
+        index: this.thinkingBlockIndex,
+        delta: {
+          type: 'thinking_delta',
+          thinking: data.delta,
+        },
+      });
+    }
+
+    // 处理普通文本增量
+    if (type === 'response.output_text.delta' && data?.delta) {
+      this.ensureMessageStart();
+      if (this.textBlockIndex === null) {
+        this.textBlockIndex = this.assignContentBlockIndex();
+        this.pushEvent('content_block_start', {
+          type: 'content_block_start',
+          index: this.textBlockIndex,
+          content_block: { type: 'text' },
+        });
+      }
+      this.pushEvent('content_block_delta', {
+        type: 'content_block_delta',
+        index: this.textBlockIndex,
+        delta: {
+          type: 'text_delta',
+          text: data.delta,
+        },
+      });
+    }
+
+    // 处理拒绝内容增量（内容过滤等）
+    if (type === 'response.refusal.delta' && data?.delta) {
+      // 拒绝内容可以作为文本发送
+      this.ensureMessageStart();
+      if (this.textBlockIndex === null) {
+        this.textBlockIndex = this.assignContentBlockIndex();
+        this.pushEvent('content_block_start', {
+          type: 'content_block_start',
+          index: this.textBlockIndex,
+          content_block: { type: 'text' },
+        });
+      }
+      this.pushEvent('content_block_delta', {
+        type: 'content_block_delta',
+        index: this.textBlockIndex,
+        delta: {
+          type: 'text_delta',
+          text: data.delta,
+        },
+      });
+    }
+
+    // 处理函数调用参数增量
+    if (type === 'response.function_call_arguments.delta' && data?.delta) {
+      // OpenAI Responses API 的函数调用
+      // 这需要与现有的 tool_calls 处理逻辑配合
+      // 暂时先跳过，因为 Responses API 使用不同的函数调用格式
+    }
+
+    // 处理响应完成事件
+    if (type === 'response.completed' || type === 'response.failed' || type === 'response.incomplete') {
+      // 确保所有内容块都已关闭
+      this.finalize();
+    }
+
+    // 处理响应创建和进行中事件
+    if (type === 'response.created' || type === 'response.in_progress') {
+      this.ensureMessageStart();
+    }
+  }
+
   private finalize() {
     if (this.finalized) return;
     this.ensureMessageStart();
@@ -446,6 +565,7 @@ export class ClaudeToOpenAIChatEventTransform extends Transform {
   private usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null = null;
   private finished = false;
   private model: string | null = null;
+  private stopReason: string = 'stop'; // OpenAI 的 finish_reason
   private errorEmitted = false;
 
   constructor(options?: { model?: string }) {
@@ -487,6 +607,8 @@ export class ClaudeToOpenAIChatEventTransform extends Transform {
       if (type === 'content_block_start' && data?.content_block) {
         if (data.content_block.type === 'text') {
           // 文本块开始
+        } else if (data.content_block.type === 'thinking') {
+          // thinking 块开始（无需特殊处理）
         } else if (data.content_block.type === 'tool_use') {
           this.pendingToolCallId = data.content_block.id;
           this.pendingToolName = data.content_block.name;
@@ -501,6 +623,13 @@ export class ClaudeToOpenAIChatEventTransform extends Transform {
           const text = data.delta.text || '';
           if (text) {
             this.push({ event: null, data: { id: '', model: this.model, choices: [{ index: 0, delta: { content: text } }] } });
+          }
+        } else if (data.delta.type === 'thinking_delta') {
+          // 处理 thinking 增量，转换为 OpenAI 格式
+          const thinking = data.delta.thinking || '';
+          if (thinking) {
+            // OpenAI 兼容格式：使用 delta.thinking.content
+            this.push({ event: null, data: { id: '', model: this.model, choices: [{ index: 0, delta: { thinking: { content: thinking } } }] } });
           }
         } else if (data.delta.type === 'input_json_delta') {
           this.pendingToolArgs += data.delta.partial_json || '';
@@ -532,8 +661,30 @@ export class ClaudeToOpenAIChatEventTransform extends Transform {
 
       if (type === 'message_stop' || data?.type === 'message_stop') {
         this.finished = true;
-        this.push({ event: null, data: { id: '', model: this.model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] } });
+        // 使用映射后的 stop reason
+        this.push({ event: null, data: { id: '', model: this.model, choices: [{ index: 0, delta: {}, finish_reason: this.stopReason }] } });
         this.push({ event: 'done', data: { type: 'done' } });
+        callback();
+        return;
+      }
+
+      // 处理 message_delta 事件（包含 stop_reason 和 usage）
+      if (type === 'message_delta' && data?.delta) {
+        // 映射 Claude 的 stop_reason 到 OpenAI 的 finish_reason
+        if (data.delta.stop_reason) {
+          this.stopReason = this.mapStopReason(data.delta.stop_reason);
+        }
+
+        // 处理 usage 信息
+        if (data.usage) {
+          this.usage = {
+            prompt_tokens: data.usage.input_tokens || 0,
+            completion_tokens: data.usage.output_tokens || 0,
+            total_tokens: (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0),
+          };
+        }
+
+        // 不发送 delta 事件，只在最终 message_stop 时发送 finish_reason
         callback();
         return;
       }
@@ -557,13 +708,36 @@ export class ClaudeToOpenAIChatEventTransform extends Transform {
     try {
       if (!this.finished) {
         this.finished = true;
-        this.push({ event: null, data: { id: '', model: this.model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] } });
+        this.push({ event: null, data: { id: '', model: this.model, choices: [{ index: 0, delta: {}, finish_reason: this.stopReason }] } });
         this.push({ event: 'done', data: { type: 'done' } });
       }
       callback();
     } catch (error) {
       console.error('[ClaudeToOpenAIChatEventTransform] Error in _flush:', error);
       callback();
+    }
+  }
+
+  /**
+   * 将 Claude 的 stop_reason 映射到 OpenAI 的 finish_reason
+   * Claude: "end_turn" | "max_tokens" | "tool_use" | "stop_sequence" | "max_thinking_length"
+   * OpenAI: "stop" | "length" | "tool_calls" | "content_filter"
+   */
+  private mapStopReason(stopReason: string): string {
+    switch (stopReason) {
+      case 'end_turn':
+        return 'stop';
+      case 'max_tokens':
+      case 'max_thinking_length':
+        return 'length';
+      case 'tool_use':
+        return 'tool_calls';
+      case 'stop_sequence':
+        return 'stop';
+      case 'content_filter':
+        return 'content_filter';
+      default:
+        return 'stop';
     }
   }
 }

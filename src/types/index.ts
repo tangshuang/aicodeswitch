@@ -181,6 +181,17 @@ export interface ErrorLog {
   responseHeaders?: Record<string, string>;
   responseBody?: string;
   responseTime?: number;
+
+  // 请求日志中的详细信息字段
+  ruleId?: string;                                 // 使用的规则ID
+  targetType?: TargetType;                         // 客户端类型
+  targetServiceId?: string;                        // API服务ID
+  targetServiceName?: string;                      // API服务名
+  targetModel?: string;                            // 模型名
+  vendorId?: string;                               // 供应商ID
+  vendorName?: string;                             // 供应商名称
+  requestModel?: string;                           // 请求模型名（从请求体中读取）
+
   upstreamRequest?: {                              // 实际发送给后端的请求信息
     url: string;                                   // 实际请求的URL路径
     useProxy?: boolean;                            // 是否使用了代理
