@@ -22,6 +22,7 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: `http://${env.HOST || '127.0.0.1'}:${env.PORT || 4567}`,
           changeOrigin: true,
+          ws: true, // 启用 WebSocket 代理支持
         },
       },
     },

@@ -12,6 +12,9 @@ import StatisticsPage from './pages/StatisticsPage';
 import SkillsPage from './pages/SkillsPage';
 import { ToastContainer } from './components/Toast';
 import { ConfirmProvider } from './components/Confirm';
+import ToolsInstallModal from './components/ToolsInstallModal';
+import NotificationBar from './components/NotificationBar';
+import type { ToolInstallationStatus } from '../types';
 import './styles/App.css';
 
 function AppContent() {
@@ -36,6 +39,12 @@ function AppContent() {
   const [showMigrationModal, setShowMigrationModal] = useState(false);
   const [migrationContent, setMigrationContent] = useState('');
   const [hasCheckedMigration, setHasCheckedMigration] = useState(false);
+
+  // 工具安装检测相关状态
+  const [showToolsInstallModal, setShowToolsInstallModal] = useState(false);
+  const [showNotification, setShowNotification] = useState(false);
+  const [toolsStatus, setToolsStatus] = useState<ToolInstallationStatus | null>(null);
+  const [hasCheckedTools, setHasCheckedTools] = useState(false);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') || 'light';
@@ -125,6 +134,45 @@ function AppContent() {
     checkMigration();
   }, [hasCheckedMigration]);
 
+  // 检查工具安装状态
+  useEffect(() => {
+    const checkTools = async () => {
+      if (hasCheckedTools) return;
+
+      // 检查工具是否已经完成安装
+      const installCompleted = localStorage.getItem('tools_install_completed');
+      if (installCompleted === 'true') {
+        setHasCheckedTools(true);
+        return;
+      }
+
+      try {
+        const status = await api.getToolsStatus();
+        setToolsStatus(status);
+
+        // 如果有任何工具未安装，显示通知
+        if (!status.claudeCode.installed || !status.codex.installed) {
+          setShowNotification(true);
+        } else {
+          // 如果工具都已安装，也标记为已完成
+          localStorage.setItem('tools_install_completed', 'true');
+        }
+
+        setHasCheckedTools(true);
+      } catch (error) {
+        console.error('Failed to check tools status:', error);
+        setHasCheckedTools(true);
+      }
+    };
+
+    // 等待认证完成后再检查工具
+    if (!isCheckingAuth && isAuthenticated) {
+      checkTools();
+    } else if (!isCheckingAuth && !authEnabled) {
+      checkTools();
+    }
+  }, [hasCheckedTools, isCheckingAuth, isAuthenticated, authEnabled]);
+
   useEffect(() => {
     const checkVendors = async () => {
       try {
@@ -160,6 +208,46 @@ function AppContent() {
       console.error('Failed to acknowledge migration:', error);
     }
     setShowMigrationModal(false);
+  };
+
+  const handleNotificationClose = () => {
+    setShowNotification(false);
+  };
+
+  const handleNotificationClick = () => {
+    setShowNotification(false);
+    setShowToolsInstallModal(true);
+  };
+
+  const handleToolsInstallModalClose = () => {
+    setShowToolsInstallModal(false);
+    // 注意：安装完成后是否显示通知由 handleToolsInstallComplete 处理
+    // 这里不再重新显示通知，避免重复
+  };
+
+  const handleToolsInstallComplete = async () => {
+    // 重新检测工具状态
+    try {
+      const newStatus = await api.getToolsStatus();
+      setToolsStatus(newStatus);
+
+      // 如果所有工具都安装了，标记为已完成
+      if (newStatus.claudeCode.installed && newStatus.codex.installed) {
+        localStorage.setItem('tools_install_completed', 'true');
+        setShowNotification(false);
+      }
+
+      // 无论是否所有工具都安装完成，都关闭模态框
+      setTimeout(() => {
+        setShowToolsInstallModal(false);
+        // 如果还有未安装的工具，显示通知栏
+        if (!newStatus.claudeCode.installed || !newStatus.codex.installed) {
+          setShowNotification(true);
+        }
+      }, 500); // 0.5秒后关闭模态框（在ToolsInstallModal的1.5秒自动关闭之前）
+    } catch (error) {
+      console.error('Failed to refresh tools status:', error);
+    }
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -415,6 +503,26 @@ function AppContent() {
             </div>
           </div>
         </div>
+      )}
+
+      {showNotification && toolsStatus && (
+        <NotificationBar
+          toolName={!toolsStatus.claudeCode.installed && !toolsStatus.codex.installed
+            ? 'both'
+            : !toolsStatus.claudeCode.installed
+            ? 'claude-code'
+            : 'codex'}
+          onInstallClick={handleNotificationClick}
+          onClose={handleNotificationClose}
+        />
+      )}
+
+      {showToolsInstallModal && toolsStatus && (
+        <ToolsInstallModal
+          status={toolsStatus}
+          onClose={handleToolsInstallModalClose}
+          onInstallComplete={handleToolsInstallComplete}
+        />
       )}
     </div>
   );

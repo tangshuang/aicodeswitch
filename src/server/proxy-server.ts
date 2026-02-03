@@ -1845,7 +1845,6 @@ export class ProxyServer {
 
         res.on('finish', () => {
           streamChunksForLog = eventCollector.getChunks();
-          console.log('[Proxy] Default stream request finished, collected chunks:', streamChunksForLog?.length || 0);
           // 尝试从event collector中提取usage信息
           const extractedUsage = eventCollector.extractUsage();
           if (extractedUsage) {
