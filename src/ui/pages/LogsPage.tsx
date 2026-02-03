@@ -1115,6 +1115,12 @@ function LogsPage() {
                   <JSONViewer data={selectedErrorLog.requestHeaders} />
                 </div>
               )}
+              {selectedErrorLog.upstreamRequest && (
+                <div className="form-group">
+                  <label>实际转发信息</label>
+                  <JSONViewer data={selectedErrorLog.upstreamRequest} />
+                </div>
+              )}
               {selectedErrorLog.responseHeaders && (
                 <div className="form-group">
                   <label>响应头</label>

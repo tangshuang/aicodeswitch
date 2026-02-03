@@ -658,6 +658,10 @@ export class ProxyServer {
     const rules = this.getRulesByRouteId(routeId);
     if (!rules || rules.length === 0) return undefined;
 
+    // 过滤掉被屏蔽的规则
+    const enabledRules = rules.filter(rule => !rule.isDisabled);
+    if (enabledRules.length === 0) return undefined;
+
     const body = req.body;
     const requestModel = body?.model;
 
@@ -768,13 +772,17 @@ export class ProxyServer {
     const rules = this.getRulesByRouteId(routeId);
     if (!rules || rules.length === 0) return [];
 
+    // 过滤掉被屏蔽的规则
+    const enabledRules = rules.filter(rule => !rule.isDisabled);
+    if (enabledRules.length === 0) return [];
+
     const body = req.body;
     const requestModel = body?.model;
     const candidates: Rule[] = [];
 
     // 1. Model mapping rules
     if (requestModel) {
-      const modelMappingRules = rules.filter(rule =>
+      const modelMappingRules = enabledRules.filter(rule =>
         rule.contentType === 'model-mapping' &&
         rule.replacedModel &&
         requestModel.includes(rule.replacedModel)
@@ -784,11 +792,11 @@ export class ProxyServer {
 
     // 2. Content type specific rules
     const contentType = this.determineContentType(req);
-    const contentTypeRules = rules.filter(rule => rule.contentType === contentType);
+    const contentTypeRules = enabledRules.filter(rule => rule.contentType === contentType);
     candidates.push(...contentTypeRules);
 
     // 3. Default rules
-    const defaultRules = rules.filter(rule => rule.contentType === 'default');
+    const defaultRules = enabledRules.filter(rule => rule.contentType === 'default');
     candidates.push(...defaultRules);
 
     // 4. 检查并重置到期的规则
@@ -1683,6 +1691,7 @@ export class ProxyServer {
                   errorStack: error.stack,
                   requestHeaders: this.normalizeHeaders(req.headers),
                   requestBody: req.body ? JSON.stringify(req.body) : undefined,
+                  upstreamRequest: upstreamRequestForLog,
                 });
               } catch (logError) {
                 console.error('[Proxy] Failed to log error:', logError);
@@ -1758,6 +1767,7 @@ export class ProxyServer {
                   errorStack: error.stack,
                   requestHeaders: this.normalizeHeaders(req.headers),
                   requestBody: req.body ? JSON.stringify(req.body) : undefined,
+                  upstreamRequest: upstreamRequestForLog,
                 });
               } catch (logError) {
                 console.error('[Proxy] Failed to log error:', logError);
@@ -1818,6 +1828,7 @@ export class ProxyServer {
                 errorStack: error.stack,
                 requestHeaders: this.normalizeHeaders(req.headers),
                 requestBody: req.body ? JSON.stringify(req.body) : undefined,
+                upstreamRequest: upstreamRequestForLog,
               });
             } catch (logError) {
               console.error('[Proxy] Failed to log error:', logError);

@@ -124,6 +124,7 @@ export interface Rule {
   requestResetInterval?: number; // 次数重置间隔（小时）
   requestLastResetAt?: number;   // 上次次数重置时间戳
   requestResetBaseTime?: number; // 下一次重置的时间基点（Unix时间戳）
+  isDisabled?: boolean;          // 是否临时屏蔽该规则
   createdAt: number;
   updatedAt: number;
 }
@@ -180,6 +181,12 @@ export interface ErrorLog {
   responseHeaders?: Record<string, string>;
   responseBody?: string;
   responseTime?: number;
+  upstreamRequest?: {                              // 实际发送给后端的请求信息
+    url: string;                                   // 实际请求的URL路径
+    useProxy?: boolean;                            // 是否使用了代理
+    headers?: Record<string, string>;              // 实际发送的请求头
+    body?: string;                                 // 实际发送的请求体
+  };
 }
 
 export interface AppConfig {

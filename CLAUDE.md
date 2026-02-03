@@ -163,7 +163,7 @@ aicos version            # Show current version information
 ### Logging
 - Request logs: Detailed API call records with token usage
 - Access logs: System access records
-- Error logs: Error and exception records
+- Error logs: Error and exception records (includes upstream request information when available)
 
 ### Usage Limits Auto-Sync
 - **Service-Level Limits**: API services can have token and request count limits configured
