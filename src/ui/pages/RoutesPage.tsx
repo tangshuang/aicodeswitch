@@ -247,7 +247,7 @@ export default function RoutesPage() {
           setTimeout(() => {
             const newRouteElement = routeRefs.current.get(id);
             if (newRouteElement) {
-              applyAnimation(id, newRouteElement, 400);
+              applyAnimation(id, newRouteElement, 250);
             }
             activatingRouteIdRef.current = null;
           }, 0);
@@ -654,18 +654,7 @@ export default function RoutesPage() {
                     borderRadius: '8px',
                     cursor: 'pointer',
                     border: '1px solid var(--border-primary)',
-                    transition: 'all 0.2s ease',
                     position: 'relative',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (selectedRoute?.id !== route.id) {
-                      e.currentTarget.style.backgroundColor = 'var(--bg-route-item-hover)';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (selectedRoute?.id !== route.id) {
-                      e.currentTarget.style.backgroundColor = 'var(--bg-route-item)';
-                    }
                   }}
                 >
                   <div>

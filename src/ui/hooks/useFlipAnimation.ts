@@ -35,7 +35,7 @@ export function useFlipAnimation() {
    * 应用动画（Invert和Play阶段）
    */
   const applyAnimation = useCallback(
-    (elementId: string, element: HTMLElement, duration: number = 400) => {
+    (elementId: string, element: HTMLElement, duration: number = 250) => {
       if (isAnimatingRef.current) {
         return;
       }
@@ -72,21 +72,21 @@ export function useFlipAnimation() {
       // Invert: 应用反转变换，让元素看起来还在原位置
       element.style.transform = `translate(${deltaLeft}px, ${deltaTop}px)`;
       element.style.transition = 'none';
+      element.style.willChange = 'transform';
 
       isAnimatingRef.current = true;
 
-      // Play: 强制浏览器重排后，应用动画
+      // Play: 强制浏览器重排后，应用动画（优化为单个 requestAnimationFrame）
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          element.style.transition = `transform ${duration}ms cubic-bezier(0.4, 0, 0.2, 1)`;
-          element.style.transform = '';
+        element.style.transition = `transform ${duration}ms cubic-bezier(0.4, 0, 0.2, 1)`;
+        element.style.transform = '';
 
-          // 动画结束后清理
-          setTimeout(() => {
-            positionsRef.current.delete(elementId);
-            isAnimatingRef.current = false;
-          }, duration);
-        });
+        // 动画结束后清理
+        setTimeout(() => {
+          positionsRef.current.delete(elementId);
+          isAnimatingRef.current = false;
+          element.style.willChange = '';
+        }, duration);
       });
     },
     []

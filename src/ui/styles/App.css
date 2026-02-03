@@ -12,13 +12,12 @@
   flex-direction: column;
   padding: 0;
   border-radius: 20px;
-  box-shadow: 0 8px 32px var(--shadow-primary), 0 0 20px rgba(4, 120, 87, 0.3);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   margin: 16px;
   position: relative;
   z-index: 1;
   padding-bottom: 80px; /* Space for theme toggle */
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 .logo {
@@ -49,21 +48,6 @@
   transition: all 0.3s ease;
 }
 
-.logo:hover::before,
-.logo:focus::before {
-  animation: sparkle 3s ease-in-out infinite;
-}
-
-.logo:hover::after,
-.logo:focus::after {
-  animation: sparkle 3s ease-in-out infinite 1.5s;
-}
-
-@keyframes sparkle {
-  0%, 100% { transform: scale(1) rotate(0deg); opacity: 0.7; }
-  50% { transform: scale(1.2) rotate(180deg); opacity: 1; }
-}
-
 .logo h2 {
   font-size: 22px;
   font-weight: 800;
@@ -71,22 +55,12 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1), 0 0 20px rgba(4, 120, 87, 0.3);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   position: relative;
   z-index: 1;
   letter-spacing: 1px;
   text-transform: uppercase;
   transition: all 0.3s ease;
-}
-
-.logo:hover h2,
-.logo:focus h2 {
-  animation: logoGlow 4s ease-in-out infinite;
-}
-
-@keyframes logoGlow {
-  0%, 100% { text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1), 0 0 20px rgba(4, 120, 87, 0.3); }
-  50% { text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1), 0 0 30px rgba(4, 120, 87, 0.5), 0 0 40px rgba(4, 120, 87, 0.3); }
 }
 
 .nav-menu {
@@ -129,12 +103,10 @@
 .nav-menu a:hover {
   background-color: rgba(255, 255, 255, 0.1);
   transform: translateX(4px);
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.2);
 }
 
 .nav-menu a.active {
   background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-  box-shadow: 0 4px 16px var(--shadow-primary);
 }
 
 .main-content {
@@ -187,13 +159,12 @@
   background: var(--bg-card);
   border-radius: 20px;
   padding: 24px;
-  box-shadow: 0 8px 32px var(--shadow-secondary), 0 0 16px rgba(4, 120, 87, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   margin-bottom: 24px;
   border: 1px solid var(--border-primary);
   position: relative;
   overflow: hidden;
   transition: all 0.3s ease-out;
-  backdrop-filter: blur(10px);
 }
 
 .card::before {
@@ -203,24 +174,13 @@
   left: 0;
   right: 0;
   height: 4px;
-  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary), var(--accent-primary));
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
   border-radius: 20px 20px 0 0;
-  background-size: 200% 100%;
-  transition: all 0.3s ease;
-}
-
-.card:hover::before {
-  animation: gradientShift 3s ease-in-out infinite;
-}
-
-@keyframes gradientShift {
-  0%, 100% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
 }
 
 .card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 12px 40px rgba(106, 123, 180, 0.2), 0 8px 24px rgba(255, 113, 206, 0.15);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
 }
 
 .btn {
@@ -233,7 +193,6 @@
   transition: all 0.3s ease-out;
   position: relative;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   white-space: nowrap;
 }
 
@@ -257,7 +216,6 @@
 
 .btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
 }
 
 .btn:active {
@@ -293,7 +251,6 @@
 
 .btn-primary:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(4, 120, 87, 0.4);
 }
 
 .btn-danger {
@@ -333,7 +290,6 @@ table {
   margin-top: 16px;
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 4px 16px rgba(106, 123, 180, 0.1);
 }
 
 table th,
@@ -408,8 +364,7 @@ table th {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.6);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -424,7 +379,6 @@ table th {
 
 .modal {
   background: var(--bg-secondary);
-  backdrop-filter: blur(20px);
   border-radius: 24px;
   padding: 32px;
   padding-right: 28px;
@@ -432,7 +386,7 @@ table th {
   width: 800px;
   max-width: 90%;
   max-height: 90vh;
-  box-shadow: 0 20px 60px var(--shadow-primary), 0 8px 32px var(--shadow-secondary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
   border: 1px solid var(--border-secondary);
   animation: modalSlideIn 0.4s ease-out;
   overflow: hidden;
@@ -477,8 +431,7 @@ table th {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.6);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -504,16 +457,14 @@ table th {
   align-items: center;
   justify-content: center;
   padding: 0;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-  border: 2px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.3);
   z-index: 1001;
 }
 
 .modal-close-btn:hover {
   background: var(--accent-danger);
   color: white;
-  transform: scale(1.1);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  transform: scale(1.05);
 }
 
 .modal-close-btn:active {
@@ -565,7 +516,6 @@ table th {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   white-space: nowrap;
 }
 
@@ -759,7 +709,6 @@ table th {
 .theme-toggle button.active {
   background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
   color: white;
-  box-shadow: 0 2px 8px var(--shadow-primary), 0 0 8px rgba(4, 120, 87, 0.5);
   animation: pulse 2s ease-in-out infinite;
 }
 
@@ -774,13 +723,12 @@ table th {
   bottom: 80px;
   left: 20px;
   right: 20px;
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(5, 150, 105, 0.15));
+  background: rgba(16, 185, 129, 0.15);
   border: 1px solid rgba(16, 185, 129, 0.4);
   border-radius: 12px;
   padding: 12px;
-  backdrop-filter: blur(10px);
   animation: slideUp 0.3s ease-out;
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   margin-bottom: 12px;
 }
 
@@ -863,7 +811,6 @@ table th {
 
 .update-link:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
 }
 
 /* Reduced motion support */
@@ -1051,7 +998,6 @@ table th {
   border-radius: 12px;
   font-size: 11px;
   font-weight: 600;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .status-active {
@@ -1088,7 +1034,7 @@ table th {
   font-size: 16px;
   font-weight: 700;
   border-radius: 14px;
-  box-shadow: 0 10px 24px rgba(4, 120, 87, 0.4), 0 0 18px rgba(16, 185, 129, 0.35);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   position: relative;
 }
 
@@ -1098,13 +1044,7 @@ table th {
   inset: -6px;
   border-radius: 18px;
   border: 2px solid rgba(16, 185, 129, 0.35);
-  opacity: 0.8;
-  animation: pulseDiscover 2.4s ease-in-out infinite;
-}
-
-@keyframes pulseDiscover {
-  0%, 100% { transform: scale(1); opacity: 0.6; }
-  50% { transform: scale(1.03); opacity: 1; }
+  opacity: 0.6;
 }
 
 .skills-section-header {

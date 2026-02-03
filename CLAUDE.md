@@ -211,3 +211,4 @@ aicos version            # Show current version information
 * 所有对话请使用中文。生成代码中的文案及相关注释根据代码原本的语言生成。
 * 在服务端，直接使用 __dirname 来获取当前目录，不要使用 process.cwd()
 * 每次有新的变化时，你需要更新 CLAUDE.md 来让文档保持最新。
+* 禁止在项目中使用依赖GPU的css样式处理。

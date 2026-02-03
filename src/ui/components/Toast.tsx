@@ -67,13 +67,13 @@ export function ToastContainer() {
       padding: '12px 20px',
       borderRadius: '8px',
       marginBottom: '10px',
-      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+      boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
       display: 'flex',
       alignItems: 'center',
       gap: '10px',
       minWidth: '300px',
       maxWidth: '500px',
-      animation: 'slideIn 0.3s ease-out',
+      animation: 'slideIn 0.2s ease-out',
     };
 
     const typeStyles = {
@@ -117,22 +117,12 @@ export function ToastContainer() {
       <style>{`
         @keyframes slideIn {
           from {
-            transform: translateX(100%);
+            transform: translateX(50px);
             opacity: 0;
           }
           to {
             transform: translateX(0);
             opacity: 1;
-          }
-        }
-        @keyframes slideOut {
-          from {
-            transform: translateX(0);
-            opacity: 1;
-          }
-          to {
-            transform: translateX(100%);
-            opacity: 0;
           }
         }
       `}</style>
