@@ -950,8 +950,8 @@ export default function RoutesPage() {
                       <td>
                         <div style={{ fontSize: '13px' }}>
                           {/* Token限制 */}
-                          <div>
-                            <span style={{ fontWeight: 'bold', fontSize: '12px' }}>Token:</span>
+                          <div style={{ whiteSpace: 'nowrap' }}>
+                            <span style={{ fontWeight: 'bold', fontSize: '12px' }}>Tokens:</span>
                             {rule.tokenLimit ? (
                               <>
                                 {/* 使用 WebSocket 实时数据 */}

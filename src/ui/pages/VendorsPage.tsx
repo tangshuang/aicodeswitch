@@ -655,7 +655,7 @@ function VendorsPage() {
                   onChange={(e) => setCurrentSourceType(e.target.value as SourceType)}
                   required
                 >
-                  <option value="">请选择源类型</option>
+                  <option value="" disabled>请选择源类型</option>
                   {Object.keys(SOURCE_TYPE).map((type) => (
                     <option key={type} value={type}>{SOURCE_TYPE[type as keyof typeof SOURCE_TYPE]}</option>
                   ))}

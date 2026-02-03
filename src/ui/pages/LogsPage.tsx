@@ -980,15 +980,6 @@ function LogsPage() {
                 <h2>请求详情</h2>
               </div>
             <div>
-              {/* 调试信息 */}
-              {console.log('[RequestLogDetail] selectedRequestLog:', {
-                id: selectedRequestLog.id,
-                hasResponseBody: !!selectedRequestLog.responseBody,
-                responseBodyLength: selectedRequestLog.responseBody?.length,
-                hasStreamChunks: !!selectedRequestLog.streamChunks,
-                streamChunksLength: selectedRequestLog.streamChunks?.length,
-                targetType: selectedRequestLog.targetType
-              })}
               <div className="form-group">
                 <label>日志ID</label>
                 <input type="text" value={selectedRequestLog.id} readOnly />
@@ -1193,6 +1184,36 @@ function LogsPage() {
                 <label>时间</label>
                 <input type="text" value={dayjs(selectedErrorLog.timestamp).format('YYYY-MM-DD HH:mm:ss')} readOnly />
               </div>
+              {selectedErrorLog.targetType && (
+                <div className="form-group">
+                  <label>客户端类型</label>
+                  <input type="text" value={TARGET_TYPE[selectedErrorLog.targetType] || '-'} readOnly />
+                </div>
+              )}
+              {selectedErrorLog.requestModel && (
+                <div className="form-group">
+                  <label>请求模型</label>
+                  <input type="text" value={selectedErrorLog.requestModel} readOnly />
+                </div>
+              )}
+              {selectedErrorLog.vendorName && (
+                <div className="form-group">
+                  <label>供应商</label>
+                  <input type="text" value={selectedErrorLog.vendorName} readOnly />
+                </div>
+              )}
+              {selectedErrorLog.targetServiceName && (
+                <div className="form-group">
+                  <label>供应商API服务</label>
+                  <input type="text" value={selectedErrorLog.targetServiceName} readOnly />
+                </div>
+              )}
+              {selectedErrorLog.targetModel && (
+                <div className="form-group">
+                  <label>供应商模型</label>
+                  <input type="text" value={selectedErrorLog.targetModel} readOnly />
+                </div>
+              )}
               <div className="form-group">
                 <label>请求方法</label>
                 <input type="text" value={selectedErrorLog.method} readOnly />
@@ -1219,16 +1240,16 @@ function LogsPage() {
                   <textarea rows={8} value={selectedErrorLog.errorStack} readOnly style={{ fontSize: '12px', color: '#7f8c8d' }} />
                 </div>
               )}
-              {selectedErrorLog.requestBody && (
-                <div className="form-group">
-                  <label>请求体</label>
-                  <JSONViewer data={selectedErrorLog.requestBody} />
-                </div>
-              )}
               {selectedErrorLog.requestHeaders && (
                 <div className="form-group">
                   <label>请求头</label>
                   <JSONViewer data={selectedErrorLog.requestHeaders} />
+                </div>
+              )}
+              {selectedErrorLog.requestBody && (
+                <div className="form-group">
+                  <label>请求体</label>
+                  <JSONViewer data={selectedErrorLog.requestBody} />
                 </div>
               )}
               {selectedErrorLog.upstreamRequest && (

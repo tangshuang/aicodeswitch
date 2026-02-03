@@ -170,7 +170,10 @@ export class ProxyServer {
           });
         }
 
-        // 记录错误日志
+        // 确定目标类型
+        const targetType: TargetType = req.path.startsWith('/claude-code/') ? 'claude-code' : 'codex';
+
+        // 记录错误日志 - 包含请求详情
         await this.dbManager.addErrorLog({
           timestamp: Date.now(),
           method: req.method,
@@ -180,6 +183,10 @@ export class ProxyServer {
           errorStack: lastError?.stack,
           requestHeaders: this.normalizeHeaders(req.headers),
           requestBody: req.body ? JSON.stringify(req.body) : undefined,
+          // 添加请求详情
+          targetType,
+          requestModel: req.body?.model,
+          responseTime: 0,
         });
 
         // 根据路径判断目标类型并返回适当的错误格式
@@ -211,7 +218,8 @@ export class ProxyServer {
             error: error.message,
           });
         }
-        // Add error log
+        // Add error log - 包含请求详情
+        const targetType: TargetType = req.path.startsWith('/claude-code/') ? 'claude-code' : 'codex';
         await this.dbManager.addErrorLog({
           timestamp: Date.now(),
           method: req.method,
@@ -221,6 +229,10 @@ export class ProxyServer {
           errorStack: error.stack,
           requestHeaders: this.normalizeHeaders(req.headers),
           requestBody: req.body ? JSON.stringify(req.body) : undefined,
+          // 添加请求详情
+          targetType,
+          requestModel: req.body?.model,
+          responseTime: 0,
         });
 
         // 根据路径判断目标类型并返回适当的错误格式
@@ -375,7 +387,7 @@ export class ProxyServer {
           });
         }
 
-        // 记录错误日志
+        // 记录错误日志 - 包含请求详情（使用函数参数 targetType）
         await this.dbManager.addErrorLog({
           timestamp: Date.now(),
           method: req.method,
@@ -385,6 +397,10 @@ export class ProxyServer {
           errorStack: lastError?.stack,
           requestHeaders: this.normalizeHeaders(req.headers),
           requestBody: req.body ? JSON.stringify(req.body) : undefined,
+          // 添加请求详情
+          targetType,
+          requestModel: req.body?.model,
+          responseTime: 0,
         });
 
         // 根据路径判断目标类型并返回适当的错误格式
@@ -416,7 +432,7 @@ export class ProxyServer {
             error: error.message,
           });
         }
-        // Add error log
+        // Add error log - 包含请求详情（使用函数参数 targetType）
         await this.dbManager.addErrorLog({
           timestamp: Date.now(),
           method: req.method,
@@ -426,6 +442,10 @@ export class ProxyServer {
           errorStack: error.stack,
           requestHeaders: this.normalizeHeaders(req.headers),
           requestBody: req.body ? JSON.stringify(req.body) : undefined,
+          // 添加请求详情
+          targetType,
+          requestModel: req.body?.model,
+          responseTime: 0,
         });
         res.status(500).json({ error: error.message });
       }
@@ -1762,8 +1782,12 @@ export class ProxyServer {
             if (error) {
               console.error('[Proxy] Pipeline error for claude-code:', error);
 
-              // 记录到错误日志
+              // 记录到错误日志 - 包含请求详情和实际转发信息
               try {
+                // 获取供应商信息
+                const vendors = this.dbManager.getVendors();
+                const vendor = vendors.find(v => v.id === service.vendorId);
+
                 await this.dbManager.addErrorLog({
                   timestamp: Date.now(),
                   method: req.method,
@@ -1774,6 +1798,16 @@ export class ProxyServer {
                   requestHeaders: this.normalizeHeaders(req.headers),
                   requestBody: req.body ? JSON.stringify(req.body) : undefined,
                   upstreamRequest: upstreamRequestForLog,
+                  // 添加请求详情
+                  ruleId: rule.id,
+                  targetType,
+                  targetServiceId: service.id,
+                  targetServiceName: service.name,
+                  targetModel: rule.targetModel,
+                  vendorId: service.vendorId,
+                  vendorName: vendor?.name,
+                  requestModel: req.body?.model,
+                  responseTime: Date.now() - startTime,
                 });
               } catch (logError) {
                 console.error('[Proxy] Failed to log error:', logError);
@@ -1839,8 +1873,12 @@ export class ProxyServer {
             if (error) {
               console.error('[Proxy] Pipeline error for codex:', error);
 
-              // 记录到错误日志
+              // 记录到错误日志 - 包含请求详情和实际转发信息
               try {
+                // 获取供应商信息
+                const vendors = this.dbManager.getVendors();
+                const vendor = vendors.find(v => v.id === service.vendorId);
+
                 await this.dbManager.addErrorLog({
                   timestamp: Date.now(),
                   method: req.method,
@@ -1851,6 +1889,16 @@ export class ProxyServer {
                   requestHeaders: this.normalizeHeaders(req.headers),
                   requestBody: req.body ? JSON.stringify(req.body) : undefined,
                   upstreamRequest: upstreamRequestForLog,
+                  // 添加请求详情
+                  ruleId: rule.id,
+                  targetType,
+                  targetServiceId: service.id,
+                  targetServiceName: service.name,
+                  targetModel: rule.targetModel,
+                  vendorId: service.vendorId,
+                  vendorName: vendor?.name,
+                  requestModel: req.body?.model,
+                  responseTime: Date.now() - startTime,
                 });
               } catch (logError) {
                 console.error('[Proxy] Failed to log error:', logError);
@@ -1950,6 +1998,10 @@ export class ProxyServer {
           errorDetail = JSON.stringify(responseData);
         }
 
+        // 获取供应商信息
+        const vendors = this.dbManager.getVendors();
+        const vendor = vendors.find(v => v.id === service.vendorId);
+
         await this.dbManager.addErrorLog({
           timestamp: Date.now(),
           method: req.method,
@@ -1961,6 +2013,17 @@ export class ProxyServer {
           requestBody: req.body ? JSON.stringify(req.body) : undefined,
           responseHeaders: responseHeadersForLog,
           responseBody: responseBodyForLog,
+          // 添加请求详情和实际转发信息
+          ruleId: rule.id,
+          targetType,
+          targetServiceId: service.id,
+          targetServiceName: service.name,
+          targetModel: rule.targetModel,
+          vendorId: service.vendorId,
+          vendorName: vendor?.name,
+          requestModel: req.body?.model,
+          upstreamRequest: upstreamRequestForLog,
+          responseTime: Date.now() - startTime,
         });
 
         this.copyResponseHeaders(responseHeaders, res);
@@ -2010,7 +2073,11 @@ export class ProxyServer {
         ? 'Request timeout - the upstream API took too long to respond'
         : (error.message || 'Internal server error');
 
-      // 将错误记录到错误日志
+      // 将错误记录到错误日志 - 包含请求详情和实际转发信息
+      // 获取供应商信息
+      const vendors = this.dbManager.getVendors();
+      const vendor = vendors.find(v => v.id === service.vendorId);
+
       await this.dbManager.addErrorLog({
         timestamp: Date.now(),
         method: req.method,
@@ -2020,6 +2087,17 @@ export class ProxyServer {
         errorStack: error.stack,
         requestHeaders: this.normalizeHeaders(req.headers),
         requestBody: req.body ? JSON.stringify(req.body) : undefined,
+        // 添加请求详情和实际转发信息
+        ruleId: rule.id,
+        targetType,
+        targetServiceId: service.id,
+        targetServiceName: service.name,
+        targetModel: rule.targetModel,
+        vendorId: service.vendorId,
+        vendorName: vendor?.name,
+        requestModel: req.body?.model,
+        upstreamRequest: upstreamRequestForLog,
+        responseTime: Date.now() - startTime,
       });
 
       await finalizeLog(isTimeout ? 504 : 500, errorMessage);

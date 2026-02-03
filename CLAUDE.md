@@ -182,7 +182,15 @@ aicos version            # Show current version information
 ### Logging
 - Request logs: Detailed API call records with token usage
 - Access logs: System access records
-- Error logs: Error and exception records (includes upstream request information when available)
+- Error logs: Error and exception records with comprehensive context
+  - **Error Log Details**:
+    - Basic error information: timestamp, method, path, status code, error message, error stack
+    - Request context: targetType (client type), requestModel (requested model)
+    - Routing context: ruleId (used rule), targetServiceId/Name (API service), targetModel (actual model)
+    - Vendor context: vendorId/Name (service provider)
+    - Request details: request headers, request body, response headers, response body
+    - **Upstream Request Information**: URL, headers, body, proxy usage
+    - Response time metrics
 - **Data Sanitization**:
   - Sensitive authentication fields (api_key, authorization, password, secret, etc.) are automatically masked in the UI
   - Technical fields like `max_tokens`, `input_tokens`, `output_tokens` are NOT masked - they are legitimate API parameters
