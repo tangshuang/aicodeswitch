@@ -31,6 +31,7 @@ export interface SkillCatalogItem {
   description?: string;
   tags?: string[];
   url?: string;
+  stars?: number;  // 评分数
 }
 
 export interface SkillInstallRequest {
