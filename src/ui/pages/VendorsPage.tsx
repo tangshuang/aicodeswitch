@@ -466,7 +466,7 @@ function VendorsPage() {
   };
 
   return (
-    <div>
+    <div className='vendors-page'>
       <div className="page-header">
         <h1>供应商管理</h1>
         <p>管理API供应商和服务配置</p>
@@ -512,7 +512,7 @@ function VendorsPage() {
                     color: 'var(--text-primary)'
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
                       <div style={{ fontWeight: 500 }}>{vendor.name}</div>
                       {vendor.description && (

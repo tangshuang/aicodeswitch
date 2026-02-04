@@ -93,7 +93,13 @@ function SkillsPage() {
       setSearching(true);
       setHasSearched(true);
       const results = await api.searchSkills(query);
-      setSearchResults(results);
+      // 按评分数倒序排序
+      const sortedResults = results.sort((a, b) => {
+        const starsA = a.stars ?? 0;
+        const starsB = b.stars ?? 0;
+        return starsB - starsA;
+      });
+      setSearchResults(sortedResults);
     } catch (error) {
       console.error('Failed to search skills:', error);
       toast.error('搜索失败，请稍后重试');
@@ -488,7 +494,15 @@ function SkillsPage() {
             {searchResults.map((skill) => {
               return (
                 <div className="card skill-card" key={skill.id}>
-                  <div className="skill-title">{skill.name}</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                    <div className="skill-title" style={{ flex: 1 }}>{skill.name}</div>
+                    {skill.stars !== undefined && skill.stars > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#f39c12', fontSize: '14px', flexShrink: 0 }}>
+                        <span>⭐</span>
+                        <span style={{ fontWeight: '600' }}>{skill.stars}</span>
+                      </div>
+                    )}
+                  </div>
                   {skill.tags && skill.tags.length > 0 && (
                     <div className="skill-tags">
                       {skill.tags.map((tag) => (

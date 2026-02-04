@@ -14,6 +14,7 @@ import { ToastContainer } from './components/Toast';
 import { ConfirmProvider } from './components/Confirm';
 import ToolsInstallModal from './components/ToolsInstallModal';
 import NotificationBar from './components/NotificationBar';
+import NavItemWithTooltip from './components/Tooltip';
 import type { ToolInstallationStatus } from '../types';
 import './styles/App.css';
 
@@ -22,6 +23,7 @@ function AppContent() {
   const [theme, setTheme] = useState('light');
   const [showVendorModal, setShowVendorModal] = useState(false);
   const [hasCheckedVendors, setHasCheckedVendors] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // 版本更新相关状态
   const [hasUpdate, setHasUpdate] = useState(false);
@@ -50,6 +52,11 @@ function AppContent() {
     const savedTheme = localStorage.getItem('theme') || 'light';
     setTheme(savedTheme);
     document.documentElement.setAttribute('data-theme', savedTheme);
+
+    const savedSidebarState = localStorage.getItem('sidebar-collapsed');
+    if (savedSidebarState === 'true') {
+      setSidebarCollapsed(true);
+    }
   }, []);
 
   // 版本检查 - 每1分钟检查一次
@@ -194,6 +201,11 @@ function AppContent() {
     setTheme(newTheme);
     document.documentElement.setAttribute('data-theme', newTheme);
     localStorage.setItem('theme', newTheme);
+  };
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed(!sidebarCollapsed);
+    localStorage.setItem('sidebar-collapsed', (!sidebarCollapsed).toString());
   };
 
   const handleVendorModalConfirm = () => {
@@ -361,31 +373,45 @@ function AppContent() {
 
   return (
     <div className="app">
-      <nav className="sidebar">
+      <nav className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="logo">
           <h2>AI Code Switch</h2>
         </div>
          <ul className="nav-menu">
           <li>
-            <NavLink to="/">🌏 路由管理</NavLink>
+            <NavItemWithTooltip text="路由管理" showTooltip={sidebarCollapsed}>
+              <NavLink to="/"><span className="nav-icon">🌏</span><span className="nav-text">路由管理</span></NavLink>
+            </NavItemWithTooltip>
           </li>
           <li>
-            <NavLink to="/vendors">🏭 供应商管理</NavLink>
+            <NavItemWithTooltip text="供应商管理" showTooltip={sidebarCollapsed}>
+              <NavLink to="/vendors"><span className="nav-icon">🏭</span><span className="nav-text">供应商管理</span></NavLink>
+            </NavItemWithTooltip>
           </li>
           <li>
-            <NavLink to="/skills">🧩 Skills 管理</NavLink>
+            <NavItemWithTooltip text="Skills 管理" showTooltip={sidebarCollapsed}>
+              <NavLink to="/skills"><span className="nav-icon">🧩</span><span className="nav-text">Skills 管理</span></NavLink>
+            </NavItemWithTooltip>
           </li>
           <li>
-            <NavLink to="/statistics">📊 数据统计</NavLink>
+            <NavItemWithTooltip text="数据统计" showTooltip={sidebarCollapsed}>
+              <NavLink to="/statistics"><span className="nav-icon">📊</span><span className="nav-text">数据统计</span></NavLink>
+            </NavItemWithTooltip>
           </li>
           <li>
-            <NavLink to="/logs">🪵 日志</NavLink>
+            <NavItemWithTooltip text="日志" showTooltip={sidebarCollapsed}>
+              <NavLink to="/logs"><span className="nav-icon">🪵</span><span className="nav-text">日志</span></NavLink>
+            </NavItemWithTooltip>
           </li>
           <li>
-            <NavLink to="/settings">⚙️ 设置</NavLink>
+            <NavItemWithTooltip text="设置" showTooltip={sidebarCollapsed}>
+              <NavLink to="/settings"><span className="nav-icon">⚙️</span><span className="nav-text">设置</span></NavLink>
+            </NavItemWithTooltip>
           </li>
           <li>
-            <NavLink to="/usage">📖 使用说明</NavLink>
+            <NavItemWithTooltip text="使用说明" showTooltip={sidebarCollapsed}>
+              <NavLink to="/usage"><span className="nav-icon">📖</span><span className="nav-text">使用说明</span></NavLink>
+            </NavItemWithTooltip>
           </li>
         </ul>
 
@@ -435,6 +461,13 @@ function AppContent() {
               v{currentVersion}
             </div>
           )}
+          <button
+            onClick={toggleSidebar}
+            className="sidebar-toggle-btn"
+            title={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+          >
+            {sidebarCollapsed ? '»' : '«'}
+          </button>
         </div>
       </nav>
       <main className="main-content">

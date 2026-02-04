@@ -2,6 +2,7 @@
   display: flex;
   width: 100%;
   height: 100%;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -15,9 +16,40 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   margin: 16px;
   position: relative;
-  z-index: 1;
+  z-index: 999999;
   padding-bottom: 80px; /* Space for theme toggle */
   border: 1px solid rgba(255, 255, 255, 0.15);
+  transition: width 0.3s ease, margin 0.3s ease;
+}
+
+.sidebar.collapsed {
+  width: 80px;
+  margin-right: 8px;
+  overflow: visible;
+}
+
+.sidebar.collapsed .logo h2,
+.sidebar.collapsed .nav-menu .nav-text,
+.sidebar.collapsed .update-notification,
+.sidebar.collapsed .github-link,
+.sidebar.collapsed .version-info {
+  display: none;
+  opacity: 0;
+}
+
+.sidebar.collapsed .logo {
+  padding: 20px 10px;
+}
+
+.sidebar.collapsed .nav-menu a {
+  padding: 14px;
+  justify-content: center;
+}
+
+.sidebar.collapsed .theme-toggle {
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
 }
 
 .logo {
@@ -26,6 +58,7 @@
   text-align: center;
   position: relative;
   overflow: hidden;
+  transition: padding 0.3s ease;
 }
 
 .logo::before {
@@ -48,6 +81,17 @@
   transition: all 0.3s ease;
 }
 
+.sidebar.collapsed .logo::before {
+  left: 50%;
+  transform: translateX(-50%);
+  top: 50%;
+  margin-top: -8px;
+}
+
+.sidebar.collapsed .logo::after {
+  opacity: 0;
+}
+
 .logo h2 {
   font-size: 22px;
   font-weight: 800;
@@ -67,14 +111,18 @@
   list-style: none;
   padding: 16px 0;
   margin: 0;
+  overflow: visible;
 }
 
 .nav-menu li {
   margin: 8px 12px;
+  overflow: visible;
 }
 
 .nav-menu a {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 12px;
   padding: 14px 20px;
   color: var(--text-sidebar);
   text-decoration: none;
@@ -83,6 +131,17 @@
   font-weight: 500;
   position: relative;
   overflow: hidden;
+}
+
+.nav-menu .nav-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  transition: all 0.3s ease;
+}
+
+.nav-menu .nav-text {
+  transition: opacity 0.3s ease, width 0.3s ease;
+  white-space: nowrap;
 }
 
 .nav-menu a::before {
@@ -112,12 +171,13 @@
 .main-content {
   flex: 1;
   padding: 24px;
-  overflow-y: auto;
+  overflow: auto;
   background: var(--bg-primary);
   position: relative;
   z-index: 1;
   margin: 16px 16px 16px 0;
   border-radius: 20px;
+  transition: margin 0.3s ease;
 }
 
 .main-content::before {
@@ -132,6 +192,12 @@
     radial-gradient(circle at 80% 20%, rgba(134, 204, 202, 0.1) 0%, transparent 50%),
     radial-gradient(circle at 40% 40%, rgba(255, 113, 206, 0.05) 0%, transparent 50%);
   pointer-events: none;
+}
+
+.main-content > .routes-page,
+.main-content > .vendors-page,
+.main-content > .logs-page {
+  min-width: 1086px;
 }
 
 .page-header {
@@ -306,6 +372,7 @@ table th {
   color: var(--text-secondary);
   font-family: 'Fredoka', sans-serif;
   font-size: 14px;
+  white-space: nowrap;
 }
 
 
@@ -653,6 +720,27 @@ table th {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sidebar-toggle-btn {
+  background: none;
+  border: none;
+  color: var(--text-sidebar);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 8px;
+  transition: all 0.3s ease-out;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: bold;
+}
+
+.sidebar-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  opacity: 1;
 }
 
 .github-link {

@@ -126,7 +126,13 @@ aicos version            # Show current version information
 - Configuration storage (API key, logging settings, etc.)
 
 #### 5. UI (React) - `ui/`
-- Main app: `App.tsx` - Navigation and layout
+- Main app: `App.tsx` - Navigation and layout with collapsible sidebar
+- Components:
+  - `Tooltip.tsx` - Tooltip component for displaying menu text when sidebar is collapsed
+  - `Toast.tsx` - Toast notification component
+  - `Confirm.tsx` - Confirmation dialog component
+  - `ToolsInstallModal.tsx` - Tools installation modal
+  - `NotificationBar.tsx` - Notification bar component
 - Pages:
   - `VendorsPage.tsx` - Manage AI service vendors
   - `SkillsPage.tsx` - Manage global Skills and discovery
@@ -135,6 +141,9 @@ aicos version            # Show current version information
   - `SettingsPage.tsx` - Application settings
   - `WriteConfigPage.tsx` - Overwrite Claude Code/Codex config files
   - `UsagePage.tsx` - Usage statistics
+- Styles:
+  - `App.css` - Main application styles with sidebar collapse animations
+  - `Tooltip.css` - Tooltip component styles
 
 #### 6. Types - `types/`
 - TypeScript type definitions for:
