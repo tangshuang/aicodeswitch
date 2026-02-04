@@ -640,7 +640,7 @@ export default function RoutesPage() {
   };
 
   return (
-    <div>
+    <div className='routes-page'>
       <div className="page-header">
         <h1>路由管理</h1>
         <p>管理API路由和路由配置</p>
