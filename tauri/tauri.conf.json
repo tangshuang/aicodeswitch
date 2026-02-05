@@ -7,7 +7,7 @@
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:17808",
     "beforeBuildCommand": "npm run build && node tauri/prepare-resources.js",
-    "frontendDist": "resources"
+    "frontendDist": "resources/screens"
   },
   "bundle": {
     "active": true,
