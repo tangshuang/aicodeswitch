@@ -59,13 +59,27 @@ fn read_port_from_config() -> u16 {
     DEFAULT_SERVER_PORT
 }
 
-// 获取资源根目录（bundle 后的 files 目录）
+// 获取资源根目录
+// Tauri 2.0 会将 resources 目录打包到应用中
+// 在开发模式下，资源直接在 resource_dir 下
+// 在生产模式下，需要检查 resources 目录是否存在
 fn get_resource_root(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let resource_dir = app
         .path()
         .resource_dir()
         .map_err(|e| format!("Failed to resolve resource dir: {}", e))?;
-    Ok(resource_dir.join("files"))
+
+    let resource_root = resource_dir.join("resources");
+    println!("Resource directory: {:?}", resource_dir);
+    println!("Resource root (resources): {:?}", resource_root);
+
+    // 检查 resource_root 是否存在，如果不存在，尝试使用 resource_dir
+    if !resource_root.exists() {
+        println!("Warning: 'resources' directory not found in resource_dir, using resource_dir directly");
+        Ok(resource_dir)
+    } else {
+        Ok(resource_root)
+    }
 }
 
 // 启动 Node.js 服务器
@@ -90,16 +104,22 @@ async fn start_server(
             .join("server")
             .join("main.js");
 
+        println!("Server path: {:?}", server_path);
+        println!("Working directory: {:?}", resource_root);
+
         // 检查服务器文件是否存在
         if !server_path.exists() {
             return Err(format!(
-                "Server entry file not found: {}",
-                server_path.display()
+                "Server entry file not found: {}\nWorking directory: {:?}",
+                server_path.display(),
+                resource_root
             ));
         }
 
         // 构建 Node.js 启动命令
         let node_path = get_node_executable();
+        println!("Node.js executable: {}", node_path);
+
         let mut command = Command::new(&node_path);
         command
             .arg(&server_path)
@@ -114,13 +134,16 @@ async fn start_server(
             command.creation_flags(CREATE_NO_WINDOW);
         }
 
+        println!("Starting Node.js server with command: {:?} {:?}", node_path, server_path);
+
         // 启动进程
         let child = command
             .spawn()
             .map_err(|e| format!("Failed to start Node.js server: {}", e))?;
 
         server.process = Some(child);
-        println!("Node.js server started on port {}", port);
+        println!("Node.js server process spawned (PID: {:?}), waiting for ready on port {}",
+                 server.process.as_ref().map(|p| p.id()), port);
     }
 
     // 等待服务器就绪
@@ -155,15 +178,21 @@ fn get_node_executable() -> String {
 fn check_nodejs_installed() -> Result<String, String> {
     let node_path = get_node_executable();
 
+    println!("Checking Node.js installation...");
+
     // 尝试运行 node --version 来检查 Node.js 是否安装
     match Command::new(&node_path).arg("--version").output() {
         Ok(output) => {
             if output.status.success() {
                 // Node.js 已安装，返回版本信息
                 let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                println!("Detected Node.js version: {}", version);
+                println!("✓ Detected Node.js version: {}", version);
                 Ok(version)
             } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let status_code = output.status.code().unwrap_or(-1);
+                eprintln!("✗ Node.js executable failed with status code: {}", status_code);
+                eprintln!("  stderr: {}", stderr);
                 Err(format!(
                     "Node.js 可执行文件执行失败，请检查 Node.js 安装是否正确"
                 ))
@@ -171,6 +200,7 @@ fn check_nodejs_installed() -> Result<String, String> {
         }
         Err(e) => {
             // Node.js 未安装或不在 PATH 中
+            eprintln!("✗ Failed to execute Node.js: {}", e);
             Err(format!(
                 "未检测到 Node.js 安装。\n\n错误信息: {}\n\n请先安装 Node.js 后再运行本应用程序。\n\n安装地址: https://nodejs.org/",
                 e
@@ -183,6 +213,8 @@ fn check_nodejs_installed() -> Result<String, String> {
 async fn is_server_running(port: u16) -> bool {
     let health_url = format!("http://localhost:{}/health", port);
 
+    println!("Checking if server is already running on port {}...", port);
+
     // 尝试连接健康检查端点，超时时间短一些（1秒）
     match tokio::time::timeout(
         std::time::Duration::from_secs(1),
@@ -191,10 +223,21 @@ async fn is_server_running(port: u16) -> bool {
     .await
     {
         Ok(Ok(response)) if response.status().is_success() => {
-            println!("Detected existing server on port {}", port);
+            println!("✓ Detected existing server on port {}", port);
             true
         }
-        _ => false,
+        Ok(Ok(response)) => {
+            println!("✗ Server responded with status: {}", response.status());
+            false
+        }
+        Ok(Err(e)) => {
+            println!("✗ Health check failed: {}", e);
+            false
+        }
+        Err(_) => {
+            println!("✗ Health check timeout");
+            false
+        }
     }
 }
 
@@ -204,23 +247,37 @@ async fn wait_for_server(port: u16) -> Result<(), String> {
     let max_attempts = 30;
     let retry_delay = std::time::Duration::from_millis(500);
 
+    println!("Waiting for server to be ready (max {} seconds)...", max_attempts / 2);
+
     for attempt in 1..=max_attempts {
         match reqwest::get(&health_url).await {
             Ok(response) if response.status().is_success() => {
-                println!("Server is ready at http://localhost:{}", port);
+                println!("✓ Server is ready at http://localhost:{} (after {} attempts)",
+                         port, attempt);
                 return Ok(());
             }
-            _ => {
-                if attempt < max_attempts {
-                    tokio::time::sleep(retry_delay).await;
+            Ok(response) => {
+                if attempt % 6 == 0 { // 每3秒打印一次
+                    println!("Waiting... attempt {}/{} (status: {})",
+                             attempt, max_attempts, response.status());
                 }
             }
+            Err(e) => {
+                if attempt % 6 == 0 { // 每3秒打印一次
+                    println!("Waiting... attempt {}/{} (error: {})",
+                             attempt, max_attempts, e);
+                }
+            }
+        }
+
+        if attempt < max_attempts {
+            tokio::time::sleep(retry_delay).await;
         }
     }
 
     Err(format!(
-        "Server failed to start within {} seconds",
-        max_attempts / 2
+        "Server failed to start within {} seconds\nLast health check URL: {}",
+        max_attempts / 2, health_url
     ))
 }
 
@@ -263,30 +320,47 @@ fn main() {
 
             println!("Running in production mode - using port: {}", port);
 
+            // 克隆 app_handle 用于异步任务
+            let app_handle_for_async = app_handle.clone();
+            let window_for_async = window.clone();
+
             // 异步检查服务状态并启动/连接
             tauri::async_runtime::spawn(async move {
-                let state = app_handle.state::<Mutex<ServerProcess>>();
+                let state = app_handle_for_async.state::<Mutex<ServerProcess>>();
 
                 // 先检查是否已有服务在运行
                 if is_server_running(port).await {
                     println!("Using existing server, skipping Node.js process startup");
-                    // 已有服务在运行，直接加载 URL
-                    if let Err(e) = window.eval(&format!("window.location.href = '{}'", server_url)) {
-                        eprintln!("Failed to load server URL: {}", e);
+                    // 已有服务在运行，使用 navigate 方法加载 URL
+                    println!("Navigating to: {}", server_url);
+                    let url = server_url.parse().unwrap();
+                    if let Err(e) = window_for_async.navigate(url) {
+                        eprintln!("Failed to navigate to server URL: {}", e);
                     }
                     return;
                 }
 
                 // 没有服务在运行，启动新的服务器
-                match start_server(&app_handle, &state, port).await {
+                println!("No existing server detected, starting new Node.js process...");
+                match start_server(&app_handle_for_async, &state, port).await {
                     Ok(_) => {
-                        // 服务器启动成功，加载 URL
-                        if let Err(e) = window.eval(&format!("window.location.href = '{}'", server_url)) {
-                            eprintln!("Failed to load server URL: {}", e);
+                        // 服务器启动成功，使用 navigate 方法加载 URL
+                        println!("Server started successfully, navigating to: {}", server_url);
+                        let url = server_url.parse().unwrap();
+                        if let Err(e) = window_for_async.navigate(url) {
+                            eprintln!("Failed to navigate to server URL: {}", e);
                         }
                     }
                     Err(e) => {
                         eprintln!("Failed to start server: {}", e);
+                        // 显示错误对话框
+                        use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+                        let _ = app_handle_for_async
+                            .dialog()
+                            .message(&format!("无法启动后端服务器：\n\n{}\n\n请检查 Node.js 是否已正确安装。", e))
+                            .title("服务器启动失败")
+                            .kind(MessageDialogKind::Error)
+                            .show(|_| {});
                     }
                 }
             });

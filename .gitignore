@@ -58,6 +58,7 @@ backup/
 tauri/target/
 tauri/WixTools/
 tauri/icons/
+tauri/resources/
 
 # documents
 /documents/
