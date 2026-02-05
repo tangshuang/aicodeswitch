@@ -55,8 +55,9 @@ main/
 backup/
 
 # Tauri / Rust
-src-tauri/target/
-src-tauri/WixTools/
+tauri/target/
+tauri/WixTools/
+tauri/icons/
 
 # documents
 /documents/

@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "AI Code Switch",
   "version": "2.1.0",
-  "identifier": "com.tangshuang.aicodeswitch",
+  "identifier": "net.tangshuang.aicodeswitch",
   "build": {
     "beforeDevCommand": "npm run dev:ui",
     "devUrl": "http://localhost:4568",

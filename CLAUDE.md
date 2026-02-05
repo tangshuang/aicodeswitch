@@ -202,7 +202,7 @@ aicos version            # Show current version information
 - `stop.js` - Server shutdown
 - `restart.js` - Restart server
 
-#### 8. Tauri Desktop Application - `src-tauri/`
+#### 8. Tauri Desktop Application - `tauri/`
 - **src/main.rs**: Tauri main process (Rust)
   - Node.js process lifecycle management
   - Server startup/shutdown commands
@@ -217,13 +217,6 @@ aicos version            # Show current version information
 - **icons/**: Application icon resources
   - Multiple formats for different platforms (PNG, ICO, ICNS)
   - Generated via `npm run tauri:icon`
-
-#### 9. React Hooks - `src/ui/hooks/`
-- **useBackendService.ts**: Backend service management hook
-  - Detects Tauri vs web environment
-  - Manages Node.js backend process lifecycle
-  - Provides server status and control methods
-  - Handles Node.js installation checks
 
 ## Key Features
 
@@ -304,23 +297,24 @@ aicos version            # Show current version information
 2. **Development Workflow**:
    - Use `npm run dev` for web development (faster iteration)
    - Use `npm run tauri:dev` when testing desktop-specific features
-   - The `useBackendService` hook automatically detects Tauri vs web mode
+   - React UI directly communicates with Node.js backend via HTTP
 
 3. **Backend Process Management**:
-   - In Tauri mode, the Rust process manages the Node.js backend
+   - In Tauri mode, the Rust process automatically manages the Node.js backend
    - In web mode, you manually start the backend with `npm run dev:server`
    - The backend always runs on localhost:4567
+   - React UI uses standard HTTP requests (fetch/axios) to communicate with backend
 
 4. **Debugging**:
    - **Frontend**: Use browser DevTools (F12 in Tauri window)
    - **Backend**: Check Node.js console output
    - **Rust**: Use `println!` or `eprintln!` for logging
-   - **Build Issues**: Check `src-tauri/target/` for detailed error logs
+   - **Build Issues**: Check `tauri/target/` for detailed error logs
 
 5. **Icon Generation**:
    - Prepare a 512x512 PNG source image
    - Run `npm run tauri:icon path/to/icon.png`
-   - Icons are generated in `src-tauri/icons/`
+   - Icons are generated in `tauri/icons/`
 
 6. **Node.js Detection**:
    - Tauri app checks for Node.js on startup
@@ -338,14 +332,13 @@ aicodeswitch/
 │   │   ├── components/
 │   │   ├── pages/
 │   │   └── hooks/
-│   │       └── useBackendService.ts  # Tauri backend management
 │   └── server/                  # Node.js backend
 │       ├── main.ts
 │       ├── config.ts
 │       ├── database.ts
 │       ├── proxy-server.ts
 │       └── transformers/
-├── src-tauri/                   # Tauri desktop application
+├── tauri/                   # Tauri desktop application
 │   ├── src/
 │   │   └── main.rs              # Rust main process
 │   ├── icons/                   # Application icons
@@ -358,7 +351,8 @@ aicodeswitch/
 ├── bin/                         # CLI scripts
 ├── types/                       # TypeScript types
 ├── documents/                   # Documentation
-│   └── tauri-research.md        # Tauri migration research
+│   ├── tauri-research.md        # Tauri migration research
+│   └── TAURI_BUILD_GUIDE.md    # Tauri build guide
 ├── package.json
 ├── vite.config.ts
 ├── tsconfig.json
@@ -437,19 +431,19 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 #### Build Output
 
 **Windows:**
-- `src-tauri/target/release/aicodeswitch.exe` - Executable
-- `src-tauri/target/release/bundle/msi/` - MSI installer
-- `src-tauri/target/release/bundle/nsis/` - NSIS installer
+- `tauri/target/release/aicodeswitch.exe` - Executable
+- `tauri/target/release/bundle/msi/` - MSI installer
+- `tauri/target/release/bundle/nsis/` - NSIS installer
 
 **macOS:**
-- `src-tauri/target/release/aicodeswitch` - Executable
-- `src-tauri/target/release/bundle/dmg/` - DMG installer
-- `src-tauri/target/release/bundle/macos/` - .app bundle
+- `tauri/target/release/aicodeswitch` - Executable
+- `tauri/target/release/bundle/dmg/` - DMG installer
+- `tauri/target/release/bundle/macos/` - .app bundle
 
 **Linux:**
-- `src-tauri/target/release/aicodeswitch` - Executable
-- `src-tauri/target/release/bundle/deb/` - DEB package
-- `src-tauri/target/release/bundle/appimage/` - AppImage
+- `tauri/target/release/aicodeswitch` - Executable
+- `tauri/target/release/bundle/deb/` - DEB package
+- `tauri/target/release/bundle/appimage/` - AppImage
 
 #### Application Size Comparison
 
@@ -477,7 +471,8 @@ The Tauri build uses a **hybrid approach** that preserves the existing Node.js b
 3. **React Frontend (WebView)**:
    - Rendered in the system's native WebView
    - Communicates with Node.js backend via HTTP (localhost)
-   - Uses `useBackendService` hook to manage backend lifecycle
+   - Uses standard fetch/axios for API requests
+   - No special Tauri integration required in React code
 
 **Key Benefits:**
 - ✅ No backend rewrite required
@@ -518,9 +513,10 @@ The Tauri build uses a **hybrid approach** that preserves the existing Node.js b
 
 ## Development
 
-* 使用yarn作为包管理器，请使用yarn安装依赖。
+* 使用yarn作为包管理器，请使用yarn安装依赖，使用yarn来运行脚本。
 * 前端依赖库安装在devDependencies中，请使用yarn install --dev安装。
 * 所有对话请使用中文。生成代码中的文案及相关注释根据代码原本的语言生成。
 * 在服务端，直接使用 __dirname 来获取当前目录，不要使用 process.cwd()
 * 每次有新的变化时，你需要更新 CLAUDE.md 来让文档保持最新。
 * 禁止在项目中使用依赖GPU的css样式处理。
+* 禁止运行 dev:ui, dev:server, tauri:dev 等命令来进行测试。

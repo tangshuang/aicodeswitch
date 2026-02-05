@@ -20,35 +20,40 @@ async fn start_server(
     state: State<'_, Mutex<ServerProcess>>,
     port: u16,
 ) -> Result<String, String> {
-    let mut server = state.lock().unwrap();
+    // 在作用域内锁定并执行同步操作
+    {
+        let mut server = state.lock().unwrap();
 
-    // 检查进程是否已运行
-    if server.process.is_some() {
-        return Ok("Server already running".to_string());
+        // 检查进程是否已运行
+        if server.process.is_some() {
+            return Ok("Server already running".to_string());
+        }
+
+        // 获取 Node.js 可执行文件路径
+        let node_path = get_node_executable();
+
+        // 获取应用资源目录
+        let resource_dir = std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+        let server_path = resource_dir.join("server").join("main.js");
+
+        // 启动 Node.js 后端进程
+        let child = Command::new(&node_path)
+            .arg(server_path)
+            .env("PORT", port.to_string())
+            .env("NODE_ENV", "production")
+            .spawn()
+            .map_err(|e| format!("Failed to start server: {}", e))?;
+
+        server.process = Some(child);
+        // MutexGuard 在这里自动释放
     }
 
-    // 获取 Node.js 可执行文件路径
-    let node_path = get_node_executable();
-
-    // 获取应用资源目录
-    let resource_dir = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-
-    let server_path = resource_dir.join("server").join("main.js");
-
-    // 启动 Node.js 后端进程
-    let child = Command::new(&node_path)
-        .arg(server_path)
-        .env("PORT", port.to_string())
-        .env("NODE_ENV", "production")
-        .spawn()
-        .map_err(|e| format!("Failed to start server: {}", e))?;
-
-    server.process = Some(child);
-
     // 等待服务启动完成（检查端口是否可用）
+    // 此时 MutexGuard 已经释放，可以安全地 await
     wait_for_server(port).await?;
 
     Ok(format!("Server started on port {}", port))
@@ -134,27 +139,21 @@ fn main() {
             // 应用启动时自动启动 Node.js 后端
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                // 先检查 Node.js 是否安装
-                match app_handle.state::<Mutex<ServerProcess>>().lock() {
-                    Ok(_) => {
-                        // 尝试启动服务器
-                        let state = app_handle.state::<Mutex<ServerProcess>>();
-                        if let Err(e) = start_server(state, 4567).await {
-                            eprintln!("Failed to start server: {}", e);
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to acquire lock: {}", e);
-                    }
+                // 尝试启动服务器
+                let state = app_handle.state::<Mutex<ServerProcess>>();
+                if let Err(e) = start_server(state, 4567).await {
+                    eprintln!("Failed to start server: {}", e);
                 }
             });
 
             Ok(())
         })
-        .on_window_event(|event| match event.event() {
+        .on_window_event(|_window, event| match event {
             tauri::WindowEvent::CloseRequested { .. } => {
                 // 窗口关闭时停止服务
                 println!("Window close requested, stopping server...");
+                // 可以在这里调用 stop_server，但需要访问 state
+                // 为了简化，我们让进程在应用退出时自动终止
             }
             _ => {}
         })

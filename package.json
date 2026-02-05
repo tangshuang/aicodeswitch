@@ -50,7 +50,6 @@
     "tauri:icon": "tauri icon"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0",
     "@types/jsonwebtoken": "^9.0.10",
     "axios": "^1.6.7",
     "better-sqlite3": "^11.8.1",

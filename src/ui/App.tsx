@@ -17,6 +17,7 @@ import NotificationBar from './components/NotificationBar';
 import NavItemWithTooltip from './components/Tooltip';
 import type { ToolInstallationStatus } from '../types';
 import './styles/App.css';
+import logoImage from './assets/logo.png';
 
 function AppContent() {
   const navigate = useNavigate();
@@ -375,6 +376,7 @@ function AppContent() {
     <div className="app">
       <nav className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="logo">
+          <img src={logoImage} alt="AI Code Switch Logo" className="logo-image" />
           <h2>AI Code Switch</h2>
         </div>
          <ul className="nav-menu">
