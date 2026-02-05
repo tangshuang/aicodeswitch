@@ -1,0 +1,220 @@
+.titlebar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 40px;
+  background: var(--bg-sidebar, #1e1e1e);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  user-select: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 999999;
+  -webkit-app-region: drag;
+}
+
+.titlebar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-left: 12px;
+  -webkit-app-region: drag;
+}
+
+.titlebar-logo {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
+.titlebar-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-sidebar, #ffffff);
+  opacity: 0.9;
+  -webkit-app-region: drag;
+}
+
+.titlebar-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.titlebar-status-running {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.15);
+}
+
+.titlebar-status-stopped {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.15);
+}
+
+.titlebar-right {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.titlebar-menu-container {
+  position: relative;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.titlebar-more-btn {
+  width: 46px;
+  height: 100%;
+  background: none;
+  border: none;
+  color: var(--text-sidebar, #ffffff);
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: no-drag;
+  transition: background-color 0.2s;
+  font-weight: bold;
+  letter-spacing: -2px;
+}
+
+.titlebar-more-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.titlebar-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  background: var(--bg-sidebar, #2d2d2d);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  min-width: 140px;
+  overflow: hidden;
+  animation: dropdownFadeIn 0.2s ease-out;
+}
+
+@keyframes dropdownFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.titlebar-dropdown-item {
+  width: 100%;
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  color: var(--text-sidebar, #ffffff);
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: background-color 0.2s;
+  text-align: left;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-dropdown-item:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.titlebar-dropdown-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.dropdown-icon {
+  font-size: 14px;
+  width: 16px;
+  text-align: center;
+}
+
+.titlebar-controls {
+  display: flex;
+  height: 100%;
+}
+
+.titlebar-control {
+  width: 46px;
+  height: 100%;
+  background: none;
+  border: none;
+  color: var(--text-sidebar, #ffffff);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: no-drag;
+  transition: background-color 0.2s;
+}
+
+.titlebar-control:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.titlebar-close:hover {
+  background-color: #e81123;
+  color: white;
+}
+
+/* Dark theme specific styles */
+[data-theme="dark"] .titlebar {
+  background: #1e1e1e;
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .titlebar-logo {
+  filter: none;
+}
+
+/* Light theme specific styles */
+[data-theme="light"] .titlebar {
+  background: #f5f5f5;
+  border-bottom-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .titlebar-title {
+  color: #333333;
+}
+
+[data-theme="light"] .titlebar-more-btn,
+[data-theme="light"] .titlebar-control {
+  color: #333333;
+}
+
+[data-theme="light"] .titlebar-more-btn:hover,
+[data-theme="light"] .titlebar-control:hover {
+  background-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .titlebar-close:hover {
+  background-color: #e81123;
+  color: white;
+}
+
+[data-theme="light"] .titlebar-dropdown {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .titlebar-dropdown-item {
+  color: #333333;
+}
+
+[data-theme="light"] .titlebar-dropdown-item:hover:not(:disabled) {
+  background-color: rgba(0, 0, 0, 0.05);
+}

@@ -151,6 +151,53 @@ fn get_node_executable() -> String {
     }
 }
 
+// 检查 Node.js 是否已安装
+fn check_nodejs_installed() -> Result<String, String> {
+    let node_path = get_node_executable();
+
+    // 尝试运行 node --version 来检查 Node.js 是否安装
+    match Command::new(&node_path).arg("--version").output() {
+        Ok(output) => {
+            if output.status.success() {
+                // Node.js 已安装，返回版本信息
+                let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                println!("Detected Node.js version: {}", version);
+                Ok(version)
+            } else {
+                Err(format!(
+                    "Node.js 可执行文件执行失败，请检查 Node.js 安装是否正确"
+                ))
+            }
+        }
+        Err(e) => {
+            // Node.js 未安装或不在 PATH 中
+            Err(format!(
+                "未检测到 Node.js 安装。\n\n错误信息: {}\n\n请先安装 Node.js 后再运行本应用程序。\n\n安装地址: https://nodejs.org/",
+                e
+            ))
+        }
+    }
+}
+
+// 检查端口是否已经有服务在运行
+async fn is_server_running(port: u16) -> bool {
+    let health_url = format!("http://localhost:{}/health", port);
+
+    // 尝试连接健康检查端点，超时时间短一些（1秒）
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        reqwest::get(&health_url),
+    )
+    .await
+    {
+        Ok(Ok(response)) if response.status().is_success() => {
+            println!("Detected existing server on port {}", port);
+            true
+        }
+        _ => false,
+    }
+}
+
 // 等待服务器就绪（检查健康端点）
 async fn wait_for_server(port: u16) -> Result<(), String> {
     let health_url = format!("http://localhost:{}/health", port);
@@ -179,8 +226,28 @@ async fn wait_for_server(port: u16) -> Result<(), String> {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(ServerProcess { process: None }))
         .setup(|app| {
+            // 开发模式下，Tauri 会自动加载 devUrl，不需要手动启动服务器
+            if cfg!(debug_assertions) {
+                println!("Running in dev mode - using Vite dev server");
+                return Ok(());
+            }
+
+            // 检查 Node.js 是否已安装
+            if let Err(e) = check_nodejs_installed() {
+                // 显示错误对话框
+                use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+                app.dialog()
+                    .message(&e)
+                    .title("Node.js 未安装")
+                    .kind(MessageDialogKind::Error)
+                    .show(|_| {});
+
+                return Ok(());
+            }
+
             let app_handle = app.handle().clone();
             let window = match app.get_webview_window("main") {
                 Some(w) => w,
@@ -194,12 +261,23 @@ fn main() {
             let port = read_port_from_config();
             let server_url = format!("http://localhost:{}", port);
 
-            println!("Using port: {}", port);
+            println!("Running in production mode - using port: {}", port);
 
-            // 异步启动服务器并加载 URL
+            // 异步检查服务状态并启动/连接
             tauri::async_runtime::spawn(async move {
                 let state = app_handle.state::<Mutex<ServerProcess>>();
 
+                // 先检查是否已有服务在运行
+                if is_server_running(port).await {
+                    println!("Using existing server, skipping Node.js process startup");
+                    // 已有服务在运行，直接加载 URL
+                    if let Err(e) = window.eval(&format!("window.location.href = '{}'", server_url)) {
+                        eprintln!("Failed to load server URL: {}", e);
+                    }
+                    return;
+                }
+
+                // 没有服务在运行，启动新的服务器
                 match start_server(&app_handle, &state, port).await {
                     Ok(_) => {
                         // 服务器启动成功，加载 URL
@@ -217,9 +295,11 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
-                // 窗口关闭时停止服务器
-                let state = window.state::<Mutex<ServerProcess>>();
-                stop_server(&state);
+                // 只在生产模式下停止服务器
+                if !cfg!(debug_assertions) {
+                    let state = window.state::<Mutex<ServerProcess>>();
+                    stop_server(&state);
+                }
             }
         })
         .run(tauri::generate_context!())

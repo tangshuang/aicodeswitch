@@ -102,6 +102,7 @@ aicos version            # Show current version information
 │  ┌──────────────────────────────────────────────────────┐  │
 │  │  Tauri Main Process (Rust)                           │  │
 │  │  - Window Management                                 │  │
+│  │  - Node.js Installation Check                        │  │
 │  │  - Node.js Process Lifecycle Management              │  │
 │  │  - System Integration                                │  │
 │  └──────────────────────────────────────────────────────┘  │
@@ -302,8 +303,11 @@ aicos version            # Show current version information
 3. **Backend Process Management**:
    - In Tauri mode, the Rust process automatically manages the Node.js backend
    - In web mode, you manually start the backend with `npm run dev:server`
-   - The backend always runs on localhost:4567
+   - The backend always runs on localhost:4567 (configurable via `~/.aicodeswitch/aicodeswitch.conf`)
    - React UI uses standard HTTP requests (fetch/axios) to communicate with backend
+   - **Service Detection**: On startup, Tauri app checks if port is already in use
+     - If a Node.js server is already running (e.g., started via `aicos start`), the app will connect to it instead of starting a new process
+     - This prevents conflicts when users have both the CLI tool and desktop app installed
 
 4. **Debugging**:
    - **Frontend**: Use browser DevTools (F12 in Tauri window)
@@ -317,9 +321,14 @@ aicos version            # Show current version information
    - Icons are generated in `tauri/icons/`
 
 6. **Node.js Detection**:
-   - Tauri app checks for Node.js on startup
-   - Users without Node.js will see a friendly error message
+   - Tauri app checks for Node.js installation on startup (production mode only)
+   - Checks by running `node --version` command
+   - If Node.js is not installed, a friendly error dialog is displayed:
+     - Title: "Node.js 未安装"
+     - Message includes error details and installation link (https://nodejs.org/)
+     - Application window closes after the dialog
    - Most developers already have Node.js installed
+   - This check is skipped in development mode
 
 ### Project Structure
 
@@ -377,6 +386,11 @@ aicodeswitch/
 # Windows, macOS, Linux
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
+
+**Install Node.js:**
+- Node.js is **required** to run the application backend
+- Download from: https://nodejs.org/ (LTS version recommended)
+- The application will check for Node.js installation on startup and display a friendly error message if not found
 
 **Platform-Specific Requirements:**
 
