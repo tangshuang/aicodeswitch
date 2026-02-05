@@ -9,8 +9,9 @@
 )]
 
 use std::process::{Child, Command};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -281,10 +282,18 @@ async fn wait_for_server(port: u16) -> Result<(), String> {
     ))
 }
 
+// 用于跟踪是否已经导航到服务器 URL（避免重复导航）
+struct NavigationState {
+    has_navigated: Arc<AtomicBool>,
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(ServerProcess { process: None }))
+        .manage(NavigationState {
+            has_navigated: Arc::new(AtomicBool::new(false)),
+        })
         .setup(|app| {
             // 开发模式下，Tauri 会自动加载 devUrl，不需要手动启动服务器
             if cfg!(debug_assertions) {
@@ -292,18 +301,7 @@ fn main() {
                 return Ok(());
             }
 
-            // 检查 Node.js 是否已安装
-            if let Err(e) = check_nodejs_installed() {
-                // 显示错误对话框
-                use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-                app.dialog()
-                    .message(&e)
-                    .title("Node.js 未安装")
-                    .kind(MessageDialogKind::Error)
-                    .show(|_| {});
-
-                return Ok(());
-            }
+            println!("Running in production mode - frontend will load immediately, Node.js check in background");
 
             let app_handle = app.handle().clone();
             let window = match app.get_webview_window("main") {
@@ -318,14 +316,31 @@ fn main() {
             let port = read_port_from_config();
             let server_url = format!("http://localhost:{}", port);
 
-            println!("Running in production mode - using port: {}", port);
+            println!("Configured server port: {}", port);
 
             // 克隆 app_handle 用于异步任务
             let app_handle_for_async = app_handle.clone();
             let window_for_async = window.clone();
 
-            // 异步检查服务状态并启动/连接
+            // 获取导航状态
+            let nav_state = app_handle.state::<NavigationState>();
+            let has_navigated = nav_state.has_navigated.clone();
+
+            // 异步检查 Node.js 并启动/连接服务（不阻塞界面显示）
             tauri::async_runtime::spawn(async move {
+                // 检查 Node.js 是否已安装
+                if let Err(e) = check_nodejs_installed() {
+                    // 显示错误对话框
+                    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+                    let _ = app_handle_for_async
+                        .dialog()
+                        .message(&e)
+                        .title("Node.js 未安装")
+                        .kind(MessageDialogKind::Error)
+                        .show(|_| {});
+                    return;
+                }
+
                 let state = app_handle_for_async.state::<Mutex<ServerProcess>>();
 
                 // 先检查是否已有服务在运行
@@ -336,6 +351,8 @@ fn main() {
                     let url = server_url.parse().unwrap();
                     if let Err(e) = window_for_async.navigate(url) {
                         eprintln!("Failed to navigate to server URL: {}", e);
+                    } else {
+                        has_navigated.store(true, Ordering::SeqCst);
                     }
                     return;
                 }
@@ -349,6 +366,8 @@ fn main() {
                         let url = server_url.parse().unwrap();
                         if let Err(e) = window_for_async.navigate(url) {
                             eprintln!("Failed to navigate to server URL: {}", e);
+                        } else {
+                            has_navigated.store(true, Ordering::SeqCst);
                         }
                     }
                     Err(e) => {
