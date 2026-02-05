@@ -46,8 +46,8 @@
     "prepublishOnly": "npm run build",
     "release": "standard-version",
     "tauri:dev": "tauri dev",
-    "tauri:build": "npm run build && tauri build",
-    "tauri:icon": "tauri icon"
+    "tauri:build": "tauri build",
+    "tauri:icon": "tauri icon src/ui/assets/logo.png"
   },
   "dependencies": {
     "@types/jsonwebtoken": "^9.0.10",
@@ -95,3 +95,4 @@
     "vite": "^5.0.8"
   }
 }
+

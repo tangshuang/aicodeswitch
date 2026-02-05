@@ -417,30 +417,6 @@ function AppContent() {
           </li>
         </ul>
 
-        {hasUpdate && (
-          <a
-            href="https://npmjs.com/package/aicodeswitch"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-          <div className="update-notification">
-            <div className="update-notification-content">
-              <span className="update-icon">⬆️</span>
-              <div className="update-text">
-                <div className="update-title">新版本可用</div>
-                <div className="update-versions">
-                  {currentVersion} → {latestVersion}
-                </div>
-                <div className="update-message">
-                  命令行执行如下更新到最新版本<br />
-                  <code>npm i -g aicodeswitch</code>
-                </div>
-              </div>
-            </div>
-          </div>
-          </a>
-        )}
-
         <div className="theme-toggle">
           <button
             onClick={toggleTheme}
@@ -459,8 +435,33 @@ function AppContent() {
             </svg>
           </a>
           {currentVersion && (
-            <div className="version-info">
-              v{currentVersion}
+            <div className="version-info-wrapper">
+              <div className="version-info">
+                v{currentVersion}
+                {hasUpdate && <span className="version-badge"></span>}
+              </div>
+              {hasUpdate && (
+                <a
+                  href="https://npmjs.com/package/aicodeswitch"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="version-update-popup"
+                >
+                  <div className="update-popup-content">
+                    <span className="update-icon">⬆️</span>
+                    <div className="update-text">
+                      <div className="update-title">新版本可用</div>
+                      <div className="update-versions">
+                        {currentVersion} → {latestVersion}
+                      </div>
+                      <div className="update-message">
+                        命令行执行如下更新到最新版本<br />
+                        <code>npm i -g aicodeswitch</code>
+                      </div>
+                    </div>
+                  </div>
+                </a>
+              )}
             </div>
           )}
           <button

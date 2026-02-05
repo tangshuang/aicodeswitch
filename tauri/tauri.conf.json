@@ -4,10 +4,10 @@
   "version": "2.1.0",
   "identifier": "net.tangshuang.aicodeswitch",
   "build": {
-    "beforeDevCommand": "npm run dev:ui",
-    "devUrl": "http://localhost:4568",
-    "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist/ui"
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:17808",
+    "beforeBuildCommand": "npm run build && node tauri/prepare-resources.js",
+    "frontendDist": "target/release/files/dist/ui"
   },
   "bundle": {
     "active": true,
@@ -20,7 +20,6 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "../dist/server/**/*"
     ],
     "externalBin": [],
     "copyright": "Copyright (c) 2024 tangshuang",
@@ -45,7 +44,7 @@
       {
         "title": "AI Code Switch",
         "width": 1200,
-        "height": 800,
+        "height": 720,
         "minWidth": 800,
         "minHeight": 600,
         "resizable": true,
@@ -75,3 +74,5 @@
     }
   }
 }
+
+
