@@ -44,9 +44,13 @@
     "build:server": "tsc -p tsconfig.server.json",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "prepublishOnly": "npm run build",
-    "release": "standard-version"
+    "release": "standard-version",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "npm run build && tauri build",
+    "tauri:icon": "tauri icon"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
     "@types/jsonwebtoken": "^9.0.10",
     "axios": "^1.6.7",
     "better-sqlite3": "^11.8.1",
@@ -63,6 +67,7 @@
     "ws": "^8.19.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
     "@types/better-sqlite3": "^7.6.9",
     "@types/cors": "^2.8.17",
     "@types/crypto-js": "^4.2.2",

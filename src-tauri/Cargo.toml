@@ -1,0 +1,30 @@
+[package]
+name = "aicodeswitch"
+version = "2.1.0"
+description = "AI Code Switch - API Proxy Manager"
+authors = ["tangshuang"]
+license = "GPL-3.0"
+repository = "https://github.com/tangshuang/aicodeswitch"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-shell = "2"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
