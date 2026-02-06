@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const repoRoot = path.resolve(__dirname, '..');
 const srcDist = path.join(repoRoot, 'dist');
@@ -15,6 +16,16 @@ const indexDestRoot = path.join(destRoot, 'screens');
 if (!fs.existsSync(srcDist)) {
   console.error('[tauri] dist/ not found. Run npm run build first.');
   process.exit(1);
+}
+
+const iconsDir = path.join(repoRoot, 'tauri/icons');
+if (!fs.existsSync(iconsDir)) {
+  execFileSync('yarn', ['tauri:icon'], {
+    cwd: repoRoot,
+    stdio: 'inherit',
+    shell: true
+  });
+  console.log('[tauri] icons generated at', iconsDir);
 }
 
 // 移除release目录
@@ -51,7 +62,6 @@ console.log('[tauri] package.json copied (devDependencies, scripts, bin removed)
 
 // 在 resources 目录执行 yarn 安装
 try {
-  const { execFileSync } = require('child_process');
   console.log('[tauri] installing dependencies with yarn...');
   execFileSync('yarn', ['install', '--no-lockfile', '--no-non-interactive'], {
     cwd: destRoot,
