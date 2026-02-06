@@ -55,9 +55,16 @@ backup/
 AGENTS.md
 /index.html
 PRD.md
+TECH.md
+CHANGELOG.md
+CLAUDE.md
 tsconfig.json
 tsconfig.*.json
 vite.config.ts
 .env
 .env.*
 /src/
+/tauri/
+/schemes/
+/public/
+.github/

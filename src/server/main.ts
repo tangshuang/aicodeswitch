@@ -874,6 +874,51 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     })
   );
 
+  // 批量停用所有激活的路由（用于应用关闭时清理）
+  app.post(
+    '/api/routes/deactivate-all',
+    asyncHandler(async (_req, res) => {
+      console.log('[Deactivate All Routes] Starting cleanup process...');
+
+      // 步骤1：恢复 Claude Code 配置文件
+      try {
+        console.log('[Deactivate All Routes] Restoring Claude Code config...');
+        const claudeRestored = await restoreClaudeConfig();
+        console.log(`[Deactivate All Routes] Claude Code config ${claudeRestored ? 'restored' : 'was not modified'}`);
+      } catch (error: any) {
+        console.error('[Deactivate All Routes] Failed to restore Claude config:', error);
+      }
+
+      // 步骤2：恢复 Codex 配置文件
+      try {
+        console.log('[Deactivate All Routes] Restoring Codex config...');
+        const codexRestored = await restoreCodexConfig();
+        console.log(`[Deactivate All Routes] Codex config ${codexRestored ? 'restored' : 'was not modified'}`);
+      } catch (error: any) {
+        console.error('[Deactivate All Routes] Failed to restore Codex config:', error);
+      }
+
+      // 步骤3：停用所有激活的路由
+      console.log('[Deactivate All Routes] Deactivating all active routes...');
+      const deactivatedCount = dbManager.deactivateAllRoutes();
+
+      if (deactivatedCount > 0) {
+        console.log(`[Deactivate All Routes] Deactivated ${deactivatedCount} route(s), reloading routes...`);
+        await proxyServer.reloadRoutes();
+        console.log('[Deactivate All Routes] Routes reloaded successfully');
+      } else {
+        console.log('[Deactivate All Routes] No active routes to deactivate');
+      }
+
+      console.log('[Deactivate All Routes] Cleanup process completed');
+
+      res.json({
+        success: true,
+        deactivatedCount
+      });
+    })
+  );
+
   app.get('/api/rules', (req, res) => {
     const routeId = typeof req.query.routeId === 'string' ? req.query.routeId : undefined;
     res.json(dbManager.getRules(routeId));

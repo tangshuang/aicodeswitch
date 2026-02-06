@@ -53,7 +53,7 @@ const getConfigApi = (targetType: 'claude-code' | 'codex') => {
 
 export default function RoutesPage() {
   const { confirm } = useConfirm();
-  const { ruleStatuses, isConnected: wsConnected } = useRulesStatus();
+  const { ruleStatuses } = useRulesStatus();
   const [routes, setRoutes] = useState<Route[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);

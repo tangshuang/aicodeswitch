@@ -29,6 +29,19 @@ npm run build:ui         # Build React UI to dist/ui
 npm run build:server     # Build TypeScript server to dist/server
 ```
 
+### Tauri Desktop Application
+```bash
+npm run tauri:dev        # Run Tauri development mode (requires Rust toolchain)
+npm run tauri:build      # Build Tauri desktop application
+npm run tauri:icon       # Generate application icons from source image
+```
+
+**Prerequisites for Tauri build:**
+- Rust toolchain (rustc, cargo) - Install from https://rustup.rs/
+- Windows: Microsoft Visual Studio C++ Build Tools
+- macOS: Xcode Command Line Tools
+- Linux: Development packages (webkit2gtk, etc.)
+
 ### Linting
 ```bash
 npm run lint             # Run ESLint on all .ts/.tsx files
@@ -49,6 +62,8 @@ aicos version            # Show current version information
 ## Architecture
 
 ### High-Level Structure
+
+#### Traditional Deployment (CLI/Web)
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     AI Code Switch                          │
@@ -78,6 +93,36 @@ aicos version            # Show current version information
 │                    └──────────────┘                        │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+#### Tauri Desktop Application (Hybrid Architecture)
+```
+┌─────────────────────────────────────────────────────────────┐
+│              Tauri Desktop Application                      │
+├─────────────────────────────────────────────────────────────┤
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │  Tauri Main Process (Rust)                           │  │
+│  │  - Window Management                                 │  │
+│  │  - Node.js Installation Check                        │  │
+│  │  - Node.js Process Lifecycle Management              │  │
+│  │  - System Integration                                │  │
+│  └──────────────────────────────────────────────────────┘  │
+│            │                           │                    │
+│            ▼                           ▼                    │
+│  ┌──────────────────┐      ┌──────────────────┐           │
+│  │  WebView (React) │      │  Node.js Backend │           │
+│  │  - UI Components │◄─────┤  - Express Server│           │
+│  │  - User Interface│ HTTP │  - Proxy Logic   │           │
+│  └──────────────────┘      │  - Database      │           │
+│                             └──────────────────┘           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Tauri Hybrid Approach Benefits:**
+- **Preserves Existing Code**: Node.js backend remains unchanged
+- **Smaller App Size**: ~10-20MB (vs 150MB+ for Electron)
+- **Better Performance**: Native system integration via Rust
+- **Cross-Platform**: Windows, macOS, Linux support
+- **No Rewrite Required**: Gradual migration path available
 
 ### Core Components
 
@@ -158,6 +203,22 @@ aicos version            # Show current version information
 - `stop.js` - Server shutdown
 - `restart.js` - Restart server
 
+#### 8. Tauri Desktop Application - `tauri/`
+- **src/main.rs**: Tauri main process (Rust)
+  - Node.js process lifecycle management
+  - Server startup/shutdown commands
+  - Health check and status monitoring
+  - System integration (window management, tray icon)
+- **Cargo.toml**: Rust dependencies and build configuration
+- **tauri.conf.json**: Tauri application configuration
+  - Window settings (size, title, decorations)
+  - Bundle configuration (icons, resources)
+  - Security policies (CSP, asset protocol)
+  - Build commands and paths
+- **icons/**: Application icon resources
+  - Multiple formats for different platforms (PNG, ICO, ICNS)
+  - Generated via `npm run tauri:icon`
+
 ## Key Features
 
 ### Routing System
@@ -227,27 +288,261 @@ aicos version            # Show current version information
 5. **Skills Search**: `SKILLSMP_API_KEY` is required for Skills discovery via SkillsMP
 6. **API Endpoints**: All routes are prefixed with `/api/` except proxy routes (`/claude-code/`, `/codex/`)
 
+### Tauri Development Tips
+
+1. **First-Time Setup**:
+   - Install Rust toolchain before running Tauri commands
+   - Run `npm run tauri:dev` to verify setup is correct
+   - Check Rust compilation errors in the terminal
+
+2. **Development Workflow**:
+   - Use `npm run dev` for web development (faster iteration)
+   - Use `npm run tauri:dev` when testing desktop-specific features
+   - React UI directly communicates with Node.js backend via HTTP
+
+3. **Backend Process Management**:
+   - In Tauri mode, the Rust process automatically manages the Node.js backend
+   - In web mode, you manually start the backend with `npm run dev:server`
+   - The backend always runs on localhost:4567 (configurable via `~/.aicodeswitch/aicodeswitch.conf`)
+   - React UI uses standard HTTP requests (fetch/axios) to communicate with backend
+   - **Service Detection**: On startup, Tauri app checks if port is already in use
+     - If a Node.js server is already running (e.g., started via `aicos start`), the app will connect to it instead of starting a new process
+     - This prevents conflicts when users have both the CLI tool and desktop app installed
+
+4. **Debugging**:
+   - **Frontend**: Use browser DevTools (F12 in Tauri window)
+   - **Backend**: Check Node.js console output
+   - **Rust**: Use `println!` or `eprintln!` for logging
+   - **Build Issues**: Check `tauri/target/` for detailed error logs
+
+5. **Icon Generation**:
+   - Prepare a 512x512 PNG source image
+   - Run `npm run tauri:icon path/to/icon.png`
+   - Icons are generated in `tauri/icons/`
+
+6. **Node.js Detection**:
+   - Tauri app checks for Node.js installation on startup (production mode only)
+   - Checks by running `node --version` command
+   - If Node.js is not installed, a friendly error dialog is displayed:
+     - Title: "Node.js 未安装"
+     - Message includes error details and installation link (https://nodejs.org/)
+     - Application window closes after the dialog
+   - Most developers already have Node.js installed
+   - This check is skipped in development mode
+
+7. **Auto-Deactivate Routes on Exit**:
+   - When the application is closed, it automatically deactivates all active routes
+   - This prevents configuration files from remaining in an overwritten state
+   - The close event is intercepted and the following steps are executed:
+     1. Fetch all routes via `GET /api/routes`
+     2. Filter for active routes
+     3. Send `POST /api/routes/:id/deactivate` for each active route
+     4. Stop the Node.js server
+     5. Destroy the window
+   - This feature only works in production mode
+   - If deactivation fails, the app still proceeds with shutdown to avoid hanging
+
+### Project Structure
+
+```
+aicodeswitch/
+├── src/
+│   ├── ui/                      # React frontend
+│   │   ├── App.tsx
+│   │   ├── main.tsx
+│   │   ├── components/
+│   │   ├── pages/
+│   │   └── hooks/
+│   └── server/                  # Node.js backend
+│       ├── main.ts
+│       ├── config.ts
+│       ├── database.ts
+│       ├── proxy-server.ts
+│       └── transformers/
+├── tauri/                   # Tauri desktop application
+│   ├── src/
+│   │   └── main.rs              # Rust main process
+│   ├── icons/                   # Application icons
+│   ├── Cargo.toml               # Rust dependencies
+│   ├── tauri.conf.json          # Tauri configuration
+│   └── build.rs                 # Build script
+├── dist/                        # Build output
+│   ├── ui/                      # Frontend build
+│   └── server/                  # Backend build
+├── bin/                         # CLI scripts
+├── types/                       # TypeScript types
+├── documents/                   # Documentation
+│   ├── tauri-research.md        # Tauri migration research
+│   └── TAURI_BUILD_GUIDE.md    # Tauri build guide
+├── package.json
+├── vite.config.ts
+├── tsconfig.json
+└── CLAUDE.md                    # This file
+```
+
 ## Build and Deployment
+
+### Traditional CLI/Web Deployment
 
 1. Run `npm run build` to create production builds
 2. UI build outputs to `dist/ui/` (static files)
 3. Server build outputs to `dist/server/` (JavaScript)
 4. Configuration files are created in user's home directory on first run
 
+### Tauri Desktop Application Build
+
+#### Prerequisites
+
+**Install Rust Toolchain:**
+```bash
+# Windows, macOS, Linux
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+**Install Node.js:**
+- Node.js is **required** to run the application backend
+- Download from: https://nodejs.org/ (LTS version recommended)
+- The application will check for Node.js installation on startup and display a friendly error message if not found
+
+**Platform-Specific Requirements:**
+
+- **Windows**:
+  - Microsoft Visual Studio C++ Build Tools
+  - WebView2 (usually pre-installed on Windows 10/11)
+
+- **macOS**:
+  - Xcode Command Line Tools: `xcode-select --install`
+
+- **Linux**:
+  ```bash
+  # Debian/Ubuntu
+  sudo apt install libwebkit2gtk-4.0-dev \
+    build-essential \
+    curl \
+    wget \
+    file \
+    libssl-dev \
+    libgtk-3-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev
+  ```
+
+#### Build Process
+
+1. **Generate Application Icons** (optional, if you have a custom icon):
+   ```bash
+   npm run tauri:icon path/to/your/icon.png
+   ```
+
+2. **Development Mode**:
+   ```bash
+   npm run tauri:dev
+   ```
+   This will:
+   - Start the Vite dev server for the UI
+   - Compile the Rust code
+   - Launch the Tauri window with hot-reload
+
+3. **Production Build**:
+   ```bash
+   npm run tauri:build
+   ```
+   This will:
+   - Build the React UI (`npm run build:ui`)
+   - Build the Node.js server (`npm run build:server`)
+   - Compile the Rust code in release mode
+   - Bundle the application with all resources
+   - Create platform-specific installers
+
+#### Build Output
+
+**Windows:**
+- `tauri/target/release/aicodeswitch.exe` - Executable
+- `tauri/target/release/bundle/msi/` - MSI installer
+- `tauri/target/release/bundle/nsis/` - NSIS installer
+
+**macOS:**
+- `tauri/target/release/aicodeswitch` - Executable
+- `tauri/target/release/bundle/dmg/` - DMG installer
+- `tauri/target/release/bundle/macos/` - .app bundle
+
+**Linux:**
+- `tauri/target/release/aicodeswitch` - Executable
+- `tauri/target/release/bundle/deb/` - DEB package
+- `tauri/target/release/bundle/appimage/` - AppImage
+
+#### Application Size Comparison
+
+| Build Type | Size | Notes |
+|------------|------|-------|
+| Tauri (without Node.js) | ~10-20 MB | Requires Node.js pre-installed |
+| Tauri (with Node.js) | ~50-70 MB | Bundles Node.js runtime |
+| Traditional Electron | ~150-200 MB | Bundles Chromium + Node.js |
+
+### Tauri Hybrid Architecture Details
+
+The Tauri build uses a **hybrid approach** that preserves the existing Node.js backend:
+
+1. **Tauri Main Process (Rust)**:
+   - Manages application lifecycle
+   - Creates and controls the WebView window
+   - Spawns and monitors the Node.js backend process
+   - Provides IPC commands for frontend-backend communication
+
+2. **Node.js Backend Process**:
+   - Runs the existing Express server unchanged
+   - Handles all proxy logic, API transformations, and database operations
+   - Listens on localhost:4567 (configurable)
+
+3. **React Frontend (WebView)**:
+   - Rendered in the system's native WebView
+   - Communicates with Node.js backend via HTTP (localhost)
+   - Uses standard fetch/axios for API requests
+   - No special Tauri integration required in React code
+
+**Key Benefits:**
+- ✅ No backend rewrite required
+- ✅ All existing Node.js code works as-is
+- ✅ Significantly smaller application size
+- ✅ Better system integration
+- ✅ Cross-platform support (Windows, macOS, Linux)
+- ✅ Future migration path to full Rust backend if desired
+
 ## Technology Stack
 
-- **Backend**: Node.js, Express, TypeScript, SQLite3
-- **Frontend**: React 18, TypeScript, Vite, React Router
+### Backend
+- **Runtime**: Node.js
+- **Framework**: Express
+- **Language**: TypeScript
+- **Database**: SQLite3
 - **Streaming**: SSE (Server-Sent Events)
 - **HTTP Client**: Axios
 - **Encryption**: CryptoJS (AES)
-- **CLI**: Yargs-like custom implementation
+
+### Frontend
+- **Framework**: React 18
+- **Language**: TypeScript
+- **Build Tool**: Vite
+- **Routing**: React Router
+- **UI Components**: Custom components
+
+### Desktop Application (Tauri)
+- **Core**: Tauri 2.0
+- **Language**: Rust (main process)
+- **WebView**: System native (WebView2 on Windows, WebKit on macOS/Linux)
+- **IPC**: Tauri command system
+- **Process Management**: Rust std::process
+
+### CLI
+- **Implementation**: Custom Yargs-like CLI
+- **Process Management**: Node.js child_process
 
 ## Development
 
-* 使用yarn作为包管理器，请使用yarn安装依赖。
+* 使用yarn作为包管理器，请使用yarn安装依赖，使用yarn来运行脚本。
 * 前端依赖库安装在devDependencies中，请使用yarn install --dev安装。
 * 所有对话请使用中文。生成代码中的文案及相关注释根据代码原本的语言生成。
 * 在服务端，直接使用 __dirname 来获取当前目录，不要使用 process.cwd()
 * 每次有新的变化时，你需要更新 CLAUDE.md 来让文档保持最新。
 * 禁止在项目中使用依赖GPU的css样式处理。
+* 禁止运行 dev:ui, dev:server, tauri:dev 等命令来进行测试。
