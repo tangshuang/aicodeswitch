@@ -330,6 +330,18 @@ aicos version            # Show current version information
    - Most developers already have Node.js installed
    - This check is skipped in development mode
 
+7. **Auto-Deactivate Routes on Exit**:
+   - When the application is closed, it automatically deactivates all active routes
+   - This prevents configuration files from remaining in an overwritten state
+   - The close event is intercepted and the following steps are executed:
+     1. Fetch all routes via `GET /api/routes`
+     2. Filter for active routes
+     3. Send `POST /api/routes/:id/deactivate` for each active route
+     4. Stop the Node.js server
+     5. Destroy the window
+   - This feature only works in production mode
+   - If deactivation fails, the app still proceeds with shutdown to avoid hanging
+
 ### Project Structure
 
 ```

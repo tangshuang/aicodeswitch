@@ -704,6 +704,11 @@ export class DatabaseManager {
     return result.changes > 0;
   }
 
+  deactivateAllRoutes(): number {
+    const result = this.db.prepare('UPDATE routes SET is_active = 0 WHERE is_active = 1').run();
+    return result.changes;
+  }
+
   // Rule operations
   getRules(routeId?: string): Rule[] {
     const query = routeId

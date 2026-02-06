@@ -12,6 +12,7 @@ use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
 use std::sync::atomic::{AtomicBool, Ordering};
+use serde_json;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -161,6 +162,39 @@ fn stop_server(state: &State<'_, Mutex<ServerProcess>>) {
         let _ = child.wait();
         println!("Node.js server stopped");
     }
+}
+
+// 停用所有激活的路由
+async fn deactivate_active_routes(port: u16) -> Result<(), String> {
+    let base_url = format!("http://localhost:{}", port);
+    let deactivate_url = format!("{}/api/routes/deactivate-all", base_url);
+
+    println!("Deactivating all active routes...");
+
+    // 调用批量停用接口
+    let response = reqwest::Client::new()
+        .post(&deactivate_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to send deactivate request: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Deactivate request failed, status: {}", response.status()));
+    }
+
+    // 等待响应体完整接收，确保后端处理完成
+    let response_text = response.text().await
+        .map_err(|e| format!("Failed to read deactivate response: {}", e))?;
+
+    // 解析响应以获取停用的路由数量
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response_text) {
+        if let Some(count) = json["deactivatedCount"].as_i64() {
+            println!("✓ Successfully deactivated {} route(s)", count);
+        }
+    }
+
+    println!("Route deactivation completed");
+    Ok(())
 }
 
 // 获取 Node.js 可执行文件路径
@@ -387,12 +421,38 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-                // 只在生产模式下停止服务器
-                if !cfg!(debug_assertions) {
-                    let state = window.state::<Mutex<ServerProcess>>();
-                    stop_server(&state);
-                }
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // 阻止默认关闭行为
+                api.prevent_close();
+
+                let window_clone = window.clone();
+                let app_handle = window.app_handle().clone();
+
+                // 异步执行停用路由和关闭
+                tauri::async_runtime::spawn(async move {
+                    let port = read_port_from_config();
+
+                    // 尝试停用所有激活的路由（开发模式和生产模式都执行）
+                    match deactivate_active_routes(port).await {
+                        Ok(_) => {
+                            println!("All active routes deactivated successfully");
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: Failed to deactivate routes: {}", e);
+                            // 即使失败也继续关闭流程
+                        }
+                    }
+
+                    // 只在生产模式下停止服务器进程
+                    // 开发模式下服务器由 npm run dev:server 管理，不应在这里停止
+                    if !cfg!(debug_assertions) {
+                        let state = app_handle.state::<Mutex<ServerProcess>>();
+                        stop_server(&state);
+                    }
+
+                    // 销毁窗口，完成关闭
+                    let _ = window_clone.destroy();
+                });
             }
         })
         .run(tauri::generate_context!())
