@@ -61,3 +61,4 @@ vite.config.ts
 .env
 .env.*
 /src/
+/tauri/

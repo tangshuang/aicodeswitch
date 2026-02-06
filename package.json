@@ -46,7 +46,7 @@
     "prepublishOnly": "npm run build",
     "release": "standard-version",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
+    "tauri:build": "tauri build && node tauri/move-bundle.js",
     "tauri:icon": "tauri icon src/ui/assets/logo.png"
   },
   "dependencies": {
