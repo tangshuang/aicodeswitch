@@ -28,11 +28,11 @@ if (!fs.existsSync(iconsDir)) {
   console.log('[tauri] icons generated at', iconsDir);
 }
 
-// 移除release目录
-const releaseRoot = path.join(repoRoot, 'tauri/target/release');
-fs.rmSync(releaseRoot, { recursive: true, force: true });
-
-console.log('[tauri] release directory removed at', releaseRoot);
+// 注意：不要删除 target/release 目录，因为 Tauri 构建需要它
+// 之前在这里删除会导致并行编译失败
+// const releaseRoot = path.join(repoRoot, 'tauri/target/release');
+// fs.rmSync(releaseRoot, { recursive: true, force: true });
+console.log('[tauri] skipping release directory cleanup (preserving build artifacts)');
 
 // 清理并重新创建 resources 目录
 fs.rmSync(destRoot, { recursive: true, force: true });

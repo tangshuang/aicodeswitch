@@ -198,6 +198,7 @@ async fn deactivate_active_routes(port: u16) -> Result<(), String> {
 }
 
 // 获取 Node.js 可执行文件路径
+// macOS GUI 应用的 PATH 不包含 /usr/local/bin，需要尝试常见路径
 fn get_node_executable() -> String {
     #[cfg(target_os = "windows")]
     {
@@ -205,6 +206,24 @@ fn get_node_executable() -> String {
     }
     #[cfg(not(target_os = "windows"))]
     {
+        // 尝试按优先级查找 Node.js
+        let possible_paths = vec![
+            "/usr/local/bin/node",  // macOS 默认安装路径
+            "/opt/homebrew/bin/node",  // Apple Silicon Homebrew
+            "/home/linuxbrew/.linuxbrew/bin/node",  // Linux Homebrew
+            "/usr/bin/node",  // 系统路径
+            "node",  // PATH 中的 node
+        ];
+
+        for path in possible_paths {
+            if std::path::Path::new(path).exists() {
+                println!("Found Node.js at: {}", path);
+                return path.to_string();
+            }
+        }
+
+        // 如果都找不到，返回 "node" 让系统尝试
+        println!("Node.js not found in common paths, using 'node' from PATH");
         "node".to_string()
     }
 }
