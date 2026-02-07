@@ -1237,7 +1237,8 @@ export class ProxyServer {
   private buildUpstreamHeaders(req: Request, service: APIService, sourceType: SourceType, streamRequested: boolean) {
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(req.headers)) {
-      if (['host', 'connection', 'content-length', 'authorization'].includes(key.toLowerCase())) {
+      // 排除原始认证头，防止与代理设置的认证头冲突
+      if (['host', 'connection', 'content-length', 'authorization', 'x-api-key', 'x-anthropic-api-key', 'anthropic-api-key'].includes(key.toLowerCase())) {
         continue;
       }
       if (typeof value === 'string') {
