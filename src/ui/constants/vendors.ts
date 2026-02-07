@@ -34,6 +34,31 @@ export default {
             },
         ],
     },
+    kimi: {
+        name: 'Kimi',
+        description: '国内优秀大模型 https://www.kimi.ai/',
+        services: [
+            {
+                name: 'Coding Plan Claude Code',
+                sourceType: 'claude-code',
+                apiUrl: 'https://api.kimi.com/coding',
+                authType: AuthType.API_KEY,
+            }
+        ]
+    },
+    minimax: {
+        name: 'Minimax',
+        description: '国内优秀的大模型 https://platform.minimaxi.com/subscribe/coding-plan?code=G6xKj7L4YN&source=link',
+        services: [
+            {
+                name: 'Coding Plan Claude Code',
+                sourceType: 'claude-code',
+                apiUrl: 'https://api.minimaxi.com/anthropic',
+                authType: AuthType.AUTH_TOKEN,
+                models: 'MiniMax-M2.1',
+            }
+        ]
+    },
     doubao: {
         name: '豆包',
         description: '字节旗下大模型。Coding Plan一次性支持GLM-4.7、Kimi-K2.5、Deepseek多个国产模型 https://volcengine.com/L/RcHlm6yxj0w/  邀请码：Y58X463P',
@@ -59,31 +84,6 @@ export default {
                 authType: AuthType.AUTH_TOKEN,
             },
         ],
-    },
-    kimi: {
-        name: 'Kimi',
-        description: '国内优秀大模型 https://www.kimi.ai/',
-        services: [
-            {
-                name: 'Coding Plan Claude Code',
-                sourceType: 'claude-code',
-                apiUrl: 'https://api.kimi.com/coding',
-                authType: AuthType.API_KEY,
-            }
-        ]
-    },
-    minimax: {
-        name: 'Minimax',
-        description: '国内优秀的大模型 https://platform.minimaxi.com/subscribe/coding-plan?code=G6xKj7L4YN&source=link',
-        services: [
-            {
-                name: 'Coding Plan Claude Code',
-                sourceType: 'claude-code',
-                apiUrl: 'https://api.minimaxi.com/anthropic',
-                authType: AuthType.AUTH_TOKEN,
-                models: 'MiniMax-M2.1',
-            }
-        ]
     },
     aicodewith: {
         name: 'AICodeWith',
