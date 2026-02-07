@@ -8,6 +8,12 @@ function SettingsPage() {
   const [password, setPassword] = useState('');
   const [importData, setImportData] = useState('');
   const [exportedData, setExportedData] = useState('');
+  const [proxyFormData, setProxyFormData] = useState({
+    proxyEnabled: false,
+    proxyUrl: '',
+    proxyUsername: '',
+    proxyPassword: '',
+  });
 
   useEffect(() => {
     loadConfig();
@@ -16,6 +22,12 @@ function SettingsPage() {
   const loadConfig = async () => {
     const data = await api.getConfig();
     setConfig(data);
+    setProxyFormData({
+      proxyEnabled: data.proxyEnabled || false,
+      proxyUrl: data.proxyUrl || '',
+      proxyUsername: data.proxyUsername || '',
+      proxyPassword: data.proxyPassword || '',
+    });
   };
 
   const handleSaveConfig = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -193,19 +205,24 @@ function SettingsPage() {
         <form onSubmit={handleSaveProxyConfig}>
           <div className="form-group">
             <label>启用代理</label>
-            <select name="proxyEnabled" defaultValue={config.proxyEnabled ? 'true' : 'false'}>
+            <select
+              name="proxyEnabled"
+              value={proxyFormData.proxyEnabled ? 'true' : 'false'}
+              onChange={(e) => setProxyFormData(prev => ({ ...prev, proxyEnabled: e.target.value === 'true' }))}
+            >
               <option value="false">不启用</option>
               <option value="true">启用</option>
             </select>
           </div>
-          {config.proxyEnabled !== false && (
+          {proxyFormData.proxyEnabled && (
             <>
               <div className="form-group">
                 <label>代理地址</label>
                 <input
                   type="text"
                   name="proxyUrl"
-                  defaultValue={config.proxyUrl || ''}
+                  value={proxyFormData.proxyUrl}
+                  onChange={(e) => setProxyFormData(prev => ({ ...prev, proxyUrl: e.target.value }))}
                   placeholder="例如: proxy.example.com:8080 或 http://proxy.example.com:8080"
                 />
               </div>
@@ -214,7 +231,8 @@ function SettingsPage() {
                 <input
                   type="text"
                   name="proxyUsername"
-                  defaultValue={config.proxyUsername || ''}
+                  value={proxyFormData.proxyUsername}
+                  onChange={(e) => setProxyFormData(prev => ({ ...prev, proxyUsername: e.target.value }))}
                   placeholder="如果代理需要认证"
                 />
               </div>
@@ -223,7 +241,8 @@ function SettingsPage() {
                 <input
                   type="password"
                   name="proxyPassword"
-                  defaultValue={config.proxyPassword || ''}
+                  value={proxyFormData.proxyPassword}
+                  onChange={(e) => setProxyFormData(prev => ({ ...prev, proxyPassword: e.target.value }))}
                   placeholder="如果代理需要认证"
                 />
               </div>

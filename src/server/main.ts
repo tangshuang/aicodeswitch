@@ -4,13 +4,17 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { DatabaseManager } from './database';
 import { ProxyServer } from './proxy-server';
-import type { AppConfig, LoginRequest, LoginResponse, AuthStatus } from '../types';
+import type { AppConfig, LoginRequest, LoginResponse, AuthStatus, InstalledSkill, SkillCatalogItem, SkillInstallRequest, SkillInstallResponse, TargetType } from '../types';
 import os from 'os';
 import { isAuthEnabled, verifyAuthCode, generateToken, authMiddleware } from './auth';
 import { checkVersionUpdate } from './version-check';
 import { checkPortUsable } from './utils';
+import { getToolsInstallationStatus } from './tools-service';
+import { createToolInstallationWSServer } from './websocket-service';
+import { createRulesStatusWSServer } from './rules-status-service';
 import {
   saveMetadata,
   deleteMetadata,
@@ -19,20 +23,59 @@ import {
   cleanupInvalidMetadata,
   type ConfigMetadata
 } from './config-metadata';
+import { SKILLSMP_API_KEY } from './config';
 
-const dotenvPath = path.resolve(os.homedir(), '.aicodeswitch/aicodeswitch.conf');
+const appDir = path.join(os.homedir(), '.aicodeswitch');
+const dataDir = path.join(appDir, 'data');
+const dotenvPath = path.resolve(appDir, 'aicodeswitch.conf');
+const migrationHashFilePath = path.join(appDir, 'migration-hash');
+
 if (fs.existsSync(dotenvPath)) {
   dotenv.config({ path: dotenvPath });
 }
 
 const host = process.env.HOST || '127.0.0.1';
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
-const dataDir = process.env.DATA_DIR ? path.resolve(process.cwd(), process.env.DATA_DIR) : path.join(os.homedir(), '.aicodeswitch/data');
+
+let globalProxyConfig: { enabled: boolean; url: string; username?: string; password?: string } | null = null;
+
+function updateProxyConfig(config: AppConfig): void {
+  if (config.proxyEnabled && config.proxyUrl) {
+    globalProxyConfig = {
+      enabled: true,
+      url: config.proxyUrl,
+      username: config.proxyUsername,
+      password: config.proxyPassword,
+    };
+  } else {
+    globalProxyConfig = null;
+  }
+}
+
+function getProxyAgent() {
+  if (!globalProxyConfig?.enabled || !globalProxyConfig.url) {
+    return null;
+  }
+
+  try {
+    const url = globalProxyConfig.url;
+    const proxyUrl = url.startsWith('http') ? url : `http://${url}`;
+
+    if (globalProxyConfig.username && globalProxyConfig.password) {
+      const proxyUrlWithAuth = proxyUrl.replace('://', `://${encodeURIComponent(globalProxyConfig.username)}:${encodeURIComponent(globalProxyConfig.password)}@`);
+      return proxyUrlWithAuth;
+    }
+
+    return proxyUrl;
+  } catch {
+    return null;
+  }
+}
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: 'Infinity' }));
+app.use(express.urlencoded({ extended: true, limit: 'Infinity' }));
 
 const asyncHandler =
   (handler: (req: Request, res: Response, next: NextFunction) => Promise<void> | void) =>
@@ -93,17 +136,19 @@ const writeClaudeConfig = async (dbManager: DatabaseManager): Promise<boolean> =
     // Claude Code .claude.json
     const claudeJsonPath = path.join(homeDir, '.claude.json');
 
-    // 同样处理 .claude.json 的备份
+    // 先读取原文件内容（如果存在）
+    let claudeJson: any = {};
+    if (fs.existsSync(claudeJsonPath)) {
+      claudeJson = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8'));
+    }
+
+    // 然后处理备份
     if (!fs.existsSync(claudeJsonBakPath)) {
       if (fs.existsSync(claudeJsonPath)) {
         fs.renameSync(claudeJsonPath, claudeJsonBakPath);
       }
     }
 
-    let claudeJson: any = {};
-    if (fs.existsSync(claudeJsonPath)) {
-      claudeJson = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8'));
-    }
     claudeJson.hasCompletedOnboarding = true;
 
     fs.writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2));
@@ -341,7 +386,421 @@ const checkCodexBackupExists = (): boolean => {
   }
 };
 
+const getCentralSkillsDir = (): string => {
+  return path.join(os.homedir(), '.aicodeswitch', 'skills');
+};
+
+function sanitizeDirName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .substring(0, 100);
+}
+
+function getSkillDirByName(name: string): string {
+  const sanitizedName = sanitizeDirName(name);
+  const centralDir = getCentralSkillsDir();
+  return path.join(centralDir, sanitizedName);
+}
+
+const getSkillSymlinkPath = (skillId: string, targetType: TargetType): string => {
+  const baseDir = targetType === 'claude-code' ? '.claude' : '.codex';
+  return path.join(os.homedir(), baseDir, 'skills', skillId);
+};
+
+function isSkillSymlinkExists(skillId: string, targetType: TargetType): boolean {
+  const symlinkPath = getSkillSymlinkPath(skillId, targetType);
+
+  try {
+    const stats = fs.lstatSync(symlinkPath);
+    return stats.isSymbolicLink();
+  } catch (error) {
+    return false;
+  }
+}
+
+async function createSkillSymlink(skillId: string, targetType: TargetType): Promise<{ success: boolean; error?: string }> {
+  try {
+    const centralDir = getCentralSkillsDir();
+    const skillDir = path.join(centralDir, skillId);
+    const symlinkPath = getSkillSymlinkPath(skillId, targetType);
+
+    if (!fs.existsSync(skillDir)) {
+      return { success: false, error: 'Skill目录不存在' };
+    }
+
+    const targetBaseDir = path.dirname(symlinkPath);
+    if (!fs.existsSync(targetBaseDir)) {
+      fs.mkdirSync(targetBaseDir, { recursive: true });
+    }
+
+    if (fs.existsSync(symlinkPath)) {
+      if (fs.lstatSync(symlinkPath).isSymbolicLink()) {
+        fs.unlinkSync(symlinkPath);
+      } else {
+        return { success: false, error: '目标路径已存在非软链接文件' };
+      }
+    }
+
+    const relativePath = path.relative(targetBaseDir, skillDir);
+
+    if (process.platform === 'win32') {
+      fs.symlinkSync(skillDir, symlinkPath, 'junction');
+    } else {
+      fs.symlinkSync(relativePath, symlinkPath);
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+async function removeSkillSymlink(skillId: string, targetType: TargetType): Promise<{ success: boolean; error?: string }> {
+  try {
+    const symlinkPath = getSkillSymlinkPath(skillId, targetType);
+
+    if (!fs.existsSync(symlinkPath)) {
+      return { success: true };
+    }
+
+    const stats = fs.lstatSync(symlinkPath);
+    if (stats.isSymbolicLink()) {
+      fs.unlinkSync(symlinkPath);
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+// GitHub URL解析工具函数
+interface GitHubRepoInfo {
+  owner: string;
+  repo: string;
+  path: string;
+}
+
+function parseGitHubUrl(githubUrl: string, subPath?: string): GitHubRepoInfo {
+  // 解析各种GitHub URL格式
+  const patterns = [
+    // https://github.com/owner/repo/tree/{ref}/path/to/dir
+    /github\.com\/([^\/]+)\/([^\/]+)(?:\/tree\/[^\/]+)?\/(.*)/,
+    // git@github.com:owner/repo.git
+    /git@github\.com:([^\/]+)\/([^\/]+)(?:\.git)?$/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = githubUrl.match(pattern);
+    if (match) {
+      let owner = match[1];
+      let repo = match[2];
+      let repoPath = match[3] || '';
+
+      // 移除.git后缀（如果存在）
+      if (repo.endsWith('.git')) {
+        repo = repo.slice(0, -4);
+      }
+
+      // 拼接完整路径
+      const fullPath = subPath ? path.join(repoPath, subPath) : repoPath;
+
+      return { owner, repo, path: fullPath };
+    }
+  }
+
+  throw new Error(`无法解析GitHub URL: ${githubUrl}`);
+}
+
+// 重试配置
+const MAX_RETRY_COUNT = 3;
+const RETRY_DELAY_MS = 1000;
+
+// 带重试的fetch包装函数，支持代理
+async function fetchWithRetry(url: string, options: RequestInit = {}, retryCount = MAX_RETRY_COUNT): Promise<globalThis.Response> {
+  let lastError: Error | null = null;
+
+  // 获取代理配置
+  const proxyUrl = getProxyAgent();
+
+  for (let i = 0; i < retryCount; i++) {
+    try {
+      const fetchOptions: RequestInit = { ...options };
+
+      // 如果启用了代理，添加 agent
+      if (proxyUrl) {
+        try {
+          (fetchOptions as any).agent = new HttpsProxyAgent(proxyUrl);
+          console.log(`使用代理请求: ${url}`);
+        } catch (agentError) {
+          console.warn('创建代理 agent 失败，将跳过代理:', agentError);
+        }
+      }
+
+      const response = await fetch(url, fetchOptions);
+
+      // 如果是403限流错误，等待后重试
+      if (response.status === 403) {
+        const resetTime = response.headers.get('X-RateLimit-Reset');
+        const waitTime = resetTime
+          ? Math.max(parseInt(resetTime) * 1000 - Date.now(), RETRY_DELAY_MS)
+          : RETRY_DELAY_MS * (i + 1);
+
+        console.warn(`GitHub API限流，等待 ${Math.ceil(waitTime / 1000)} 秒后重试...`);
+        await new Promise(resolve => setTimeout(resolve, Math.min(waitTime, 30000)));
+        continue;
+      }
+
+      return response;
+    } catch (error) {
+      lastError = error as Error;
+      console.warn(`请求失败 (${i + 1}/${retryCount}):`, error);
+
+      if (i < retryCount - 1) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * (i + 1)));
+      }
+    }
+  }
+
+  throw lastError || new Error('请求失败');
+}
+
+// 使用GitHub Contents API获取目录内容
+async function getGitHubContents(owner: string, repo: string, filePath: string, ref?: string): Promise<any[]> {
+  let apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`;
+
+  if (ref) {
+    apiUrl += `?ref=${ref}`;
+  }
+
+  const response = await fetchWithRetry(apiUrl, {
+    headers: {
+      'Accept': 'application/vnd.github.v3+json',
+      'User-Agent': 'AICodeSwitch-SkillsManager',
+    },
+  });
+
+  if (!response.ok) {
+    if (response.status === 403) {
+      // API限流
+      const resetTime = response.headers.get('X-RateLimit-Reset');
+      throw new Error(`GitHub API限流，请稍后再试${resetTime ? `（${new Date(parseInt(resetTime) * 1000).toLocaleTimeString()}）` : ''}`);
+    }
+    if (response.status === 404) {
+      throw new Error(`路径不存在: ${filePath}`);
+    }
+    throw new Error(`GitHub API错误: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+
+  // Contents API对单个文件返回对象，对目录返回数组
+  return Array.isArray(data) ? data : [data];
+}
+
+// 下载单个文件（带重试）
+async function downloadFile(downloadUrl: string, targetPath: string, retryCount = MAX_RETRY_COUNT): Promise<void> {
+  let lastError: Error | null = null;
+
+  for (let i = 0; i < retryCount; i++) {
+    try {
+      const response = await fetchWithRetry(downloadUrl);
+
+      if (!response.ok) {
+        throw new Error(`下载失败: ${response.status} ${response.statusText}`);
+      }
+
+      const content = await response.text();
+
+      // 确保目标目录存在
+      const dir = path.dirname(targetPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      fs.writeFileSync(targetPath, content, 'utf-8');
+      return;
+    } catch (error) {
+      lastError = error as Error;
+      console.warn(`文件下载失败 (${i + 1}/${retryCount}):`, downloadUrl);
+
+      if (i < retryCount - 1) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * (i + 1)));
+      }
+    }
+  }
+
+  throw lastError || new Error('文件下载失败');
+}
+
+// 递归下载目录内容
+async function downloadDirectory(owner: string, repo: string, contents: any[], basePath: string, ref?: string): Promise<number> {
+  let downloadedCount = 0;
+
+  for (const item of contents) {
+    const relativePath = item.path ? item.path.split('/').slice(-1)[0] : item.name;
+    const targetPath = path.join(basePath, relativePath);
+
+    if (item.type === 'file') {
+      // 下载文件
+      if (item.download_url) {
+        await downloadFile(item.download_url, targetPath);
+        downloadedCount++;
+      }
+    } else if (item.type === 'dir') {
+      // 递归下载子目录
+      const subContents = await getGitHubContents(owner, repo, item.path, ref);
+      const subCount = await downloadDirectory(owner, repo, subContents, targetPath, ref);
+      downloadedCount += subCount;
+    }
+  }
+
+  return downloadedCount;
+}
+
+// 验证下载完整性
+function verifyDownload(targetDir: string): { valid: boolean; filesCount: number; error?: string } {
+  if (!fs.existsSync(targetDir)) {
+    return { valid: false, filesCount: 0, error: '目标目录不存在' };
+  }
+
+  const hasSkillJson = fs.existsSync(path.join(targetDir, 'skill.json'));
+  const hasSkillMd = fs.existsSync(path.join(targetDir, 'SKILL.md'));
+
+  if (!hasSkillJson && !hasSkillMd) {
+    return { valid: false, filesCount: 0, error: '缺少必要文件: skill.json 或 SKILL.md' };
+  }
+
+  // 统计下载的文件数量
+  let filesCount = 0;
+  try {
+    const countFiles = (dir: string) => {
+      const items = fs.readdirSync(dir, { withFileTypes: true });
+      for (const item of items) {
+        if (item.isFile()) {
+          filesCount++;
+        } else if (item.isDirectory()) {
+          countFiles(path.join(dir, item.name));
+        }
+      }
+    };
+    countFiles(targetDir);
+  } catch (error) {
+    return { valid: false, filesCount: 0, error: '无法读取目录' };
+  }
+
+  if (filesCount === 0) {
+    return { valid: false, filesCount: 0, error: '下载的文件为空' };
+  }
+
+  return { valid: true, filesCount };
+}
+
+// 从GitHub下载指定路径的skill
+async function downloadSkillFromGitHub(githubUrl: string, skillPath: string, targetDir: string): Promise<{ success: boolean; filesDownloaded: number; error?: string }> {
+  try {
+    // 解析GitHub URL
+    const { owner, repo, path: repoPath } = parseGitHubUrl(githubUrl, skillPath);
+
+    // 构造完整路径
+    const fullPath = repoPath || skillPath;
+
+    if (!fullPath) {
+      throw new Error('无效的skill路径');
+    }
+
+    // 获取目录内容
+    const contents = await getGitHubContents(owner, repo, fullPath);
+
+    if (contents.length === 0) {
+      throw new Error('目录为空');
+    }
+
+    // 确保目标目录存在
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+
+    // 递归下载所有文件
+    const filesDownloaded = await downloadDirectory(owner, repo, contents, targetDir);
+
+    if (filesDownloaded === 0) {
+      throw new Error('未能下载任何文件');
+    }
+
+    // 验证下载完整性
+    const verification = verifyDownload(targetDir);
+    if (!verification.valid) {
+      // 清理不完整的下载
+      fs.rmSync(targetDir, { recursive: true, force: true });
+      throw new Error(`下载验证失败: ${verification.error}`);
+    }
+
+    return { success: true, filesDownloaded };
+  } catch (error: any) {
+    return { success: false, filesDownloaded: 0, error: error.message };
+  }
+}
+
+const listInstalledSkills = (): InstalledSkill[] => {
+  const result = new Map<string, InstalledSkill>();
+  const centralDir = getCentralSkillsDir();
+
+  if (!fs.existsSync(centralDir)) {
+    return [];
+  }
+
+  const entries = fs.readdirSync(centralDir, { withFileTypes: true });
+  entries.filter(entry => entry.isDirectory()).forEach(entry => {
+    const skillId = entry.name;
+    const skillDir = path.join(centralDir, skillId);
+    const metadataPath = path.join(skillDir, 'skill.json');
+
+    if (!fs.existsSync(metadataPath)) {
+      return;
+    }
+
+    try {
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+
+      const enabledTargets: TargetType[] = [];
+
+      ['claude-code', 'codex'].forEach((targetType) => {
+        if (isSkillSymlinkExists(skillId, targetType as TargetType)) {
+          enabledTargets.push(targetType as TargetType);
+        }
+      });
+
+      const existing = result.get(skillId);
+      if (existing) {
+        existing.targets = [...new Set([...existing.targets, ...(metadata.targets || [])])];
+        existing.enabledTargets = enabledTargets;
+      } else {
+        result.set(skillId, {
+          id: skillId,
+          name: metadata.name || skillId,
+          description: metadata.description,
+          targets: metadata.targets || [],
+          enabledTargets: enabledTargets,
+          githubUrl: metadata.githubUrl,
+          skillPath: metadata.skillPath,
+          installedAt: metadata.installedAt || Date.now(),
+        });
+      }
+    } catch (error) {
+      console.error(`Failed to parse skill metadata for ${skillId}:`, error);
+    }
+  });
+
+  return Array.from(result.values()).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+};
+
 const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) => {
+  updateProxyConfig(dbManager.getConfig());
+
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
   // 鉴权相关路由 - 公开访问
@@ -415,6 +874,51 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     })
   );
 
+  // 批量停用所有激活的路由（用于应用关闭时清理）
+  app.post(
+    '/api/routes/deactivate-all',
+    asyncHandler(async (_req, res) => {
+      console.log('[Deactivate All Routes] Starting cleanup process...');
+
+      // 步骤1：恢复 Claude Code 配置文件
+      try {
+        console.log('[Deactivate All Routes] Restoring Claude Code config...');
+        const claudeRestored = await restoreClaudeConfig();
+        console.log(`[Deactivate All Routes] Claude Code config ${claudeRestored ? 'restored' : 'was not modified'}`);
+      } catch (error: any) {
+        console.error('[Deactivate All Routes] Failed to restore Claude config:', error);
+      }
+
+      // 步骤2：恢复 Codex 配置文件
+      try {
+        console.log('[Deactivate All Routes] Restoring Codex config...');
+        const codexRestored = await restoreCodexConfig();
+        console.log(`[Deactivate All Routes] Codex config ${codexRestored ? 'restored' : 'was not modified'}`);
+      } catch (error: any) {
+        console.error('[Deactivate All Routes] Failed to restore Codex config:', error);
+      }
+
+      // 步骤3：停用所有激活的路由
+      console.log('[Deactivate All Routes] Deactivating all active routes...');
+      const deactivatedCount = dbManager.deactivateAllRoutes();
+
+      if (deactivatedCount > 0) {
+        console.log(`[Deactivate All Routes] Deactivated ${deactivatedCount} route(s), reloading routes...`);
+        await proxyServer.reloadRoutes();
+        console.log('[Deactivate All Routes] Routes reloaded successfully');
+      } else {
+        console.log('[Deactivate All Routes] No active routes to deactivate');
+      }
+
+      console.log('[Deactivate All Routes] Cleanup process completed');
+
+      res.json({
+        success: true,
+        deactivatedCount
+      });
+    })
+  );
+
   app.get('/api/rules', (req, res) => {
     const routeId = typeof req.query.routeId === 'string' ? req.query.routeId : undefined;
     res.json(dbManager.getRules(routeId));
@@ -424,6 +928,7 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
   app.delete('/api/rules/:id', (req, res) => res.json(dbManager.deleteRule(req.params.id)));
   app.put('/api/rules/:id/reset-tokens', (req, res) => res.json(dbManager.resetRuleTokenUsage(req.params.id)));
   app.put('/api/rules/:id/reset-requests', (req, res) => res.json(dbManager.resetRuleRequestCount(req.params.id)));
+  app.put('/api/rules/:id/toggle-disable', (req, res) => res.json(dbManager.toggleRuleDisabled(req.params.id)));
 
   // 解除规则的黑名单状态
   app.put(
@@ -555,8 +1060,436 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
       const result = dbManager.updateConfig(config);
       if (result) {
         await proxyServer.updateConfig(config);
+        updateProxyConfig(config);
       }
       res.json(result);
+    })
+  );
+
+  // Skills 管理相关
+  app.get('/api/skills/installed', (_req, res) => {
+    const skills = listInstalledSkills();
+    res.json(skills);
+  });
+
+  app.post(
+    '/api/skills/search',
+    asyncHandler(async (req, res) => {
+      const { query } = req.body as { query?: string };
+      if (!query || !query.trim()) {
+        res.status(400).json({ error: 'Query is required' });
+        return;
+      }
+
+      if (!SKILLSMP_API_KEY) {
+        res.status(500).json({ error: 'SKILLSMP_API_KEY 未配置' });
+        return;
+      }
+
+      const url = `https://skillsmp.com/api/v1/skills/ai-search?q=${encodeURIComponent(query.trim())}`;
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${SKILLSMP_API_KEY}`,
+        },
+      });
+
+      if (!response.ok) {
+        let errorMessage = 'Skills 搜索失败';
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody?.error?.message || errorMessage;
+        } catch (error) {
+          errorMessage = await response.text();
+        }
+        res.status(response.status).json({ error: errorMessage });
+        return;
+      }
+
+      const data = await response.json();
+      const results = (data?.data?.data || [])
+        .map((item: any) => item?.skill)
+        .filter(Boolean)
+        .map((skill: any) => {
+          const tags: any[] = [
+            skill.author ? `作者: ${skill.author}` : null,
+            typeof skill.stars === 'number' ? `⭐ ${skill.stars}` : null,
+          ].filter(Boolean);
+
+          const result: SkillCatalogItem = {
+            id: skill.id,
+            name: skill.name || skill.id,
+            description: skill.description,
+            tags: tags.length > 0 ? tags : [],
+            url: skill.githubUrl || skill.skillUrl,
+          };
+
+          return result;
+        });
+
+      res.json(results);
+    })
+  );
+
+  app.post(
+    '/api/skills/install',
+    asyncHandler(async (req, res) => {
+      const { skillId, name, description, tags, githubUrl, skillPath } = req.body as SkillInstallRequest & { githubUrl?: string; skillPath?: string };
+
+      if (!skillId) {
+        const response: SkillInstallResponse = {
+          success: false,
+          message: '缺少 Skill ID',
+        };
+        res.status(400).json(response);
+        return;
+      }
+
+      const skillName = name || skillId;
+      const skillDir = getSkillDirByName(skillName);
+      const sanitizedDirName = path.basename(skillDir);
+
+      if (fs.existsSync(skillDir)) {
+        const existingSkillJson = path.join(skillDir, 'skill.json');
+        let existingMetadata: any = null;
+        if (fs.existsSync(existingSkillJson)) {
+          try {
+            existingMetadata = JSON.parse(fs.readFileSync(existingSkillJson, 'utf-8'));
+          } catch (e) {
+            // 忽略解析错误
+          }
+        }
+
+        if (githubUrl) {
+          const downloadResult = await downloadSkillFromGitHub(
+            githubUrl,
+            skillPath || '',
+            skillDir
+          );
+
+          if (!downloadResult.success) {
+            const response: SkillInstallResponse = {
+              success: false,
+              message: `下载失败: ${downloadResult.error}`,
+            };
+            res.status(500).json(response);
+            return;
+          }
+
+          const metadata = {
+            id: sanitizedDirName,
+            name: name || existingMetadata?.name || skillId,
+            description: description || existingMetadata?.description,
+            tags: tags || existingMetadata?.tags,
+            githubUrl,
+            skillPath,
+            targets: [...(existingMetadata?.targets || [])],
+            enabledTargets: [...(existingMetadata?.enabledTargets || [])],
+            installedAt: existingMetadata?.installedAt || Date.now(),
+            updatedAt: Date.now(),
+            filesDownloaded: downloadResult.filesDownloaded,
+          };
+          fs.writeFileSync(path.join(skillDir, 'skill.json'), JSON.stringify(metadata, null, 2));
+
+          const response: SkillInstallResponse = {
+            success: true,
+            installedSkill: {
+              id: sanitizedDirName,
+              name: metadata.name,
+              description: metadata.description,
+              targets: metadata.targets,
+              enabledTargets: metadata.enabledTargets,
+              githubUrl,
+              skillPath,
+              installedAt: metadata.installedAt,
+            }
+          };
+          res.json(response);
+          return;
+        }
+      } else {
+        fs.mkdirSync(skillDir, { recursive: true });
+      }
+
+      if (githubUrl) {
+        const downloadResult = await downloadSkillFromGitHub(
+          githubUrl,
+          skillPath || '',
+          skillDir
+        );
+
+        if (!downloadResult.success) {
+          const response: SkillInstallResponse = {
+            success: false,
+            message: `下载失败: ${downloadResult.error}`,
+          };
+          res.status(500).json(response);
+          return;
+        }
+      }
+
+      const metadata = {
+        id: sanitizedDirName,
+        name: name || skillId,
+        description,
+        tags,
+        targets: [],
+        enabledTargets: [],
+        githubUrl,
+        skillPath,
+        installedAt: Date.now(),
+      };
+
+      fs.writeFileSync(path.join(skillDir, 'skill.json'), JSON.stringify(metadata, null, 2));
+
+      const response: SkillInstallResponse = {
+        success: true,
+        installedSkill: {
+          id: sanitizedDirName,
+          name: metadata.name,
+          description: metadata.description,
+          targets: [],
+          enabledTargets: [],
+          githubUrl,
+          skillPath,
+          installedAt: metadata.installedAt,
+        }
+      };
+
+      res.json(response);
+    })
+  );
+
+  app.post(
+    '/api/skills/create-local',
+    asyncHandler(async (req, res) => {
+      const { name, description, instruction, link, targets } = req.body as {
+        name: string;
+        description: string;
+        instruction: string;
+        link?: string;
+        targets: TargetType[];
+      };
+
+      if (!name?.trim()) {
+        res.status(400).json({ success: false, message: '请填写 Skill 名称' });
+        return;
+      }
+      if (!description?.trim()) {
+        res.status(400).json({ success: false, message: '请填写描述' });
+        return;
+      }
+      if (!instruction?.trim()) {
+        res.status(400).json({ success: false, message: '请填写指令' });
+        return;
+      }
+      if (!targets || targets.length === 0) {
+        res.status(400).json({ success: false, message: '请至少选择一个安装目标' });
+        return;
+      }
+
+      const skillDir = getSkillDirByName(name);
+      const sanitizedDirName = path.basename(skillDir);
+
+      if (fs.existsSync(skillDir)) {
+        res.status(200).json({ success: false, message: `Skill "${name}" 已存在` });
+        return;
+      }
+
+      fs.mkdirSync(skillDir, { recursive: true });
+
+      const skillMdContent = `---
+name: ${sanitizedDirName}
+description: ${description.trim()}
+---
+
+# ${name.trim()}
+
+${description.trim()}
+
+## 指令
+
+${instruction}
+`;
+      fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skillMdContent, 'utf-8');
+
+      const metadata = {
+        id: sanitizedDirName,
+        name: name.trim(),
+        description: description.trim(),
+        tags: [],
+        targets: targets,
+        enabledTargets: [],
+        githubUrl: link || '',
+        skillPath: '',
+        installedAt: Date.now(),
+      };
+
+      fs.writeFileSync(path.join(skillDir, 'skill.json'), JSON.stringify(metadata, null, 2));
+
+      const response: SkillInstallResponse = {
+        success: true,
+        installedSkill: {
+          id: sanitizedDirName,
+          name: metadata.name,
+          description: metadata.description,
+          targets: metadata.targets,
+          enabledTargets: [],
+          githubUrl: link || '',
+          skillPath: '',
+          installedAt: metadata.installedAt,
+        }
+      };
+
+      res.json(response);
+    })
+  );
+
+  // 获取skill详细信息（用于显示和安装）
+  app.get(
+    '/api/skills/:skillId/details',
+    asyncHandler(async (req, res) => {
+      const { skillId } = req.params;
+
+      if (!SKILLSMP_API_KEY) {
+        res.status(500).json({ error: 'SKILLSMP_API_KEY 未配置' });
+        return;
+      }
+
+      try {
+        const url = `https://skillsmp.com/api/v1/skills/${skillId}`;
+        const response = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${SKILLSMP_API_KEY}`,
+          },
+        });
+
+        if (!response.ok) {
+          res.status(response.status).json({ error: '获取skill详情失败' });
+          return;
+        }
+
+        const data = await response.json();
+        const skill = data?.data;
+
+        if (!skill) {
+          res.status(404).json({ error: 'Skill不存在' });
+          return;
+        }
+
+        res.json({
+          id: skill.id,
+          name: skill.name,
+          description: skill.description,
+          author: skill.author,
+          stars: skill.stars,
+          githubUrl: skill.githubUrl || skill.skillUrl,
+          skillPath: skill.skillPath || '',
+          readme: skill.readme,
+          tags: skill.tags || [],
+        });
+      } catch (error: any) {
+        console.error('获取skill详情失败:', error);
+        res.status(500).json({ error: error.message });
+      }
+    })
+  );
+
+  app.post(
+    '/api/skills/:skillId/enable',
+    asyncHandler(async (req, res) => {
+      const { skillId } = req.params;
+      const { targetType } = req.body as { targetType: TargetType };
+
+      if (!targetType || (targetType !== 'claude-code' && targetType !== 'codex')) {
+        res.status(400).json({ success: false, error: '无效的目标类型' });
+        return;
+      }
+
+      const centralDir = getCentralSkillsDir();
+      const skillDir = path.join(centralDir, skillId);
+
+      if (!fs.existsSync(skillDir)) {
+        res.status(404).json({ success: false, error: 'Skill不存在' });
+        return;
+      }
+
+      const symlinkResult = await createSkillSymlink(skillId, targetType);
+
+      if (!symlinkResult.success) {
+        res.status(500).json({ success: false, error: symlinkResult.error });
+        return;
+      }
+
+      const metadataPath = path.join(skillDir, 'skill.json');
+      if (fs.existsSync(metadataPath)) {
+        const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+        if (!metadata.enabledTargets) {
+          metadata.enabledTargets = [];
+        }
+        if (!metadata.enabledTargets.includes(targetType)) {
+          metadata.enabledTargets.push(targetType);
+        }
+        fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+      }
+
+      res.json({ success: true });
+    })
+  );
+
+  app.post(
+    '/api/skills/:skillId/disable',
+    asyncHandler(async (req, res) => {
+      const { skillId } = req.params;
+      const { targetType } = req.body as { targetType: TargetType };
+
+      if (!targetType || (targetType !== 'claude-code' && targetType !== 'codex')) {
+        res.status(400).json({ success: false, error: '无效的目标类型' });
+        return;
+      }
+
+      const symlinkResult = await removeSkillSymlink(skillId, targetType);
+
+      if (!symlinkResult.success) {
+        res.status(500).json({ success: false, error: symlinkResult.error });
+        return;
+      }
+
+      const centralDir = getCentralSkillsDir();
+      const skillDir = path.join(centralDir, skillId);
+      const metadataPath = path.join(skillDir, 'skill.json');
+
+      if (fs.existsSync(metadataPath)) {
+        const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+        if (metadata.enabledTargets) {
+          metadata.enabledTargets = metadata.enabledTargets.filter((t: TargetType) => t !== targetType);
+          fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+        }
+      }
+
+      res.json({ success: true });
+    })
+  );
+
+  app.delete(
+    '/api/skills/:skillId',
+    asyncHandler(async (req, res) => {
+      const { skillId } = req.params;
+
+      const centralDir = getCentralSkillsDir();
+      const skillDir = path.join(centralDir, skillId);
+
+      if (!fs.existsSync(skillDir)) {
+        res.status(404).json({ success: false, error: 'Skill不存在' });
+        return;
+      }
+
+      ['claude-code', 'codex'].forEach(async (targetType) => {
+        await removeSkillSymlink(skillId, targetType as TargetType);
+      });
+
+      fs.rmSync(skillDir, { recursive: true, force: true });
+
+      res.json({ success: true });
     })
   );
 
@@ -727,9 +1660,6 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     res.type('text/plain').send(text);
   }));
 
-  // Migration 相关端点
-  const getMigrationHashPath = () => path.join(dataDir, '.migration-hash');
-
   // 查找 migration.md 文件的路径
   const findMigrationPath = (): string | null => {
     // 可能的路径列表
@@ -758,24 +1688,21 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
         return;
       }
 
-      const content = fs.readFileSync(migrationPath, 'utf-8');
+      const content = fs.readFileSync(migrationPath, 'utf-8').trim();
 
       // 计算当前内容的 hash
       const currentHash = createHash('sha256').update(content).digest('hex');
 
-      // 读取之前保存的 hash
-      const hashPath = getMigrationHashPath();
-
       // 如果 hash 文件不存在，说明是第一次安装
-      if (!fs.existsSync(hashPath)) {
+      if (!fs.existsSync(migrationHashFilePath)) {
         // 第一次安装，直接保存当前 hash，不显示弹窗
-        fs.writeFileSync(hashPath, currentHash, 'utf-8');
+        fs.writeFileSync(migrationHashFilePath, currentHash, 'utf-8');
         res.json({ shouldShow: false, content: '' });
         return;
       }
 
       // 读取已保存的 hash
-      const savedHash = fs.readFileSync(hashPath, 'utf-8').trim();
+      const savedHash = fs.readFileSync(migrationHashFilePath, 'utf-8').trim();
 
       // 如果 hash 不同，需要显示弹窗
       const shouldShow = savedHash !== currentHash;
@@ -796,12 +1723,11 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
         return;
       }
 
-      const content = fs.readFileSync(migrationPath, 'utf-8');
+      const content = fs.readFileSync(migrationPath, 'utf-8').trim();
       const hash = createHash('sha256').update(content).digest('hex');
 
       // 保存 hash 到文件
-      const hashPath = getMigrationHashPath();
-      fs.writeFileSync(hashPath, hash, 'utf-8');
+      fs.writeFileSync(migrationHashFilePath, hash, 'utf-8');
 
       res.json({ success: true });
     } catch (error) {
@@ -809,6 +1735,20 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
       res.json({ success: false });
     }
   }));
+
+  // 工具安装检测相关路由
+  app.get('/api/tools/status', asyncHandler(async (_req, res) => {
+    console.log('[API] GET /api/tools/status - 获取工具安装状态');
+    try {
+      const status = await getToolsInstallationStatus();
+      console.log('[API] 工具安装状态:', status);
+      res.json(status);
+    } catch (error) {
+      console.error('[API] 获取工具状态失败:', error);
+      res.status(500).json({ error: '获取工具状态失败' });
+    }
+  }));
+
 };
 
 const start = async () => {
@@ -838,6 +1778,30 @@ const start = async () => {
     console.log(`Admin server running on http://${host}:${port}`);
   });
 
+  // 创建 WebSocket 服务器用于工具安装
+  const toolInstallWss = createToolInstallationWSServer();
+
+  // 创建 WebSocket 服务器用于规则状态
+  const rulesStatusWss = createRulesStatusWSServer();
+
+  // 将 WebSocket 服务器附加到 HTTP 服务器
+  server.on('upgrade', (request, socket, head) => {
+    if (request.url === '/api/tools/install') {
+      toolInstallWss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
+        toolInstallWss.emit('connection', ws, request);
+      });
+    } else if (request.url === '/api/rules/status') {
+      rulesStatusWss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
+        rulesStatusWss.emit('connection', ws, request);
+      });
+    } else {
+      socket.destroy();
+    }
+  });
+
+  console.log(`WebSocket server for tool installation attached to ws://${host}:${port}/api/tools/install`);
+  console.log(`WebSocket server for rules status attached to ws://${host}:${port}/api/rules/status`);
+
   const shutdown = async () => {
     console.log('Shutting down server...');
     dbManager.close();
@@ -854,6 +1818,18 @@ const start = async () => {
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error(err);
   res.status(500).json({ error: err.message || 'Internal server error' });
+});
+
+// 全局未捕获异常处理 - 防止服务崩溃
+process.on('uncaughtException', (error: Error) => {
+  console.error('[Uncaught Exception] 服务遇到未捕获的异常:', error);
+  console.error('[Uncaught Exception] 堆栈信息:', error.stack);
+  // 不退出进程，继续运行
+});
+
+process.on('unhandledRejection', (reason: unknown) => {
+  console.error('[Unhandled Rejection] 服务遇到未处理的 Promise 拒绝:', reason);
+  // 不退出进程，继续运行
 });
 
 start().catch((error) => {

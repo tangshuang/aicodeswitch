@@ -15,10 +15,9 @@ export const SOURCE_TYPE = {
   'deepseek-reasoning-chat': 'DeepSeek Reasoning Chat',
 };
 
-
 export const SOURCE_TYPE_MESSAGE: Record<SourceType, string> = {
   'openai-chat': '填写完整的接口地址，如：https://api.openai.com/v1/chat/completions',
-  'openai-responses': '只填写 base 地址，如：https://api.openai.com',
+  'openai-responses': '只填写 base 地址(含/v1），如：https://api.openai.com/v1',
   'claude-chat': '填写完整的接口地址，如：https://api.anthropic.com/v1/messages',
   'claude-code': '只填写 base 地址，如：https://api.anthropic.com',
   'deepseek-reasoning-chat': '推理类模型，填写完整的接口地址，如：https://api.deepseek.com/v1/chat/completions',

@@ -1,9 +1,13 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import os from 'os';
+import dotenv from 'dotenv';
+import fs from 'fs';
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '')
+  const envPath = path.join(os.homedir(), '.aicodeswitch', 'aicodeswitch.conf');
+  const env = fs.existsSync(envPath) ? dotenv.parse(fs.readFileSync(envPath)) : {};
   return {
     plugins: [react()],
     base: './',
@@ -17,11 +21,12 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: env.PORT ? parseInt(env.PORT) + 1 : 4568,
+      port: 17808,
       proxy: {
         '/api': {
           target: `http://${env.HOST || '127.0.0.1'}:${env.PORT || 4567}`,
           changeOrigin: true,
+          ws: true, // 启用 WebSocket 代理支持
         },
       },
     },

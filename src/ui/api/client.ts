@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -32,6 +32,7 @@ interface BackendAPI {
   resetRuleTokens: (id: string) => Promise<boolean>;
   resetRuleRequests: (id: string) => Promise<boolean>;
   clearRuleBlacklist: (id: string) => Promise<boolean>;
+  toggleRuleDisable: (id: string) => Promise<{ success: boolean; isDisabled: boolean }>;
   getRulesBlacklistStatus: (routeId: string) => Promise<Array<{
     ruleId: string;
     isBlacklisted: boolean;
@@ -93,9 +94,28 @@ interface BackendAPI {
   getRecommendVendorsMarkdown: () => Promise<string>;
   getReadmeMarkdown: () => Promise<string>;
 
+  // Skills 管理相关
+  getInstalledSkills: () => Promise<InstalledSkill[]>;
+  searchSkills: (query: string) => Promise<SkillCatalogItem[]>;
+  getSkillDetails: (skillId: string) => Promise<SkillDetail | null>;
+  installSkill: (skill: SkillCatalogItem, targetType?: TargetType) => Promise<SkillInstallResponse>;
+  enableSkill: (skillId: string, targetType: TargetType) => Promise<{ success: boolean; error?: string }>;
+  disableSkill: (skillId: string, targetType: TargetType) => Promise<{ success: boolean; error?: string }>;
+  deleteSkill: (skillId: string) => Promise<{ success: boolean; error?: string }>;
+  createLocalSkill: (data: { name: string; description: string; instruction: string; link?: string; targets: TargetType[] }) => Promise<SkillInstallResponse>;
+
   // Migration 相关
   getMigration: () => Promise<{ shouldShow: boolean; content: string }>;
   acknowledgeMigration: () => Promise<{ success: boolean }>;
+
+  // 工具安装相关
+  getToolsStatus: () => Promise<ToolInstallationStatus>;
+  installTool: (tool: 'claude-code' | 'codex', callbacks: {
+    onStdout?: (data: string) => void;
+    onStderr?: (data: string) => void;
+    onClose?: (code: number | null, success: boolean) => void;
+    onError?: (error: string) => void;
+  }) => (() => void) & { sendInput?: (input: string) => void }; // 返回取消函数和发送输入函数
 }
 
 const buildUrl = (
@@ -188,6 +208,7 @@ export const api: BackendAPI = {
   resetRuleTokens: (id) => requestJson(buildUrl(`/api/rules/${id}/reset-tokens`), { method: 'PUT' }),
   resetRuleRequests: (id) => requestJson(buildUrl(`/api/rules/${id}/reset-requests`), { method: 'PUT' }),
   clearRuleBlacklist: (id) => requestJson(buildUrl(`/api/rules/${id}/clear-blacklist`), { method: 'PUT' }),
+  toggleRuleDisable: (id) => requestJson(buildUrl(`/api/rules/${id}/toggle-disable`), { method: 'PUT' }),
   getRulesBlacklistStatus: (routeId) => requestJson(buildUrl(`/api/rules/${routeId}/blacklist-status`)),
 
   getLogs: (limit, offset) => requestJson(buildUrl('/api/logs', { limit, offset })),
@@ -239,7 +260,152 @@ export const api: BackendAPI = {
 
   getReadmeMarkdown: () => requestJson(buildUrl('/api/docs/readme')),
 
+  // Skills 管理相关
+  getInstalledSkills: () => requestJson(buildUrl('/api/skills/installed')),
+  searchSkills: (query) => requestJson(buildUrl('/api/skills/search'), {
+    method: 'POST',
+    body: JSON.stringify({ query })
+  }),
+  getSkillDetails: (skillId) => requestJson<SkillDetail | null>(buildUrl(`/api/skills/${skillId}/details`)),
+  installSkill: (skill, targetType) => requestJson(buildUrl('/api/skills/install'), {
+    method: 'POST',
+    body: JSON.stringify({
+      skillId: skill.id,
+      name: skill.name,
+      description: skill.description,
+      tags: skill.tags,
+      ...(targetType ? { targetType } : {}),
+      githubUrl: skill.url,
+    })
+  }),
+  enableSkill: (skillId: string, targetType: TargetType) => requestJson(buildUrl(`/api/skills/${skillId}/enable`), {
+    method: 'POST',
+    body: JSON.stringify({ targetType })
+  }),
+  disableSkill: (skillId: string, targetType: TargetType) => requestJson(buildUrl(`/api/skills/${skillId}/disable`), {
+    method: 'POST',
+    body: JSON.stringify({ targetType })
+  }),
+  deleteSkill: (skillId: string) => requestJson(buildUrl(`/api/skills/${skillId}`), {
+    method: 'DELETE'
+  }),
+  createLocalSkill: (data) => requestJson(buildUrl('/api/skills/create-local'), {
+    method: 'POST',
+    body: JSON.stringify(data)
+  }),
+
   // Migration 相关
   getMigration: () => requestJson(buildUrl('/api/migration')),
   acknowledgeMigration: () => requestJson(buildUrl('/api/migration/ack'), { method: 'POST' }),
+
+  // 工具安装相关
+  getToolsStatus: () => requestJson<ToolInstallationStatus>(buildUrl('/api/tools/status')),
+  installTool: (tool, callbacks) => {
+    console.log('[API Client] 开始安装工具:', tool);
+
+    // 构建 WebSocket URL
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    const wsUrl = `${protocol}//${host}/api/tools/install`;
+
+    console.log('[API Client] 连接 WebSocket:', wsUrl);
+
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: NodeJS.Timeout | null = null;
+
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch (error) {
+      console.error('[API Client] 创建 WebSocket 失败:', error);
+      callbacks.onError?.('创建 WebSocket 连接失败');
+      return () => {};
+    }
+
+    // 连接打开时发送安装请求
+    ws.onopen = () => {
+      console.log('[API Client] WebSocket 连接已建立');
+      // 发送安装请求
+      ws?.send(JSON.stringify({ type: 'install', tool }));
+    };
+
+    // 接收消息
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        console.log('[API Client] 收到消息:', message.type);
+
+        switch (message.type) {
+          case 'start':
+            console.log('[API Client] 安装开始:', message.data);
+            callbacks.onStdout?.(`\n========== 开始安装 ${message.data.tool} ==========\n`);
+            callbacks.onStdout?.(`操作系统: ${message.data.os}\n`);
+            callbacks.onStdout?.(`执行命令: ${message.data.command}\n`);
+            callbacks.onStdout?.(`子进程已创建 (PID: ${message.data.pid})\n`);
+            callbacks.onStdout?.(`等待 npm 输出...\n\n`);
+            break;
+          case 'stdout':
+            callbacks.onStdout?.(message.data);
+            break;
+          case 'stderr':
+            callbacks.onStderr?.(message.data);
+            break;
+          case 'close':
+            console.log('[API Client] 安装完成:', message.data);
+            callbacks.onClose?.(message.data.code, message.data.success);
+            // 延迟关闭 WebSocket，确保收到所有消息
+            setTimeout(() => {
+              ws?.close();
+            }, 1000);
+            break;
+          case 'error':
+            console.error('[API Client] 安装错误:', message.data);
+            callbacks.onError?.(message.data);
+            break;
+        }
+      } catch (error) {
+        console.error('[API Client] 解析消息失败:', error, event.data);
+      }
+    };
+
+    // 连接关闭
+    ws.onclose = (event) => {
+      console.log('[API Client] WebSocket 连接关闭:', event.code, event.reason);
+      if (!event.wasClean) {
+        callbacks.onError?.('连接意外关闭');
+      }
+    };
+
+    // 连接错误
+    ws.onerror = (error) => {
+      console.error('[API Client] WebSocket 错误:', error);
+      callbacks.onError?.('WebSocket 连接错误');
+    };
+
+    // 返回取消函数和发送输入函数
+    const cleanup = () => {
+      console.log('[API Client] 清理 WebSocket 连接');
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+      }
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
+    };
+
+    const sendInput = (input: string) => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'input', data: input }));
+        console.log('[API Client] 发送输入:', input.slice(0, 10));
+      } else {
+        console.warn('[API Client] WebSocket 未连接，无法发送输入');
+      }
+    };
+
+    // 返回取消函数，同时提供 sendInput 方法
+    const cancelFn = cleanup as (() => void) & { sendInput?: (input: string) => void };
+    cancelFn.sendInput = sendInput;
+
+    return cancelFn;
+  },
 };

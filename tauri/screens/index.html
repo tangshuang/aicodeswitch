@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Code Switch - 欢迎</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --primary: #2d6a4f;
+      --primary-glow: rgba(45, 106, 79, 0.5);
+      --secondary: #1b4332;
+      --accent: #52b788;
+      --bg-dark: #081c15;
+      --bg-card: rgba(27, 67, 50, 0.6);
+      --text-primary: #ffffff;
+      --text-secondary: #95d5b2;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: var(--bg-dark);
+      min-height: 100vh;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* 动态背景粒子 */
+    .particles-container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .particle {
+      position: absolute;
+      width: 4px;
+      height: 4px;
+      background: var(--primary);
+      border-radius: 50%;
+      opacity: 0;
+      animation: float 15s infinite;
+      box-shadow: 0 0 10px var(--primary-glow);
+    }
+
+    @keyframes float {
+      0% {
+        transform: translateY(100vh) scale(0);
+        opacity: 0;
+      }
+      10% {
+        opacity: 0.6;
+      }
+      90% {
+        opacity: 0.6;
+      }
+      100% {
+        transform: translateY(-100vh) scale(1);
+        opacity: 0;
+      }
+    }
+
+    /* 网格背景 */
+    .grid-bg {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-image:
+        linear-gradient(rgba(45, 106, 79, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(45, 106, 79, 0.05) 1px, transparent 1px);
+      background-size: 50px 50px;
+      animation: gridMove 20s linear infinite;
+      z-index: 0;
+    }
+
+    @keyframes gridMove {
+      0% {
+        transform: perspective(500px) rotateX(60deg) translateY(0);
+      }
+      100% {
+        transform: perspective(500px) rotateX(60deg) translateY(50px);
+      }
+    }
+
+    /* 光晕效果 */
+    .glow {
+      position: fixed;
+      width: 600px;
+      height: 600px;
+      border-radius: 50%;
+      filter: blur(100px);
+      opacity: 0.3;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .glow-1 {
+      top: -200px;
+      left: -200px;
+      background: radial-gradient(circle, var(--primary) 0%, transparent 70%);
+      animation: pulse1 8s ease-in-out infinite;
+    }
+
+    .glow-2 {
+      bottom: -200px;
+      right: -200px;
+      background: radial-gradient(circle, var(--secondary) 0%, transparent 70%);
+      animation: pulse2 10s ease-in-out infinite;
+    }
+
+    @keyframes pulse1 {
+      0%, 100% { transform: scale(1); opacity: 0.3; }
+      50% { transform: scale(1.2); opacity: 0.5; }
+    }
+
+    @keyframes pulse2 {
+      0%, 100% { transform: scale(1.2); opacity: 0.3; }
+      50% { transform: scale(1); opacity: 0.5; }
+    }
+
+    /* 主容器 */
+    .welcome-container {
+      position: relative;
+      z-index: 10;
+      text-align: center;
+      padding: 40px;
+    }
+
+    /* Logo 区域 */
+    .logo-section {
+      margin-bottom: 40px;
+    }
+
+    .logo-icon {
+      width: 120px;
+      height: 120px;
+      margin: 0 auto 30px;
+      position: relative;
+    }
+
+    .logo-ring {
+      position: absolute;
+      border: 2px solid var(--primary);
+      border-radius: 50%;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    .logo-ring-1 {
+      width: 120px;
+      height: 120px;
+      border-color: var(--primary);
+      animation: rotate1 10s linear infinite;
+    }
+
+    .logo-ring-2 {
+      width: 90px;
+      height: 90px;
+      border-color: var(--secondary);
+      animation: rotate2 8s linear infinite reverse;
+    }
+
+    .logo-ring-3 {
+      width: 60px;
+      height: 60px;
+      border-color: var(--accent);
+      animation: rotate3 6s linear infinite;
+    }
+
+    .logo-core {
+      position: absolute;
+      width: 30px;
+      height: 30px;
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      border-radius: 50%;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 30px var(--primary-glow);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes rotate1 {
+      from { transform: translate(-50%, -50%) rotate(0deg); }
+      to { transform: translate(-50%, -50%) rotate(360deg); }
+    }
+
+    @keyframes rotate2 {
+      from { transform: translate(-50%, -50%) rotate(0deg); }
+      to { transform: translate(-50%, -50%) rotate(-360deg); }
+    }
+
+    @keyframes rotate3 {
+      from { transform: translate(-50%, -50%) rotate(0deg); }
+      to { transform: translate(-50%, -50%) rotate(360deg); }
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: translate(-50%, -50%) scale(1); }
+      50% { transform: translate(-50%, -50%) scale(1.1); }
+    }
+
+    /* 标题 */
+    .title {
+      font-size: 3rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--text-primary) 0%, var(--primary) 50%, var(--secondary) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 16px;
+      letter-spacing: -0.02em;
+      animation: titleGlow 3s ease-in-out infinite;
+    }
+
+    @keyframes titleGlow {
+      0%, 100% { filter: brightness(1); }
+      50% { filter: brightness(1.2); }
+    }
+
+    /* 副标题 */
+    .subtitle {
+      font-size: 1.25rem;
+      color: var(--text-secondary);
+      margin-bottom: 50px;
+      line-height: 1.6;
+    }
+
+    .subtitle .highlight {
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    /* 功能卡片 */
+    .features {
+      display: flex;
+      gap: 24px;
+      justify-content: center;
+      margin-bottom: 50px;
+      flex-wrap: wrap;
+    }
+
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid rgba(45, 106, 79, 0.3);
+      border-radius: 16px;
+      padding: 24px 32px;
+      min-width: 200px;
+      backdrop-filter: blur(10px);
+      transition: all 0.3s ease;
+      opacity: 0;
+      transform: translateY(30px);
+      animation: fadeInUp 0.6s ease forwards;
+    }
+
+    .feature-card:nth-child(1) { animation-delay: 0.2s; }
+    .feature-card:nth-child(2) { animation-delay: 0.4s; }
+    .feature-card:nth-child(3) { animation-delay: 0.6s; }
+
+    @keyframes fadeInUp {
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .feature-card:hover {
+      transform: translateY(-5px);
+      border-color: var(--primary);
+      box-shadow: 0 10px 40px rgba(45, 106, 79, 0.25);
+    }
+
+    .feature-icon {
+      width: 48px;
+      height: 48px;
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+      font-size: 24px;
+    }
+
+    .feature-title {
+      color: var(--text-primary);
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .feature-desc {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    /* 准备中状态 */
+    .loading-status {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+      opacity: 0;
+      animation: fadeIn 0.8s ease 0.8s forwards;
+    }
+
+    @keyframes fadeIn {
+      to { opacity: 1; }
+    }
+
+    .loading-spinner {
+      position: relative;
+      width: 60px;
+      height: 60px;
+    }
+
+    .spinner-ring {
+      position: absolute;
+      border: 3px solid transparent;
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 1.5s linear infinite;
+    }
+
+    .spinner-ring:nth-child(1) {
+      width: 60px;
+      height: 60px;
+      top: 0;
+      left: 0;
+      border-top-color: var(--primary);
+      animation-duration: 1.5s;
+    }
+
+    .spinner-ring:nth-child(2) {
+      width: 45px;
+      height: 45px;
+      top: 7.5px;
+      left: 7.5px;
+      border-top-color: var(--secondary);
+      animation-duration: 1.2s;
+      animation-direction: reverse;
+    }
+
+    .spinner-ring:nth-child(3) {
+      width: 30px;
+      height: 30px;
+      top: 15px;
+      left: 15px;
+      border-top-color: var(--accent);
+      animation-duration: 0.9s;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .loading-text {
+      font-size: 1.2rem;
+      font-weight: 500;
+      color: var(--text-primary);
+      letter-spacing: 0.1em;
+    }
+
+    .loading-dots {
+      display: flex;
+      gap: 8px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      background: var(--primary);
+      border-radius: 50%;
+      animation: dotPulse 1.4s ease-in-out infinite;
+      box-shadow: 0 0 10px var(--primary-glow);
+    }
+
+    .dot:nth-child(1) { animation-delay: 0s; }
+    .dot:nth-child(2) { animation-delay: 0.2s; }
+    .dot:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes dotPulse {
+      0%, 100% {
+        transform: scale(0.6);
+        opacity: 0.4;
+      }
+      50% {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+
+    /* 版本号 */
+    .version {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+      opacity: 0.6;
+    }
+
+    /* 连接线动画 */
+    .connection-lines {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .connection-line {
+      position: absolute;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--primary), transparent);
+      opacity: 0.3;
+      animation: lineMove 3s ease-in-out infinite;
+    }
+
+    @keyframes lineMove {
+      0%, 100% {
+        opacity: 0;
+        transform: translateX(-100%);
+      }
+      50% {
+        opacity: 0.5;
+      }
+      100% {
+        opacity: 0;
+        transform: translateX(100vw);
+      }
+    }
+
+    /* 扫描线效果 */
+    .scan-line {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--primary), transparent);
+      opacity: 0.5;
+      animation: scan 4s linear infinite;
+      z-index: 5;
+      pointer-events: none;
+    }
+
+    @keyframes scan {
+      0% { top: 0; opacity: 0; }
+      10% { opacity: 0.5; }
+      90% { opacity: 0.5; }
+      100% { top: 100vh; opacity: 0; }
+    }
+
+    /* 响应式 */
+    @media (max-width: 768px) {
+      .title {
+        font-size: 2rem;
+      }
+      .subtitle {
+        font-size: 1rem;
+      }
+      .features {
+        flex-direction: column;
+        align-items: center;
+      }
+      .feature-card {
+        width: 100%;
+        max-width: 300px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- 粒子背景 -->
+  <div class="particles-container" id="particles"></div>
+  
+  <!-- 网格背景 -->
+  <div class="grid-bg"></div>
+  
+  <!-- 光晕 -->
+  <div class="glow glow-1"></div>
+  <div class="glow glow-2"></div>
+  
+  <!-- 连接线 -->
+  <div class="connection-lines" id="connectionLines"></div>
+  
+  <!-- 扫描线 -->
+  <div class="scan-line"></div>
+
+  <!-- 主内容 -->
+  <div class="welcome-container">
+    <!-- Logo -->
+    <div class="logo-section">
+      <div class="logo-icon">
+        <div class="logo-ring logo-ring-1"></div>
+        <div class="logo-ring logo-ring-2"></div>
+        <div class="logo-ring logo-ring-3"></div>
+        <div class="logo-core"></div>
+      </div>
+    </div>
+
+    <!-- 标题 -->
+    <h1 class="title">AI Code Switch</h1>
+    <p class="subtitle">
+      让 <span class="highlight">Claude Code</span> 和 <span class="highlight">Codex</span> 不再局限于官方模型<br>
+      一键切换，自由接入任意 AI 服务
+    </p>
+
+    <!-- 功能卡片 -->
+    <div class="features">
+      <div class="feature-card">
+        <div class="feature-icon">🚀</div>
+        <div class="feature-title">智能路由</div>
+        <div class="feature-desc">根据请求类型自动选择最佳服务商</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <div class="feature-title">实时转换</div>
+        <div class="feature-desc">自动转换 Claude ↔ OpenAI 协议</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🛡️</div>
+        <div class="feature-title">本地部署</div>
+        <div class="feature-desc">数据安全，完全本地化管理</div>
+      </div>
+    </div>
+
+    <!-- 准备中提示 -->
+    <div class="loading-status">
+      <div class="loading-spinner">
+        <div class="spinner-ring"></div>
+        <div class="spinner-ring"></div>
+        <div class="spinner-ring"></div>
+      </div>
+      <div class="loading-text">正在进入……</div>
+      <div class="loading-dots">
+        <span class="dot"></span>
+        <span class="dot"></span>
+        <span class="dot"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 版本号 -->
+  <div class="version">v1.0.0</div>
+
+  <script>
+    // 创建粒子
+    function createParticles() {
+      const container = document.getElementById('particles');
+      const particleCount = 50;
+      
+      for (let i = 0; i < particleCount; i++) {
+        const particle = document.createElement('div');
+        particle.className = 'particle';
+        particle.style.left = Math.random() * 100 + '%';
+        particle.style.animationDelay = Math.random() * 15 + 's';
+        particle.style.animationDuration = (10 + Math.random() * 10) + 's';
+        container.appendChild(particle);
+      }
+    }
+
+    // 创建连接线
+    function createConnectionLines() {
+      const container = document.getElementById('connectionLines');
+      const lineCount = 5;
+      
+      for (let i = 0; i < lineCount; i++) {
+        const line = document.createElement('div');
+        line.className = 'connection-line';
+        line.style.top = (20 + i * 15) + '%';
+        line.style.width = (100 + Math.random() * 200) + 'px';
+        line.style.animationDelay = (i * 0.5) + 's';
+        container.appendChild(line);
+      }
+    }
+
+
+
+    // 初始化
+    document.addEventListener('DOMContentLoaded', () => {
+      createParticles();
+      createConnectionLines();
+    });
+  </script>
+</body>
+</html>

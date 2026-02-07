@@ -12,6 +12,56 @@ export interface Vendor {
 export type SourceType = 'openai-chat' | 'openai-responses' | 'claude-chat' | 'claude-code' | 'deepseek-reasoning-chat';
 /** 路由的目标对象类型，目前，仅支持claude-code和codex */
 export type TargetType = 'claude-code' | 'codex';
+
+/** Skills 管理相关类型 */
+export interface InstalledSkill {
+  id: string;
+  name: string;
+  description?: string;
+  targets: TargetType[];
+  enabledTargets: TargetType[];
+  githubUrl?: string;
+  skillPath?: string;
+  installedAt: number;
+}
+
+export interface SkillCatalogItem {
+  id: string;
+  name: string;
+  description?: string;
+  tags?: string[];
+  url?: string;
+  stars?: number;  // 评分数
+}
+
+export interface SkillInstallRequest {
+  skillId: string;
+  targetType: TargetType;
+  name?: string;
+  description?: string;
+  tags?: string[];
+  githubUrl?: string;
+  skillPath?: string;
+}
+
+export interface SkillDetail {
+  id: string;
+  name: string;
+  description?: string;
+  author?: string;
+  stars?: number;
+  githubUrl?: string;
+  skillPath?: string;
+  readme?: string;
+  tags?: string[];
+}
+
+export interface SkillInstallResponse {
+  success: boolean;
+  message?: string;
+  installedSkill?: InstalledSkill;
+}
+
 /** 认证方式类型 */
 export enum AuthType {
   AUTH_TOKEN = 'authorization',
@@ -79,6 +129,7 @@ export interface Rule {
   requestResetInterval?: number; // 次数重置间隔（小时）
   requestLastResetAt?: number;   // 上次次数重置时间戳
   requestResetBaseTime?: number; // 下一次重置的时间基点（Unix时间戳）
+  isDisabled?: boolean;          // 是否临时屏蔽该规则
   createdAt: number;
   updatedAt: number;
 }
@@ -135,6 +186,23 @@ export interface ErrorLog {
   responseHeaders?: Record<string, string>;
   responseBody?: string;
   responseTime?: number;
+
+  // 请求日志中的详细信息字段
+  ruleId?: string;                                 // 使用的规则ID
+  targetType?: TargetType;                         // 客户端类型
+  targetServiceId?: string;                        // API服务ID
+  targetServiceName?: string;                      // API服务名
+  targetModel?: string;                            // 模型名
+  vendorId?: string;                               // 供应商ID
+  vendorName?: string;                             // 供应商名称
+  requestModel?: string;                           // 请求模型名（从请求体中读取）
+
+  upstreamRequest?: {                              // 实际发送给后端的请求信息
+    url: string;                                   // 实际请求的URL路径
+    useProxy?: boolean;                            // 是否使用了代理
+    headers?: Record<string, string>;              // 实际发送的请求头
+    body?: string;                                 // 实际发送的请求体
+  };
 }
 
 export interface AppConfig {
@@ -273,4 +341,29 @@ export interface Statistics {
     totalErrors: number;
     recentErrors: number; // 最近24小时
   };
+}
+
+/** 工具安装状态 */
+export interface ToolInstallationStatus {
+  claudeCode: {
+    installed: boolean;
+    version?: string;
+    installCommand?: string;
+  };
+  codex: {
+    installed: boolean;
+    version?: string;
+    installCommand?: string;
+  };
+}
+
+/** 安装请求 */
+export interface InstallToolRequest {
+  tool: 'claude-code' | 'codex';
+}
+
+/** 安装响应 */
+export interface InstallToolResponse {
+  success: boolean;
+  message?: string;
 }

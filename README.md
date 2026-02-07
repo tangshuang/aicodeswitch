@@ -10,18 +10,30 @@ AI Code Switch 是帮助你在本地管理 AI 编程工具接入大模型的工�
 - 视频演示：[https://www.bilibili.com/video/BV1uEznBuEJd/](https://www.bilibili.com/video/BV1uEznBuEJd/?from=github)
 - 1分钟让Claude Code接入GLM国产模型：[https://www.bilibili.com/video/BV1a865B8ErA/](https://www.bilibili.com/video/BV1a865B8ErA/)
 
-## 安装
+## 桌面版
+
+桌面端应用下载：[https://github.com/tangshuang/aicodeswitch/releases](https://github.com/tangshuang/aicodeswitch/releases)
+
+## 命令行工具
+
+### 安装
 
 ```
 npm install -g aicodeswitch
 ```
 
-## 使用方法
+### 使用方法
 
 **启动服务**
 
 ```
 aicos start
+```
+
+或者直接运行
+
+```
+aicos ui
 ```
 
 **停止服务**
@@ -41,6 +53,8 @@ aicos ui
 # 手动在浏览器打开管理界面
 http://127.0.0.1:4567
 ```
+
+## 管理界面
 
 **配置供应商**
 
@@ -127,11 +141,18 @@ aicodeswitch内部，会根据“源类型”来转换数据。例如，你的�
 
 你可以根据你的实际情况来实时切换路由，比如，你可以在发现自己的某个服务商处的余额较少时，立即切换到另外一个服务商。
 
-另外，我还在考虑增加一些自动化切换到逻辑，比如，当上游服务商接口报错时，立即切换到另外一个服务商。
+**智能故障切换机制**
 
-### 3\. 请求日志
+当同一请求类型配置多个规则时,系统会按排序优先使用第一个，如果某个服务报错(4xx/5xx)或请求超时，将自动切换到下一个可用规则，确保你可以正常使用coding工具。
 
-在**请求日志**页面，您可以查看：
+## Skills管理
+
+你可以在 aicodeswitch 中集中统一管理 skills，把skills分发给claude code和codex，随时启用和停用skills。
+另外，你可以基于自然语言搜索skills，找到skill之后，支持一键安装。
+
+## 日志
+
+在**日志**页面，您可以查看：
 
 **请求日志**：所有 API 请求的详细记录
 
@@ -140,17 +161,13 @@ aicodeswitch内部，会根据“源类型”来转换数据。例如，你的�
 *   耗时和状态码
 *   错误信息（如有）
 
-**访问日志**：系统访问记录
-
-*   访问时间
-*   请求路径
-*   HTTP 方法
-
 **错误日志**：错误和异常记录
 
 *   错误类型
 *   错误详情
 *   发生时间
+
+**会话日志**：按照会话session来汇集日志
 
 **日志筛选**
 

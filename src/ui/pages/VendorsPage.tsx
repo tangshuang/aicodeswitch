@@ -468,14 +468,14 @@ function VendorsPage() {
   };
 
   return (
-    <div>
+    <div className='vendors-page'>
       <div className="page-header">
         <h1>供应商管理</h1>
         <p>管理API供应商和服务配置</p>
       </div>
 
       <div style={{ display: 'flex', gap: '20px' }}>
-        <div className="card" style={{ flex: '0 0 33%' }}>
+        <div className="card" style={{ flex: '0 0 25%', minWidth: 400 }}>
           <div className="toolbar">
             <h3>供应商列表</h3>
             <div style={{ display: 'flex', gap: '10px' }}>
@@ -483,31 +483,12 @@ function VendorsPage() {
               <button
                 className="btn btn-secondary"
                 style={{
-                  background: 'linear-gradient(135deg, #2563EB 0%, #F97316 100%)',
+                  background: '#2563EB',
                   color: '#FFFFFF',
-                  boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)',
                   border: 'none',
-                  transition: 'all 0.3s ease',
                   cursor: 'pointer',
-                  fontWeight: '600',
-                  letterSpacing: '0.5px'
                 }}
                 onClick={handleRecommend}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = '0 8px 20px rgba(37, 99, 235, 0.4)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(37, 99, 235, 0.3)';
-                }}
-                onFocus={(e) => {
-                  e.currentTarget.style.outline = '2px solid #2563EB';
-                  e.currentTarget.style.outlineOffset = '2px';
-                }}
-                onBlur={(e) => {
-                  e.currentTarget.style.outline = 'none';
-                }}
               >
                 推荐
               </button>
@@ -533,7 +514,7 @@ function VendorsPage() {
                     color: 'var(--text-primary)'
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
                       <div style={{ fontWeight: 500 }}>{vendor.name}</div>
                       {vendor.description && (
@@ -676,7 +657,7 @@ function VendorsPage() {
                   onChange={(e) => setCurrentSourceType(e.target.value as SourceType)}
                   required
                 >
-                  <option value="">请选择源类型</option>
+                  <option value="" disabled>请选择源类型</option>
                   {Object.keys(SOURCE_TYPE).map((type) => (
                     <option key={type} value={type}>{SOURCE_TYPE[type as keyof typeof SOURCE_TYPE]}</option>
                   ))}

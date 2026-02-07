@@ -1,4 +1,4 @@
-import recommendMd from '../../../public/vendors-recommand.md?raw';
+import recommendMd from '../assets/vendors-recommand.md?raw';
 import readMeMd from '../../../README.md?raw';
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';

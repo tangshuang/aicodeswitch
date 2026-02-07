@@ -253,6 +253,14 @@ export class DatabaseManager {
       this.db.exec('ALTER TABLE api_services ADD COLUMN auth_type TEXT DEFAULT NULL;');
       console.log('[DB] Migration completed: auth_type column added');
     }
+
+    // 检查rules表是否有is_disabled字段（临时屏蔽功能）
+    const hasIsDisabled = rulesColumns.some((col: any) => col.name === 'is_disabled');
+    if (!hasIsDisabled) {
+      console.log('[DB] Running migration: Adding is_disabled column to rules table');
+      this.db.exec('ALTER TABLE rules ADD COLUMN is_disabled INTEGER DEFAULT 0;');
+      console.log('[DB] Migration completed: is_disabled column added');
+    }
   }
 
   private async migrateMaxOutputTokensToModelLimits() {
@@ -370,10 +378,13 @@ export class DatabaseManager {
         total_tokens_used INTEGER DEFAULT 0,
         reset_interval INTEGER,
         last_reset_at INTEGER,
+        token_reset_base_time INTEGER,
         request_count_limit INTEGER,
         total_requests_used INTEGER DEFAULT 0,
         request_reset_interval INTEGER,
         request_last_reset_at INTEGER,
+        request_reset_base_time INTEGER,
+        is_disabled INTEGER DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE CASCADE,
@@ -567,7 +578,74 @@ export class DatabaseManager {
       console.log(`[DB] Updated service ${id}: ${service.name} -> ${service.apiUrl}`);
     }
 
+    // 如果更新成功，检查是否需要同步更新关联规则的超量限制
+    if (result.changes > 0) {
+      this.syncRulesWithServiceLimits(id, service);
+    }
+
     return result.changes > 0;
+  }
+
+  /**
+   * 同步更新使用该服务的规则的超量限制
+   * 当API服务的超量限制修改时，自动更新所有使用该服务的规则
+   */
+  private syncRulesWithServiceLimits(serviceId: string, service: Partial<APIService>): void {
+    // 获取所有使用该服务的规则
+    const rules = this.db.prepare('SELECT id FROM rules WHERE target_service_id = ?').all(serviceId) as any[];
+
+    if (rules.length === 0) {
+      return; // 没有规则使用此服务，无需同步
+    }
+
+    const now = Date.now();
+    const ruleIds = rules.map(r => r.id);
+
+    // Token超量限制同步
+    if (service.enableTokenLimit !== undefined || service.tokenLimit !== undefined ||
+        service.tokenResetInterval !== undefined || service.tokenResetBaseTime !== undefined) {
+
+      // 获取当前服务的最新配置
+      const currentService = this.db.prepare('SELECT enable_token_limit, token_limit, token_reset_interval, token_reset_base_time FROM api_services WHERE id = ?').get(serviceId) as any;
+
+      if (currentService && currentService.enable_token_limit === 1) {
+        // 启用了Token超量限制，同步到所有规则
+        this.db.prepare(
+          'UPDATE rules SET token_limit = ?, reset_interval = ?, token_reset_base_time = ?, updated_at = ? WHERE target_service_id = ?'
+        ).run(
+          currentService.token_limit,
+          currentService.token_reset_interval,
+          currentService.token_reset_base_time,
+          now,
+          serviceId
+        );
+
+        console.log(`[DB] Synced token limits for ${ruleIds.length} rule(s) using service ${serviceId}`);
+      }
+    }
+
+    // 请求次数超量限制同步
+    if (service.enableRequestLimit !== undefined || service.requestCountLimit !== undefined ||
+        service.requestResetInterval !== undefined || service.requestResetBaseTime !== undefined) {
+
+      // 获取当前服务的最新配置
+      const currentService = this.db.prepare('SELECT enable_request_limit, request_count_limit, request_reset_interval, request_reset_base_time FROM api_services WHERE id = ?').get(serviceId) as any;
+
+      if (currentService && currentService.enable_request_limit === 1) {
+        // 启用了请求次数超量限制，同步到所有规则
+        this.db.prepare(
+          'UPDATE rules SET request_count_limit = ?, request_reset_interval = ?, request_reset_base_time = ?, updated_at = ? WHERE target_service_id = ?'
+        ).run(
+          currentService.request_count_limit,
+          currentService.request_reset_interval,
+          currentService.request_reset_base_time,
+          now,
+          serviceId
+        );
+
+        console.log(`[DB] Synced request count limits for ${ruleIds.length} rule(s) using service ${serviceId}`);
+      }
+    }
   }
 
   deleteAPIService(id: string): boolean {
@@ -626,6 +704,11 @@ export class DatabaseManager {
     return result.changes > 0;
   }
 
+  deactivateAllRoutes(): number {
+    const result = this.db.prepare('UPDATE routes SET is_active = 0 WHERE is_active = 1').run();
+    return result.changes;
+  }
+
   // Rule operations
   getRules(routeId?: string): Rule[] {
     const query = routeId
@@ -652,6 +735,7 @@ export class DatabaseManager {
       requestResetInterval: row.request_reset_interval,
       requestLastResetAt: row.request_last_reset_at,
       requestResetBaseTime: row.request_reset_base_time,
+      isDisabled: row.is_disabled === 1,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -679,6 +763,7 @@ export class DatabaseManager {
       requestResetInterval: row.request_reset_interval,
       requestLastResetAt: row.request_last_reset_at,
       requestResetBaseTime: row.request_reset_base_time,
+      isDisabled: row.is_disabled === 1,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -689,7 +774,7 @@ export class DatabaseManager {
     const now = Date.now();
     this.db
       .prepare(
-        'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, token_reset_base_time, request_count_limit, total_requests_used, request_reset_interval, request_last_reset_at, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, token_reset_base_time, request_count_limit, total_requests_used, request_reset_interval, request_last_reset_at, request_reset_base_time, is_disabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         id,
@@ -710,6 +795,7 @@ export class DatabaseManager {
         route.requestResetInterval || null,
         route.requestLastResetAt || null,
         route.requestResetBaseTime || null,
+        route.isDisabled ? 1 : 0,
         now,
         now
       );
@@ -720,7 +806,7 @@ export class DatabaseManager {
     const now = Date.now();
     const result = this.db
       .prepare(
-        'UPDATE rules SET content_type = ?, target_service_id = ?, target_model = ?, replaced_model = ?, sort_order = ?, timeout = ?, token_limit = ?, reset_interval = ?, token_reset_base_time = ?, request_count_limit = ?, request_reset_interval = ?, request_reset_base_time = ?, updated_at = ? WHERE id = ?'
+        'UPDATE rules SET content_type = ?, target_service_id = ?, target_model = ?, replaced_model = ?, sort_order = ?, timeout = ?, token_limit = ?, reset_interval = ?, token_reset_base_time = ?, request_count_limit = ?, request_reset_interval = ?, request_reset_base_time = ?, is_disabled = ?, updated_at = ? WHERE id = ?'
       )
       .run(
         route.contentType,
@@ -735,6 +821,7 @@ export class DatabaseManager {
         route.requestCountLimit !== undefined ? route.requestCountLimit : null,
         route.requestResetInterval !== undefined ? route.requestResetInterval : null,
         route.requestResetBaseTime !== undefined ? route.requestResetBaseTime : null,
+        route.isDisabled !== undefined ? (route.isDisabled ? 1 : 0) : null,
         now,
         id
       );
@@ -744,6 +831,29 @@ export class DatabaseManager {
   deleteRule(id: string): boolean {
     const result = this.db.prepare('DELETE FROM rules WHERE id = ?').run(id);
     return result.changes > 0;
+  }
+
+  /**
+   * 切换规则的临时屏蔽状态
+   * @param ruleId 规则ID
+   * @returns 是否成功
+   */
+  toggleRuleDisabled(ruleId: string): { success: boolean; isDisabled: boolean } {
+    const rule = this.getRule(ruleId);
+    if (!rule) {
+      return { success: false, isDisabled: false };
+    }
+
+    const now = Date.now();
+    const newDisabledState = !rule.isDisabled;
+    const result = this.db
+      .prepare('UPDATE rules SET is_disabled = ?, updated_at = ? WHERE id = ?')
+      .run(newDisabledState ? 1 : 0, now, ruleId);
+
+    return {
+      success: result.changes > 0,
+      isDisabled: newDisabledState
+    };
   }
 
   /**
@@ -1212,7 +1322,7 @@ export class DatabaseManager {
       for (const rule of importData.rules) {
         this.db
           .prepare(
-            'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, token_reset_base_time, request_count_limit, total_requests_used, request_reset_interval, request_last_reset_at, request_reset_base_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO rules (id, route_id, content_type, target_service_id, target_model, replaced_model, sort_order, timeout, token_limit, total_tokens_used, reset_interval, last_reset_at, token_reset_base_time, request_count_limit, total_requests_used, request_reset_interval, request_last_reset_at, request_reset_base_time, is_disabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
           )
           .run(
             rule.id,
@@ -1233,6 +1343,7 @@ export class DatabaseManager {
             rule.requestResetInterval || null,
             rule.requestLastResetAt || null,
             (rule as any).requestResetBaseTime || null,
+            rule.isDisabled ? 1 : 0,
             rule.createdAt,
             rule.updatedAt
           );

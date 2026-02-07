@@ -9,15 +9,22 @@ import SettingsPage from './pages/SettingsPage';
 import WriteConfigPage from './pages/WriteConfigPage';
 import UsagePage from './pages/UsagePage';
 import StatisticsPage from './pages/StatisticsPage';
+import SkillsPage from './pages/SkillsPage';
 import { ToastContainer } from './components/Toast';
 import { ConfirmProvider } from './components/Confirm';
+import ToolsInstallModal from './components/ToolsInstallModal';
+import NotificationBar from './components/NotificationBar';
+import NavItemWithTooltip from './components/Tooltip';
+import type { ToolInstallationStatus } from '../types';
 import './styles/App.css';
+import logoImage from './assets/logo.png';
 
 function AppContent() {
   const navigate = useNavigate();
   const [theme, setTheme] = useState('light');
   const [showVendorModal, setShowVendorModal] = useState(false);
   const [hasCheckedVendors, setHasCheckedVendors] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // 版本更新相关状态
   const [hasUpdate, setHasUpdate] = useState(false);
@@ -36,10 +43,21 @@ function AppContent() {
   const [migrationContent, setMigrationContent] = useState('');
   const [hasCheckedMigration, setHasCheckedMigration] = useState(false);
 
+  // 工具安装检测相关状态
+  const [showToolsInstallModal, setShowToolsInstallModal] = useState(false);
+  const [showNotification, setShowNotification] = useState(false);
+  const [toolsStatus, setToolsStatus] = useState<ToolInstallationStatus | null>(null);
+  const [hasCheckedTools, setHasCheckedTools] = useState(false);
+
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') || 'light';
     setTheme(savedTheme);
     document.documentElement.setAttribute('data-theme', savedTheme);
+
+    const savedSidebarState = localStorage.getItem('sidebar-collapsed');
+    if (savedSidebarState === 'true') {
+      setSidebarCollapsed(true);
+    }
   }, []);
 
   // 版本检查 - 每1分钟检查一次
@@ -124,6 +142,45 @@ function AppContent() {
     checkMigration();
   }, [hasCheckedMigration]);
 
+  // 检查工具安装状态
+  useEffect(() => {
+    const checkTools = async () => {
+      if (hasCheckedTools) return;
+
+      // 检查工具是否已经完成安装
+      const installCompleted = localStorage.getItem('tools_install_completed');
+      if (installCompleted === 'true') {
+        setHasCheckedTools(true);
+        return;
+      }
+
+      try {
+        const status = await api.getToolsStatus();
+        setToolsStatus(status);
+
+        // 如果有任何工具未安装，显示通知
+        if (!status.claudeCode.installed || !status.codex.installed) {
+          setShowNotification(true);
+        } else {
+          // 如果工具都已安装，也标记为已完成
+          localStorage.setItem('tools_install_completed', 'true');
+        }
+
+        setHasCheckedTools(true);
+      } catch (error) {
+        console.error('Failed to check tools status:', error);
+        setHasCheckedTools(true);
+      }
+    };
+
+    // 等待认证完成后再检查工具
+    if (!isCheckingAuth && isAuthenticated) {
+      checkTools();
+    } else if (!isCheckingAuth && !authEnabled) {
+      checkTools();
+    }
+  }, [hasCheckedTools, isCheckingAuth, isAuthenticated, authEnabled]);
+
   useEffect(() => {
     const checkVendors = async () => {
       try {
@@ -147,6 +204,11 @@ function AppContent() {
     localStorage.setItem('theme', newTheme);
   };
 
+  const toggleSidebar = () => {
+    setSidebarCollapsed(!sidebarCollapsed);
+    localStorage.setItem('sidebar-collapsed', (!sidebarCollapsed).toString());
+  };
+
   const handleVendorModalConfirm = () => {
     setShowVendorModal(false);
     navigate('/vendors');
@@ -159,6 +221,46 @@ function AppContent() {
       console.error('Failed to acknowledge migration:', error);
     }
     setShowMigrationModal(false);
+  };
+
+  const handleNotificationClose = () => {
+    setShowNotification(false);
+  };
+
+  const handleNotificationClick = () => {
+    setShowNotification(false);
+    setShowToolsInstallModal(true);
+  };
+
+  const handleToolsInstallModalClose = () => {
+    setShowToolsInstallModal(false);
+    // 注意：安装完成后是否显示通知由 handleToolsInstallComplete 处理
+    // 这里不再重新显示通知，避免重复
+  };
+
+  const handleToolsInstallComplete = async () => {
+    // 重新检测工具状态
+    try {
+      const newStatus = await api.getToolsStatus();
+      setToolsStatus(newStatus);
+
+      // 如果所有工具都安装了，标记为已完成
+      if (newStatus.claudeCode.installed && newStatus.codex.installed) {
+        localStorage.setItem('tools_install_completed', 'true');
+        setShowNotification(false);
+      }
+
+      // 无论是否所有工具都安装完成，都关闭模态框
+      setTimeout(() => {
+        setShowToolsInstallModal(false);
+        // 如果还有未安装的工具，显示通知栏
+        if (!newStatus.claudeCode.installed || !newStatus.codex.installed) {
+          setShowNotification(true);
+        }
+      }, 500); // 0.5秒后关闭模态框（在ToolsInstallModal的1.5秒自动关闭之前）
+    } catch (error) {
+      console.error('Failed to refresh tools status:', error);
+    }
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -272,56 +374,48 @@ function AppContent() {
 
   return (
     <div className="app">
-      <nav className="sidebar">
+      <nav className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="logo">
+          <img src={logoImage} alt="AI Code Switch Logo" className="logo-image" />
           <h2>AI Code Switch</h2>
         </div>
          <ul className="nav-menu">
           <li>
-            <NavLink to="/">🌏 路由管理</NavLink>
+            <NavItemWithTooltip text="路由管理" showTooltip={sidebarCollapsed}>
+              <NavLink to="/"><span className="nav-icon">🌏</span><span className="nav-text">路由管理</span></NavLink>
+            </NavItemWithTooltip>
           </li>
           <li>
-            <NavLink to="/vendors">🏭 供应商管理</NavLink>
+            <NavItemWithTooltip text="供应商管理" showTooltip={sidebarCollapsed}>
+              <NavLink to="/vendors"><span className="nav-icon">🏭</span><span className="nav-text">供应商管理</span></NavLink>
+            </NavItemWithTooltip>
           </li>
           <li>
-            <NavLink to="/statistics">📊 数据统计</NavLink>
+            <NavItemWithTooltip text="Skills 管理" showTooltip={sidebarCollapsed}>
+              <NavLink to="/skills"><span className="nav-icon">🧩</span><span className="nav-text">Skills 管理</span></NavLink>
+            </NavItemWithTooltip>
           </li>
           <li>
-            <NavLink to="/logs">🪵 日志</NavLink>
+            <NavItemWithTooltip text="数据统计" showTooltip={sidebarCollapsed}>
+              <NavLink to="/statistics"><span className="nav-icon">📊</span><span className="nav-text">数据统计</span></NavLink>
+            </NavItemWithTooltip>
           </li>
           <li>
-            <NavLink to="/settings">⚙️ 设置</NavLink>
+            <NavItemWithTooltip text="日志" showTooltip={sidebarCollapsed}>
+              <NavLink to="/logs"><span className="nav-icon">🪵</span><span className="nav-text">日志</span></NavLink>
+            </NavItemWithTooltip>
           </li>
           <li>
-            <NavLink to="/usage">📖 使用说明</NavLink>
+            <NavItemWithTooltip text="设置" showTooltip={sidebarCollapsed}>
+              <NavLink to="/settings"><span className="nav-icon">⚙️</span><span className="nav-text">设置</span></NavLink>
+            </NavItemWithTooltip>
+          </li>
+          <li>
+            <NavItemWithTooltip text="使用说明" showTooltip={sidebarCollapsed}>
+              <NavLink to="/usage"><span className="nav-icon">📖</span><span className="nav-text">使用说明</span></NavLink>
+            </NavItemWithTooltip>
           </li>
         </ul>
-
-        {hasUpdate && (
-          <div className="update-notification">
-            <div className="update-notification-content">
-              <span className="update-icon">⬆️</span>
-              <div className="update-text">
-                <div className="update-title">新版本可用</div>
-                <div className="update-versions">
-                  {currentVersion} → {latestVersion}
-                </div>
-                <div className="update-message">
-                  命令行执行如下更新到最新版本<br />
-                  <code>npm i -g aicodeswitch</code>
-                </div>
-              </div>
-            </div>
-            <a
-              href="https://npmjs.com/package/aicodeswitch"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="update-link"
-            >
-              查看详情
-            </a>
-          </div>
-        )}
 
         <div className="theme-toggle">
           <button
@@ -329,11 +423,54 @@ function AppContent() {
           >
             {theme === 'dark' ? '🌙' : '☀️'}
           </button>
+          <a
+            href="https://github.com/tangshuang/aicodeswitch"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="github-link"
+            title="GitHub"
+          >
+            <svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor">
+              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+            </svg>
+          </a>
           {currentVersion && (
-            <div className="version-info">
-              v{currentVersion}
+            <div className="version-info-wrapper">
+              <div className="version-info">
+                v{currentVersion}
+                {hasUpdate && <span className="version-badge"></span>}
+              </div>
+              {hasUpdate && (
+                <a
+                  href="https://npmjs.com/package/aicodeswitch"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="version-update-popup"
+                >
+                  <div className="update-popup-content">
+                    <span className="update-icon">⬆️</span>
+                    <div className="update-text">
+                      <div className="update-title">新版本可用</div>
+                      <div className="update-versions">
+                        {currentVersion} → {latestVersion}
+                      </div>
+                      <div className="update-message">
+                        命令行执行如下更新到最新版本<br />
+                        <code>npm i -g aicodeswitch</code>
+                      </div>
+                    </div>
+                  </div>
+                </a>
+              )}
             </div>
           )}
+          <button
+            onClick={toggleSidebar}
+            className="sidebar-toggle-btn"
+            title={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+          >
+            {sidebarCollapsed ? '»' : '«'}
+          </button>
         </div>
       </nav>
       <main className="main-content">
@@ -342,6 +479,7 @@ function AppContent() {
             <Route path="/statistics" element={<StatisticsPage />} />
             <Route path="/routes" element={<RouteGroupsPage />} />
             <Route path="/vendors" element={<VendorsPage />} />
+            <Route path="/skills" element={<SkillsPage />} />
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/write-config" element={<WriteConfigPage />} />
             <Route path="/settings" element={<SettingsPage />} />
@@ -399,6 +537,26 @@ function AppContent() {
             </div>
           </div>
         </div>
+      )}
+
+      {showNotification && toolsStatus && (
+        <NotificationBar
+          toolName={!toolsStatus.claudeCode.installed && !toolsStatus.codex.installed
+            ? 'both'
+            : !toolsStatus.claudeCode.installed
+            ? 'claude-code'
+            : 'codex'}
+          onInstallClick={handleNotificationClick}
+          onClose={handleNotificationClose}
+        />
+      )}
+
+      {showToolsInstallModal && toolsStatus && (
+        <ToolsInstallModal
+          status={toolsStatus}
+          onClose={handleToolsInstallModalClose}
+          onInstallComplete={handleToolsInstallComplete}
+        />
       )}
     </div>
   );

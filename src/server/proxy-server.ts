@@ -10,6 +10,7 @@ import {
   SSESerializerTransform,
 } from './transformers/streaming';
 import { SSEEventCollectorTransform } from './transformers/chunk-collector';
+import { rulesStatusBroadcaster } from './rules-status-service';
 import {
   extractTokenUsageFromClaudeUsage,
   extractTokenUsageFromOpenAIUsage,
@@ -170,7 +171,10 @@ export class ProxyServer {
           });
         }
 
-        // 记录错误日志
+        // 确定目标类型
+        const targetType: TargetType = req.path.startsWith('/claude-code/') ? 'claude-code' : 'codex';
+
+        // 记录错误日志 - 包含请求详情
         await this.dbManager.addErrorLog({
           timestamp: Date.now(),
           method: req.method,
@@ -180,6 +184,10 @@ export class ProxyServer {
           errorStack: lastError?.stack,
           requestHeaders: this.normalizeHeaders(req.headers),
           requestBody: req.body ? JSON.stringify(req.body) : undefined,
+          // 添加请求详情
+          targetType,
+          requestModel: req.body?.model,
+          responseTime: 0,
         });
 
         // 根据路径判断目标类型并返回适当的错误格式
@@ -211,7 +219,8 @@ export class ProxyServer {
             error: error.message,
           });
         }
-        // Add error log
+        // Add error log - 包含请求详情
+        const targetType: TargetType = req.path.startsWith('/claude-code/') ? 'claude-code' : 'codex';
         await this.dbManager.addErrorLog({
           timestamp: Date.now(),
           method: req.method,
@@ -221,6 +230,10 @@ export class ProxyServer {
           errorStack: error.stack,
           requestHeaders: this.normalizeHeaders(req.headers),
           requestBody: req.body ? JSON.stringify(req.body) : undefined,
+          // 添加请求详情
+          targetType,
+          requestModel: req.body?.model,
+          responseTime: 0,
         });
 
         // 根据路径判断目标类型并返回适当的错误格式
@@ -375,7 +388,7 @@ export class ProxyServer {
           });
         }
 
-        // 记录错误日志
+        // 记录错误日志 - 包含请求详情（使用函数参数 targetType）
         await this.dbManager.addErrorLog({
           timestamp: Date.now(),
           method: req.method,
@@ -385,6 +398,10 @@ export class ProxyServer {
           errorStack: lastError?.stack,
           requestHeaders: this.normalizeHeaders(req.headers),
           requestBody: req.body ? JSON.stringify(req.body) : undefined,
+          // 添加请求详情
+          targetType,
+          requestModel: req.body?.model,
+          responseTime: 0,
         });
 
         // 根据路径判断目标类型并返回适当的错误格式
@@ -416,7 +433,7 @@ export class ProxyServer {
             error: error.message,
           });
         }
-        // Add error log
+        // Add error log - 包含请求详情（使用函数参数 targetType）
         await this.dbManager.addErrorLog({
           timestamp: Date.now(),
           method: req.method,
@@ -426,6 +443,10 @@ export class ProxyServer {
           errorStack: error.stack,
           requestHeaders: this.normalizeHeaders(req.headers),
           requestBody: req.body ? JSON.stringify(req.body) : undefined,
+          // 添加请求详情
+          targetType,
+          requestModel: req.body?.model,
+          responseTime: 0,
         });
         res.status(500).json({ error: error.message });
       }
@@ -659,6 +680,10 @@ export class ProxyServer {
     const rules = this.getRulesByRouteId(routeId);
     if (!rules || rules.length === 0) return undefined;
 
+    // 过滤掉被屏蔽的规则
+    const enabledRules = rules.filter(rule => !rule.isDisabled);
+    if (enabledRules.length === 0) return undefined;
+
     const body = req.body;
     const requestModel = body?.model;
 
@@ -685,8 +710,8 @@ export class ProxyServer {
         this.dbManager.checkAndResetRuleIfNeeded(rule.id);
         this.dbManager.checkAndResetRequestCountIfNeeded(rule.id);
 
-        // 检查token限制
-        if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit) {
+        // 检查token限制（tokenLimit单位是k，需要乘以1000转换为实际token数）
+        if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit * 1000) {
           continue; // 跳过超限规则
         }
 
@@ -718,8 +743,8 @@ export class ProxyServer {
       this.dbManager.checkAndResetRuleIfNeeded(rule.id);
       this.dbManager.checkAndResetRequestCountIfNeeded(rule.id);
 
-      // 检查token限制
-      if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit) {
+      // 检查token限制（tokenLimit单位是k，需要乘以1000转换为实际token数）
+      if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit * 1000) {
         continue; // 跳过超限规则
       }
 
@@ -749,8 +774,8 @@ export class ProxyServer {
       this.dbManager.checkAndResetRuleIfNeeded(rule.id);
       this.dbManager.checkAndResetRequestCountIfNeeded(rule.id);
 
-      // 检查token限制
-      if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit) {
+      // 检查token限制（tokenLimit单位是k，需要乘以1000转换为实际token数）
+      if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit * 1000) {
         continue; // 跳过超限规则
       }
 
@@ -769,13 +794,17 @@ export class ProxyServer {
     const rules = this.getRulesByRouteId(routeId);
     if (!rules || rules.length === 0) return [];
 
+    // 过滤掉被屏蔽的规则
+    const enabledRules = rules.filter(rule => !rule.isDisabled);
+    if (enabledRules.length === 0) return [];
+
     const body = req.body;
     const requestModel = body?.model;
     const candidates: Rule[] = [];
 
     // 1. Model mapping rules
     if (requestModel) {
-      const modelMappingRules = rules.filter(rule =>
+      const modelMappingRules = enabledRules.filter(rule =>
         rule.contentType === 'model-mapping' &&
         rule.replacedModel &&
         requestModel.includes(rule.replacedModel)
@@ -785,11 +814,11 @@ export class ProxyServer {
 
     // 2. Content type specific rules
     const contentType = this.determineContentType(req);
-    const contentTypeRules = rules.filter(rule => rule.contentType === contentType);
+    const contentTypeRules = enabledRules.filter(rule => rule.contentType === contentType);
     candidates.push(...contentTypeRules);
 
     // 3. Default rules
-    const defaultRules = rules.filter(rule => rule.contentType === 'default');
+    const defaultRules = enabledRules.filter(rule => rule.contentType === 'default');
     candidates.push(...defaultRules);
 
     // 4. 检查并重置到期的规则
@@ -801,9 +830,9 @@ export class ProxyServer {
     // 5. 过滤掉超过限制的规则（仅在有多个候选规则时）
     if (candidates.length > 1) {
       const filteredCandidates = candidates.filter(rule => {
-        // 检查token限制
+        // 检查token限制（tokenLimit单位是k，需要乘以1000转换为实际token数）
         if (rule.tokenLimit && rule.totalTokensUsed !== undefined) {
-          if (rule.totalTokensUsed >= rule.tokenLimit) {
+          if (rule.totalTokensUsed >= rule.tokenLimit * 1000) {
             return false;
           }
         }
@@ -828,6 +857,11 @@ export class ProxyServer {
   private determineContentType(req: Request): ContentType {
     const body = req.body;
     if (!body) return 'default';
+
+    // 检查是否为 count_tokens 请求（后台类型）
+    if (req.path.includes('/count_tokens')) {
+      return 'background';
+    }
 
     const explicitType = this.getExplicitContentType(req, body);
     if (explicitType) {
@@ -964,6 +998,20 @@ export class ProxyServer {
   }
 
   private hasBackgroundSignal(body: any): boolean {
+    // 检测 count tokens 请求：messages 只有一条，role 为 "user"，content 为 "count"
+    const messages = body?.messages;
+    if (Array.isArray(messages) && messages.length === 1) {
+      const firstMessage = messages[0];
+      if (
+        firstMessage?.role === 'user' &&
+        (firstMessage?.content === 'count' ||
+         (typeof firstMessage?.content === 'string' && firstMessage.content.trim() === 'count'))
+      ) {
+        return true;
+      }
+    }
+
+    // 检测其他后台信号
     const candidates = [
       body?.background,
       body?.metadata?.background,
@@ -1348,6 +1396,7 @@ export class ProxyServer {
   /**
    * 提取会话标题（默认方法）
    * 对于新会话，尝试从第一条消息的内容中提取标题
+   * 优化：使用第一条用户消息的完整内容，并智能截取
    */
   private defaultExtractSessionTitle(request: Request, sessionId: string): string | undefined {
     const existingSession = this.dbManager.getSession(sessionId);
@@ -1363,19 +1412,56 @@ export class ProxyServer {
       const firstUserMessage = messages.find((msg: any) => msg.role === 'user');
       if (firstUserMessage) {
         const content = firstUserMessage.content;
+        let rawText = '';
+
         if (typeof content === 'string') {
-          // 截取前50个字符作为标题
-          return content.slice(0, 50).trim();
+          rawText = content;
         } else if (Array.isArray(content)) {
           // 处理结构化内容（如图片+文本）
           const textBlock = content.find((block: any) => block?.type === 'text');
           if (textBlock?.text) {
-            return textBlock.text.slice(0, 50).trim();
+            rawText = textBlock.text;
           }
+        }
+
+        if (rawText) {
+          return this.formatSessionTitle(rawText);
         }
       }
     }
     return undefined;
+  }
+
+  /**
+   * 格式化会话标题
+   * - 去除多余空白和换行符
+   * - 智能截取，在单词边界处截断
+   * - 限制最大长度为100个字符
+   */
+  private formatSessionTitle(text: string): string {
+    // 去除多余空白和换行符，替换为单个空格
+    let formatted = text
+      .replace(/\s+/g, ' ')  // 多个空白字符替换为单个空格
+      .replace(/[\r\n]+/g, ' ')  // 换行符替换为空格
+      .trim();
+
+    // 限制最大长度
+    const maxLength = 100;
+    if (formatted.length <= maxLength) {
+      return formatted;
+    }
+
+    // 在单词边界处截断
+    let truncated = formatted.slice(0, maxLength);
+    const lastSpaceIndex = truncated.lastIndexOf(' ');
+
+    if (lastSpaceIndex > maxLength * 0.7) {
+      // 如果最后一个空格位置在长度的70%之后，在空格处截断
+      truncated = truncated.slice(0, lastSpaceIndex);
+    }
+
+    // 添加省略号
+    return truncated.trim() + '...';
   }
 
   /**
@@ -1429,6 +1515,9 @@ export class ProxyServer {
     let streamChunksForLog: string[] | undefined;
     let upstreamRequestForLog: RequestLog['upstreamRequest'] | undefined;
     let actuallyUsedProxy = false; // 标记是否实际使用了代理
+
+    // 标记规则正在使用
+    rulesStatusBroadcaster.markRuleInUse(route.id, rule.id);
 
     const finalizeLog = async (statusCode: number, error?: string) => {
       if (logged) return;
@@ -1507,6 +1596,16 @@ export class ProxyServer {
         const totalTokens = (usageForLog.inputTokens || 0) + (usageForLog.outputTokens || 0);
         if (totalTokens > 0) {
           this.dbManager.incrementRuleTokenUsage(rule.id, totalTokens);
+
+          // 获取更新后的规则数据并广播
+          const updatedRule = this.dbManager.getRule(rule.id);
+          if (updatedRule) {
+            rulesStatusBroadcaster.broadcastUsageUpdate(
+              rule.id,
+              updatedRule.totalTokensUsed || 0,
+              updatedRule.totalRequestsUsed || 0
+            );
+          }
         }
       }
 
@@ -1517,6 +1616,16 @@ export class ProxyServer {
         // 检查是否是重复请求（如网络重试）
         if (!this.isRequestProcessed(requestHash)) {
           this.dbManager.incrementRuleRequestCount(rule.id, 1);
+
+          // 获取更新后的规则数据并广播
+          const updatedRule = this.dbManager.getRule(rule.id);
+          if (updatedRule) {
+            rulesStatusBroadcaster.broadcastUsageUpdate(
+              rule.id,
+              updatedRule.totalTokensUsed || 0,
+              updatedRule.totalRequestsUsed || 0
+            );
+          }
         }
         // 定期清理过期缓存
         if (Math.random() < 0.01) { // 1%概率清理，避免每次都清理
@@ -1661,12 +1770,68 @@ export class ProxyServer {
             }
             // 收集stream chunks（每个chunk是一个完整的SSE事件）
             streamChunksForLog = eventCollector.getChunks();
+            console.log('[Proxy] Stream request finished, collected chunks:', streamChunksForLog?.length || 0);
             void finalizeLog(res.statusCode);
           });
 
-          pipeline(response.data, parser, eventCollector, converter, serializer, res, (error) => {
+          // 监听 res 的错误事件
+          res.on('error', (err) => {
+            console.error('[Proxy] Response stream error:', err);
+          });
+
+          pipeline(response.data, parser, eventCollector, converter, serializer, res, async (error) => {
             if (error) {
-              void finalizeLog(500, error.message);
+              console.error('[Proxy] Pipeline error for claude-code:', error);
+
+              // 记录到错误日志 - 包含请求详情和实际转发信息
+              try {
+                // 获取供应商信息
+                const vendors = this.dbManager.getVendors();
+                const vendor = vendors.find(v => v.id === service.vendorId);
+
+                await this.dbManager.addErrorLog({
+                  timestamp: Date.now(),
+                  method: req.method,
+                  path: req.path,
+                  statusCode: 500,
+                  errorMessage: error.message || 'Stream processing error',
+                  errorStack: error.stack,
+                  requestHeaders: this.normalizeHeaders(req.headers),
+                  requestBody: req.body ? JSON.stringify(req.body) : undefined,
+                  upstreamRequest: upstreamRequestForLog,
+                  // 添加请求详情
+                  ruleId: rule.id,
+                  targetType,
+                  targetServiceId: service.id,
+                  targetServiceName: service.name,
+                  targetModel: rule.targetModel,
+                  vendorId: service.vendorId,
+                  vendorName: vendor?.name,
+                  requestModel: req.body?.model,
+                  responseTime: Date.now() - startTime,
+                });
+              } catch (logError) {
+                console.error('[Proxy] Failed to log error:', logError);
+              }
+
+              // 尝试向客户端发送错误事件
+              try {
+                if (!res.writableEnded) {
+                  const errorEvent = `event: error\ndata: ${JSON.stringify({
+                    type: 'error',
+                    error: {
+                      type: 'api_error',
+                      message: 'Stream processing error occurred'
+                    }
+                  })}\n\n`;
+                  res.write(errorEvent);
+                  res.end();
+                }
+              } catch (writeError) {
+                console.error('[Proxy] Failed to send error event:', writeError);
+              }
+
+              await finalizeLog(500, error.message);
             }
           });
           return;
@@ -1696,12 +1861,64 @@ export class ProxyServer {
               }
             }
             streamChunksForLog = eventCollector.getChunks();
+            console.log('[Proxy] Codex stream request finished, collected chunks:', streamChunksForLog?.length || 0);
             void finalizeLog(res.statusCode);
           });
 
-          pipeline(response.data, parser, eventCollector, converter, serializer, res, (error) => {
+          // 监听 res 的错误事件
+          res.on('error', (err) => {
+            console.error('[Proxy] Response stream error:', err);
+          });
+
+          pipeline(response.data, parser, eventCollector, converter, serializer, res, async (error) => {
             if (error) {
-              void finalizeLog(500, error.message);
+              console.error('[Proxy] Pipeline error for codex:', error);
+
+              // 记录到错误日志 - 包含请求详情和实际转发信息
+              try {
+                // 获取供应商信息
+                const vendors = this.dbManager.getVendors();
+                const vendor = vendors.find(v => v.id === service.vendorId);
+
+                await this.dbManager.addErrorLog({
+                  timestamp: Date.now(),
+                  method: req.method,
+                  path: req.path,
+                  statusCode: 500,
+                  errorMessage: error.message || 'Stream processing error',
+                  errorStack: error.stack,
+                  requestHeaders: this.normalizeHeaders(req.headers),
+                  requestBody: req.body ? JSON.stringify(req.body) : undefined,
+                  upstreamRequest: upstreamRequestForLog,
+                  // 添加请求详情
+                  ruleId: rule.id,
+                  targetType,
+                  targetServiceId: service.id,
+                  targetServiceName: service.name,
+                  targetModel: rule.targetModel,
+                  vendorId: service.vendorId,
+                  vendorName: vendor?.name,
+                  requestModel: req.body?.model,
+                  responseTime: Date.now() - startTime,
+                });
+              } catch (logError) {
+                console.error('[Proxy] Failed to log error:', logError);
+              }
+
+              // 尝试向客户端发送错误事件
+              try {
+                if (!res.writableEnded) {
+                  const errorEvent = `data: ${JSON.stringify({
+                    error: 'Stream processing error occurred'
+                  })}\n\n`;
+                  res.write(errorEvent);
+                  res.end();
+                }
+              } catch (writeError) {
+                console.error('[Proxy] Failed to send error event:', writeError);
+              }
+
+              await finalizeLog(500, error.message);
             }
           });
           return;
@@ -1712,6 +1929,12 @@ export class ProxyServer {
         responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
 
         this.copyResponseHeaders(responseHeaders, res);
+
+        // 监听 res 的错误事件
+        res.on('error', (err) => {
+          console.error('[Proxy] Response stream error:', err);
+        });
+
         res.on('finish', () => {
           streamChunksForLog = eventCollector.getChunks();
           // 尝试从event collector中提取usage信息
@@ -1721,9 +1944,29 @@ export class ProxyServer {
           }
           void finalizeLog(res.statusCode);
         });
-        pipeline(response.data, eventCollector, res, (error) => {
+
+        pipeline(response.data, eventCollector, res, async (error) => {
           if (error) {
-            void finalizeLog(500, error.message);
+            console.error('[Proxy] Pipeline error (default stream):', error);
+
+            // 记录到错误日志
+            try {
+              await this.dbManager.addErrorLog({
+                timestamp: Date.now(),
+                method: req.method,
+                path: req.path,
+                statusCode: 500,
+                errorMessage: error.message || 'Stream processing error',
+                errorStack: error.stack,
+                requestHeaders: this.normalizeHeaders(req.headers),
+                requestBody: req.body ? JSON.stringify(req.body) : undefined,
+                upstreamRequest: upstreamRequestForLog,
+              });
+            } catch (logError) {
+              console.error('[Proxy] Failed to log error:', logError);
+            }
+
+            await finalizeLog(500, error.message);
           }
         });
         return;
@@ -1756,6 +1999,10 @@ export class ProxyServer {
           errorDetail = JSON.stringify(responseData);
         }
 
+        // 获取供应商信息
+        const vendors = this.dbManager.getVendors();
+        const vendor = vendors.find(v => v.id === service.vendorId);
+
         await this.dbManager.addErrorLog({
           timestamp: Date.now(),
           method: req.method,
@@ -1767,6 +2014,17 @@ export class ProxyServer {
           requestBody: req.body ? JSON.stringify(req.body) : undefined,
           responseHeaders: responseHeadersForLog,
           responseBody: responseBodyForLog,
+          // 添加请求详情和实际转发信息
+          ruleId: rule.id,
+          targetType,
+          targetServiceId: service.id,
+          targetServiceName: service.name,
+          targetModel: rule.targetModel,
+          vendorId: service.vendorId,
+          vendorName: vendor?.name,
+          requestModel: req.body?.model,
+          upstreamRequest: upstreamRequestForLog,
+          responseTime: Date.now() - startTime,
         });
 
         this.copyResponseHeaders(responseHeaders, res);
@@ -1794,6 +2052,7 @@ export class ProxyServer {
         usageForLog = this.extractTokenUsage(responseData?.usage);
         // 记录原始响应体
         responseBodyForLog = typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
+        console.log('[Proxy] Non-stream response logged, body length:', responseBodyForLog?.length || 0);
         this.copyResponseHeaders(responseHeaders, res);
         if (contentType.includes('application/json')) {
           res.status(response.status).json(responseData);
@@ -1815,7 +2074,11 @@ export class ProxyServer {
         ? 'Request timeout - the upstream API took too long to respond'
         : (error.message || 'Internal server error');
 
-      // 将错误记录到错误日志
+      // 将错误记录到错误日志 - 包含请求详情和实际转发信息
+      // 获取供应商信息
+      const vendors = this.dbManager.getVendors();
+      const vendor = vendors.find(v => v.id === service.vendorId);
+
       await this.dbManager.addErrorLog({
         timestamp: Date.now(),
         method: req.method,
@@ -1825,6 +2088,17 @@ export class ProxyServer {
         errorStack: error.stack,
         requestHeaders: this.normalizeHeaders(req.headers),
         requestBody: req.body ? JSON.stringify(req.body) : undefined,
+        // 添加请求详情和实际转发信息
+        ruleId: rule.id,
+        targetType,
+        targetServiceId: service.id,
+        targetServiceName: service.name,
+        targetModel: rule.targetModel,
+        vendorId: service.vendorId,
+        vendorName: vendor?.name,
+        requestModel: req.body?.model,
+        upstreamRequest: upstreamRequestForLog,
+        responseTime: Date.now() - startTime,
       });
 
       await finalizeLog(isTimeout ? 504 : 500, errorMessage);
