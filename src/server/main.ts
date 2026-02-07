@@ -126,6 +126,7 @@ const writeClaudeConfig = async (dbManager: DatabaseManager): Promise<boolean> =
     const claudeSettings = {
       env: {
         ANTHROPIC_AUTH_TOKEN: config.apiKey || "api_key",
+        ANTHROPIC_API_KEY: "",
         ANTHROPIC_BASE_URL: `http://${host}:${port}/claude-code`,
         API_TIMEOUT_MS: "3000000"
       }

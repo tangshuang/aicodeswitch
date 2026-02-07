@@ -63,7 +63,11 @@ export interface SkillInstallResponse {
 }
 
 /** 认证方式类型 */
-export type AuthType = 'authorization' | 'x-api-key' | 'auto';
+export enum AuthType {
+  AUTH_TOKEN = 'authorization',
+  API_KEY = 'x-api-key',
+  AUTO = 'auto',
+};
 
 /** 供应商API服务 */
 export interface APIService {

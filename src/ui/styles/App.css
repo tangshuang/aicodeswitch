@@ -155,7 +155,6 @@
 
 .nav-menu a:hover {
   background-color: rgba(255, 255, 255, 0.1);
-  transform: translateX(4px);
 }
 
 .nav-menu a.active {
@@ -239,7 +238,6 @@
 }
 
 .card:hover {
-  transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
 }
 
@@ -275,7 +273,6 @@
 }
 
 .btn:hover {
-  transform: translateY(-1px);
 }
 
 .btn:active {
@@ -310,7 +307,6 @@
 }
 
 .btn-primary:hover {
-  transform: translateY(-2px);
 }
 
 .btn-danger {

@@ -1,4 +1,4 @@
-import { SourceType } from "../../types";
+import { SourceType, AuthType } from "../../types";
 
 type VendorConfig = {
     [vendorKey: string]: {
@@ -10,6 +10,7 @@ type VendorConfig = {
             apiUrl: string;
             models?: string;
             modelLimits?: Record<string, number>;
+            authType?: AuthType;
         }[];
         is_oversea?: boolean;
     };
@@ -28,9 +29,32 @@ export default {
                 modelLimits: {
                     'glm-4.7': 131072,
                     'glm-4.5-air': 98304
-                }
+                },
             },
         ],
+    },
+    kimi: {
+        name: 'Kimi',
+        description: '国内优秀大模型 https://www.kimi.ai/',
+        services: [
+            {
+                name: 'Coding Plan Claude Code',
+                sourceType: 'claude-code',
+                apiUrl: 'https://api.kimi.com/coding',
+            }
+        ]
+    },
+    minimax: {
+        name: 'Minimax',
+        description: '国内优秀的大模型 https://platform.minimaxi.com/subscribe/coding-plan?code=G6xKj7L4YN&source=link',
+        services: [
+            {
+                name: 'Coding Plan Claude Code',
+                sourceType: 'claude-code',
+                apiUrl: 'https://api.minimaxi.com/anthropic',
+                models: 'MiniMax-M2.1',
+            }
+        ]
     },
     doubao: {
         name: '火山方舟（豆包）',
@@ -106,6 +130,13 @@ export default {
         name: 'OpenRouter',
         description: '一站式 AI 模型路由平台 https://openrouter.ai',
         services: [
+            {
+                name: 'Claude Code专属接口',
+                sourceType: 'claude-code',
+                apiUrl: 'https://openrouter.ai/api',
+                models: 'anthropic/claude-opus-4.6, anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5',
+                authType: AuthType.AUTH_TOKEN,
+            },
             {
                 name: '通用接口',
                 sourceType: 'openai-chat',
