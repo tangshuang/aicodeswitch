@@ -18,6 +18,7 @@ import {
   transformOpenAIChatResponseToClaude,
 } from './transformers/claude-openai';
 import type { AppConfig, Rule, APIService, Route, SourceType, TargetType, TokenUsage, ContentType, RequestLog } from '../types';
+import { AuthType } from '../types';
 
 type ContentTypeDetector = {
   type: ContentType;
@@ -1203,13 +1204,13 @@ export class ProxyServer {
     }
 
     // 确定认证方式：优先使用服务配置的 authType，否则根据 sourceType 自动判断
-    const authType = service.authType || 'auto';
-    const useXApiKey = authType === 'x-api-key' || (authType === 'auto' && this.isClaudeSource(sourceType));
+    const authType = service.authType || AuthType.AUTO;
+    const useXApiKey = authType === AuthType.API_KEY || (authType === AuthType.AUTO && this.isClaudeSource(sourceType));
 
     if (useXApiKey) {
       // 使用 x-api-key 认证（适用于 claude-chat, claude-code 及某些需要 x-api-key 的 openai-chat 兼容 API）
       headers['x-api-key'] = service.apiKey;
-      if (this.isClaudeSource(sourceType) || authType === 'x-api-key') {
+      if (this.isClaudeSource(sourceType) || authType === AuthType.API_KEY) {
         // 仅在明确配置或 Claude 源时添加 anthropic-version
         headers['anthropic-version'] = headers['anthropic-version'] || '2023-06-01';
       }

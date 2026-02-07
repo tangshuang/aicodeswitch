@@ -1,4 +1,4 @@
-import { SourceType } from "../../types";
+import { SourceType, AuthType } from "../../types";
 
 type VendorConfig = {
     [vendorKey: string]: {
@@ -10,6 +10,7 @@ type VendorConfig = {
             apiUrl: string;
             models?: string;
             modelLimits?: Record<string, number>;
+            authType?: AuthType;
         }[];
         is_oversea?: boolean;
     };
@@ -28,19 +29,21 @@ export default {
                 modelLimits: {
                     'glm-4.7': 131072,
                     'glm-4.5-air': 98304
-                }
+                },
+                authType: AuthType.AUTH_TOKEN,
             },
         ],
     },
     doubao: {
         name: '豆包',
-        description: '字节旗下大模型。Coding Plan一次性支持GLM、Kimi-K2、Deepseek多个国产模型 https://volcengine.com/L/RcHlm6yxj0w/  邀请码：Y58X463P',
+        description: '字节旗下大模型。Coding Plan一次性支持GLM-4.7、Kimi-K2.5、Deepseek多个国产模型 https://volcengine.com/L/RcHlm6yxj0w/  邀请码：Y58X463P',
         services: [
             {
                 name: 'Coding Plan Claude Code',
                 sourceType: 'claude-code',
                 apiUrl: 'https://ark.cn-beijing.volces.com/api/coding',
                 models: 'ark-code-latest',
+                authType: AuthType.AUTH_TOKEN,
             },
             {
                 name: 'Coding Plan Codex',
@@ -53,8 +56,34 @@ export default {
                 sourceType: 'claude-code',
                 apiUrl: 'https://ark.cn-beijing.volces.com/api/compatible',
                 models: 'doubao-seed-code-preview-251028',
+                authType: AuthType.AUTH_TOKEN,
             },
         ],
+    },
+    kimi: {
+        name: 'Kimi',
+        description: '国内优秀大模型 https://www.kimi.ai/',
+        services: [
+            {
+                name: 'Coding Plan Claude Code',
+                sourceType: 'claude-code',
+                apiUrl: 'https://api.kimi.com/coding',
+                authType: AuthType.API_KEY,
+            }
+        ]
+    },
+    minimax: {
+        name: 'Minimax',
+        description: '国内优秀的大模型 https://platform.minimaxi.com/subscribe/coding-plan?code=G6xKj7L4YN&source=link',
+        services: [
+            {
+                name: 'Coding Plan Claude Code',
+                sourceType: 'claude-code',
+                apiUrl: 'https://api.minimaxi.com/anthropic',
+                authType: AuthType.AUTH_TOKEN,
+                models: 'MiniMax-M2.1',
+            }
+        ]
     },
     aicodewith: {
         name: 'AICodeWith',
@@ -64,6 +93,7 @@ export default {
                 name: 'claudecode',
                 sourceType: 'claude-code',
                 apiUrl: 'https://api.aicodewith.com',
+                authType: AuthType.AUTH_TOKEN,
             },
             {
                 name: 'codex',
@@ -100,6 +130,13 @@ export default {
         name: 'OpenRouter',
         description: '一站式 AI 模型路由平台 https://openrouter.ai',
         services: [
+            {
+                name: 'Claude Code专属接口',
+                sourceType: 'claude-code',
+                apiUrl: 'https://openrouter.ai/api',
+                models: 'anthropic/claude-opus-4.6, anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5',
+                authType: AuthType.AUTH_TOKEN,
+            },
             {
                 name: '通用接口',
                 sourceType: 'openai-chat',

@@ -1,4 +1,4 @@
-import { SourceType } from '../../types';
+import { SourceType, AuthType } from '../../types';
 
 /** 终端对象类型 */
 export const TARGET_TYPE = {
@@ -25,16 +25,16 @@ export const SOURCE_TYPE_MESSAGE: Record<SourceType, string> = {
 };
 
 /** 认证方式类型 */
-export const AUTH_TYPE = {
-  'auto': '自动判断',
-  'authorization': 'Authorization (Bearer Token)',
-  'x-api-key': 'X-API-Key',
+export const AUTH_TYPE: Record<AuthType, string> = {
+  [AuthType.AUTO]: '自动',
+  [AuthType.AUTH_TOKEN]: 'AUTH_TOKEN',
+  [AuthType.API_KEY]: 'API_KEY',
 };
 
-export const AUTH_TYPE_MESSAGE: Record<string, string> = {
-  'auto': '根据数据源类型自动判断认证方式：claude-chat/claude-code 使用 x-api-key，其他类型使用 Authorization',
-  'authorization': '使用 Authorization: Bearer <token> 进行认证（适用于大多数 OpenAI 兼容 API）',
-  'x-api-key': '使用 x-api-key: <token> 进行认证（适用于 Claude API 及某些特殊的 OpenAI 兼容 API）',
+export const AUTH_TYPE_MESSAGE: Record<AuthType, string> = {
+  [AuthType.AUTO]: '根据数据源类型自动判断：Claude 类型使用 API_KEY，其他类型使用 AUTH_TOKEN',
+  [AuthType.AUTH_TOKEN]: '使用 Authorization: Bearer <token> 进行认证（对应 Claude Code 的 ANTHROPIC_AUTH_TOKEN）',
+  [AuthType.API_KEY]: '使用 x-api-key: <token> 进行认证（对应 Claude Code 的 ANTHROPIC_API_KEY）',
 };
 
 /** 默认请求超时时间 */
