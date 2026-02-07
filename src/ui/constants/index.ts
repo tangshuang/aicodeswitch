@@ -31,8 +31,8 @@ export const AUTH_TYPE: Record<AuthType, string> = {
 };
 
 export const AUTH_TYPE_MESSAGE: Record<AuthType, string> = {
-  [AuthType.AUTO]: '根据数据源类型自动判断：Claude 类型使用 API_KEY，其他类型使用 AUTH_TOKEN',
-  [AuthType.AUTH_TOKEN]: '使用 Authorization: Bearer <token> 进行认证（对应 Claude Code 的 ANTHROPIC_AUTH_TOKEN）',
+  [AuthType.AUTO]: '根据数据源类型自动判断：Claude 相关类型使用 x-api-key header，OpenAI 相关类型使用 Authorization: Bearer header',
+  [AuthType.AUTH_TOKEN]: '使用 Authorization: Bearer <token> 进行认证（对应 Claude Code 的 ANTHROPIC_AUTH_TOKEN，以及OpenAI的所有请求）',
   [AuthType.API_KEY]: '使用 x-api-key: <token> 进行认证（对应 Claude Code 的 ANTHROPIC_API_KEY）',
 };
 

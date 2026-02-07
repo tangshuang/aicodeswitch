@@ -30,7 +30,6 @@ export default {
                     'glm-4.7': 131072,
                     'glm-4.5-air': 98304
                 },
-                authType: AuthType.AUTH_TOKEN,
             },
         ],
     },
@@ -42,7 +41,6 @@ export default {
                 name: 'Coding Plan Claude Code',
                 sourceType: 'claude-code',
                 apiUrl: 'https://api.kimi.com/coding',
-                authType: AuthType.API_KEY,
             }
         ]
     },
@@ -54,7 +52,6 @@ export default {
                 name: 'Coding Plan Claude Code',
                 sourceType: 'claude-code',
                 apiUrl: 'https://api.minimaxi.com/anthropic',
-                authType: AuthType.AUTH_TOKEN,
                 models: 'MiniMax-M2.1',
             }
         ]
@@ -68,7 +65,6 @@ export default {
                 sourceType: 'claude-code',
                 apiUrl: 'https://ark.cn-beijing.volces.com/api/coding',
                 models: 'ark-code-latest',
-                authType: AuthType.AUTH_TOKEN,
             },
             {
                 name: 'Coding Plan Codex',
@@ -81,7 +77,6 @@ export default {
                 sourceType: 'claude-code',
                 apiUrl: 'https://ark.cn-beijing.volces.com/api/compatible',
                 models: 'doubao-seed-code-preview-251028',
-                authType: AuthType.AUTH_TOKEN,
             },
             {
                 name: '付费API兼容Codex',
@@ -99,7 +94,6 @@ export default {
                 name: 'claudecode',
                 sourceType: 'claude-code',
                 apiUrl: 'https://api.aicodewith.com',
-                authType: AuthType.AUTH_TOKEN,
             },
             {
                 name: 'codex',

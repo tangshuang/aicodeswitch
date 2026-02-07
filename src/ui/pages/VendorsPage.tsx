@@ -514,16 +514,16 @@ function VendorsPage() {
                     color: 'var(--text-primary)'
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>
-                      <div style={{ fontWeight: 500 }}>{vendor.name}</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                      <div style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{vendor.name}</div>
                       {vendor.description && (
-                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {vendor.description}
                         </div>
                       )}
                     </div>
-                    <div className="action-buttons">
+                    <div className="action-buttons" style={{ flexShrink: 0 }}>
                       <button
                         className="btn btn-secondary"
                         style={{ padding: '4px 8px', fontSize: '12px' }}
