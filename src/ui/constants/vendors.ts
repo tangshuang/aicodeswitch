@@ -92,6 +92,30 @@ export default {
             },
         ],
     },
+    qwen: {
+        name: '阿里云百炼（千问）',
+        description: '国内优秀大模型 https://help.aliyun.com/zh/model-studio/coding-plan',
+        services: [
+            {
+                name: 'Coding Plan Claude Code',
+                sourceType: 'claude-code',
+                apiUrl: 'https://coding.dashscope.aliyuncs.com/apps/anthropic',
+                models: 'qwen3-max-2026-01-23, qwen3-coder-plus',
+            },
+            {
+                name: 'Coding Plan Codex',
+                sourceType: 'openai-chat',
+                apiUrl: 'https://coding.dashscope.aliyuncs.com/v1',
+                models: 'qwen3-max-2026-01-23, qwen3-coder-plus',
+            },
+            {
+                name: '付费API兼容Codex',
+                sourceType: 'openai-responses',
+                apiUrl: 'https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1',
+                models: 'qwen3-max-2026-01-23, qwen3-coder-plus, kimi-k2.5, glm-4.7, MiniMax-M2.1',
+            },
+        ]
+    },
     aicodewith: {
         name: 'AICodeWith',
         description: '稳定的第三方中转 https://aicodewith.com/login?tab=register&invitation=QCA74W',
