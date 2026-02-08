@@ -550,7 +550,7 @@ function VendorsPage() {
 
         <div className="card" style={{ flex: 1 }}>
            <div className="toolbar">
-             <h3>供应商API服务{selectedVendor && ` - ${selectedVendor.name}`}</h3>
+             <h3>供应商{selectedVendor ? `(${selectedVendor.name})` : null}API服务</h3>
              {selectedVendor && (
                <button className="btn btn-primary" onClick={handleCreateService}>新增服务</button>
              )}
@@ -566,7 +566,7 @@ function VendorsPage() {
                   <th style={{ whiteSpace: 'nowrap' }}>服务名称</th>
                   <th>源类型</th>
                   <th>API地址</th>
-                  <th>模型列表</th>
+                  <th>模型</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -576,7 +576,7 @@ function VendorsPage() {
                     <td>{service.name}</td>
                     <td>{service.sourceType ? SOURCE_TYPE[service.sourceType] : '-'}</td>
                      <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={service.apiUrl}>{service.apiUrl}</td>
-                    <td>{service.supportedModels?.join(', ') || '*'}</td>
+                    <td>{service.supportedModels?.length ?? '*'} 个</td>
                     <td>
                       <div className="action-buttons">
                         <button className="btn btn-sm btn-secondary" onClick={() => handleEditService(service)}>编辑</button>
