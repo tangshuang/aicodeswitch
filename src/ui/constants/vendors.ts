@@ -17,6 +17,24 @@ type VendorConfig = {
 };
 
 export default {
+    minimax: {
+        name: 'Minimax',
+        description: '国内优秀的大模型 https://platform.minimaxi.com/subscribe/coding-plan?code=G6xKj7L4YN&source=link',
+        services: [
+            {
+                name: 'Coding Plan Claude Code',
+                sourceType: 'claude-code',
+                apiUrl: 'https://api.minimaxi.com/anthropic',
+                models: 'MiniMax-M2.1',
+            },
+            {
+                name: 'Coding Plan Codex',
+                sourceType: 'openai-chat',
+                apiUrl: 'https://api.minimaxi.com/v1',
+                models: 'codex-MiniMax-M2.1',
+            }
+        ]
+    },
     glm: {
         name: 'GLM',
         description: '国内优秀的大模型 https://www.bigmodel.cn/glm-coding?ic=5AH7ATEZSC',
@@ -41,18 +59,6 @@ export default {
                 name: 'Coding Plan Claude Code',
                 sourceType: 'claude-code',
                 apiUrl: 'https://api.kimi.com/coding',
-            }
-        ]
-    },
-    minimax: {
-        name: 'Minimax',
-        description: '国内优秀的大模型 https://platform.minimaxi.com/subscribe/coding-plan?code=G6xKj7L4YN&source=link',
-        services: [
-            {
-                name: 'Coding Plan Claude Code',
-                sourceType: 'claude-code',
-                apiUrl: 'https://api.minimaxi.com/anthropic',
-                models: 'MiniMax-M2.1',
             }
         ]
     },
