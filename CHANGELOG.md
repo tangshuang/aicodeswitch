@@ -3,7 +3,20 @@
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
 
-### 3.0.2 (2026-02-10)
+### 3.1.0 (2026-02-10)
+
+#### Breaking Changes
+* **数据库结构重构**：将供应商的 API 服务作为嵌套数组存储在 `vendors.json` 中，不再使用独立的 `services.json` 文件
+  * 从 SQLite 迁移时自动将 services 嵌入到 vendors 中
+  * 从旧的文件系统数据库迁移时自动将 services.json 合并到 vendors.json
+  * 导出功能更新版本为 `2.0.0`，同时兼容旧格式导入
+  * 前端代码适配新的数据结构，服务列表直接从供应商对象获取
+
+#### Features
+* 供应商删除时自动级联删除服务（无需手动维护关联）
+* 获取供应商时直接包含服务列表，减少二次查询
+* 数据导出/导入支持新旧两种格式自动检测
+* SQLite 迁移脚本更新，支持新的嵌套数据结构
 
 #### Fixes
 * **重要修复**：修复后端异步路由缺少 await 的问题，导致创建供应商/服务/路由/规则时返回空对象

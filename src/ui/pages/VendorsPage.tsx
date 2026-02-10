@@ -115,7 +115,7 @@ function TagInput({ value = [], onChange, placeholder, inputValue, onInputChange
 function VendorsPage() {
   const { confirm } = useConfirm();
   const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [services, setServices] = useState<APIService[]>([]);
+  // 移除独立的 services 状态，现在从 selectedVendor.services 获取
   const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null);
   const [showVendorModal, setShowVendorModal] = useState(false);
   const [showServiceModal, setShowServiceModal] = useState(false);
@@ -165,11 +165,7 @@ function VendorsPage() {
     loadVendors();
   }, []);
 
-  useEffect(() => {
-    if (selectedVendor) {
-      loadServices(selectedVendor.id);
-    }
-  }, [selectedVendor]);
+  // 移除 useEffect - 服务现在直接从 selectedVendor.services 获取
 
   // 同步模型列表和模型限制
   useEffect(() => {
@@ -199,10 +195,7 @@ function VendorsPage() {
     }
   };
 
-  const loadServices = async (vendorId: string) => {
-    const data = await api.getAPIServices(vendorId);
-    setServices(data);
-  };
+  // 移除 loadServices 函数 - 服务现在从 selectedVendor.services 获取
 
   const handleCreateVendor = () => {
     setEditingVendor(null);
@@ -313,8 +306,14 @@ function VendorsPage() {
 
     if (confirmed) {
       await api.deleteAPIService(id);
+      // 重新加载供应商（服务已自动包含）
+      await loadVendors();
       if (selectedVendor) {
-        loadServices(selectedVendor.id);
+        // 刷新选中供应商
+        const updatedVendor = vendors.find(v => v.id === selectedVendor.id);
+        if (updatedVendor) {
+          setSelectedVendor(updatedVendor);
+        }
       }
       toast.success('API服务已删除');
     }
@@ -385,8 +384,14 @@ function VendorsPage() {
     setRequestCountLimit(undefined);
     setRequestResetInterval(undefined);
     setRequestResetBaseTime(undefined);
+    // 重新加载供应商（服务已自动包含）
+    await loadVendors();
     if (selectedVendor) {
-      loadServices(selectedVendor.id);
+      // 刷新选中供应商
+      const updatedVendor = vendors.find(v => v.id === selectedVendor.id);
+      if (updatedVendor) {
+        setSelectedVendor(updatedVendor);
+      }
     }
   };
 
@@ -599,7 +604,7 @@ function VendorsPage() {
            </div>
           {!selectedVendor ? (
             <div className="empty-state"><p>请先选择一个供应商</p></div>
-          ) : services.length === 0 ? (
+          ) : !selectedVendor.services || selectedVendor.services.length === 0 ? (
             <div className="empty-state"><p>暂无API服务</p></div>
           ) : (
             <table style={{ fontSize: 'smaller' }}>
@@ -613,7 +618,7 @@ function VendorsPage() {
                 </tr>
               </thead>
               <tbody>
-                {services.map((service) => (
+                {selectedVendor.services.map((service) => (
                   <tr key={service.id}>
                     <td>{service.name}</td>
                     <td>{service.sourceType ? SOURCE_TYPE[service.sourceType] : '-'}</td>

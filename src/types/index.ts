@@ -4,6 +4,7 @@ export interface Vendor {
   name: string;
   description?: string;
   sortOrder?: number;
+  services: APIService[];  // 供应商的 API 服务列表
   createdAt: number;
   updatedAt: number;
 }
@@ -72,7 +73,7 @@ export enum AuthType {
 /** 供应商API服务 */
 export interface APIService {
   id: string;
-  vendorId: string;
+  vendorId?: string;  // 仅在 API 请求时使用，数据存储时不保存此字段
   name: string;
   apiUrl: string;
   apiKey: string;

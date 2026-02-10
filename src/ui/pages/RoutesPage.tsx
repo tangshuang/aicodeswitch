@@ -151,7 +151,7 @@ export default function RoutesPage() {
     }
     setSelectedService('');
     setSelectedModel('');
-  }, [selectedVendor, allServices]);
+  }, [selectedVendor]);  // 移除 allServices 依赖，避免无限循环
 
   const loadRoutes = async () => {
     const data = await api.getRoutes();
@@ -480,9 +480,11 @@ export default function RoutesPage() {
     setSelectedContentType(rule.contentType);
     const service = allServices.find(s => s.id === rule.targetServiceId);
     if (service) {
-      setSelectedVendor(service.vendorId);
-      // 直接设置当前供应商的服务列表，避免 useEffect 的异步延迟
-      setServices(allServices.filter(s => s.vendorId === service.vendorId));
+      if (service.vendorId) {
+        setSelectedVendor(service.vendorId);
+        // 直接设置当前供应商的服务列表，避免 useEffect 的异步延迟
+        setServices(allServices.filter(s => s.vendorId === service.vendorId));
+      }
       // 使用 setTimeout 确保状态更新完成后再设置 selectedService 和 selectedModel
       setTimeout(() => {
         setSelectedService(service.id);

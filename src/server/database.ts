@@ -437,14 +437,23 @@ export class DatabaseManager {
   // Vendor operations
   getVendors(): Vendor[] {
     const rows = this.db.prepare('SELECT * FROM vendors ORDER BY sort_order DESC, created_at DESC').all();
-    return rows.map((row: any) => ({
-      id: row.id,
-      name: row.name,
-      description: row.description,
-      sortOrder: row.sort_order,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
+    return rows.map((row: any) => {
+      const vendorId = row.id;
+      // 获取该供应商的所有服务
+      const services = this.getAPIServices(vendorId);
+      // 移除服务中的 vendorId 字段
+      const servicesWithoutVendorId = services.map(({ vendorId, ...service }) => service);
+
+      return {
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        sortOrder: row.sort_order,
+        services: servicesWithoutVendorId,  // 添加嵌套的 services 数组
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    });
   }
 
   createVendor(vendor: Omit<Vendor, 'id' | 'createdAt' | 'updatedAt'>): Vendor {
@@ -1469,7 +1478,7 @@ export class DatabaseManager {
       return {
         serviceId,
         serviceName: serviceInfo?.name || 'Unknown',
-        vendorName: serviceInfo ? vendorMap.get(serviceInfo.vendorId) || 'Unknown' : 'Unknown',
+        vendorName: serviceInfo && serviceInfo.vendorId ? (vendorMap.get(serviceInfo.vendorId) || 'Unknown') : 'Unknown',
         totalRequests: stats.requests,
         totalTokens: stats.tokens,
         avgResponseTime: stats.requests > 0 ? Math.round(stats.responseTime / stats.requests) : 0,

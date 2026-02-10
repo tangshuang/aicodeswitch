@@ -49,16 +49,37 @@ export async function migrateToFileSystem(dataPath: string): Promise<void> {
     console.log(`[Migration] Found ${routes.length} routes`);
     console.log(`[Migration] Found ${rules.length} rules`);
 
+    // 将 services 按 vendorId 分组并嵌入到 vendors 中
+    console.log('[Migration] Restructuring vendors with nested services...');
+    const servicesByVendor = new Map<string, any[]>();
+    for (const service of services) {
+      if (!service.vendorId) {
+        console.warn(`[Migration] Skipping service without vendorId: ${service.id}`);
+        continue;
+      }
+      if (!servicesByVendor.has(service.vendorId)) {
+        servicesByVendor.set(service.vendorId, []);
+      }
+      // 移除 vendorId 字段，因为现在通过父级关系隐式关联
+      const { vendorId, ...serviceWithoutVendorId } = service;
+      servicesByVendor.get(service.vendorId)!.push(serviceWithoutVendorId);
+    }
+
+    // 为每个 vendor 添加 services 数组
+    const vendorsWithServices = vendors.map((vendor: any) => ({
+      ...vendor,
+      services: servicesByVendor.get(vendor.id) || []
+    }));
+
+    console.log('[Migration] Restructuring completed');
+
     // 保存核心数据到新的文件系统格式
     console.log('[Migration] Saving core data to file system...');
     await fs.writeFile(
       path.join(dataPath, 'vendors.json'),
-      JSON.stringify(vendors, null, 2)
+      JSON.stringify(vendorsWithServices, null, 2)
     );
-    await fs.writeFile(
-      path.join(dataPath, 'services.json'),
-      JSON.stringify(services, null, 2)
-    );
+    // 不再保存独立的 services.json，已合并到 vendors.json 中
     await fs.writeFile(
       path.join(dataPath, 'routes.json'),
       JSON.stringify(routes, null, 2)
@@ -215,10 +236,9 @@ export async function verifyMigration(dataPath: string): Promise<{
   const warnings: string[] = [];
 
   try {
-    // 检查必需的文件
+    // 检查必需的文件（移除了 services.json，因为现在合并到 vendors.json 中）
     const requiredFiles = [
       'vendors.json',
-      'services.json',
       'routes.json',
       'rules.json',
       'config.json',
@@ -235,9 +255,26 @@ export async function verifyMigration(dataPath: string): Promise<{
         // 尝试解析 JSON
         const content = await fs.readFile(filePath, 'utf-8');
         JSON.parse(content);
+
+        // 特殊验证：确保 vendors.json 包含 services 数组
+        if (file === 'vendors.json') {
+          const vendors = JSON.parse(content);
+          for (const vendor of vendors) {
+            if (!Array.isArray(vendor.services)) {
+              errors.push(`Invalid vendors.json: vendor ${vendor.id} is missing services array`);
+            }
+          }
+        }
       } catch (error) {
         errors.push(`File ${file} is missing or invalid`);
       }
+    }
+
+    // 可选文件检查（services.json）
+    const oldServicesFile = path.join(dataPath, 'services.json');
+    const oldServicesExists = await fs.access(oldServicesFile).then(() => true).catch(() => false);
+    if (oldServicesExists) {
+      warnings.push('Old services.json file still exists (should have been migrated to vendors.json)');
     }
 
     return {

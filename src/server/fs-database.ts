@@ -32,7 +32,7 @@ interface LogShardIndex {
 export class FileSystemDatabaseManager {
   private dataPath: string;
   private vendors: Vendor[] = [];
-  private apiServices: APIService[] = [];
+  // 移除独立的 apiServices 存储，现在作为 vendor 的属性
   private routes: Route[] = [];
   private rules: Rule[] = [];
   private config: AppConfig | null = null;
@@ -113,8 +113,8 @@ export class FileSystemDatabaseManager {
 
   private async loadAllData() {
     await Promise.all([
-      this.loadVendors(),
-      this.loadServices(),
+      this.loadVendors(),  // loadVendors 内部会处理旧 services.json 的迁移
+      // 删除: this.loadServices(),
       this.loadRoutes(),
       this.loadRules(),
       this.loadConfig(),
@@ -133,24 +133,88 @@ export class FileSystemDatabaseManager {
     } catch {
       this.vendors = [];
     }
+
+    // 兼容性检查：如果存在旧的 services.json，自动迁移
+    await this.migrateServicesIfNeeded();
   }
 
-  private async saveVendors() {
-    await fs.writeFile(this.vendorsFile, JSON.stringify(this.vendors, null, 2));
-  }
+  /**
+   * 检测并迁移旧的 services.json 到新结构
+   * 旧格式：vendors.json 和 services.json 分离
+   * 新格式：vendors.json 包含嵌套的 services 数组
+   */
+  private async migrateServicesIfNeeded(): Promise<void> {
+    const oldServicesFile = this.servicesFile;
 
-  private async loadServices() {
     try {
-      const data = await fs.readFile(this.servicesFile, 'utf-8');
-      this.apiServices = JSON.parse(data);
-    } catch {
-      this.apiServices = [];
+      await fs.access(oldServicesFile);
+      console.log('[Database] 发现旧的 services.json 文件，开始迁移到新结构...');
+
+      // 读取旧服务数据
+      const servicesData = await fs.readFile(oldServicesFile, 'utf-8');
+      const oldServices: APIService[] = JSON.parse(servicesData);
+
+      console.log(`[Database] 准备迁移 ${oldServices.length} 个服务...`);
+
+      // 按 vendorId 分组
+      const servicesByVendor = new Map<string, APIService[]>();
+      for (const service of oldServices) {
+        if (!service.vendorId) {
+          console.warn(`[Database] 跳过没有 vendorId 的服务: ${service.id}`);
+          continue;
+        }
+        if (!servicesByVendor.has(service.vendorId)) {
+          servicesByVendor.set(service.vendorId, []);
+        }
+        // 移除 vendorId 字段，因为现在通过父级关系隐式关联
+        const { vendorId, ...serviceWithoutVendorId } = service;
+        servicesByVendor.get(service.vendorId)!.push(serviceWithoutVendorId as APIService);
+      }
+
+      // 合并到 vendors 数组
+      let migratedCount = 0;
+      for (const vendor of this.vendors) {
+        const services = servicesByVendor.get(vendor.id);
+        if (services) {
+          vendor.services = services;
+          migratedCount += services.length;
+        } else {
+          vendor.services = [];
+        }
+      }
+
+      // 保存新的 vendors.json
+      await this.saveVendors();
+
+      // 备份旧文件
+      const timestamp = Date.now();
+      const backupFile = path.join(this.dataPath, `services.json.backup.${timestamp}`);
+      await fs.rename(oldServicesFile, backupFile);
+
+      console.log(`[Database] 迁移完成：${migratedCount} 个服务已迁移`);
+      console.log(`[Database] 旧的 services.json 已备份到 ${backupFile}`);
+
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        // 旧文件不存在，这是正常的（新安装或已迁移）
+        return;
+      }
+      console.error('[Database] 迁移 services 时出错:', err);
     }
   }
 
-  private async saveServices() {
-    await fs.writeFile(this.servicesFile, JSON.stringify(this.apiServices, null, 2));
+  private async saveVendors() {
+    // 确保每个供应商都有 services 数组
+    const normalizedVendors = this.vendors.map(v => ({
+      ...v,
+      services: v.services || []
+    }));
+    await fs.writeFile(this.vendorsFile, JSON.stringify(normalizedVendors, null, 2));
   }
+
+  // loadServices 和 saveServices 已移除
+  // 服务现在作为供应商的属性存储在 vendors.json 中
+  // 迁移逻辑见 migrateServicesIfNeeded() 方法
 
   private async loadRoutes() {
     try {
@@ -497,11 +561,22 @@ export class FileSystemDatabaseManager {
     });
   }
 
+  // 新增：获取单个供应商（带服务）
+  getVendor(id: string): Vendor | undefined {
+    return this.vendors.find(v => v.id === id);
+  }
+
   async createVendor(vendor: Omit<Vendor, 'id' | 'createdAt' | 'updatedAt'>): Promise<Vendor> {
     console.log('[数据库] 创建供应商，输入数据:', JSON.stringify(vendor, null, 2));
     const id = crypto.randomUUID();
     const now = Date.now();
-    const newVendor: Vendor = { ...vendor, id, createdAt: now, updatedAt: now };
+    const newVendor: Vendor = {
+      ...vendor,
+      id,
+      services: vendor.services || [],  // 确保 services 字段存在
+      createdAt: now,
+      updatedAt: now
+    };
     console.log('[数据库] 创建供应商，返回数据:', JSON.stringify(newVendor, null, 2));
     this.vendors.push(newVendor);
     await this.saveVendors();
@@ -511,12 +586,13 @@ export class FileSystemDatabaseManager {
   async updateVendor(id: string, vendor: Partial<Vendor>): Promise<boolean> {
     const index = this.vendors.findIndex(v => v.id === id);
     if (index === -1) return false;
-    
+
     const now = Date.now();
     this.vendors[index] = {
       ...this.vendors[index],
       ...vendor,
       id,
+      services: vendor.services !== undefined ? vendor.services : this.vendors[index].services,
       updatedAt: now,
     };
     await this.saveVendors();
@@ -526,11 +602,16 @@ export class FileSystemDatabaseManager {
   async deleteVendor(id: string): Promise<boolean> {
     const index = this.vendors.findIndex(v => v.id === id);
     if (index === -1) return false;
-    
-    // 删除关联的服务
-    this.apiServices = this.apiServices.filter(s => s.vendorId !== id);
-    await this.saveServices();
-    
+
+    // 检查是否有服务被规则使用
+    const vendor = this.vendors[index];
+    const serviceIds = (vendor.services || []).map(s => s.id);
+    const rulesUsingServices = this.rules.filter(r => serviceIds.includes(r.targetServiceId));
+
+    if (rulesUsingServices.length > 0) {
+      throw new Error(`无法删除供应商：有 ${rulesUsingServices.length} 个规则正在使用该供应商的服务`);
+    }
+
     this.vendors.splice(index, 1);
     await this.saveVendors();
     return true;
@@ -538,54 +619,141 @@ export class FileSystemDatabaseManager {
 
   // API Service operations
   getAPIServices(vendorId?: string): APIService[] {
-    const services = vendorId
-      ? this.apiServices.filter(s => s.vendorId === vendorId)
-      : this.apiServices;
-    
-    return services.sort((a, b) => b.createdAt - a.createdAt);
+    if (vendorId) {
+      const vendor = this.vendors.find(v => v.id === vendorId);
+      if (!vendor) return [];
+
+      // 返回指定供应商的服务，并添加 vendorId
+      return (vendor.services || []).map(service => ({
+        ...service,
+        vendorId: vendor.id  // 添加 vendorId 以便前端使用
+      }));
+    }
+
+    // 返回所有供应商的所有服务（扁平化），并添加 vendorId
+    const allServices: APIService[] = [];
+    for (const vendor of this.vendors) {
+      if (vendor.services) {
+        const servicesWithVendorId = vendor.services.map(service => ({
+          ...service,
+          vendorId: vendor.id  // 添加 vendorId 以便前端使用
+        }));
+        allServices.push(...servicesWithVendorId);
+      }
+    }
+
+    return allServices.sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  // 新增：通过 ID 获取服务
+  getAPIService(id: string): APIService | undefined {
+    for (const vendor of this.vendors) {
+      const service = vendor.services?.find(s => s.id === id);
+      if (service) {
+        return service;
+      }
+    }
+    return undefined;
+  }
+
+  // 新增：获取服务所属的供应商
+  getVendorByServiceId(serviceId: string): Vendor | undefined {
+    for (const vendor of this.vendors) {
+      if (vendor.services?.some(s => s.id === serviceId)) {
+        return vendor;
+      }
+    }
+    return undefined;
   }
 
   async createAPIService(service: Omit<APIService, 'id' | 'createdAt' | 'updatedAt'>): Promise<APIService> {
     console.log('[数据库] 创建服务，输入数据:', JSON.stringify(service, null, 2));
+
+    // 从 vendorId 找到供应商
+    const vendorId = (service as any).vendorId;
+    if (!vendorId) {
+      throw new Error('创建服务时必须提供 vendorId');
+    }
+
+    const vendor = this.vendors.find(v => v.id === vendorId);
+    if (!vendor) {
+      throw new Error(`供应商不存在: ${vendorId}`);
+    }
+
+    // 移除 vendorId 字段（数据存储时不需要）
+    const { vendorId: _, ...serviceData } = service as any;
+
     const id = crypto.randomUUID();
     const now = Date.now();
-    const newService: APIService = { ...service, id, createdAt: now, updatedAt: now };
+    const newService: APIService = {
+      ...serviceData,
+      id,
+      createdAt: now,
+      updatedAt: now
+    };
+
     console.log('[数据库] 创建服务，最终数据:', JSON.stringify(newService, null, 2));
-    this.apiServices.push(newService);
-    await this.saveServices();
-    console.log('[数据库] 服务已保存，当前总数:', this.apiServices.length);
+
+    if (!vendor.services) {
+      vendor.services = [];
+    }
+    vendor.services.push(newService);
+
+    // 更新供应商的 updatedAt 时间
+    vendor.updatedAt = now;
+
+    await this.saveVendors();
+    console.log('[数据库] 服务已保存，当前总数:', vendor.services.length);
     return newService;
   }
 
   async updateAPIService(id: string, service: Partial<APIService>): Promise<boolean> {
-    const index = this.apiServices.findIndex(s => s.id === id);
+    // 查找服务所属的供应商
+    const vendor = this.getVendorByServiceId(id);
+    if (!vendor) return false;
+
+    const index = vendor.services!.findIndex(s => s.id === id);
     if (index === -1) return false;
-    
+
     const now = Date.now();
-    this.apiServices[index] = {
-      ...this.apiServices[index],
+    vendor.services![index] = {
+      ...vendor.services![index],
       ...service,
       id,
       updatedAt: now,
     };
-    await this.saveServices();
-    
+
+    // 更新供应商的 updatedAt 时间
+    vendor.updatedAt = now;
+
+    await this.saveVendors();
+
     // 同步规则的超量限制
     await this.syncRulesWithServiceLimits(id, service);
-    
+
     return true;
   }
 
   async deleteAPIService(id: string): Promise<boolean> {
-    const index = this.apiServices.findIndex(s => s.id === id);
+    // 查找服务所属的供应商
+    const vendor = this.getVendorByServiceId(id);
+    if (!vendor) return false;
+
+    const index = vendor.services!.findIndex(s => s.id === id);
     if (index === -1) return false;
-    
-    // 删除关联的规则
-    this.rules = this.rules.filter(r => r.targetServiceId !== id);
-    await this.saveRules();
-    
-    this.apiServices.splice(index, 1);
-    await this.saveServices();
+
+    // 检查是否有规则正在使用此服务
+    const rulesUsingService = this.rules.filter(r => r.targetServiceId === id);
+    if (rulesUsingService.length > 0) {
+      throw new Error(`无法删除服务：有 ${rulesUsingService.length} 个规则正在使用此服务`);
+    }
+
+    vendor.services!.splice(index, 1);
+
+    // 更新供应商的 updatedAt 时间
+    vendor.updatedAt = Date.now();
+
+    await this.saveVendors();
     return true;
   }
 
@@ -594,7 +762,7 @@ export class FileSystemDatabaseManager {
     if (relatedRules.length === 0) return;
 
     const now = Date.now();
-    const currentService = this.apiServices.find(s => s.id === serviceId);
+    const currentService = this.getAPIService(serviceId);
     if (!currentService) return;
 
     let updated = false;
@@ -1145,11 +1313,24 @@ export class FileSystemDatabaseManager {
 
   // Export/Import operations
   async exportData(password: string): Promise<string> {
+    // 扁平化所有服务（兼容旧格式）
+    const allServices: APIService[] = [];
+    for (const vendor of this.vendors) {
+      if (vendor.services) {
+        // 为每个服务添加 vendorId（兼容旧格式）
+        const servicesWithVendorId = vendor.services.map(s => ({
+          ...s,
+          vendorId: vendor.id
+        }));
+        allServices.push(...servicesWithVendorId);
+      }
+    }
+
     const exportData: ExportData = {
-      version: '1.0.0',
+      version: '2.0.0',  // 更新版本号
       exportDate: Date.now(),
       vendors: this.vendors,
-      apiServices: this.apiServices,
+      apiServices: allServices,  // 兼容旧格式
       routes: this.routes,
       rules: this.rules,
       config: this.config!,
@@ -1166,15 +1347,42 @@ export class FileSystemDatabaseManager {
       const jsonData = decrypted.toString(CryptoJS.enc.Utf8);
       const importData: ExportData = JSON.parse(jsonData);
 
-      this.vendors = importData.vendors;
-      this.apiServices = importData.apiServices;
+      // 检测数据版本
+      const isNewFormat = importData.vendors.some((v: any) => v.services);
+
+      if (isNewFormat || importData.version >= '2.0.0') {
+        // 新格式：直接使用 vendors（已包含 services）
+        this.vendors = importData.vendors;
+      } else {
+        // 旧格式：需要重建 services 关系
+        const { vendors, apiServices } = importData;
+
+        // 构建 vendorId -> services 映射
+        const servicesByVendor = new Map<string, APIService[]>();
+        for (const service of apiServices) {
+          if (!service.vendorId) continue;
+
+          if (!servicesByVendor.has(service.vendorId)) {
+            servicesByVendor.set(service.vendorId, []);
+          }
+          const { vendorId, ...serviceWithoutVendorId } = service;
+          servicesByVendor.get(service.vendorId)!.push(serviceWithoutVendorId as APIService);
+        }
+
+        // 合并到 vendors
+        this.vendors = vendors.map((vendor: any) => ({
+          ...vendor,
+          services: servicesByVendor.get(vendor.id) || []
+        }));
+      }
+
       this.routes = importData.routes;
       this.rules = importData.rules;
       this.config = importData.config;
 
       await Promise.all([
         this.saveVendors(),
-        this.saveServices(),
+        // 删除: this.saveServices(),
         this.saveRoutes(),
         this.saveRules(),
         this.saveConfig(),
