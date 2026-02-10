@@ -84,8 +84,6 @@ interface BackendAPI {
     };
   }>;
 
-  getStatistics: (days?: number) => Promise<Statistics>;
-
   // Sessions 相关
   getSessions: (limit?: number, offset?: number) => Promise<Session[]>;
   getSessionsCount: () => Promise<{ count: number }>;
@@ -251,8 +249,6 @@ export const api: BackendAPI = {
   // 新的详细配置状态 API
   getClaudeConfigStatus: () => requestJson(buildUrl('/api/config-status/claude')),
   getCodexConfigStatus: () => requestJson(buildUrl('/api/config-status/codex')),
-
-  getStatistics: (days) => requestJson(buildUrl('/api/statistics', days ? { days } : undefined)),
 
   // Sessions 相关
   getSessions: (limit, offset) => requestJson(buildUrl('/api/sessions', { limit, offset })),

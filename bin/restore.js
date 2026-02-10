@@ -5,6 +5,43 @@ const chalk = require('chalk');
 const boxen = require('boxen');
 const ora = require('ora');
 
+// 停用所有激活的路由（直接操作数据库文件）
+const deactivateAllRoutes = () => {
+  const appDir = path.join(os.homedir(), '.aicodeswitch');
+  const routesFilePath = path.join(appDir, 'data', 'routes.json');
+
+  // 如果数据文件不存在，说明没有路由需要停用
+  if (!fs.existsSync(routesFilePath)) {
+    return { success: true, deactivatedCount: 0, reason: 'no_data_file' };
+  }
+
+  try {
+    // 读取路由数据
+    const routesData = JSON.parse(fs.readFileSync(routesFilePath, 'utf-8'));
+
+    if (!Array.isArray(routesData)) {
+      return { success: false, error: 'Invalid routes data format' };
+    }
+
+    let deactivatedCount = 0;
+
+    // 将所有激活的路由设置为停用状态
+    routesData.forEach(route => {
+      if (route.isActive === true) {
+        route.isActive = false;
+        deactivatedCount++;
+      }
+    });
+
+    // 保存修改后的数据
+    fs.writeFileSync(routesFilePath, JSON.stringify(routesData, null, 2));
+
+    return { success: true, deactivatedCount };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+};
+
 // 恢复 Claude Code 配置
 const restoreClaudeConfig = () => {
   const results = {
@@ -216,6 +253,25 @@ const restore = async () => {
     const codexResults = restoreCodexConfig();
     spinner.succeed(chalk.green('Codex restore complete'));
     showRestoreResult('codex', codexResults);
+  }
+
+  // 停用所有激活的路由
+  console.log('');
+  const routesSpinner = ora({
+    text: chalk.yellow('Deactivating all active routes...'),
+    color: 'yellow'
+  }).start();
+
+  const routesResult = deactivateAllRoutes();
+
+  if (routesResult.success) {
+    if (routesResult.deactivatedCount > 0) {
+      routesSpinner.succeed(chalk.green(`Deactivated ${routesResult.deactivatedCount} active route(s)`));
+    } else {
+      routesSpinner.info(chalk.gray('No active routes to deactivate'));
+    }
+  } else {
+    routesSpinner.fail(chalk.red(`Failed to deactivate routes: ${routesResult.error}`));
   }
 
   console.log('');

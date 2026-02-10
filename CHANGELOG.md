@@ -4,9 +4,13 @@ All notable changes to this project will be documented in this file. See [standa
 
 ### 2.1.6 (2026-02-10)
 
+#### Features
+* 规则列表"类型"列添加图标（后台⚙、思考💭、长上下文📄、图像理解🖼、模型顶替🔄），默认类型不显示图标
+
 #### Fixes
 * 修复 main.ts 中数据库迁移功能的接入，改用 `DatabaseFactory.createAuto()` 自动检测并执行迁移
 * 改进 database-factory.ts 使用静态导入替代动态导入，确保迁移功能正常工作
+* restore 命令执行时同步停用所有激活的路由，直接修改数据库文件
 
 ### 2.1.5 (2026-02-08)
 
