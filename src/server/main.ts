@@ -1670,6 +1670,16 @@ ${instruction}
     res.type('text/plain').send(text);
   }));
 
+  app.get('/api/docs/upgrade', asyncHandler(async (_req, res) => {
+    const resp = await fetch('https://unpkg.com/aicodeswitch/docs/upgrade.md');
+    if (!resp.ok) {
+      res.status(500).send('');
+      return;
+    }
+    const text = await resp.text();
+    res.type('text/plain').send(text);
+  }));
+
   // 查找 migration.md 文件的路径
   const findMigrationPath = (): string | null => {
     // 可能的路径列表

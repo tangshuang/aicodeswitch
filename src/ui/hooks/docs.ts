@@ -1,5 +1,6 @@
 import recommendMd from '../assets/vendors-recommand.md?raw';
 import readMeMd from '../../../README.md?raw';
+import upgradeMd from '../assets/upgrade.md?raw';
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 
@@ -51,3 +52,4 @@ function createDocHookFunc(markdown: string, apiFunc: Function) {
 
 export const useRecomandVendors = createDocHookFunc(recommendMd, api.getRecommendVendorsMarkdown);
 export const useReadme = createDocHookFunc(readMeMd, api.getReadmeMarkdown);
+export const useUpgradeNotes = createDocHookFunc(upgradeMd, api.getUpgradeMarkdown);

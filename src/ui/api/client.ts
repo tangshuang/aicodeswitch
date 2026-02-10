@@ -94,6 +94,7 @@ interface BackendAPI {
 
   getRecommendVendorsMarkdown: () => Promise<string>;
   getReadmeMarkdown: () => Promise<string>;
+  getUpgradeMarkdown: () => Promise<string>;
 
   // Skills 管理相关
   getInstalledSkills: () => Promise<InstalledSkill[]>;
@@ -261,6 +262,8 @@ export const api: BackendAPI = {
   getRecommendVendorsMarkdown: () => requestJson(buildUrl('/api/docs/recommend-vendors')),
 
   getReadmeMarkdown: () => requestJson(buildUrl('/api/docs/readme')),
+
+  getUpgradeMarkdown: () => requestJson(buildUrl('/api/docs/upgrade')),
 
   // Skills 管理相关
   getInstalledSkills: () => requestJson(buildUrl('/api/skills/installed')),
