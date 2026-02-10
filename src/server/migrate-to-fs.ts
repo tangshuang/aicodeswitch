@@ -163,62 +163,10 @@ export async function migrateToFileSystem(dataPath: string): Promise<void> {
       console.log('[Migration] Warning: Could not close old database:', error instanceof Error ? error.message : error);
     }
 
-    // 备份旧数据库文件
-    console.log('[Migration] Backing up old database files...');
-    const backupPath = path.join(dataPath, 'backup');
-    await fs.mkdir(backupPath, { recursive: true });
-    
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    
-    // 备份 SQLite 数据库
-    try {
-      await fs.rename(
-        oldDbPath,
-        path.join(backupPath, `app.db.${timestamp}.backup`)
-      );
-      console.log('[Migration] SQLite database backed up');
-    } catch (error) {
-      console.log('[Migration] Warning: Could not backup SQLite database:', error instanceof Error ? error.message : error);
-    }
-
-    // 备份 leveldb 目录（Windows 上可能会失败，因为文件可能还在使用中）
-    const levelDbDirs = ['logs', 'error-logs', 'service-blacklist'];
-    for (const dir of levelDbDirs) {
-      const dirPath = path.join(dataPath, dir);
-      try {
-        const dirExists = await fs.access(dirPath).then(() => true).catch(() => false);
-        if (dirExists) {
-          // 在 Windows 上，尝试复制而不是移动
-          const backupDirPath = path.join(backupPath, `${dir}.${timestamp}.backup`);
-          try {
-            await fs.rename(dirPath, backupDirPath);
-            console.log(`[Migration] LevelDB directory '${dir}' backed up`);
-          } catch (renameError) {
-            // 如果重命名失败（Windows 权限问题），尝试复制
-            console.log(`[Migration] Rename failed for '${dir}', trying to copy...`);
-            try {
-              await fs.cp(dirPath, backupDirPath, { recursive: true });
-              console.log(`[Migration] LevelDB directory '${dir}' copied to backup`);
-              // 尝试删除原目录（可能失败，但不影响迁移）
-              try {
-                await fs.rm(dirPath, { recursive: true, force: true });
-                console.log(`[Migration] Original LevelDB directory '${dir}' removed`);
-              } catch (rmError) {
-                console.log(`[Migration] Warning: Could not remove original '${dir}' directory (will be ignored on next start)`);
-              }
-            } catch (copyError) {
-              console.log(`[Migration] Warning: Could not backup LevelDB directory '${dir}':`, copyError instanceof Error ? copyError.message : copyError);
-            }
-          }
-        }
-      } catch (error) {
-        console.log(`[Migration] Warning: Could not backup LevelDB directory '${dir}':`, error instanceof Error ? error.message : error);
-      }
-    }
-
-    console.log('[Migration] ✅ Migration completed successfully!');
-    console.log('[Migration] Old database files backed up to:', backupPath);
-    console.log('[Migration] You can safely delete the backup folder after verifying the migration');
+    // 保留原始数据库文件，不进行备份或重命名
+    // 这样如果迁移失败，用户可以使用老版本继续运行
+    console.log('[Migration] ✅ Migration data export completed successfully!');
+    console.log('[Migration] Original database files preserved for rollback');
   } catch (error) {
     console.error('[Migration] ❌ Migration failed:', error);
     console.error('[Migration] Stack trace:', (error as Error).stack);
@@ -290,13 +238,6 @@ export async function verifyMigration(dataPath: string): Promise<{
       } catch (error) {
         errors.push(`File ${file} is missing or invalid`);
       }
-    }
-
-    // 检查备份目录
-    const backupPath = path.join(dataPath, 'backup');
-    const backupExists = await fs.access(backupPath).then(() => true).catch(() => false);
-    if (!backupExists) {
-      warnings.push('Backup directory not found');
     }
 
     return {

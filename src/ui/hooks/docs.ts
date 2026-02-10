@@ -1,6 +1,6 @@
 import recommendMd from '../assets/vendors-recommand.md?raw';
 import readMeMd from '../../../README.md?raw';
-import upgradeMd from '../assets/upgrade.md?raw';
+import upgradeMd from '../../../UPGRADE.md?raw';
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 

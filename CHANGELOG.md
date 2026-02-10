@@ -12,6 +12,10 @@ All notable changes to this project will be documented in this file. See [standa
 * 改进 database-factory.ts 使用静态导入替代动态导入，确保迁移功能正常工作
 * restore 命令执行时同步停用所有激活的路由，直接修改数据库文件
 
+#### BREAKING CHANGES
+
+* 将基于sqlite和leveldb的数据库，迁移为json文件数据库，并且在升级版本后第一次启动时，自动迁移数据库文件
+
 ### 2.1.5 (2026-02-08)
 
 ### 2.1.4 (2026-02-07)

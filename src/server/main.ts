@@ -29,7 +29,7 @@ import { SKILLSMP_API_KEY } from './config';
 const appDir = path.join(os.homedir(), '.aicodeswitch');
 const dataDir = path.join(appDir, 'data');
 const dotenvPath = path.resolve(appDir, 'aicodeswitch.conf');
-const migrationHashFilePath = path.join(appDir, 'migration-hash');
+const upgradeHashFilePath = path.join(appDir, 'upgrade-hash');
 
 if (fs.existsSync(dotenvPath)) {
   dotenv.config({ path: dotenvPath });
@@ -1680,78 +1680,59 @@ ${instruction}
     res.type('text/plain').send(text);
   }));
 
-  // 查找 migration.md 文件的路径
-  const findMigrationPath = (): string | null => {
-    // 可能的路径列表
-    const possiblePaths = [
-      // 开发环境：src/server/main.ts -> public/migration.md
-      path.resolve(__dirname, '../../public/migration.md'),
-      // 生产环境：dist/server/main.js -> dist/ui/migration.md
-      path.resolve(__dirname, '../ui/migration.md'),
-    ];
-
-    for (const possiblePath of possiblePaths) {
-      if (fs.existsSync(possiblePath)) {
-        return possiblePath;
-      }
-    }
-
-    return null;
-  };
-
-  app.get('/api/migration', asyncHandler(async (_req, res) => {
+  app.get('/api/upgrade', asyncHandler(async (_req, res) => {
     try {
-      // 读取 migration.md 文件
-      const migrationPath = findMigrationPath();
-      if (!migrationPath) {
+      // 读取 upgrade.md 文件
+      const upgradePath = path.resolve(__dirname, '../../UPGRADE.md');
+      if (!upgradePath) {
         res.json({ shouldShow: false, content: '' });
         return;
       }
 
-      const content = fs.readFileSync(migrationPath, 'utf-8').trim();
+      const content = fs.readFileSync(upgradePath, 'utf-8').trim();
 
       // 计算当前内容的 hash
       const currentHash = createHash('sha256').update(content).digest('hex');
 
       // 如果 hash 文件不存在，说明是第一次安装
-      if (!fs.existsSync(migrationHashFilePath)) {
+      if (!fs.existsSync(upgradeHashFilePath)) {
         // 第一次安装，直接保存当前 hash，不显示弹窗
-        fs.writeFileSync(migrationHashFilePath, currentHash, 'utf-8');
+        fs.writeFileSync(upgradeHashFilePath, currentHash, 'utf-8');
         res.json({ shouldShow: false, content: '' });
         return;
       }
 
       // 读取已保存的 hash
-      const savedHash = fs.readFileSync(migrationHashFilePath, 'utf-8').trim();
+      const savedHash = fs.readFileSync(upgradeHashFilePath, 'utf-8').trim();
 
       // 如果 hash 不同，需要显示弹窗
       const shouldShow = savedHash !== currentHash;
 
       res.json({ shouldShow, content: shouldShow ? content : '' });
     } catch (error) {
-      console.error('Failed to read migration file:', error);
+      console.error('Failed to read upgrade file:', error);
       res.json({ shouldShow: false, content: '' });
     }
   }));
 
-  app.post('/api/migration/ack', asyncHandler(async (_req, res) => {
+  app.post('/api/upgrade/ack', asyncHandler(async (_req, res) => {
     try {
-      // 读取 migration.md 文件并计算 hash
-      const migrationPath = findMigrationPath();
-      if (!migrationPath) {
+      // 读取 upgrade.md 文件并计算 hash
+      const upgradePath = path.resolve(__dirname, '../../UPGRADE.md');
+      if (!upgradePath) {
         res.json({ success: false });
         return;
       }
 
-      const content = fs.readFileSync(migrationPath, 'utf-8').trim();
+      const content = fs.readFileSync(upgradePath, 'utf-8').trim();
       const hash = createHash('sha256').update(content).digest('hex');
 
       // 保存 hash 到文件
-      fs.writeFileSync(migrationHashFilePath, hash, 'utf-8');
+      fs.writeFileSync(upgradeHashFilePath, hash, 'utf-8');
 
       res.json({ success: true });
     } catch (error) {
-      console.error('Failed to acknowledge migration:', error);
+      console.error('Failed to acknowledge upgrade:', error);
       res.json({ success: false });
     }
   }));

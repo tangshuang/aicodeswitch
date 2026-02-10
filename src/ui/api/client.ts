@@ -106,9 +106,9 @@ interface BackendAPI {
   deleteSkill: (skillId: string) => Promise<{ success: boolean; error?: string }>;
   createLocalSkill: (data: { name: string; description: string; instruction: string; link?: string; targets: TargetType[] }) => Promise<SkillInstallResponse>;
 
-  // Migration 相关
-  getMigration: () => Promise<{ shouldShow: boolean; content: string }>;
-  acknowledgeMigration: () => Promise<{ success: boolean }>;
+  // Upgrade 相关
+  getUpgrade: () => Promise<{ shouldShow: boolean; content: string }>;
+  acknowledgeUpgrade: () => Promise<{ success: boolean }>;
 
   // 工具安装相关
   getToolsStatus: () => Promise<ToolInstallationStatus>;
@@ -299,9 +299,9 @@ export const api: BackendAPI = {
     body: JSON.stringify(data)
   }),
 
-  // Migration 相关
-  getMigration: () => requestJson(buildUrl('/api/migration')),
-  acknowledgeMigration: () => requestJson(buildUrl('/api/migration/ack'), { method: 'POST' }),
+  // Upgrade 相关
+  getUpgrade: () => requestJson(buildUrl('/api/upgrade')),
+  acknowledgeUpgrade: () => requestJson(buildUrl('/api/upgrade/ack'), { method: 'POST' }),
 
   // 工具安装相关
   getToolsStatus: () => requestJson<ToolInstallationStatus>(buildUrl('/api/tools/status')),

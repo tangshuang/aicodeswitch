@@ -41,10 +41,10 @@ function AppContent() {
   const [loginError, setLoginError] = useState('');
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
-  // Migration 相关状态
-  const [showMigrationModal, setShowMigrationModal] = useState(false);
-  const [migrationContent, setMigrationContent] = useState('');
-  const [hasCheckedMigration, setHasCheckedMigration] = useState(false);
+  // Upgrade 相关状态
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [upgradeContent, setUpgradeContent] = useState('');
+  const [hasCheckedUpgrade, setHasCheckedUpgrade] = useState(false);
 
   // 工具安装检测相关状态
   const [showToolsInstallModal, setShowToolsInstallModal] = useState(false);
@@ -125,25 +125,25 @@ function AppContent() {
     checkAuth();
   }, []);
 
-  // 检查 migration
+  // 检查 upgrade
   useEffect(() => {
-    const checkMigration = async () => {
-      if (hasCheckedMigration) return;
+    const checkUpgrade = async () => {
+      if (hasCheckedUpgrade) return;
 
       try {
-        const migration = await api.getMigration();
-        if (migration.shouldShow && migration.content) {
-          setMigrationContent(migration.content);
-          setShowMigrationModal(true);
+        const upgrade = await api.getUpgrade();
+        if (upgrade.shouldShow && upgrade.content) {
+          setUpgradeContent(upgrade.content);
+          setShowUpgradeModal(true);
         }
-        setHasCheckedMigration(true);
+        setHasCheckedUpgrade(true);
       } catch (error) {
-        console.error('Failed to check migration:', error);
+        console.error('Failed to check upgrade:', error);
       }
     };
 
-    checkMigration();
-  }, [hasCheckedMigration]);
+    checkUpgrade();
+  }, [hasCheckedUpgrade]);
 
   // 检查工具安装状态
   useEffect(() => {
@@ -217,13 +217,13 @@ function AppContent() {
     navigate('/vendors');
   };
 
-  const handleMigrationModalClose = async () => {
+  const handleUpgradeModalClose = async () => {
     try {
-      await api.acknowledgeMigration();
+      await api.acknowledgeUpgrade();
     } catch (error) {
-      console.error('Failed to acknowledge migration:', error);
+      console.error('Failed to acknowledge upgrade:', error);
     }
-    setShowMigrationModal(false);
+    setShowUpgradeModal(false);
   };
 
   const handleNotificationClose = () => {
@@ -504,7 +504,7 @@ function AppContent() {
         </div>
       )}
 
-      {showMigrationModal && (
+      {showUpgradeModal && (
         <div className="modal-overlay">
           <div className="modal" style={{ maxWidth: '800px', maxHeight: '80vh', overflow: 'auto' }}>
             <div className="modal-container">
@@ -513,11 +513,11 @@ function AppContent() {
               </div>
               <div className="modal-body">
                 <div className="markdown-content">
-                  <ReactMarkdown>{migrationContent}</ReactMarkdown>
+                  <ReactMarkdown>{upgradeContent}</ReactMarkdown>
                 </div>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-primary" onClick={handleMigrationModalClose}>我知道了</button>
+                <button type="button" className="btn btn-primary" onClick={handleUpgradeModalClose}>我知道了</button>
               </div>
             </div>
           </div>

@@ -49,14 +49,28 @@ export class DatabaseFactory {
    */
   static async createAuto(dataPath: string) {
     const fs = await import('fs/promises');
-    
+
+    // 检查迁移完成标记文件
+    const migrationMarkerPath = path.join(dataPath, '.migration-completed');
+    const hasMigrationMarker = await fs.access(migrationMarkerPath)
+      .then(() => true)
+      .catch(() => false);
+
     // 检查是否存在文件系统数据库
     const fsDbExists = await fs.access(path.join(dataPath, 'config.json'))
       .then(() => true)
       .catch(() => false);
 
+    // 如果存在迁移标记且文件系统数据库存在，使用文件系统数据库
+    if (hasMigrationMarker && fsDbExists) {
+      console.log('[Database] Migration marker found, using filesystem database');
+      return this.create(dataPath, 'filesystem');
+    }
+
+    // 如果不存在迁移标记但存在文件系统数据库，可能是用户手动删除了标记
+    // 这种情况下仍然使用文件系统数据库（避免数据丢失）
     if (fsDbExists) {
-      console.log('[Database] Using existing filesystem database');
+      console.log('[Database] Using existing filesystem database (no migration marker)');
       return this.create(dataPath, 'filesystem');
     }
 
@@ -80,6 +94,11 @@ export class DatabaseFactory {
           if (verification.warnings.length > 0) {
             console.log('[Database] Warnings:', verification.warnings);
           }
+
+          // 只有在验证成功后才创建标记文件
+          const migrationMarkerPath = path.join(dataPath, '.migration-completed');
+          await fs.writeFile(migrationMarkerPath, new Date().toISOString(), 'utf-8');
+          console.log('[Database] Migration marker file created:', migrationMarkerPath);
         } else {
           console.error('[Database] ❌ Migration verification failed');
           console.error('[Database] Errors:', verification.errors);
@@ -90,8 +109,8 @@ export class DatabaseFactory {
       } catch (error) {
         console.error('[Database] Migration failed:', error);
         console.log('[Database] Creating new filesystem database');
-        // 即使迁移失败，也创建新的文件系统数据库
-        // 用户可以手动恢复备份或重新配置
+        // 迁移失败时，原始数据库文件保持不变
+        // 用户可以使用老版本继续运行，或手动重新配置
       }
     } else {
       console.log('[Database] No existing database found, creating new filesystem database');
