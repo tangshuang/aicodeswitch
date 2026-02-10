@@ -394,48 +394,47 @@ function LogsPage() {
     }
   };
 
-  const handleClearLogs = async () => {
-    const logTypeMap = {
-      request: '请求日志',
-      access: '访问日志',
-      error: '错误日志',
-      sessions: '会话'
-    };
-
-    const logType = logTypeMap[activeTab];
-    const warningMessage = `确定要清空所有${logType}吗?\n\n⚠️ 警告:\n1. 此操作将永久删除所有${logType}记录\n2. 相关的统计数据也会被清空\n3. 此操作不可撤销\n\n是否继续?`;
+  const handleClearAllLogs = async () => {
+    const warningMessage = `确定要清空所有日志吗?\n\n⚠️ 警告:\n1. 此操作将永久删除所有请求日志、错误日志和会话记录\n2. 相关的统计数据也会被清空\n3. 此操作不可撤销\n\n是否继续?`;
 
     const confirmed = await confirm({
       message: warningMessage,
-      title: '确认清空',
+      title: '确认清空全部日志',
       type: 'danger',
       confirmText: '确认清空',
       cancelText: '取消'
     });
 
     if (confirmed) {
-      if (activeTab === 'request') {
-        await api.clearLogs();
+      try {
+        // 并发清空所有类型的日志
+        await Promise.all([
+          api.clearLogs(),
+          api.clearErrorLogs(),
+          api.clearSessions()
+        ]);
+
+        // 重置所有状态
         setRequestLogs([]);
         setSelectedRequestLog(null);
         setRequestLogsPage(1);
         setRequestLogsTotal(0);
-        toast.success('请求日志已清空');
-      } else if (activeTab === 'error') {
-        await api.clearErrorLogs();
+
         setErrorLogs([]);
         setSelectedErrorLog(null);
         setErrorLogsPage(1);
         setErrorLogsTotal(0);
-        toast.success('错误日志已清空');
-      } else if (activeTab === 'sessions') {
-        await api.clearSessions();
+
         setSessions([]);
         setSelectedSession(null);
         setSelectedSessionLogs([]);
         setSessionsPage(1);
         setSessionsTotal(0);
-        toast.success('会话已清空');
+
+        toast.success('所有日志已清空');
+      } catch (error) {
+        console.error('清空日志失败:', error);
+        toast.error('清空日志失败，请重试');
       }
     }
   };
@@ -694,8 +693,13 @@ function LogsPage() {
   return (
     <div className='logs-page'>
       <div className="page-header">
-        <h1>日志</h1>
-        <p>查看所有API请求日志</p>
+        <div className="page-header-content">
+          <div className="page-header-text">
+            <h1>日志</h1>
+            <p>查看所有API请求日志</p>
+          </div>
+          <button className="btn btn-danger" onClick={handleClearAllLogs}>清空全部日志</button>
+        </div>
       </div>
 
       <div className="card">
@@ -774,7 +778,6 @@ function LogsPage() {
               </label>
             </div>
             <button className="btn btn-primary" onClick={() => { loadLogs(); loadAllCounts(); setCountdown(10); }}>刷新</button>
-            <button className="btn btn-danger" onClick={handleClearLogs}>清空日志</button>
           </div>
         </div>
 

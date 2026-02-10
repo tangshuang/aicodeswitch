@@ -47,6 +47,9 @@ interface BackendAPI {
   clearErrorLogs: () => Promise<boolean>;
   getErrorLogsCount: () => Promise<{ count: number }>;
 
+  getStatistics: (days?: number) => Promise<Statistics>;
+  resetStatistics: () => Promise<boolean>;
+
   getConfig: () => Promise<AppConfig>;
   updateConfig: (config: AppConfig) => Promise<boolean>;
 
@@ -219,6 +222,9 @@ export const api: BackendAPI = {
 
   getLogsCount: () => requestJson<{ count: number }>(buildUrl('/api/logs/count')),
   getErrorLogsCount: () => requestJson<{ count: number }>(buildUrl('/api/error-logs/count')),
+
+  getStatistics: (days = 30) => requestJson(buildUrl('/api/statistics', { days })),
+  resetStatistics: () => requestJson(buildUrl('/api/statistics'), { method: 'DELETE' }),
 
   getConfig: () => requestJson(buildUrl('/api/config')),
   updateConfig: (config) => requestJson(buildUrl('/api/config'), { method: 'PUT', body: JSON.stringify(config) }),

@@ -142,7 +142,7 @@ export interface RequestLog {
   method: string;
   path: string;
   headers: Record<string, string>;
-  body?: string;
+  body?: any;                                      // 改为对象类型
   statusCode?: number;
   responseTime?: number;
   targetProvider?: string;
@@ -160,16 +160,13 @@ export interface RequestLog {
   requestModel?: string;                           // 请求模型名（从请求体中读取）
 
   responseHeaders?: Record<string, string>;        // 响应头
-  responseBody?: string;                           // 响应体(非stream)
+  responseBody?: any;                              // 响应体(非stream)，改为对象类型
   streamChunks?: string[];                         // stream chunks数组
   upstreamRequest?: {                              // 实际发送给后端的请求信息
     url: string;                                   // 实际请求的URL路径
-    // model: string;                                 // 实际请求的模型名
-    // max_tokens?: number;                           // 实际的 max_tokens 值
-    // max_completion_tokens?: number;                // 实际的 max_completion_tokens 值
     useProxy?: boolean;                            // 是否使用了代理
     headers?: Record<string, string>;              // 实际发送的请求头
-    body?: string;                                 // 实际发送的请求体
+    body?: any;                                    // 实际发送的请求体，改为对象类型
   };
 }
 

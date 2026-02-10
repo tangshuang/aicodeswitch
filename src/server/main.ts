@@ -5,7 +5,8 @@ import fs from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import { DatabaseManager } from './database';
+import { FileSystemDatabaseManager } from './fs-database';
+import { DatabaseMigration } from './database-migration';
 import { ProxyServer } from './proxy-server';
 import type { AppConfig, LoginRequest, LoginResponse, AuthStatus, InstalledSkill, SkillCatalogItem, SkillInstallRequest, SkillInstallResponse, TargetType } from '../types';
 import os from 'os';
@@ -83,7 +84,7 @@ const asyncHandler =
     Promise.resolve(handler(req, res, next)).catch(next);
   };
 
-const writeClaudeConfig = async (dbManager: DatabaseManager): Promise<boolean> => {
+const writeClaudeConfig = async (dbManager: FileSystemDatabaseManager): Promise<boolean> => {
   try {
     const homeDir = os.homedir();
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
@@ -182,7 +183,7 @@ const writeClaudeConfig = async (dbManager: DatabaseManager): Promise<boolean> =
   }
 };
 
-const writeCodexConfig = async (dbManager: DatabaseManager): Promise<boolean> => {
+const writeCodexConfig = async (dbManager: FileSystemDatabaseManager): Promise<boolean> => {
   try {
     const homeDir = os.homedir();
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
@@ -799,7 +800,7 @@ const listInstalledSkills = (): InstalledSkill[] => {
   return Array.from(result.values()).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
 };
 
-const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) => {
+const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: ProxyServer) => {
   updateProxyConfig(dbManager.getConfig());
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
@@ -901,7 +902,7 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
 
       // 步骤3：停用所有激活的路由
       console.log('[Deactivate All Routes] Deactivating all active routes...');
-      const deactivatedCount = dbManager.deactivateAllRoutes();
+      const deactivatedCount = await dbManager.deactivateAllRoutes();
 
       if (deactivatedCount > 0) {
         console.log(`[Deactivate All Routes] Deactivated ${deactivatedCount} route(s), reloading routes...`);
@@ -1033,6 +1034,14 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     '/api/error-logs',
     asyncHandler(async (_req, res) => {
       await dbManager.clearErrorLogs();
+      res.json(true);
+    })
+  );
+
+  app.delete(
+    '/api/statistics',
+    asyncHandler(async (_req, res) => {
+      await dbManager.resetStatistics();
       res.json(true);
     })
   );
@@ -1590,7 +1599,7 @@ ${instruction}
       const rawOffset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : NaN;
       const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
       const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
-      const sessions = dbManager.getSessions(limit, offset);
+      const sessions = await dbManager.getSessions(undefined, limit, offset);
       res.json(sessions);
     })
   );
@@ -1598,7 +1607,7 @@ ${instruction}
   app.get(
     '/api/sessions/count',
     asyncHandler(async (_req, res) => {
-      const count = dbManager.getSessionsCount();
+      const count = await dbManager.getSessionsCount();
       res.json({ count });
     })
   );
@@ -1755,9 +1764,32 @@ ${instruction}
 const start = async () => {
   fs.mkdirSync(dataDir, { recursive: true });
 
-  const dbManager = new DatabaseManager(dataDir);
-  // 必须先初始化数据库，否则会报错
+  // 检测并执行数据库迁移
+  const migration = new DatabaseMigration(dataDir);
+  const { needsMigration, source } = await migration.detectMigrationNeeded();
+
+  if (needsMigration && source) {
+    console.log(`[Server] Detected old ${source} database, starting migration...`);
+    try {
+      if (source === 'sqlite') {
+        await migration.migrateFromSQLite();
+      } else if (source === 'leveldb') {
+        await migration.migrateFromLevelDB();
+      }
+      console.log('[Server] Database migration completed successfully');
+    } catch (error) {
+      console.error('[Server] Database migration failed:', error);
+      console.error('[Server] Please check the error above and try again');
+      console.error('[Server] You can also use the manual migration tool: node bin/migrate-manual.js');
+      process.exit(1);
+    }
+  }
+
+  // 使用文件系统数据库
+  console.log('[Server] Initializing database...');
+  const dbManager = new FileSystemDatabaseManager(dataDir);
   await dbManager.initialize();
+  console.log('[Server] Database initialized successfully');
 
   const proxyServer = new ProxyServer(dbManager, app);
   // Initialize proxy server and register proxy routes last

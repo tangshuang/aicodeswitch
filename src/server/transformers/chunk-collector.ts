@@ -193,7 +193,8 @@ export class SSEEventCollectorTransform extends Transform {
       return;
     }
 
-    const raw = this.currentEvent.rawLines.join('\n');
+    // SSE格式要求事件以空行结束，所以添加一个空行
+    const raw = this.currentEvent.rawLines.join('\n') + '\n';
     const event: SSEEvent = {
       event: this.currentEvent.event,
       id: this.currentEvent.id,
