@@ -8,12 +8,21 @@ import { useRulesStatus } from '../hooks/useRulesStatus';
 
 const CONTENT_TYPE_OPTIONS = [
   { value: 'default', label: '默认' },
-  { value: 'background', label: '后台' },
-  { value: 'thinking', label: '思考' },
-  { value: 'long-context', label: '长上下文' },
-  { value: 'image-understanding', label: '图像理解' },
-  { value: 'model-mapping', label: '模型顶替' },
+  { value: 'background', label: '后台', icon: '⚙' },
+  { value: 'thinking', label: '思考', icon: '💭' },
+  { value: 'long-context', label: '长上下文', icon: '📄' },
+  { value: 'image-understanding', label: '图像理解', icon: '🖼' },
+  { value: 'model-mapping', label: '模型顶替', icon: '🔄' },
 ];
+
+// 类型到图标的映射
+const CONTENT_TYPE_ICONS: Record<string, string> = {
+  'background': '🧱',
+  'thinking': '💭',
+  'long-context': '📄',
+  'image-understanding': '🖼️',
+  'model-mapping': '🔄',
+};
 
 const TARGET_TYPE_OPTIONS = [
   { value: 'claude-code', label: 'Claude Code' },
@@ -776,7 +785,13 @@ export default function RoutesPage() {
                     <tr key={rule.id}>
                       <td>{rule.sortOrder || 0}</td>
                       <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <div style={{ fontSize: '12px', whiteSpace: 'nowrap' }}>
+                          {/* 为非默认类型添加图标 */}
+                          {rule.contentType !== 'default' && CONTENT_TYPE_ICONS[rule.contentType] && (
+                            <span style={{ fontSize: '14px' }}>
+                              {CONTENT_TYPE_ICONS[rule.contentType]}
+                            </span>
+                          )}
                           <span>{contentTypeLabel}</span>
                           {rule.contentType === 'model-mapping' && rule.replacedModel && (
                             <div

@@ -2,7 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import axios, { AxiosRequestConfig } from 'axios';
 import { pipeline } from 'stream';
 import crypto from 'crypto';
-import { DatabaseManager } from './database';
+import type { FileSystemDatabaseManager } from './fs-database';
 import {
   ClaudeToOpenAIChatEventTransform,
   OpenAIToClaudeEventTransform,
@@ -30,7 +30,7 @@ const SUPPORTED_TARGETS = ['claude-code', 'codex'];
 
 export class ProxyServer {
   private app: express.Application;
-  private dbManager: DatabaseManager;
+  private dbManager: FileSystemDatabaseManager;
   // 以下字段用于缓存备份（将来可能用于性能优化）
   // 实际使用时，所有配置都从数据库实时读取
   private routes?: Route[] = [];
@@ -42,7 +42,7 @@ export class ProxyServer {
   private requestDedupeCache = new Map<string, number>();
   private readonly DEDUPE_CACHE_TTL = 60000; // 去重缓存1分钟过期
 
-  constructor(dbManager: DatabaseManager, app: express.Application) {
+  constructor(dbManager: FileSystemDatabaseManager, app: express.Application) {
     this.dbManager = dbManager;
     this.config = dbManager.getConfig();
     this.app = app;
@@ -166,7 +166,7 @@ export class ProxyServer {
             method: req.method,
             path: req.path,
             headers: this.normalizeHeaders(req.headers),
-            body: req.body ? JSON.stringify(req.body) : undefined,
+            body: req.body,
             error: lastError?.message || 'All services failed',
           });
         }
@@ -215,7 +215,7 @@ export class ProxyServer {
             method: req.method,
             path: req.path,
             headers: this.normalizeHeaders(req.headers),
-            body: req.body ? JSON.stringify(req.body) : undefined,
+            body: req.body,
             error: error.message,
           });
         }
@@ -383,7 +383,7 @@ export class ProxyServer {
             method: req.method,
             path: req.path,
             headers: this.normalizeHeaders(req.headers),
-            body: req.body ? JSON.stringify(req.body) : undefined,
+            body: req.body,
             error: lastError?.message || 'All services failed',
           });
         }
@@ -429,7 +429,7 @@ export class ProxyServer {
             method: req.method,
             path: req.path,
             headers: this.normalizeHeaders(req.headers),
-            body: req.body ? JSON.stringify(req.body) : undefined,
+            body: req.body,
             error: error.message,
           });
         }
@@ -1398,6 +1398,7 @@ export class ProxyServer {
    * 提取会话标题（默认方法）
    * 对于新会话，尝试从第一条消息的内容中提取标题
    * 优化：使用第一条用户消息的完整内容，并智能截取
+   * 对于结构化内容（数组），从最后一个元素取值
    */
   private defaultExtractSessionTitle(request: Request, sessionId: string): string | undefined {
     const existingSession = this.dbManager.getSession(sessionId);
@@ -1417,11 +1418,18 @@ export class ProxyServer {
 
         if (typeof content === 'string') {
           rawText = content;
-        } else if (Array.isArray(content)) {
+        } else if (Array.isArray(content) && content.length > 0) {
           // 处理结构化内容（如图片+文本）
-          const textBlock = content.find((block: any) => block?.type === 'text');
-          if (textBlock?.text) {
-            rawText = textBlock.text;
+          // 从最后一个元素取值，通常最后的文本才是真正的用户输入
+          const lastBlock = content[content.length - 1];
+          if (lastBlock?.type === 'text' && lastBlock?.text) {
+            rawText = lastBlock.text;
+          } else {
+            // 如果最后一个不是 text 类型，尝试找到第一个 text 类型作为备用
+            const textBlock = content.find((block: any) => block?.type === 'text');
+            if (textBlock?.text) {
+              rawText = textBlock.text;
+            }
           }
         }
 
@@ -1548,7 +1556,7 @@ export class ProxyServer {
         method: req.method,
         path: req.path,
         headers: this.normalizeHeaders(req.headers),
-        body: req.body ? JSON.stringify(req.body) : undefined,
+        body: req.body,
         statusCode,
         responseTime: Date.now() - startTime,
         targetProvider: service.name,
@@ -1758,7 +1766,8 @@ export class ProxyServer {
           // 收集响应头
           responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
 
-          res.on('finish', () => {
+          // 监听事件收集器的完成事件，确保所有chunks都被收集
+          const finalizeChunks = () => {
             const usage = converter.getUsage();
             if (usage) {
               usageForLog = extractTokenUsageFromClaudeUsage(usage);
@@ -1771,8 +1780,26 @@ export class ProxyServer {
             }
             // 收集stream chunks（每个chunk是一个完整的SSE事件）
             streamChunksForLog = eventCollector.getChunks();
+            // 将所有 chunks 合并成完整的响应体用于日志记录
+            responseBodyForLog = streamChunksForLog.join('\n');
             console.log('[Proxy] Stream request finished, collected chunks:', streamChunksForLog?.length || 0);
+            console.log('[Proxy] Response body length:', responseBodyForLog?.length || 0);
             void finalizeLog(res.statusCode);
+          };
+
+          // 在pipeline完成且eventCollector flush后执行
+          eventCollector.on('finish', () => {
+            console.log('[Proxy] EventCollector finished, collecting chunks...');
+            finalizeChunks();
+          });
+
+          // 备用：如果eventCollector的finish没有触发，监听res的finish
+          res.on('finish', () => {
+            console.log('[Proxy] Response finished');
+            if (!streamChunksForLog) {
+              console.log('[Proxy] Chunks not collected yet, forcing collection...');
+              finalizeChunks();
+            }
           });
 
           // 监听 res 的错误事件
@@ -1850,7 +1877,8 @@ export class ProxyServer {
 
           responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
 
-          res.on('finish', () => {
+          // 监听事件收集器的完成事件，确保所有chunks都被收集
+          const finalizeChunks = () => {
             const usage = converter.getUsage();
             if (usage) {
               usageForLog = extractTokenUsageFromOpenAIUsage(usage);
@@ -1862,8 +1890,26 @@ export class ProxyServer {
               }
             }
             streamChunksForLog = eventCollector.getChunks();
+            // 将所有 chunks 合并成完整的响应体用于日志记录
+            responseBodyForLog = streamChunksForLog.join('\n');
             console.log('[Proxy] Codex stream request finished, collected chunks:', streamChunksForLog?.length || 0);
+            console.log('[Proxy] Response body length:', responseBodyForLog?.length || 0);
             void finalizeLog(res.statusCode);
+          };
+
+          // 在pipeline完成且eventCollector flush后执行
+          eventCollector.on('finish', () => {
+            console.log('[Proxy] EventCollector finished (codex), collecting chunks...');
+            finalizeChunks();
+          });
+
+          // 备用：如果eventCollector的finish没有触发，监听res的finish
+          res.on('finish', () => {
+            console.log('[Proxy] Response finished (codex)');
+            if (!streamChunksForLog) {
+              console.log('[Proxy] Chunks not collected yet, forcing collection...');
+              finalizeChunks();
+            }
           });
 
           // 监听 res 的错误事件
@@ -1926,27 +1972,49 @@ export class ProxyServer {
         }
 
         // 默认stream处理(无转换)
+        const parser = new SSEParserTransform();
         const eventCollector = new SSEEventCollectorTransform();
+        const serializer = new SSESerializerTransform();
         responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
 
         this.copyResponseHeaders(responseHeaders, res);
+
+        // 监听事件收集器的完成事件，确保所有chunks都被收集
+        const finalizeChunks = () => {
+          streamChunksForLog = eventCollector.getChunks();
+          // 将所有 chunks 合并成完整的响应体用于日志记录
+          responseBodyForLog = streamChunksForLog.join('\n');
+          // 尝试从event collector中提取usage信息
+          const extractedUsage = eventCollector.extractUsage();
+          if (extractedUsage) {
+            usageForLog = this.extractTokenUsage(extractedUsage);
+          }
+          console.log('[Proxy] Default stream request finished, collected chunks:', streamChunksForLog?.length || 0);
+          console.log('[Proxy] Response body length:', responseBodyForLog?.length || 0);
+          void finalizeLog(res.statusCode);
+        };
+
+        // 在pipeline完成且eventCollector flush后执行
+        eventCollector.on('finish', () => {
+          console.log('[Proxy] EventCollector finished (default stream), collecting chunks...');
+          finalizeChunks();
+        });
+
+        // 备用：如果eventCollector的finish没有触发，监听res的finish
+        res.on('finish', () => {
+          console.log('[Proxy] Response finished (default stream)');
+          if (!streamChunksForLog) {
+            console.log('[Proxy] Chunks not collected yet, forcing collection...');
+            finalizeChunks();
+          }
+        });
 
         // 监听 res 的错误事件
         res.on('error', (err) => {
           console.error('[Proxy] Response stream error:', err);
         });
 
-        res.on('finish', () => {
-          streamChunksForLog = eventCollector.getChunks();
-          // 尝试从event collector中提取usage信息
-          const extractedUsage = eventCollector.extractUsage();
-          if (extractedUsage) {
-            usageForLog = this.extractTokenUsage(extractedUsage);
-          }
-          void finalizeLog(res.statusCode);
-        });
-
-        pipeline(response.data, eventCollector, res, async (error) => {
+        pipeline(response.data, parser, eventCollector, serializer, res, async (error) => {
           if (error) {
             console.error('[Proxy] Pipeline error (default stream):', error);
 

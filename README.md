@@ -10,10 +10,6 @@ AI Code Switch 是帮助你在本地管理 AI 编程工具接入大模型的工�
 - 视频演示：[https://www.bilibili.com/video/BV1uEznBuEJd/](https://www.bilibili.com/video/BV1uEznBuEJd/?from=github)
 - 1分钟让Claude Code接入GLM国产模型：[https://www.bilibili.com/video/BV1a865B8ErA/](https://www.bilibili.com/video/BV1a865B8ErA/)
 
-## 桌面版
-
-桌面端应用下载：[https://github.com/tangshuang/aicodeswitch/releases](https://github.com/tangshuang/aicodeswitch/releases)
-
 ## 命令行工具
 
 ### 安装
@@ -21,6 +17,8 @@ AI Code Switch 是帮助你在本地管理 AI 编程工具接入大模型的工�
 ```
 npm install -g aicodeswitch
 ```
+
+**注意：**由于工具依赖sqlite和leveldb作为数据存储，在安装过程中，会执行这两个数据库的编译，如果你是在windows电脑上安装，你需要安装 visual studio 2017 以上版本，才能正常编译数据库，macos 和 linux 系统中一般都自带了编译工具，因此大部分情况下都能正确编译。
 
 ### 使用方法
 

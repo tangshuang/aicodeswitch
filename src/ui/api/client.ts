@@ -47,6 +47,9 @@ interface BackendAPI {
   clearErrorLogs: () => Promise<boolean>;
   getErrorLogsCount: () => Promise<{ count: number }>;
 
+  getStatistics: (days?: number) => Promise<Statistics>;
+  resetStatistics: () => Promise<boolean>;
+
   getConfig: () => Promise<AppConfig>;
   updateConfig: (config: AppConfig) => Promise<boolean>;
 
@@ -81,8 +84,6 @@ interface BackendAPI {
     };
   }>;
 
-  getStatistics: (days?: number) => Promise<Statistics>;
-
   // Sessions 相关
   getSessions: (limit?: number, offset?: number) => Promise<Session[]>;
   getSessionsCount: () => Promise<{ count: number }>;
@@ -93,6 +94,7 @@ interface BackendAPI {
 
   getRecommendVendorsMarkdown: () => Promise<string>;
   getReadmeMarkdown: () => Promise<string>;
+  getUpgradeMarkdown: () => Promise<string>;
 
   // Skills 管理相关
   getInstalledSkills: () => Promise<InstalledSkill[]>;
@@ -104,9 +106,9 @@ interface BackendAPI {
   deleteSkill: (skillId: string) => Promise<{ success: boolean; error?: string }>;
   createLocalSkill: (data: { name: string; description: string; instruction: string; link?: string; targets: TargetType[] }) => Promise<SkillInstallResponse>;
 
-  // Migration 相关
-  getMigration: () => Promise<{ shouldShow: boolean; content: string }>;
-  acknowledgeMigration: () => Promise<{ success: boolean }>;
+  // Upgrade 相关
+  getUpgrade: () => Promise<{ shouldShow: boolean; content: string }>;
+  acknowledgeUpgrade: () => Promise<{ success: boolean }>;
 
   // 工具安装相关
   getToolsStatus: () => Promise<ToolInstallationStatus>;
@@ -220,6 +222,9 @@ export const api: BackendAPI = {
   getLogsCount: () => requestJson<{ count: number }>(buildUrl('/api/logs/count')),
   getErrorLogsCount: () => requestJson<{ count: number }>(buildUrl('/api/error-logs/count')),
 
+  getStatistics: (days = 30) => requestJson(buildUrl('/api/statistics', { days })),
+  resetStatistics: () => requestJson(buildUrl('/api/statistics'), { method: 'DELETE' }),
+
   getConfig: () => requestJson(buildUrl('/api/config')),
   updateConfig: (config) => requestJson(buildUrl('/api/config'), { method: 'PUT', body: JSON.stringify(config) }),
 
@@ -246,8 +251,6 @@ export const api: BackendAPI = {
   getClaudeConfigStatus: () => requestJson(buildUrl('/api/config-status/claude')),
   getCodexConfigStatus: () => requestJson(buildUrl('/api/config-status/codex')),
 
-  getStatistics: (days) => requestJson(buildUrl('/api/statistics', days ? { days } : undefined)),
-
   // Sessions 相关
   getSessions: (limit, offset) => requestJson(buildUrl('/api/sessions', { limit, offset })),
   getSessionsCount: () => requestJson<{ count: number }>(buildUrl('/api/sessions/count')),
@@ -259,6 +262,8 @@ export const api: BackendAPI = {
   getRecommendVendorsMarkdown: () => requestJson(buildUrl('/api/docs/recommend-vendors')),
 
   getReadmeMarkdown: () => requestJson(buildUrl('/api/docs/readme')),
+
+  getUpgradeMarkdown: () => requestJson(buildUrl('/api/docs/upgrade')),
 
   // Skills 管理相关
   getInstalledSkills: () => requestJson(buildUrl('/api/skills/installed')),
@@ -294,9 +299,9 @@ export const api: BackendAPI = {
     body: JSON.stringify(data)
   }),
 
-  // Migration 相关
-  getMigration: () => requestJson(buildUrl('/api/migration')),
-  acknowledgeMigration: () => requestJson(buildUrl('/api/migration/ack'), { method: 'POST' }),
+  // Upgrade 相关
+  getUpgrade: () => requestJson(buildUrl('/api/upgrade')),
+  acknowledgeUpgrade: () => requestJson(buildUrl('/api/upgrade/ack'), { method: 'POST' }),
 
   // 工具安装相关
   getToolsStatus: () => requestJson<ToolInstallationStatus>(buildUrl('/api/tools/status')),

@@ -5,8 +5,9 @@ import fs from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import { DatabaseManager } from './database';
+import { DatabaseFactory } from './database-factory';
 import { ProxyServer } from './proxy-server';
+import type { FileSystemDatabaseManager } from './fs-database';
 import type { AppConfig, LoginRequest, LoginResponse, AuthStatus, InstalledSkill, SkillCatalogItem, SkillInstallRequest, SkillInstallResponse, TargetType } from '../types';
 import os from 'os';
 import { isAuthEnabled, verifyAuthCode, generateToken, authMiddleware } from './auth';
@@ -28,7 +29,7 @@ import { SKILLSMP_API_KEY } from './config';
 const appDir = path.join(os.homedir(), '.aicodeswitch');
 const dataDir = path.join(appDir, 'data');
 const dotenvPath = path.resolve(appDir, 'aicodeswitch.conf');
-const migrationHashFilePath = path.join(appDir, 'migration-hash');
+const upgradeHashFilePath = path.join(appDir, 'upgrade-hash');
 
 if (fs.existsSync(dotenvPath)) {
   dotenv.config({ path: dotenvPath });
@@ -83,7 +84,7 @@ const asyncHandler =
     Promise.resolve(handler(req, res, next)).catch(next);
   };
 
-const writeClaudeConfig = async (dbManager: DatabaseManager): Promise<boolean> => {
+const writeClaudeConfig = async (dbManager: FileSystemDatabaseManager): Promise<boolean> => {
   try {
     const homeDir = os.homedir();
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
@@ -182,7 +183,7 @@ const writeClaudeConfig = async (dbManager: DatabaseManager): Promise<boolean> =
   }
 };
 
-const writeCodexConfig = async (dbManager: DatabaseManager): Promise<boolean> => {
+const writeCodexConfig = async (dbManager: FileSystemDatabaseManager): Promise<boolean> => {
   try {
     const homeDir = os.homedir();
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
@@ -799,7 +800,7 @@ const listInstalledSkills = (): InstalledSkill[] => {
   return Array.from(result.values()).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
 };
 
-const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) => {
+const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: ProxyServer) => {
   updateProxyConfig(dbManager.getConfig());
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
@@ -856,7 +857,7 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
   app.post(
     '/api/routes/:id/activate',
     asyncHandler(async (req, res) => {
-      const result = dbManager.activateRoute(req.params.id);
+      const result = await dbManager.activateRoute(req.params.id);
       if (result) {
         await proxyServer.reloadRoutes();
       }
@@ -867,7 +868,7 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
   app.post(
     '/api/routes/:id/deactivate',
     asyncHandler(async (req, res) => {
-      const result = dbManager.deactivateRoute(req.params.id);
+      const result = await dbManager.deactivateRoute(req.params.id);
       if (result) {
         await proxyServer.reloadRoutes();
       }
@@ -901,7 +902,7 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
 
       // 步骤3：停用所有激活的路由
       console.log('[Deactivate All Routes] Deactivating all active routes...');
-      const deactivatedCount = dbManager.deactivateAllRoutes();
+      const deactivatedCount = await dbManager.deactivateAllRoutes();
 
       if (deactivatedCount > 0) {
         console.log(`[Deactivate All Routes] Deactivated ${deactivatedCount} route(s), reloading routes...`);
@@ -1037,6 +1038,14 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     })
   );
 
+  app.delete(
+    '/api/statistics',
+    asyncHandler(async (_req, res) => {
+      await dbManager.resetStatistics();
+      res.json(true);
+    })
+  );
+
   app.get(
     '/api/logs/count',
     asyncHandler(async (_req, res) => {
@@ -1058,7 +1067,7 @@ const registerRoutes = (dbManager: DatabaseManager, proxyServer: ProxyServer) =>
     '/api/config',
     asyncHandler(async (req, res) => {
       const config = req.body as AppConfig;
-      const result = dbManager.updateConfig(config);
+      const result = await dbManager.updateConfig(config);
       if (result) {
         await proxyServer.updateConfig(config);
         updateProxyConfig(config);
@@ -1590,7 +1599,7 @@ ${instruction}
       const rawOffset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : NaN;
       const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
       const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
-      const sessions = dbManager.getSessions(limit, offset);
+      const sessions = await dbManager.getSessions(undefined, limit, offset);
       res.json(sessions);
     })
   );
@@ -1598,7 +1607,7 @@ ${instruction}
   app.get(
     '/api/sessions/count',
     asyncHandler(async (_req, res) => {
-      const count = dbManager.getSessionsCount();
+      const count = await dbManager.getSessionsCount();
       res.json({ count });
     })
   );
@@ -1661,78 +1670,69 @@ ${instruction}
     res.type('text/plain').send(text);
   }));
 
-  // 查找 migration.md 文件的路径
-  const findMigrationPath = (): string | null => {
-    // 可能的路径列表
-    const possiblePaths = [
-      // 开发环境：src/server/main.ts -> public/migration.md
-      path.resolve(__dirname, '../../public/migration.md'),
-      // 生产环境：dist/server/main.js -> dist/ui/migration.md
-      path.resolve(__dirname, '../ui/migration.md'),
-    ];
-
-    for (const possiblePath of possiblePaths) {
-      if (fs.existsSync(possiblePath)) {
-        return possiblePath;
-      }
+  app.get('/api/docs/upgrade', asyncHandler(async (_req, res) => {
+    const resp = await fetch('https://unpkg.com/aicodeswitch/docs/upgrade.md');
+    if (!resp.ok) {
+      res.status(500).send('');
+      return;
     }
+    const text = await resp.text();
+    res.type('text/plain').send(text);
+  }));
 
-    return null;
-  };
-
-  app.get('/api/migration', asyncHandler(async (_req, res) => {
+  app.get('/api/upgrade', asyncHandler(async (_req, res) => {
     try {
-      // 读取 migration.md 文件
-      const migrationPath = findMigrationPath();
-      if (!migrationPath) {
+      // 读取 upgrade.md 文件
+      const upgradePath = path.resolve(__dirname, '../../UPGRADE.md');
+      if (!upgradePath) {
         res.json({ shouldShow: false, content: '' });
         return;
       }
 
-      const content = fs.readFileSync(migrationPath, 'utf-8').trim();
+      const content = fs.readFileSync(upgradePath, 'utf-8').trim();
 
       // 计算当前内容的 hash
       const currentHash = createHash('sha256').update(content).digest('hex');
 
       // 如果 hash 文件不存在，说明是第一次安装
-      if (!fs.existsSync(migrationHashFilePath)) {
+      if (!fs.existsSync(upgradeHashFilePath)) {
         // 第一次安装，直接保存当前 hash，不显示弹窗
-        fs.writeFileSync(migrationHashFilePath, currentHash, 'utf-8');
+        fs.writeFileSync(upgradeHashFilePath, currentHash, 'utf-8');
         res.json({ shouldShow: false, content: '' });
         return;
       }
 
       // 读取已保存的 hash
-      const savedHash = fs.readFileSync(migrationHashFilePath, 'utf-8').trim();
+      const savedHash = fs.readFileSync(upgradeHashFilePath, 'utf-8').trim();
 
       // 如果 hash 不同，需要显示弹窗
       const shouldShow = savedHash !== currentHash;
 
       res.json({ shouldShow, content: shouldShow ? content : '' });
     } catch (error) {
-      console.error('Failed to read migration file:', error);
+      console.error('Failed to read upgrade file:', error);
       res.json({ shouldShow: false, content: '' });
     }
   }));
 
-  app.post('/api/migration/ack', asyncHandler(async (_req, res) => {
+  app.post('/api/upgrade/ack', asyncHandler(async (_req, res) => {
     try {
-      // 读取 migration.md 文件并计算 hash
-      const migrationPath = findMigrationPath();
-      if (!migrationPath) {
+      // 读取 upgrade.md 文件并计算 hash
+      const upgradePath = path.resolve(__dirname, '../../UPGRADE.md');
+      if (!upgradePath) {
         res.json({ success: false });
         return;
       }
 
-      const content = fs.readFileSync(migrationPath, 'utf-8').trim();
+      const content = fs.readFileSync(upgradePath, 'utf-8').trim();
       const hash = createHash('sha256').update(content).digest('hex');
 
       // 保存 hash 到文件
-      fs.writeFileSync(migrationHashFilePath, hash, 'utf-8');
+      fs.writeFileSync(upgradeHashFilePath, hash, 'utf-8');
 
       res.json({ success: true });
     } catch (error) {
-      console.error('Failed to acknowledge migration:', error);
+      console.error('Failed to acknowledge upgrade:', error);
       res.json({ success: false });
     }
   }));
@@ -1755,9 +1755,10 @@ ${instruction}
 const start = async () => {
   fs.mkdirSync(dataDir, { recursive: true });
 
-  const dbManager = new DatabaseManager(dataDir);
-  // 必须先初始化数据库，否则会报错
-  await dbManager.initialize();
+  // 自动检测数据库类型并执行迁移（如果需要）
+  console.log('[Server] Initializing database...');
+  const dbManager = await DatabaseFactory.createAuto(dataDir) as FileSystemDatabaseManager;
+  console.log('[Server] Database initialized successfully');
 
   const proxyServer = new ProxyServer(dbManager, app);
   // Initialize proxy server and register proxy routes last

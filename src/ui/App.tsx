@@ -18,6 +18,7 @@ import NavItemWithTooltip from './components/Tooltip';
 import type { ToolInstallationStatus } from '../types';
 import './styles/App.css';
 import logoImage from './assets/logo.png';
+import { useUpgradeNotes } from './hooks/docs';
 
 function AppContent() {
   const navigate = useNavigate();
@@ -30,6 +31,8 @@ function AppContent() {
   const [hasUpdate, setHasUpdate] = useState(false);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [currentVersion, setCurrentVersion] = useState<string | null>(null);
+  const [showVersionModal, setShowVersionModal] = useState(false);
+  const upgradeNotes = useUpgradeNotes();
 
   // 鉴权相关状态
   const [authEnabled, setAuthEnabled] = useState(false);
@@ -38,10 +41,10 @@ function AppContent() {
   const [loginError, setLoginError] = useState('');
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
-  // Migration 相关状态
-  const [showMigrationModal, setShowMigrationModal] = useState(false);
-  const [migrationContent, setMigrationContent] = useState('');
-  const [hasCheckedMigration, setHasCheckedMigration] = useState(false);
+  // Upgrade 相关状态
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [upgradeContent, setUpgradeContent] = useState('');
+  const [hasCheckedUpgrade, setHasCheckedUpgrade] = useState(false);
 
   // 工具安装检测相关状态
   const [showToolsInstallModal, setShowToolsInstallModal] = useState(false);
@@ -122,25 +125,25 @@ function AppContent() {
     checkAuth();
   }, []);
 
-  // 检查 migration
+  // 检查 upgrade
   useEffect(() => {
-    const checkMigration = async () => {
-      if (hasCheckedMigration) return;
+    const checkUpgrade = async () => {
+      if (hasCheckedUpgrade) return;
 
       try {
-        const migration = await api.getMigration();
-        if (migration.shouldShow && migration.content) {
-          setMigrationContent(migration.content);
-          setShowMigrationModal(true);
+        const upgrade = await api.getUpgrade();
+        if (upgrade.shouldShow && upgrade.content) {
+          setUpgradeContent(upgrade.content);
+          setShowUpgradeModal(true);
         }
-        setHasCheckedMigration(true);
+        setHasCheckedUpgrade(true);
       } catch (error) {
-        console.error('Failed to check migration:', error);
+        console.error('Failed to check upgrade:', error);
       }
     };
 
-    checkMigration();
-  }, [hasCheckedMigration]);
+    checkUpgrade();
+  }, [hasCheckedUpgrade]);
 
   // 检查工具安装状态
   useEffect(() => {
@@ -214,13 +217,13 @@ function AppContent() {
     navigate('/vendors');
   };
 
-  const handleMigrationModalClose = async () => {
+  const handleUpgradeModalClose = async () => {
     try {
-      await api.acknowledgeMigration();
+      await api.acknowledgeUpgrade();
     } catch (error) {
-      console.error('Failed to acknowledge migration:', error);
+      console.error('Failed to acknowledge upgrade:', error);
     }
-    setShowMigrationModal(false);
+    setShowUpgradeModal(false);
   };
 
   const handleNotificationClose = () => {
@@ -435,33 +438,15 @@ function AppContent() {
             </svg>
           </a>
           {currentVersion && (
-            <div className="version-info-wrapper">
+            <div
+              className={`version-info-wrapper ${hasUpdate ? 'has-update' : ''}`}
+              onClick={() => setShowVersionModal(true)}
+              style={{ cursor: 'pointer' }}
+            >
               <div className="version-info">
                 v{currentVersion}
                 {hasUpdate && <span className="version-badge"></span>}
               </div>
-              {hasUpdate && (
-                <a
-                  href="https://npmjs.com/package/aicodeswitch"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="version-update-popup"
-                >
-                  <div className="update-popup-content">
-                    <span className="update-icon">⬆️</span>
-                    <div className="update-text">
-                      <div className="update-title">新版本可用</div>
-                      <div className="update-versions">
-                        {currentVersion} → {latestVersion}
-                      </div>
-                      <div className="update-message">
-                        命令行执行如下更新到最新版本<br />
-                        <code>npm i -g aicodeswitch</code>
-                      </div>
-                    </div>
-                  </div>
-                </a>
-              )}
             </div>
           )}
           <button
@@ -519,7 +504,7 @@ function AppContent() {
         </div>
       )}
 
-      {showMigrationModal && (
+      {showUpgradeModal && (
         <div className="modal-overlay">
           <div className="modal" style={{ maxWidth: '800px', maxHeight: '80vh', overflow: 'auto' }}>
             <div className="modal-container">
@@ -528,11 +513,11 @@ function AppContent() {
               </div>
               <div className="modal-body">
                 <div className="markdown-content">
-                  <ReactMarkdown>{migrationContent}</ReactMarkdown>
+                  <ReactMarkdown>{upgradeContent}</ReactMarkdown>
                 </div>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-primary" onClick={handleMigrationModalClose}>我知道了</button>
+                <button type="button" className="btn btn-primary" onClick={handleUpgradeModalClose}>我知道了</button>
               </div>
             </div>
           </div>
@@ -557,6 +542,102 @@ function AppContent() {
           onClose={handleToolsInstallModalClose}
           onInstallComplete={handleToolsInstallComplete}
         />
+      )}
+
+      {showVersionModal && (
+        <div className="modal-overlay">
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={() => setShowVersionModal(false)}
+            aria-label="关闭"
+          >
+            ×
+          </button>
+          <div className="modal" style={{ maxWidth: '700px', maxHeight: '80vh', overflow: 'auto' }}>
+            <div className="modal-container">
+              <div className="modal-header">
+                <h2>📦 版本信息</h2>
+              </div>
+              <div style={{ padding: '20px 0' }}>
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '16px',
+                  backgroundColor: 'var(--bg-secondary)',
+                  borderRadius: '8px',
+                  marginBottom: '20px'
+                }}>
+                  <div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                      当前版本
+                    </div>
+                    <div style={{ fontSize: '18px', fontWeight: '600' }}>
+                      v{currentVersion}
+                    </div>
+                  </div>
+                  {hasUpdate ? (
+                    <>
+                      <div style={{ fontSize: '24px', color: 'var(--text-secondary)' }}>→</div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                          最新版本
+                        </div>
+                        <div style={{ fontSize: '18px', fontWeight: '600', color: 'var(--primary-color)' }}>
+                          v{latestVersion}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{
+                      padding: '6px 12px',
+                      backgroundColor: '#d4edda',
+                      color: '#155724',
+                      borderRadius: '4px',
+                      fontSize: '14px',
+                      fontWeight: '500'
+                    }}>
+                      已是最新版本
+                    </div>
+                  )}
+                </div>
+                {hasUpdate && (
+                  <div style={{
+                    padding: '16px',
+                    backgroundColor: '#e7f3ff',
+                    border: '1px solid #b3d9ff',
+                    borderRadius: '8px',
+                    marginBottom: '20px'
+                  }}>
+                    <div style={{ fontSize: '14px', marginBottom: '8px', fontWeight: '500' }}>
+                      更新命令：
+                    </div>
+                    <code style={{
+                      display: 'block',
+                      padding: '8px 12px',
+                      backgroundColor: '#f8f9fa',
+                      border: '1px solid #dee2e6',
+                      borderRadius: '4px',
+                      fontSize: '13px',
+                      color: '#c7254e'
+                    }}>
+                      npm i -g aicodeswitch
+                    </code>
+                  </div>
+                )}
+                <div className="markdown-content" style={{ maxHeight: '400px', overflow: 'auto' }}>
+                  <ReactMarkdown>{upgradeNotes || '暂无升级说明'}</ReactMarkdown>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-primary" onClick={() => setShowVersionModal(false)}>
+                  关闭
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

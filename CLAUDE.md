@@ -77,7 +77,8 @@ aicos version            # Show current version information
 │                           ▼                                 │
 │                    ┌──────────────┐                        │
 │                    │   Database   │                        │
-│                    │  (SQLite3)   │                        │
+│                    │  (JSON Files) │                        │
+│                    │  FS Storage  │                        │
 │                    └──────────────┘                        │
 │                           │                                 │
 │                           ▼                                 │
@@ -132,7 +133,10 @@ aicos version            # Show current version information
 - Reads configuration from `~/.aicodeswitch/aicodeswitch.conf`
 - Sets up authentication middleware
 - Registers all API routes
-- Initializes database and proxy server
+- Initializes database using `DatabaseFactory.createAuto()` which automatically:
+  - Detects and migrates old SQLite/LevelDB databases if present
+  - Creates new file system database if none exists
+- Initializes proxy server
 
 #### 2. Proxy Server - `server/proxy-server.ts`
 - **Route Matching**: Finds active route based on target type (claude-code/codex)
@@ -165,10 +169,30 @@ aicos version            # Show current version information
 - 思考内容 (thinking ↔ reasoning/thinking)
 - 系统提示词 (system - 支持字符串和数组格式)
 
-#### 4. Database - `server/database.ts`
-- SQLite3 database wrapper
-- Manages: Vendors, API Services, Routes, Rules, Logs
-- Configuration storage (API key, logging settings, etc.)
+#### 4. Database - `server/fs-database.ts`
+- **FileSystemDatabaseManager**: Pure JSON file-based storage (no database dependencies)
+- **DatabaseFactory** (`server/database-factory.ts`): Auto-detects database type and handles migration
+- **Migration Tool** (`server/migrate-to-fs.ts`): Migrates data from SQLite/LevelDB to JSON files
+- **Data Files**: Stores data as JSON in `~/.aicodeswitch/data/`:
+  - `vendors.json` - AI service vendors
+  - `services.json` - API service configurations
+  - `routes.json` - Route definitions
+  - `rules.json` - Routing rules
+  - `config.json` - Application configuration
+  - `sessions.json` - User sessions
+  - `logs.json` - Request logs
+  - `error-logs.json` - Error logs
+  - `blacklist.json` - Service blacklist entries
+
+**Migration from SQLite**:
+- Automatic migration on first startup using `DatabaseFactory.createAuto()`
+- Detects old SQLite database (`app.db`) and automatically migrates to file system database
+- Migration process includes:
+  - Exporting all data from SQLite (vendors, services, routes, rules, config, sessions, logs, error logs)
+  - Creating JSON files in `~/.aicodeswitch/data/`
+  - Backing up old database files to `~/.aicodeswitch/data/backup/`
+  - Verifying migration success
+- If migration fails, a new file system database is created anyway (user can manually restore backup)
 
 #### 5. UI (React) - `ui/`
 - Main app: `App.tsx` - Navigation and layout with collapsible sidebar
@@ -190,18 +214,18 @@ aicos version            # Show current version information
   - `App.css` - Main application styles with sidebar collapse animations
   - `Tooltip.css` - Tooltip component styles
 
-#### 6. Types - `types/`
+#### 6. CLI - `bin/`
+- `cli.js` - Main CLI entry point
+- `start.js` - Server startup with PID management
+- `stop.js` - Server shutdown
+- `restart.js` - Restart server
+
+#### 7. Types - `types/`
 - TypeScript type definitions for:
   - Database models (Vendors, Services, Routes, Rules)
   - API requests/responses
   - Configuration
   - Token usage tracking
-
-#### 7. CLI - `bin/`
-- `cli.js` - Main CLI entry point
-- `start.js` - Server startup with PID management
-- `stop.js` - Server shutdown
-- `restart.js` - Restart server
 
 #### 8. Tauri Desktop Application - `tauri/`
 - **src/main.rs**: Tauri main process (Rust)
@@ -282,11 +306,12 @@ aicos version            # Show current version information
 ## Development Tips
 
 1. **Environment Variables**: Copy `.env.example` to `.env` and modify as needed
-2. **Data Directory**: Default: `~/.aicodeswitch/data/` (SQLite3 database)
+2. **Data Directory**: Default: `~/.aicodeswitch/data/` (JSON files)
 3. **Config File**: `~/.aicodeswitch/aicodeswitch.conf` (HOST, PORT, AUTH)
 4. **Dev Ports**: UI (4568), Server (4567) - configured in `vite.config.ts` and `server/main.ts`
 5. **Skills Search**: `SKILLSMP_API_KEY` is required for Skills discovery via SkillsMP
 6. **API Endpoints**: All routes are prefixed with `/api/` except proxy routes (`/claude-code/`, `/codex/`)
+7. **Database Migration**: If you have an old SQLite database, it will be automatically migrated to JSON files on first startup.
 
 ### Tauri Development Tips
 
@@ -356,7 +381,9 @@ aicodeswitch/
 │   └── server/                  # Node.js backend
 │       ├── main.ts
 │       ├── config.ts
-│       ├── database.ts
+│       ├── database-factory.ts  # Database factory with migration support
+│       ├── fs-database.ts       # JSON file-based database manager
+│       ├── migrate-to-fs.ts     # Migration tool (SQLite → JSON)
 │       ├── proxy-server.ts
 │       └── transformers/
 ├── tauri/                   # Tauri desktop application
@@ -370,6 +397,10 @@ aicodeswitch/
 │   ├── ui/                      # Frontend build
 │   └── server/                  # Backend build
 ├── bin/                         # CLI scripts
+│   ├── cli.js
+│   ├── start.js
+│   ├── stop.js
+│   ├── restart.js
 ├── types/                       # TypeScript types
 ├── documents/                   # Documentation
 │   ├── tauri-research.md        # Tauri migration research
@@ -514,7 +545,7 @@ The Tauri build uses a **hybrid approach** that preserves the existing Node.js b
 - **Runtime**: Node.js
 - **Framework**: Express
 - **Language**: TypeScript
-- **Database**: SQLite3
+- **Database**: JSON File Storage (no database dependencies)
 - **Streaming**: SSE (Server-Sent Events)
 - **HTTP Client**: Axios
 - **Encryption**: CryptoJS (AES)
@@ -543,6 +574,8 @@ The Tauri build uses a **hybrid approach** that preserves the existing Node.js b
 * 前端依赖库安装在devDependencies中，请使用yarn install --dev安装。
 * 所有对话请使用中文。生成代码中的文案及相关注释根据代码原本的语言生成。
 * 在服务端，直接使用 __dirname 来获取当前目录，不要使用 process.cwd()
-* 每次有新的变化时，你需要更新 CLAUDE.md 来让文档保持最新。
-* 禁止在项目中使用依赖GPU的css样式处理。
+* 每次有新的变化时，你需要更新 CLAUDE.md 来让文档保持最新，并且以非常简单的概述，将变化内容记录到 CHANGELOG.md 中。
+* 禁止在ui中使用依赖GPU的css样式。
 * 禁止运行 dev:ui, dev:server, tauri:dev 等命令来进行测试。
+* 如果你需要创建文档，必须将文档放在 documents 目录下
+* 如果你需要创建测试脚本，必须将脚本文件放在 scripts 目录下
