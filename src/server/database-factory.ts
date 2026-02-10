@@ -1,5 +1,6 @@
 import path from 'path';
 import { FileSystemDatabaseManager } from './fs-database';
+import * as migrateToFs from './migrate-to-fs';
 
 /**
  * 数据库类型
@@ -67,15 +68,13 @@ export class DatabaseFactory {
     if (sqliteDbExists) {
       console.log('[Database] Found old SQLite database, migrating to filesystem...');
       try {
-        const { migrateToFileSystem, verifyMigration } = await import('./migrate-to-fs.js');
-        
         // 执行迁移
-        await migrateToFileSystem(dataPath);
-        
+        await migrateToFs.migrateToFileSystem(dataPath);
+
         // 验证迁移结果
         console.log('[Database] Verifying migration...');
-        const verification = await verifyMigration(dataPath);
-        
+        const verification = await migrateToFs.verifyMigration(dataPath);
+
         if (verification.success) {
           console.log('[Database] ✅ Migration verified successfully');
           if (verification.warnings.length > 0) {
@@ -86,7 +85,7 @@ export class DatabaseFactory {
           console.error('[Database] Errors:', verification.errors);
           throw new Error('Migration verification failed');
         }
-        
+
         console.log('[Database] Migration completed, using filesystem database');
       } catch (error) {
         console.error('[Database] Migration failed:', error);

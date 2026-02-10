@@ -133,7 +133,10 @@ aicos version            # Show current version information
 - Reads configuration from `~/.aicodeswitch/aicodeswitch.conf`
 - Sets up authentication middleware
 - Registers all API routes
-- Initializes database and proxy server
+- Initializes database using `DatabaseFactory.createAuto()` which automatically:
+  - Detects and migrates old SQLite/LevelDB databases if present
+  - Creates new file system database if none exists
+- Initializes proxy server
 
 #### 2. Proxy Server - `server/proxy-server.ts`
 - **Route Matching**: Finds active route based on target type (claude-code/codex)
@@ -182,8 +185,14 @@ aicos version            # Show current version information
   - `blacklist.json` - Service blacklist entries
 
 **Migration from SQLite**:
-- Automatic migration on first startup if old SQLite database is detected
-- Old database files are backed up to `~/.aicodeswitch/data/backup/`
+- Automatic migration on first startup using `DatabaseFactory.createAuto()`
+- Detects old SQLite database (`app.db`) and automatically migrates to file system database
+- Migration process includes:
+  - Exporting all data from SQLite (vendors, services, routes, rules, config, sessions, logs, error logs)
+  - Creating JSON files in `~/.aicodeswitch/data/`
+  - Backing up old database files to `~/.aicodeswitch/data/backup/`
+  - Verifying migration success
+- If migration fails, a new file system database is created anyway (user can manually restore backup)
 
 #### 5. UI (React) - `ui/`
 - Main app: `App.tsx` - Navigation and layout with collapsible sidebar

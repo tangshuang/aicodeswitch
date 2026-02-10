@@ -5,9 +5,9 @@ import fs from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import { FileSystemDatabaseManager } from './fs-database';
-import { DatabaseMigration } from './database-migration';
+import { DatabaseFactory } from './database-factory';
 import { ProxyServer } from './proxy-server';
+import type { FileSystemDatabaseManager } from './fs-database';
 import type { AppConfig, LoginRequest, LoginResponse, AuthStatus, InstalledSkill, SkillCatalogItem, SkillInstallRequest, SkillInstallResponse, TargetType } from '../types';
 import os from 'os';
 import { isAuthEnabled, verifyAuthCode, generateToken, authMiddleware } from './auth';
@@ -857,7 +857,7 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
   app.post(
     '/api/routes/:id/activate',
     asyncHandler(async (req, res) => {
-      const result = dbManager.activateRoute(req.params.id);
+      const result = await dbManager.activateRoute(req.params.id);
       if (result) {
         await proxyServer.reloadRoutes();
       }
@@ -868,7 +868,7 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
   app.post(
     '/api/routes/:id/deactivate',
     asyncHandler(async (req, res) => {
-      const result = dbManager.deactivateRoute(req.params.id);
+      const result = await dbManager.deactivateRoute(req.params.id);
       if (result) {
         await proxyServer.reloadRoutes();
       }
@@ -1067,7 +1067,7 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
     '/api/config',
     asyncHandler(async (req, res) => {
       const config = req.body as AppConfig;
-      const result = dbManager.updateConfig(config);
+      const result = await dbManager.updateConfig(config);
       if (result) {
         await proxyServer.updateConfig(config);
         updateProxyConfig(config);
@@ -1764,31 +1764,9 @@ ${instruction}
 const start = async () => {
   fs.mkdirSync(dataDir, { recursive: true });
 
-  // 检测并执行数据库迁移
-  const migration = new DatabaseMigration(dataDir);
-  const { needsMigration, source } = await migration.detectMigrationNeeded();
-
-  if (needsMigration && source) {
-    console.log(`[Server] Detected old ${source} database, starting migration...`);
-    try {
-      if (source === 'sqlite') {
-        await migration.migrateFromSQLite();
-      } else if (source === 'leveldb') {
-        await migration.migrateFromLevelDB();
-      }
-      console.log('[Server] Database migration completed successfully');
-    } catch (error) {
-      console.error('[Server] Database migration failed:', error);
-      console.error('[Server] Please check the error above and try again');
-      console.error('[Server] You can also use the manual migration tool: node bin/migrate-manual.js');
-      process.exit(1);
-    }
-  }
-
-  // 使用文件系统数据库
+  // 自动检测数据库类型并执行迁移（如果需要）
   console.log('[Server] Initializing database...');
-  const dbManager = new FileSystemDatabaseManager(dataDir);
-  await dbManager.initialize();
+  const dbManager = await DatabaseFactory.createAuto(dataDir) as FileSystemDatabaseManager;
   console.log('[Server] Database initialized successfully');
 
   const proxyServer = new ProxyServer(dbManager, app);

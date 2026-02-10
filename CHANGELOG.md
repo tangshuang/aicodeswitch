@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2.1.6 (2026-02-10)
+
+#### Fixes
+* 修复 main.ts 中数据库迁移功能的接入，改用 `DatabaseFactory.createAuto()` 自动检测并执行迁移
+* 改进 database-factory.ts 使用静态导入替代动态导入，确保迁移功能正常工作
+
 ### 2.1.5 (2026-02-08)
 
 ### 2.1.4 (2026-02-07)
