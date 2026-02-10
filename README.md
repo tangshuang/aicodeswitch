@@ -10,10 +10,6 @@ AI Code Switch 是帮助你在本地管理 AI 编程工具接入大模型的工�
 - 视频演示：[https://www.bilibili.com/video/BV1uEznBuEJd/](https://www.bilibili.com/video/BV1uEznBuEJd/?from=github)
 - 1分钟让Claude Code接入GLM国产模型：[https://www.bilibili.com/video/BV1a865B8ErA/](https://www.bilibili.com/video/BV1a865B8ErA/)
 
-## 桌面版
-
-桌面端应用下载：[https://github.com/tangshuang/aicodeswitch/releases](https://github.com/tangshuang/aicodeswitch/releases)
-
 ## 命令行工具
 
 ### 安装
