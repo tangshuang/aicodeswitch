@@ -498,9 +498,11 @@ export class FileSystemDatabaseManager {
   }
 
   async createVendor(vendor: Omit<Vendor, 'id' | 'createdAt' | 'updatedAt'>): Promise<Vendor> {
+    console.log('[数据库] 创建供应商，输入数据:', JSON.stringify(vendor, null, 2));
     const id = crypto.randomUUID();
     const now = Date.now();
     const newVendor: Vendor = { ...vendor, id, createdAt: now, updatedAt: now };
+    console.log('[数据库] 创建供应商，返回数据:', JSON.stringify(newVendor, null, 2));
     this.vendors.push(newVendor);
     await this.saveVendors();
     return newVendor;
@@ -544,11 +546,14 @@ export class FileSystemDatabaseManager {
   }
 
   async createAPIService(service: Omit<APIService, 'id' | 'createdAt' | 'updatedAt'>): Promise<APIService> {
+    console.log('[数据库] 创建服务，输入数据:', JSON.stringify(service, null, 2));
     const id = crypto.randomUUID();
     const now = Date.now();
     const newService: APIService = { ...service, id, createdAt: now, updatedAt: now };
+    console.log('[数据库] 创建服务，最终数据:', JSON.stringify(newService, null, 2));
     this.apiServices.push(newService);
     await this.saveServices();
+    console.log('[数据库] 服务已保存，当前总数:', this.apiServices.length);
     return newService;
   }
 

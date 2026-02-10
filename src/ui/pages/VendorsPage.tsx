@@ -438,13 +438,31 @@ function VendorsPage() {
       const vendorResult = await api.createVendor({
         name: vendorConfig.name,
         description: vendorConfig.description,
+        sortOrder: 0,  // 添加默认排序值
       });
+
+      console.log('[一键配置] 供应商创建成功:', vendorResult);
+      console.log('[一键配置] 供应商 ID:', vendorResult?.id);
+
+      if (!vendorResult || !vendorResult.id) {
+        console.error('[一键配置] 供应商创建失败或缺少 ID:', vendorResult);
+        throw new Error('供应商创建失败，缺少 ID');
+      }
 
       // 2. 批量创建API服务（根据选中的索引）
       const services = vendorConfig.services.filter((_, index) => quickSetupSelectedIndices.includes(index));
-      const servicePromises = services.map(async (serviceConfig) => {
-        return api.createAPIService({
-          vendorId: vendorResult.id,
+
+      console.log('[一键配置] 准备创建服务:', services.length, '个');
+      console.log('[一键配置] vendorId:', vendorResult.id);
+
+      if (services.length === 0) {
+        throw new Error('没有选择任何服务');
+      }
+
+      const servicePromises = services.map(async (serviceConfig, index) => {
+        // 确保 vendorId 被正确传递
+        const serviceData = {
+          vendorId: vendorResult.id,  // 必须字段
           name: serviceConfig.name,
           apiUrl: serviceConfig.apiUrl,
           apiKey: apiKey,
@@ -452,18 +470,42 @@ function VendorsPage() {
           authType: serviceConfig.authType,
           supportedModels: serviceConfig.models ? serviceConfig.models.split(',').map(m => m.trim()) : undefined,
           modelLimits: serviceConfig.modelLimits || {},
+        };
+
+        console.log(`[一键配置] 创建服务 ${index + 1}/${services.length}:`, {
+          ...serviceData,
+          apiKey: '***',  // 隐藏 API Key
         });
+
+        const result = await api.createAPIService(serviceData);
+        console.log(`[一键配置] 服务 ${index + 1} 创建成功，ID:`, result.id);
+
+        // 验证返回的服务是否包含 vendorId
+        if (!result.vendorId) {
+          console.error(`[一键配置] 警告：服务 ${result.id} 缺少 vendorId！`);
+        }
+
+        return result;
       });
 
-      await Promise.all(servicePromises);
+      const createdServices = await Promise.all(servicePromises);
+      console.log('[一键配置] 所有服务创建完成，数量:', createdServices.length);
 
-      // 3. 刷新列表并关闭弹层
+      // 验证所有创建的服务都有 vendorId
+      const servicesWithoutVendorId = createdServices.filter(s => !s.vendorId);
+      if (servicesWithoutVendorId.length > 0) {
+        console.error('[一键配置] 发现缺少 vendorId 的服务:', servicesWithoutVendorId);
+        throw new Error(`有 ${servicesWithoutVendorId.length} 个服务缺少 vendorId`);
+      }
+
+      // 3. 刷新列表并选中新建的供应商
       await loadVendors();
+      setSelectedVendor(vendorResult);
       setShowQuickSetupModal(false);
       toast.success(`配置成功! 已创建 ${quickSetupSelectedIndices.length} 个API服务`);
     } catch (error) {
       console.error('一键配置失败:', error);
-      toast.error('配置失败，请检查输入信息');
+      toast.error(`配置失败: ${error instanceof Error ? error.message : '未知错误'}`);
     }
   };
 

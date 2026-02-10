@@ -838,22 +838,27 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
   });
 
   app.get('/api/vendors', (_req, res) => res.json(dbManager.getVendors()));
-  app.post('/api/vendors', (req, res) => res.json(dbManager.createVendor(req.body)));
-  app.put('/api/vendors/:id', (req, res) => res.json(dbManager.updateVendor(req.params.id, req.body)));
-  app.delete('/api/vendors/:id', (req, res) => res.json(dbManager.deleteVendor(req.params.id)));
+  app.post('/api/vendors', async (req, res) => res.json(await dbManager.createVendor(req.body)));
+  app.put('/api/vendors/:id', async (req, res) => res.json(await dbManager.updateVendor(req.params.id, req.body)));
+  app.delete('/api/vendors/:id', async (req, res) => res.json(await dbManager.deleteVendor(req.params.id)));
 
   app.get('/api/services', (req, res) => {
     const vendorId = typeof req.query.vendorId === 'string' ? req.query.vendorId : undefined;
     res.json(dbManager.getAPIServices(vendorId));
   });
-  app.post('/api/services', (req, res) => res.json(dbManager.createAPIService(req.body)));
-  app.put('/api/services/:id', (req, res) => res.json(dbManager.updateAPIService(req.params.id, req.body)));
-  app.delete('/api/services/:id', (req, res) => res.json(dbManager.deleteAPIService(req.params.id)));
+  app.post('/api/services', async (req, res) => {
+    console.log('[创建服务] 请求数据:', JSON.stringify(req.body, null, 2));
+    const result = await dbManager.createAPIService(req.body);
+    console.log('[创建服务] 创建结果:', JSON.stringify(result, null, 2));
+    res.json(result);
+  });
+  app.put('/api/services/:id', async (req, res) => res.json(await dbManager.updateAPIService(req.params.id, req.body)));
+  app.delete('/api/services/:id', async (req, res) => res.json(await dbManager.deleteAPIService(req.params.id)));
 
   app.get('/api/routes', (_req, res) => res.json(dbManager.getRoutes()));
-  app.post('/api/routes', (req, res) => res.json(dbManager.createRoute(req.body)));
-  app.put('/api/routes/:id', (req, res) => res.json(dbManager.updateRoute(req.params.id, req.body)));
-  app.delete('/api/routes/:id', (req, res) => res.json(dbManager.deleteRoute(req.params.id)));
+  app.post('/api/routes', async (req, res) => res.json(await dbManager.createRoute(req.body)));
+  app.put('/api/routes/:id', async (req, res) => res.json(await dbManager.updateRoute(req.params.id, req.body)));
+  app.delete('/api/routes/:id', async (req, res) => res.json(await dbManager.deleteRoute(req.params.id)));
   app.post(
     '/api/routes/:id/activate',
     asyncHandler(async (req, res) => {
@@ -925,12 +930,12 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
     const routeId = typeof req.query.routeId === 'string' ? req.query.routeId : undefined;
     res.json(dbManager.getRules(routeId));
   });
-  app.post('/api/rules', (req, res) => res.json(dbManager.createRule(req.body)));
-  app.put('/api/rules/:id', (req, res) => res.json(dbManager.updateRule(req.params.id, req.body)));
-  app.delete('/api/rules/:id', (req, res) => res.json(dbManager.deleteRule(req.params.id)));
-  app.put('/api/rules/:id/reset-tokens', (req, res) => res.json(dbManager.resetRuleTokenUsage(req.params.id)));
-  app.put('/api/rules/:id/reset-requests', (req, res) => res.json(dbManager.resetRuleRequestCount(req.params.id)));
-  app.put('/api/rules/:id/toggle-disable', (req, res) => res.json(dbManager.toggleRuleDisabled(req.params.id)));
+  app.post('/api/rules', async (req, res) => res.json(await dbManager.createRule(req.body)));
+  app.put('/api/rules/:id', async (req, res) => res.json(await dbManager.updateRule(req.params.id, req.body)));
+  app.delete('/api/rules/:id', async (req, res) => res.json(await dbManager.deleteRule(req.params.id)));
+  app.put('/api/rules/:id/reset-tokens', async (req, res) => res.json(await dbManager.resetRuleTokenUsage(req.params.id)));
+  app.put('/api/rules/:id/reset-requests', async (req, res) => res.json(await dbManager.resetRuleRequestCount(req.params.id)));
+  app.put('/api/rules/:id/toggle-disable', async (req, res) => res.json(await dbManager.toggleRuleDisabled(req.params.id)));
 
   // 解除规则的黑名单状态
   app.put(
