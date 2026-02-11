@@ -62,6 +62,60 @@ src/server/
 | `fs-database.ts` | JSON 文件数据库 |
 | `transformers/claude-openai.ts` | API 格式转换 |
 
+## API 格式转换
+
+项目支持 Claude API 与 OpenAI Chat API 之间的双向转换，使得 Claude Code 可以使用 OpenAI 兼容的后端服务，Codex 也可以使用 Claude 后端服务。
+
+### 转换逻辑位置
+
+| 文件 | 函数/类 | 说明 |
+|------|---------|------|
+| `transformers/claude-openai.ts:312` | `transformClaudeRequestToOpenAIChat()` | Claude 请求 → OpenAI Chat 格式 |
+| `transformers/claude-openai.ts:680` | `transformClaudeResponseToOpenAIChat()` | Claude 响应 → OpenAI Chat 格式 |
+| `transformers/claude-openai.ts:588` | `transformOpenAIChatResponseToClaude()` | OpenAI Chat 响应 → Claude 格式 |
+| `transformers/streaming.ts` | `ClaudeToOpenAIChatEventTransform` | Claude 流式事件 → OpenAI Chat 格式 |
+| `transformers/streaming.ts` | `OpenAIToClaudeEventTransform` | OpenAI Chat 流式事件 → Claude 格式 |
+
+### 路由调度逻辑
+
+在 `proxy-server.ts:1648-1667` 中根据 `targetType` 和 `sourceType` 决定转换方向：
+
+```typescript
+// Codex 使用 Claude 后端服务
+if (targetType === 'codex') {
+  if (this.isClaudeSource(sourceType)) {
+    requestBody = transformClaudeRequestToOpenAIChat(requestBody, rule.targetModel);
+  }
+}
+
+// Claude Code 使用 OpenAI 兼容后端服务
+if (targetType === 'claude-code') {
+  if (this.isOpenAIChatSource(sourceType)) {
+    requestBody = transformClaudeRequestToOpenAIChat(requestBody, rule.targetModel);
+  }
+}
+```
+
+### 支持的转换内容
+
+| 内容类型 | Claude 格式 | OpenAI 格式 |
+|---------|-------------|-------------|
+| 文本 | `{type: "text", text: "..."}` | `string` 或 `{type: "text", text: "..."}` |
+| 图像 | `{type: "image", source: {type, media_type, data}}` | `{type: "image_url", image_url: {url}}` |
+| 工具调用 | `tool_use` block: `{type, id, name, input}` | `tool_calls` array: `[{id, type, function}]` |
+| 工具结果 | `tool_result` block: `{type, tool_use_id, content}` | `role: "tool"` message |
+| 思考内容 | `{type: "thinking", thinking: "..."}` | `reasoning` / `thinking` 字段 |
+| 系统提示 | `system` 字段 (string 或 array) | `role: "system"` / `role: "developer"` message |
+| 工具选择 | `"auto"` / `"any"` / `{type: "tool", name}` | `"auto"` / `"required"` / `{type: "function", function}` |
+| 停止原因 | `end_turn` / `max_tokens` / `tool_use` / `max_thinking_length` | `stop` / `length` / `tool_calls` |
+
+### 特殊处理
+
+- **DeepSeek 兼容**: 自动将 `system` 角色映射为 `developer` 角色
+- **图像格式**: 支持 base64 和 URL 两种格式互转
+- **流式响应**: SSE 事件实时解析与格式转换
+- **token 用量**: 统一转换为 Claude 格式的 `input_tokens` / `output_tokens`
+
 ## Conventions
 
 - 使用 `__dirname` 获取目录路径
