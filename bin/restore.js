@@ -8,7 +8,11 @@ const ora = require('ora');
 // 停用所有激活的路由（直接操作数据库文件）
 const deactivateAllRoutes = () => {
   const appDir = path.join(os.homedir(), '.aicodeswitch');
-  const routesFilePath = path.join(appDir, 'data', 'routes.json');
+  const primaryRoutesFilePath = path.join(appDir, 'fs-db', 'routes.json');
+  const legacyRoutesFilePath = path.join(appDir, 'data', 'routes.json');
+  const routesFilePath = fs.existsSync(primaryRoutesFilePath)
+    ? primaryRoutesFilePath
+    : legacyRoutesFilePath;
 
   // 如果数据文件不存在，说明没有路由需要停用
   if (!fs.existsSync(routesFilePath)) {
@@ -19,14 +23,23 @@ const deactivateAllRoutes = () => {
     // 读取路由数据
     const routesData = JSON.parse(fs.readFileSync(routesFilePath, 'utf-8'));
 
-    if (!Array.isArray(routesData)) {
+    let routes = [];
+    let payload = routesData;
+
+    if (Array.isArray(routesData)) {
+      routes = routesData;
+      payload = routesData;
+    } else if (routesData && typeof routesData === 'object' && Array.isArray(routesData.routes)) {
+      routes = routesData.routes;
+      payload = { ...routesData, routes };
+    } else {
       return { success: false, error: 'Invalid routes data format' };
     }
 
     let deactivatedCount = 0;
 
     // 将所有激活的路由设置为停用状态
-    routesData.forEach(route => {
+    routes.forEach(route => {
       if (route.isActive === true) {
         route.isActive = false;
         deactivatedCount++;
@@ -34,7 +47,7 @@ const deactivateAllRoutes = () => {
     });
 
     // 保存修改后的数据
-    fs.writeFileSync(routesFilePath, JSON.stringify(routesData, null, 2));
+    fs.writeFileSync(routesFilePath, JSON.stringify(payload, null, 2));
 
     return { success: true, deactivatedCount };
   } catch (err) {

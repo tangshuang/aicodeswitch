@@ -28,11 +28,23 @@ export interface ConfigStatus {
 }
 
 /**
+ * 获取元数据目录
+ */
+const getMetadataDirs = () => {
+  const homeDir = os.homedir();
+  return {
+    primary: path.join(homeDir, '.aicodeswitch', 'fs-db'),
+    legacy: path.join(homeDir, '.aicodeswitch', 'data'),
+  };
+};
+
+/**
  * 获取元数据文件路径
  */
-const getMetadataFilePath = (configType: 'claude' | 'codex'): string => {
-  const dataDir = path.join(os.homedir(), '.aicodeswitch/data');
-  return path.join(dataDir, `.${configType}-metadata.json`);
+const getMetadataFilePath = (configType: 'claude' | 'codex', useLegacy = false): string => {
+  const dirs = getMetadataDirs();
+  const baseDir = useLegacy ? dirs.legacy : dirs.primary;
+  return path.join(baseDir, `.${configType}-metadata.json`);
 };
 
 /**
@@ -62,13 +74,32 @@ export const saveMetadata = (metadata: ConfigMetadata): boolean => {
 export const loadMetadata = (configType: 'claude' | 'codex'): ConfigMetadata | null => {
   try {
     const metadataPath = getMetadataFilePath(configType);
-
-    if (!fs.existsSync(metadataPath)) {
-      return null;
+    if (fs.existsSync(metadataPath)) {
+      const content = fs.readFileSync(metadataPath, 'utf-8');
+      return JSON.parse(content) as ConfigMetadata;
     }
 
-    const content = fs.readFileSync(metadataPath, 'utf-8');
-    return JSON.parse(content) as ConfigMetadata;
+    // 兼容旧路径
+    const legacyPath = getMetadataFilePath(configType, true);
+    if (fs.existsSync(legacyPath)) {
+      const content = fs.readFileSync(legacyPath, 'utf-8');
+      const metadata = JSON.parse(content) as ConfigMetadata;
+
+      // 尝试迁移到新路径
+      try {
+        const dataDir = path.dirname(metadataPath);
+        if (!fs.existsSync(dataDir)) {
+          fs.mkdirSync(dataDir, { recursive: true });
+        }
+        fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+      } catch (error) {
+        console.warn(`Failed to migrate metadata for ${configType}:`, error);
+      }
+
+      return metadata;
+    }
+
+    return null;
   } catch (error) {
     console.error(`Failed to load metadata for ${configType}:`, error);
     return null;
@@ -81,9 +112,13 @@ export const loadMetadata = (configType: 'claude' | 'codex'): ConfigMetadata | n
 export const deleteMetadata = (configType: 'claude' | 'codex'): boolean => {
   try {
     const metadataPath = getMetadataFilePath(configType);
+    const legacyPath = getMetadataFilePath(configType, true);
 
     if (fs.existsSync(metadataPath)) {
       fs.unlinkSync(metadataPath);
+    }
+    if (fs.existsSync(legacyPath)) {
+      fs.unlinkSync(legacyPath);
     }
 
     return true;

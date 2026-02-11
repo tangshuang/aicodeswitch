@@ -27,7 +27,8 @@ import {
 import { SKILLSMP_API_KEY } from './config';
 
 const appDir = path.join(os.homedir(), '.aicodeswitch');
-const dataDir = path.join(appDir, 'data');
+const legacyDataDir = path.join(appDir, 'data');
+const dataDir = path.join(appDir, 'fs-db');
 const dotenvPath = path.resolve(appDir, 'aicodeswitch.conf');
 const upgradeHashFilePath = path.join(appDir, 'upgrade-hash');
 
@@ -1762,7 +1763,7 @@ const start = async () => {
 
   // 自动检测数据库类型并执行迁移（如果需要）
   console.log('[Server] Initializing database...');
-  const dbManager = await DatabaseFactory.createAuto(dataDir) as FileSystemDatabaseManager;
+  const dbManager = await DatabaseFactory.createAuto(dataDir, legacyDataDir) as FileSystemDatabaseManager;
   console.log('[Server] Database initialized successfully');
 
   const proxyServer = new ProxyServer(dbManager, app);

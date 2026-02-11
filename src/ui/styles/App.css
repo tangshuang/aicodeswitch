@@ -279,9 +279,6 @@
   height: 300px;
 }
 
-.btn:hover {
-}
-
 .btn:active {
   transform: translateY(0);
 }
@@ -311,9 +308,6 @@
 
 .btn-primary:hover::before {
   left: 100%;
-}
-
-.btn-primary:hover {
 }
 
 .btn-danger {
@@ -370,6 +364,17 @@ table th {
   font-family: 'Fredoka', sans-serif;
   font-size: 14px;
   white-space: nowrap;
+}
+
+@media (max-width: 1200px) {
+  .rules-table .col-priority {
+    display: none;
+  }
+
+  .rules-table .action-buttons {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
 }
 
 
@@ -432,7 +437,7 @@ table th {
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 1000;
+  z-index: 1000000;
   animation: modalFadeIn 0.3s ease-out;
 }
 
@@ -499,7 +504,7 @@ table th {
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 1000;
+  z-index: 1000000;
   animation: modalFadeIn 0.3s ease-out;
 }
 
@@ -1312,4 +1317,8 @@ table th {
 
 .switch::-moz-focus-inner {
   border: 0;
+}
+
+.rules-table .vendor-sevices-col > div {
+  white-space: nowrap;
 }

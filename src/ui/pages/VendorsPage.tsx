@@ -193,6 +193,7 @@ function VendorsPage() {
     if (data.length > 0 && !selectedVendor) {
       setSelectedVendor(data[0]);
     }
+    return data;
   };
 
   // 移除 loadServices 函数 - 服务现在从 selectedVendor.services 获取
@@ -225,7 +226,6 @@ function VendorsPage() {
       loadVendors();
       if (selectedVendor && selectedVendor.id === id) {
         setSelectedVendor(null);
-        setServices([]);
       }
       toast.success('供应商已删除');
     }
@@ -307,10 +307,10 @@ function VendorsPage() {
     if (confirmed) {
       await api.deleteAPIService(id);
       // 重新加载供应商（服务已自动包含）
-      await loadVendors();
+      const updatedVendors = await loadVendors();
       if (selectedVendor) {
         // 刷新选中供应商
-        const updatedVendor = vendors.find(v => v.id === selectedVendor.id);
+        const updatedVendor = updatedVendors.find(v => v.id === selectedVendor.id);
         if (updatedVendor) {
           setSelectedVendor(updatedVendor);
         }
@@ -385,10 +385,10 @@ function VendorsPage() {
     setRequestResetInterval(undefined);
     setRequestResetBaseTime(undefined);
     // 重新加载供应商（服务已自动包含）
-    await loadVendors();
+    const updatedVendors = await loadVendors();
     if (selectedVendor) {
       // 刷新选中供应商
-      const updatedVendor = vendors.find(v => v.id === selectedVendor.id);
+      const updatedVendor = updatedVendors.find(v => v.id === selectedVendor.id);
       if (updatedVendor) {
         setSelectedVendor(updatedVendor);
       }
@@ -503,9 +503,10 @@ function VendorsPage() {
         throw new Error(`有 ${servicesWithoutVendorId.length} 个服务缺少 vendorId`);
       }
 
-      // 3. 刷新列表并选中新建的供应商
-      await loadVendors();
-      setSelectedVendor(vendorResult);
+      // 3. 刷新列表并选中新建的供应商（含最新 services）
+      const updatedVendors = await loadVendors();
+      const updatedVendor = updatedVendors.find(v => v.id === vendorResult.id);
+      setSelectedVendor(updatedVendor || { ...vendorResult, services: createdServices });
       setShowQuickSetupModal(false);
       toast.success(`配置成功! 已创建 ${quickSetupSelectedIndices.length} 个API服务`);
     } catch (error) {

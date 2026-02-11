@@ -57,7 +57,7 @@ export class FileSystemDatabaseManager {
   private get vendorsFile() { return path.join(this.dataPath, 'vendors.json'); }
   private get servicesFile() { return path.join(this.dataPath, 'services.json'); }
   private get routesFile() { return path.join(this.dataPath, 'routes.json'); }
-  private get rulesFile() { return path.join(this.dataPath, 'rules.json'); }
+  private get rulesFile() { return path.join(this.dataPath, 'rules.json'); } // legacy
   private get configFile() { return path.join(this.dataPath, 'config.json'); }
   private get sessionsFile() { return path.join(this.dataPath, 'sessions.json'); }
   private get logsDir() { return path.join(this.dataPath, 'logs'); }
@@ -116,7 +116,6 @@ export class FileSystemDatabaseManager {
       this.loadVendors(),  // loadVendors 内部会处理旧 services.json 的迁移
       // 删除: this.loadServices(),
       this.loadRoutes(),
-      this.loadRules(),
       this.loadConfig(),
       this.loadSessions(),
       this.loadLogsIndex(),
@@ -217,29 +216,117 @@ export class FileSystemDatabaseManager {
   // 迁移逻辑见 migrateServicesIfNeeded() 方法
 
   private async loadRoutes() {
+    let routesFileFormat: 'missing' | 'array' | 'combined' | 'unknown' = 'missing';
+    let routesFromFile: Route[] = [];
+    let rulesFromFile: Rule[] = [];
+    let hasRulesInRoutesFile = false;
+
     try {
       const data = await fs.readFile(this.routesFile, 'utf-8');
-      this.routes = JSON.parse(data);
+      const parsed = JSON.parse(data);
+
+      if (Array.isArray(parsed)) {
+        routesFileFormat = 'array';
+        routesFromFile = parsed;
+      } else if (parsed && typeof parsed === 'object') {
+        routesFileFormat = 'combined';
+        routesFromFile = Array.isArray(parsed.routes) ? parsed.routes : [];
+        if (Array.isArray(parsed.rules)) {
+          rulesFromFile = parsed.rules;
+          hasRulesInRoutesFile = true;
+        }
+      } else {
+        routesFileFormat = 'unknown';
+      }
     } catch {
-      this.routes = [];
+      routesFileFormat = 'missing';
     }
+
+    this.routes = routesFromFile;
+    this.rules = rulesFromFile;
+
+    // 兼容旧的 rules.json 文件（迁移到 routes.json 的 rules 属性）
+    await this.migrateRulesIfNeeded(routesFileFormat, hasRulesInRoutesFile);
+  }
+
+  private async saveRoutesData() {
+    const payload = {
+      routes: this.routes,
+      rules: this.rules,
+    };
+    await fs.writeFile(this.routesFile, JSON.stringify(payload, null, 2));
   }
 
   private async saveRoutes() {
-    await fs.writeFile(this.routesFile, JSON.stringify(this.routes, null, 2));
-  }
-
-  private async loadRules() {
-    try {
-      const data = await fs.readFile(this.rulesFile, 'utf-8');
-      this.rules = JSON.parse(data);
-    } catch {
-      this.rules = [];
-    }
+    await this.saveRoutesData();
   }
 
   private async saveRules() {
-    await fs.writeFile(this.rulesFile, JSON.stringify(this.rules, null, 2));
+    await this.saveRoutesData();
+  }
+
+  /**
+   * 检测并迁移旧的 rules.json 到 routes.json 的 rules 属性
+   * 旧格式：routes.json + rules.json 分离
+   * 新格式：routes.json 内包含 { routes, rules }
+   */
+  private async migrateRulesIfNeeded(
+    routesFileFormat: 'missing' | 'array' | 'combined' | 'unknown',
+    hasRulesInRoutesFile: boolean
+  ): Promise<void> {
+    const oldRulesFile = this.rulesFile;
+
+    const oldRulesExists = await fs.access(oldRulesFile)
+      .then(() => true)
+      .catch(() => false);
+
+    let merged = false;
+
+    if (oldRulesExists) {
+      try {
+        const data = await fs.readFile(oldRulesFile, 'utf-8');
+        const oldRules = JSON.parse(data);
+
+        if (Array.isArray(oldRules)) {
+          if (this.rules.length > 0) {
+            const mergedMap = new Map<string, Rule>();
+            oldRules.forEach((rule, index) => {
+              const key = rule?.id || `legacy-${index}`;
+              if (!mergedMap.has(key)) {
+                mergedMap.set(key, rule);
+              }
+            });
+            this.rules.forEach((rule, index) => {
+              const key = rule?.id || `current-${index}`;
+              mergedMap.set(key, rule);
+            });
+            this.rules = Array.from(mergedMap.values());
+          } else {
+            this.rules = oldRules;
+          }
+          merged = true;
+        }
+      } catch (error) {
+        console.error('[Database] 迁移 rules.json 时出错:', error);
+      }
+    }
+
+    // 如果 routes.json 还是旧格式/缺失，或从旧 rules.json 合并过数据，或缺少 rules 字段，则写入新格式
+    if (routesFileFormat !== 'combined' || merged || (routesFileFormat === 'combined' && !hasRulesInRoutesFile)) {
+      await this.saveRoutesData();
+    }
+
+    // 备份旧的 rules.json 文件
+    if (oldRulesExists) {
+      try {
+        const timestamp = Date.now();
+        const backupFile = path.join(this.dataPath, `rules.json.backup.${timestamp}`);
+        await fs.rename(oldRulesFile, backupFile);
+        console.log(`[Database] 旧的 rules.json 已备份到 ${backupFile}`);
+      } catch (error) {
+        console.error('[Database] 备份 rules.json 失败:', error);
+      }
+    }
   }
 
   private async loadConfig() {
@@ -704,7 +791,10 @@ export class FileSystemDatabaseManager {
 
     await this.saveVendors();
     console.log('[数据库] 服务已保存，当前总数:', vendor.services.length);
-    return newService;
+    return {
+      ...newService,
+      vendorId,
+    };
   }
 
   async updateAPIService(id: string, service: Partial<APIService>): Promise<boolean> {
@@ -1384,7 +1474,6 @@ export class FileSystemDatabaseManager {
         this.saveVendors(),
         // 删除: this.saveServices(),
         this.saveRoutes(),
-        this.saveRules(),
         this.saveConfig(),
       ]);
 

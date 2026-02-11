@@ -5,18 +5,23 @@ import fs from 'fs/promises';
  * 数据库迁移工具
  * 从 better-sqlite3 和 leveldb 迁移到文件系统数据库
  */
-export async function migrateToFileSystem(dataPath: string): Promise<void> {
+export async function migrateToFileSystem(
+  sourceDataPath: string,
+  targetDataPath: string = sourceDataPath
+): Promise<void> {
   console.log('[Migration] Starting migration to file system database...');
 
   try {
     // 动态导入旧数据库（如果存在）
-    const oldDbPath = path.join(dataPath, 'app.db');
+    const oldDbPath = path.join(sourceDataPath, 'app.db');
     const oldDbExists = await fs.access(oldDbPath).then(() => true).catch(() => false);
 
     if (!oldDbExists) {
       console.log('[Migration] No old database found, skipping migration');
       return;
     }
+
+    await fs.mkdir(targetDataPath, { recursive: true });
 
     // 尝试导入旧数据库模块（仅在有 SQLite 依赖时可用）
     let DatabaseManager: any;
@@ -33,7 +38,7 @@ export async function migrateToFileSystem(dataPath: string): Promise<void> {
 
     // 创建旧数据库实例
     console.log('[Migration] Initializing old database...');
-    const oldDb = new DatabaseManager(dataPath);
+    const oldDb = new DatabaseManager(sourceDataPath);
     await oldDb.initialize();
 
     // 导出核心数据
@@ -76,20 +81,16 @@ export async function migrateToFileSystem(dataPath: string): Promise<void> {
     // 保存核心数据到新的文件系统格式
     console.log('[Migration] Saving core data to file system...');
     await fs.writeFile(
-      path.join(dataPath, 'vendors.json'),
+      path.join(targetDataPath, 'vendors.json'),
       JSON.stringify(vendorsWithServices, null, 2)
     );
     // 不再保存独立的 services.json，已合并到 vendors.json 中
     await fs.writeFile(
-      path.join(dataPath, 'routes.json'),
-      JSON.stringify(routes, null, 2)
+      path.join(targetDataPath, 'routes.json'),
+      JSON.stringify({ routes, rules }, null, 2)
     );
     await fs.writeFile(
-      path.join(dataPath, 'rules.json'),
-      JSON.stringify(rules, null, 2)
-    );
-    await fs.writeFile(
-      path.join(dataPath, 'config.json'),
+      path.join(targetDataPath, 'config.json'),
       JSON.stringify(config, null, 2)
     );
 
@@ -98,7 +99,7 @@ export async function migrateToFileSystem(dataPath: string): Promise<void> {
       console.log('[Migration] Migrating sessions...');
       const sessions = oldDb.getSessions(10000, 0);
       await fs.writeFile(
-        path.join(dataPath, 'sessions.json'),
+        path.join(targetDataPath, 'sessions.json'),
         JSON.stringify(sessions, null, 2)
       );
       console.log(`[Migration] Migrated ${sessions.length} sessions`);
@@ -106,7 +107,7 @@ export async function migrateToFileSystem(dataPath: string): Promise<void> {
       console.log('[Migration] Could not migrate sessions:', error);
       // 创建空的 sessions 文件
       await fs.writeFile(
-        path.join(dataPath, 'sessions.json'),
+        path.join(targetDataPath, 'sessions.json'),
         JSON.stringify([], null, 2)
       );
     }
@@ -128,14 +129,14 @@ export async function migrateToFileSystem(dataPath: string): Promise<void> {
         }));
         
         await fs.writeFile(
-          path.join(dataPath, 'logs.json'),
+          path.join(targetDataPath, 'logs.json'),
           JSON.stringify(cleanedLogs, null, 2)
         );
         console.log(`[Migration] Migrated ${logs.length} request logs`);
       } else {
         // 创建空的日志文件
         await fs.writeFile(
-          path.join(dataPath, 'logs.json'),
+          path.join(targetDataPath, 'logs.json'),
           JSON.stringify([], null, 2)
         );
         console.log('[Migration] No request logs to migrate');
@@ -144,7 +145,7 @@ export async function migrateToFileSystem(dataPath: string): Promise<void> {
       console.log('[Migration] Could not migrate logs:', error instanceof Error ? error.message : error);
       // 创建空的日志文件
       await fs.writeFile(
-        path.join(dataPath, 'logs.json'),
+        path.join(targetDataPath, 'logs.json'),
         JSON.stringify([], null, 2)
       );
     }
@@ -154,7 +155,7 @@ export async function migrateToFileSystem(dataPath: string): Promise<void> {
       console.log('[Migration] Migrating error logs (last 1000)...');
       const errorLogs = await oldDb.getErrorLogs(1000, 0);
       await fs.writeFile(
-        path.join(dataPath, 'error-logs.json'),
+        path.join(targetDataPath, 'error-logs.json'),
         JSON.stringify(errorLogs, null, 2)
       );
       console.log(`[Migration] Migrated ${errorLogs.length} error logs`);
@@ -162,14 +163,14 @@ export async function migrateToFileSystem(dataPath: string): Promise<void> {
       console.log('[Migration] Could not migrate error logs:', error);
       // 创建空的错误日志文件
       await fs.writeFile(
-        path.join(dataPath, 'error-logs.json'),
+        path.join(targetDataPath, 'error-logs.json'),
         JSON.stringify([], null, 2)
       );
     }
 
     // 创建空的黑名单文件
     await fs.writeFile(
-      path.join(dataPath, 'blacklist.json'),
+      path.join(targetDataPath, 'blacklist.json'),
       JSON.stringify([], null, 2)
     );
 
@@ -196,14 +197,57 @@ export async function migrateToFileSystem(dataPath: string): Promise<void> {
 }
 
 /**
+ * 迁移旧版本的文件系统数据库目录到新目录（仅复制 JSON/日志文件）
+ */
+export async function migrateLegacyFsData(
+  legacyDataPath: string,
+  targetDataPath: string
+): Promise<void> {
+  console.log('[Migration] Migrating legacy filesystem data directory...');
+  await fs.mkdir(targetDataPath, { recursive: true });
+
+  const filesToCopy = [
+    'vendors.json',
+    'services.json',
+    'routes.json',
+    'rules.json',
+    'config.json',
+    'sessions.json',
+    'logs.json',
+    'logs-index.json',
+    'error-logs.json',
+    'blacklist.json',
+    'statistics.json',
+  ];
+
+  for (const filename of filesToCopy) {
+    const src = path.join(legacyDataPath, filename);
+    const dest = path.join(targetDataPath, filename);
+    const exists = await fs.access(src).then(() => true).catch(() => false);
+    if (exists) {
+      await fs.copyFile(src, dest);
+    }
+  }
+
+  const legacyLogsDir = path.join(legacyDataPath, 'logs');
+  const targetLogsDir = path.join(targetDataPath, 'logs');
+  const logsDirExists = await fs.access(legacyLogsDir).then(() => true).catch(() => false);
+  if (logsDirExists) {
+    await fs.cp(legacyLogsDir, targetLogsDir, { recursive: true });
+  }
+
+  console.log('[Migration] Legacy filesystem data migration completed');
+}
+
+/**
  * 检查是否需要迁移
  * @param dataPath 数据目录路径
  * @returns 是否需要迁移
  */
-export async function needsMigration(dataPath: string): Promise<boolean> {
+export async function needsMigration(sourceDataPath: string, targetDataPath: string = sourceDataPath): Promise<boolean> {
   try {
     // 检查是否存在旧的 SQLite 数据库
-    const oldDbPath = path.join(dataPath, 'app.db');
+    const oldDbPath = path.join(sourceDataPath, 'app.db');
     const oldDbExists = await fs.access(oldDbPath).then(() => true).catch(() => false);
     
     if (!oldDbExists) {
@@ -211,7 +255,7 @@ export async function needsMigration(dataPath: string): Promise<boolean> {
     }
 
     // 检查是否已经存在新的文件系统数据库
-    const newDbPath = path.join(dataPath, 'config.json');
+    const newDbPath = path.join(targetDataPath, 'config.json');
     const newDbExists = await fs.access(newDbPath).then(() => true).catch(() => false);
     
     // 如果旧数据库存在且新数据库不存在，则需要迁移
@@ -240,7 +284,6 @@ export async function verifyMigration(dataPath: string): Promise<{
     const requiredFiles = [
       'vendors.json',
       'routes.json',
-      'rules.json',
       'config.json',
       'sessions.json',
       'logs.json',
@@ -265,6 +308,21 @@ export async function verifyMigration(dataPath: string): Promise<{
             }
           }
         }
+
+        // 特殊验证：确保 routes.json 包含 routes 与 rules
+        if (file === 'routes.json') {
+          const routesData = JSON.parse(content);
+          if (!routesData || typeof routesData !== 'object') {
+            errors.push('Invalid routes.json: missing routes/rules object');
+          } else {
+            if (!Array.isArray(routesData.routes)) {
+              errors.push('Invalid routes.json: routes is not an array');
+            }
+            if (!Array.isArray(routesData.rules)) {
+              errors.push('Invalid routes.json: rules is not an array');
+            }
+          }
+        }
       } catch (error) {
         errors.push(`File ${file} is missing or invalid`);
       }
@@ -275,6 +333,12 @@ export async function verifyMigration(dataPath: string): Promise<{
     const oldServicesExists = await fs.access(oldServicesFile).then(() => true).catch(() => false);
     if (oldServicesExists) {
       warnings.push('Old services.json file still exists (should have been migrated to vendors.json)');
+    }
+
+    const oldRulesFile = path.join(dataPath, 'rules.json');
+    const oldRulesExists = await fs.access(oldRulesFile).then(() => true).catch(() => false);
+    if (oldRulesExists) {
+      warnings.push('Old rules.json file still exists (should have been migrated to routes.json)');
     }
 
     return {
