@@ -626,9 +626,11 @@ function AppContent() {
                     </code>
                   </div>
                 )}
-                <div className="markdown-content" style={{ maxHeight: '400px', overflow: 'auto' }}>
-                  <ReactMarkdown>{upgradeNotes || '暂无升级说明'}</ReactMarkdown>
-                </div>
+                {upgradeNotes ? (
+                  <div className="markdown-content" style={{ maxHeight: '400px', overflow: 'auto' }}>
+                    <ReactMarkdown>{upgradeNotes}</ReactMarkdown>
+                  </div>
+                ) : null}
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-primary" onClick={() => setShowVersionModal(false)}>

@@ -263,8 +263,6 @@ export const api: BackendAPI = {
 
   getReadmeMarkdown: () => requestJson(buildUrl('/api/docs/readme')),
 
-  getUpgradeMarkdown: () => requestJson(buildUrl('/api/docs/upgrade')),
-
   // Skills 管理相关
   getInstalledSkills: () => requestJson(buildUrl('/api/skills/installed')),
   searchSkills: (query) => requestJson(buildUrl('/api/skills/search'), {
@@ -300,6 +298,7 @@ export const api: BackendAPI = {
   }),
 
   // Upgrade 相关
+  getUpgradeMarkdown: () => requestJson(buildUrl('/api/docs/upgrade')),
   getUpgrade: () => requestJson(buildUrl('/api/upgrade')),
   acknowledgeUpgrade: () => requestJson(buildUrl('/api/upgrade/ack'), { method: 'POST' }),
 
