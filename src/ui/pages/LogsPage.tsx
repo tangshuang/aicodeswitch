@@ -250,6 +250,9 @@ function assembleResponseBody(log: RequestLog): any | null {
 
 type LogTab = 'request' | 'error' | 'sessions';
 
+const LOG_MODAL_Z_INDEX = 1000000;
+const LOG_MODAL_TOP_Z_INDEX = LOG_MODAL_Z_INDEX + 1;
+
 function LogsPage() {
   const { confirm } = useConfirm();
   const [activeTab, setActiveTab] = useState<LogTab>('request');
@@ -291,6 +294,8 @@ function LogsPage() {
   const [filterVendorId, setFilterVendorId] = useState<string>('');
   const [filterServiceId, setFilterServiceId] = useState<string>('');
   const [filterModel, setFilterModel] = useState<string>('');
+
+  const logDetailZIndex = selectedSession ? LOG_MODAL_TOP_Z_INDEX : LOG_MODAL_Z_INDEX;
 
   useEffect(() => {
     loadLogs();
@@ -967,17 +972,17 @@ function LogsPage() {
       </div>
 
       {selectedRequestLog && (
-        <div className="modal-overlay" style={{ zIndex: selectedSession ? 1100 : 1000 }}>
+        <div className="modal-overlay" style={{ zIndex: logDetailZIndex }}>
           <button
             type="button"
             className="modal-close-btn"
             onClick={() => setSelectedRequestLog(null)}
             aria-label="关闭"
-            style={{ zIndex: selectedSession ? 1101 : 1001 }}
+            style={{ zIndex: logDetailZIndex + 1 }}
           >
             ×
           </button>
-          <div className="modal" style={{ width: '800px', zIndex: selectedSession ? 1100 : 1000 }}>
+          <div className="modal" style={{ width: '800px', zIndex: logDetailZIndex }}>
             <div className="modal-container">
               <div className="modal-header">
                 <h2>请求详情</h2>
@@ -1163,17 +1168,17 @@ function LogsPage() {
       )}
 
       {selectedErrorLog && (
-        <div className="modal-overlay" style={{ zIndex: selectedSession ? 1100 : 1000 }}>
+        <div className="modal-overlay" style={{ zIndex: logDetailZIndex }}>
           <button
             type="button"
             className="modal-close-btn"
             onClick={() => setSelectedErrorLog(null)}
             aria-label="关闭"
-            style={{ zIndex: selectedSession ? 1101 : 1001 }}
+            style={{ zIndex: logDetailZIndex + 1 }}
           >
             ×
           </button>
-          <div className="modal" style={{ minWidth: '600px', zIndex: selectedSession ? 1100 : 1000 }}>
+          <div className="modal" style={{ minWidth: '600px', zIndex: logDetailZIndex }}>
             <div className="modal-container">
               <div className="modal-header">
                 <h2>错误日志详情</h2>

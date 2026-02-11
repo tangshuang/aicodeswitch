@@ -195,7 +195,7 @@ function StatisticsPage() {
           boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
         }}>
           <div style={{ fontSize: '14px', opacity: 0.9, marginBottom: '8px' }}>平均响应时间</div>
-          <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{statistics.overview.avgResponseTime}ms</div>
+          <div style={{ fontSize: '32px', fontWeight: 'bold' }}>{statistics.overview.avgResponseTime.toFixed(2)}ms</div>
         </div>
 
         <div style={{
@@ -465,7 +465,7 @@ function StatisticsPage() {
         gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))',
         gap: '20px',
       }}>
-        {/* 按目标类型 */}
+        {/* 按编程工具 */}
         <div style={{
           background: 'var(--bg-card)',
           padding: '20px',
@@ -473,7 +473,7 @@ function StatisticsPage() {
           border: '1px solid var(--border-primary)',
         }}>
           <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', color: 'var(--text-primary)' }}>
-            🎯 按目标类型统计
+            🎯 按编程工具统计
           </h3>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -537,7 +537,7 @@ function StatisticsPage() {
           </table>
         </div>
 
-        {/* 按服务统计 */}
+        {/* 按服务商API服务统计 */}
         <div style={{
           background: 'var(--bg-card)',
           padding: '20px',
@@ -545,7 +545,7 @@ function StatisticsPage() {
           border: '1px solid var(--border-primary)',
         }}>
           <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', color: 'var(--text-primary)' }}>
-            🔧 按服务统计
+            🔧 按服务商API服务统计
           </h3>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>

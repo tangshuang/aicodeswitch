@@ -1743,7 +1743,8 @@ export class FileSystemDatabaseManager {
     // 检查 body 中的 metadata.user_id（Claude Code）
     if (log.body) {
       try {
-        const body = JSON.parse(log.body);
+        // body 可能是对象（已解析）或字符串（未解析）
+        const body = typeof log.body === 'string' ? JSON.parse(log.body) : log.body;
         if (body.metadata?.user_id === sessionId) {
           return true;
         }

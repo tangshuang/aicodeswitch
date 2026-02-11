@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 3.1.1 (2026-02-11)
+
+#### Fixes
+* 修复日志页弹层被侧栏遮挡、以及会话详情内的日志详情弹层层级错误的问题
+
 
 ### 3.1.0 (2026-02-10)
 

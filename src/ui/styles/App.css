@@ -167,7 +167,6 @@
   overflow: auto;
   background: var(--bg-primary);
   position: relative;
-  z-index: 1;
   margin: 16px 16px 16px 0;
   border-radius: 20px;
   transition: margin 0.3s ease;

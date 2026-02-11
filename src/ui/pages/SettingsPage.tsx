@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import type { AppConfig } from '../../types';
 import { toast } from '../components/Toast';
+import { Switch } from '../components/Switch';
 
 function SettingsPage() {
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -203,51 +204,49 @@ function SettingsPage() {
           配置代理服务器，API 服务可选择是否通过代理转发请求。
         </p>
         <form onSubmit={handleSaveProxyConfig}>
+          <input type="hidden" name="proxyEnabled" value={proxyFormData.proxyEnabled ? 'true' : 'false'} />
           <div className="form-group">
             <label>启用代理</label>
-            <select
-              name="proxyEnabled"
-              value={proxyFormData.proxyEnabled ? 'true' : 'false'}
-              onChange={(e) => setProxyFormData(prev => ({ ...prev, proxyEnabled: e.target.value === 'true' }))}
-            >
-              <option value="false">不启用</option>
-              <option value="true">启用</option>
-            </select>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Switch
+                checked={proxyFormData.proxyEnabled}
+                onChange={(checked) => setProxyFormData(prev => ({ ...prev, proxyEnabled: checked }))}
+              />
+              <span style={{ fontSize: '14px', color: '#666' }}>
+                {proxyFormData.proxyEnabled ? '已启用' : '未启用'}
+              </span>
+            </div>
           </div>
-          {proxyFormData.proxyEnabled && (
-            <>
-              <div className="form-group">
-                <label>代理地址</label>
-                <input
-                  type="text"
-                  name="proxyUrl"
-                  value={proxyFormData.proxyUrl}
-                  onChange={(e) => setProxyFormData(prev => ({ ...prev, proxyUrl: e.target.value }))}
-                  placeholder="例如: proxy.example.com:8080 或 http://proxy.example.com:8080"
-                />
-              </div>
-              <div className="form-group">
-                <label>代理用户名（可选）</label>
-                <input
-                  type="text"
-                  name="proxyUsername"
-                  value={proxyFormData.proxyUsername}
-                  onChange={(e) => setProxyFormData(prev => ({ ...prev, proxyUsername: e.target.value }))}
-                  placeholder="如果代理需要认证"
-                />
-              </div>
-              <div className="form-group">
-                <label>代理密码（可选）</label>
-                <input
-                  type="password"
-                  name="proxyPassword"
-                  value={proxyFormData.proxyPassword}
-                  onChange={(e) => setProxyFormData(prev => ({ ...prev, proxyPassword: e.target.value }))}
-                  placeholder="如果代理需要认证"
-                />
-              </div>
-            </>
-          )}
+          <div className="form-group">
+            <label>代理地址</label>
+            <input
+              type="text"
+              name="proxyUrl"
+              value={proxyFormData.proxyUrl}
+              onChange={(e) => setProxyFormData(prev => ({ ...prev, proxyUrl: e.target.value }))}
+              placeholder="例如: proxy.example.com:8080 或 http://proxy.example.com:8080"
+            />
+          </div>
+          <div className="form-group">
+            <label>代理用户名（可选）</label>
+            <input
+              type="text"
+              name="proxyUsername"
+              value={proxyFormData.proxyUsername}
+              onChange={(e) => setProxyFormData(prev => ({ ...prev, proxyUsername: e.target.value }))}
+              placeholder="如果代理需要认证"
+            />
+          </div>
+          <div className="form-group">
+            <label>代理密码（可选）</label>
+            <input
+              type="password"
+              name="proxyPassword"
+              value={proxyFormData.proxyPassword}
+              onChange={(e) => setProxyFormData(prev => ({ ...prev, proxyPassword: e.target.value }))}
+              placeholder="如果代理需要认证"
+            />
+          </div>
           <button type="submit" className="btn btn-primary">保存代理配置</button>
         </form>
       </div>

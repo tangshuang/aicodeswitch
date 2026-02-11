@@ -81,7 +81,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     <ConfirmContext.Provider value={{ confirm }}>
       {children}
       {isOpen && (
-        <div className="modal-overlay" style={{ zIndex: 10000 }}>
+        <div className="modal-overlay" style={{ zIndex: 1000000 }}>
           <div className="modal" style={{ maxWidth: '500px' }}>
             <div className="modal-container">
               <div className="modal-header">
