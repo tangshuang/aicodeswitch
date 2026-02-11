@@ -108,7 +108,7 @@ export class FileSystemDatabaseManager {
 
     // 加载所有数据
     await this.loadAllData();
-    
+
     // 确保默认配置
     await this.ensureDefaultConfig();
   }
@@ -187,13 +187,7 @@ export class FileSystemDatabaseManager {
       // 保存新的 vendors.json
       await this.saveVendors();
 
-      // 备份旧文件
-      const timestamp = Date.now();
-      const backupFile = path.join(this.dataPath, `services.json.backup.${timestamp}`);
-      await fs.rename(oldServicesFile, backupFile);
-
       console.log(`[Database] 迁移完成：${migratedCount} 个服务已迁移`);
-      console.log(`[Database] 旧的 services.json 已备份到 ${backupFile}`);
 
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -316,18 +310,6 @@ export class FileSystemDatabaseManager {
     // 如果 routes.json 还是旧格式/缺失，或从旧 rules.json 合并过数据，或缺少 rules 字段，则写入新格式
     if (routesFileFormat !== 'combined' || merged || (routesFileFormat === 'combined' && !hasRulesInRoutesFile)) {
       await this.saveRoutesData();
-    }
-
-    // 备份旧的 rules.json 文件
-    if (oldRulesExists) {
-      try {
-        const timestamp = Date.now();
-        const backupFile = path.join(this.dataPath, `rules.json.backup.${timestamp}`);
-        await fs.rename(oldRulesFile, backupFile);
-        console.log(`[Database] 旧的 rules.json 已备份到 ${backupFile}`);
-      } catch (error) {
-        console.error('[Database] 备份 rules.json 失败:', error);
-      }
     }
   }
 
@@ -472,12 +454,6 @@ export class FileSystemDatabaseManager {
       await this.saveLogsIndex();
 
       console.log(`[Database] Successfully migrated ${migratedCount} log entries to ${this.logShardsIndex.length} shard(s)`);
-
-      // 备份旧文件
-      const backupFile = path.join(this.dataPath, 'logs.json.backup');
-      await fs.rename(oldLogsFile, backupFile);
-      console.log(`[Database] Old logs.json backed up to ${backupFile}`);
-
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         // 旧文件不存在，这是正常的
@@ -905,7 +881,7 @@ export class FileSystemDatabaseManager {
   async updateRoute(id: string, route: Partial<Route>): Promise<boolean> {
     const index = this.routes.findIndex(r => r.id === id);
     if (index === -1) return false;
-    
+
     const now = Date.now();
     this.routes[index] = {
       ...this.routes[index],
@@ -920,11 +896,11 @@ export class FileSystemDatabaseManager {
   async deleteRoute(id: string): Promise<boolean> {
     const index = this.routes.findIndex(r => r.id === id);
     if (index === -1) return false;
-    
+
     // 删除关联的规则
     this.rules = this.rules.filter(r => r.routeId !== id);
     await this.saveRules();
-    
+
     this.routes.splice(index, 1);
     await this.saveRoutes();
     return true;
@@ -933,14 +909,14 @@ export class FileSystemDatabaseManager {
   async activateRoute(id: string): Promise<boolean> {
     const route = this.routes.find(r => r.id === id);
     if (!route) return false;
-    
+
     // 停用同类型的其他路由
     for (const r of this.routes) {
       if (r.targetType === route.targetType) {
         r.isActive = r.id === id;
       }
     }
-    
+
     await this.saveRoutes();
     return true;
   }
@@ -948,7 +924,7 @@ export class FileSystemDatabaseManager {
   async deactivateRoute(id: string): Promise<boolean> {
     const route = this.routes.find(r => r.id === id);
     if (!route) return false;
-    
+
     route.isActive = false;
     await this.saveRoutes();
     return true;
@@ -973,7 +949,7 @@ export class FileSystemDatabaseManager {
     const rules = routeId
       ? this.rules.filter(r => r.routeId === routeId)
       : this.rules;
-    
+
     return rules.sort((a, b) => {
       if (b.sortOrder !== a.sortOrder) {
         return (b.sortOrder || 0) - (a.sortOrder || 0);
@@ -1006,7 +982,7 @@ export class FileSystemDatabaseManager {
   async updateRule(id: string, rule: Partial<Rule>): Promise<boolean> {
     const index = this.rules.findIndex(r => r.id === id);
     if (index === -1) return false;
-    
+
     const now = Date.now();
     this.rules[index] = {
       ...this.rules[index],
@@ -1021,7 +997,7 @@ export class FileSystemDatabaseManager {
   async deleteRule(id: string): Promise<boolean> {
     const index = this.rules.findIndex(r => r.id === id);
     if (index === -1) return false;
-    
+
     this.rules.splice(index, 1);
     await this.saveRules();
     return true;
