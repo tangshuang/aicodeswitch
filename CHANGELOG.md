@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file. See [standa
 
 #### Fixes
 * 修复日志页弹层被侧栏遮挡、以及会话详情内的日志详情弹层层级错误的问题
+* 请求日志补充记录规则内容类型，并修复内容类型统计分布缺失的问题
 
 
 ### 3.1.0 (2026-02-10)

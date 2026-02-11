@@ -1564,6 +1564,7 @@ export class ProxyServer {
         error,
 
         // 新增字段
+        contentType: rule.contentType,
         ruleId: rule.id,
         targetType,
         targetServiceId: service.id,

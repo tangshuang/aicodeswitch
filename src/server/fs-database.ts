@@ -43,6 +43,8 @@ export class FileSystemDatabaseManager {
 
   // 持久化统计数据
   private statistics: Statistics = this.createEmptyStatistics();
+  private contentTypeDistributionInitialized = false;
+  private contentTypeDistributionInitializing = false;
 
   // 缓存机制
   private logsCountCache: { count: number; timestamp: number } | null = null;
@@ -610,8 +612,10 @@ export class FileSystemDatabaseManager {
     try {
       const data = await fs.readFile(this.statisticsFile, 'utf-8');
       this.statistics = JSON.parse(data);
+      this.contentTypeDistributionInitialized = this.statistics.contentTypeDistribution.length > 0;
     } catch {
       this.statistics = this.createEmptyStatistics();
+      this.contentTypeDistributionInitialized = false;
       // 创建空文件
       await this.saveStatistics();
     }
@@ -1168,7 +1172,8 @@ export class FileSystemDatabaseManager {
   // Log operations
   async addLog(log: Omit<RequestLog, 'id'>): Promise<void> {
     const id = crypto.randomUUID();
-    const logWithId = { ...log, id };
+    const contentType = this.resolveLogContentType(log);
+    const logWithId = { ...log, contentType, id };
 
     // 获取目标分片文件名
     const filename = await this.getLogShardFilename(logWithId.timestamp);
@@ -1484,6 +1489,87 @@ export class FileSystemDatabaseManager {
     }
   }
 
+  private inferContentTypeFromLog(log: Omit<RequestLog, 'id'>): ContentType {
+    const requestModel = log.requestModel?.toLowerCase() || '';
+    let bodyText = '';
+
+    if (typeof log.body === 'string') {
+      bodyText = log.body;
+    } else if (log.body !== undefined) {
+      try {
+        bodyText = JSON.stringify(log.body);
+      } catch {
+        bodyText = '';
+      }
+    }
+
+    const lowerBody = bodyText.toLowerCase();
+
+    if (lowerBody.includes('image') || lowerBody.includes('base64')) {
+      return 'image-understanding';
+    }
+    if (requestModel.includes('think')) {
+      return 'thinking';
+    }
+    if ((log.usage?.inputTokens || 0) > 12000) {
+      return 'long-context';
+    }
+
+    return 'default';
+  }
+
+  private resolveLogContentType(log: Omit<RequestLog, 'id'>): ContentType {
+    if (log.contentType) {
+      return log.contentType;
+    }
+
+    if (log.ruleId) {
+      const rule = this.getRule(log.ruleId);
+      if (rule?.contentType) {
+        return rule.contentType;
+      }
+    }
+
+    return this.inferContentTypeFromLog(log);
+  }
+
+  private async ensureContentTypeDistribution(): Promise<void> {
+    if (this.contentTypeDistributionInitialized || this.contentTypeDistributionInitializing) {
+      return;
+    }
+
+    this.contentTypeDistributionInitializing = true;
+    try {
+      if (this.logShardsIndex.length === 0) {
+        this.contentTypeDistributionInitialized = true;
+        return;
+      }
+
+      const counts = new Map<ContentType, number>();
+      let totalRequests = 0;
+
+      for (const shard of this.logShardsIndex) {
+        const shardLogs = await this.loadLogShard(shard.filename);
+        for (const log of shardLogs) {
+          totalRequests++;
+          const contentType = this.resolveLogContentType(log);
+          counts.set(contentType, (counts.get(contentType) || 0) + 1);
+        }
+      }
+
+      this.statistics.contentTypeDistribution = Array.from(counts.entries()).map(([contentType, count]) => ({
+        contentType,
+        count,
+        percentage: totalRequests > 0 ? Math.round((count / totalRequests) * 100) : 0,
+      }));
+
+      this.contentTypeDistributionInitialized = true;
+      await this.saveStatistics();
+    } finally {
+      this.contentTypeDistributionInitializing = false;
+    }
+  }
+
   // Statistics operations
   /**
    * 更新统计数据 - 在每次添加日志时调用
@@ -1594,6 +1680,20 @@ export class FileSystemDatabaseManager {
         (modelStats.avgResponseTime * (modelStats.totalRequests - 1) + responseTime) / modelStats.totalRequests;
     }
 
+    // 更新 contentTypeDistribution
+    const resolvedContentType = this.resolveLogContentType(log);
+    let contentTypeStats = this.statistics.contentTypeDistribution.find(s => s.contentType === resolvedContentType);
+    if (!contentTypeStats) {
+      contentTypeStats = { contentType: resolvedContentType, count: 0, percentage: 0 };
+      this.statistics.contentTypeDistribution.push(contentTypeStats);
+    }
+    contentTypeStats.count++;
+    const totalRequests = this.statistics.overview.totalRequests;
+    for (const entry of this.statistics.contentTypeDistribution) {
+      entry.percentage = totalRequests > 0 ? Math.round((entry.count / totalRequests) * 100) : 0;
+    }
+    this.contentTypeDistributionInitialized = true;
+
     // 更新 timeline
     const date = new Date(log.timestamp).toISOString().split('T')[0];
     let timelineStats = this.statistics.timeline.find(t => t.date === date);
@@ -1621,6 +1721,8 @@ export class FileSystemDatabaseManager {
    * @param days - 用于过滤 timeline 数据的天数
    */
   async getStatistics(days: number = 30): Promise<Statistics> {
+    await this.ensureContentTypeDistribution();
+
     const now = Date.now();
     const startTime = now - days * 24 * 60 * 60 * 1000;
 
