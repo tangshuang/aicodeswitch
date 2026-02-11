@@ -29,8 +29,7 @@ aicodeswitch/
 ├── package.json       # npm 脚本、依赖声明
 ├── tsconfig.json      # TypeScript 配置
 ├── vite.config.ts     # Vite 构建配置
-├── .github/workflows/ # CI/CD 流水线
-└── CLAUDE.md         # Claude Code 上下文文档
+└── .github/workflows/ # CI/CD 流水线
 ```
 
 ## 快速定位
@@ -64,13 +63,13 @@ aicodeswitch/
 ### 路径约定
 - API 路由前缀: `/api/` (除代理路由 `/claude-code/`、`/codex/`)
 - 服务端口: 4567 (服务器), 4568 (UI 开发服务器)
-- 数据目录: `~/.aicodeswitch/data/`
+- 数据目录: `~/.aicodeswitch/fs-db/`
 - 配置文件: `~/.aicodeswitch/aicodeswitch.conf`
 
 ## 特殊约定
 
 ### 数据库与迁移
-- **数据格式:** 所有数据存为 JSON 文件 (`~/.aicodeswitch/data/*.json`)
+- **数据格式:** 所有数据存为 JSON 文件 (`~/.aicodeswitch/fs-db/*.json`)
 - **数据结构:** `vendors.json` 内嵌 `services` 数组（已迁移，旧结构已废弃）
 - **自动迁移:** 启动时自动检测并迁移旧 SQLite/LevelDB/旧 JSON 结构
 - **迁移工具:** `src/server/migrate-to-fs.ts`
@@ -88,6 +87,7 @@ aicodeswitch/
 - **Node.js 检测:** 启动时检查是否安装，未安装显示友好错误
 - **退出处理:** 关闭时自动禁用所有激活的路由，防止配置文件残留
 - **资源打包:** 构建时将 `dist/server` 和 `dist/ui` 嵌入 Tauri
+- **原理:** 通过tauri来运行dist/server/main.js，并使用内置的webview来渲染ui页面
 
 ## 构建与发布
 

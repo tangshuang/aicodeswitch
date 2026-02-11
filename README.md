@@ -141,6 +141,12 @@ aicodeswitch内部，会根据“源类型”来转换数据。例如，你的�
 
 当同一请求类型配置多个规则时,系统会按排序优先使用第一个，如果某个服务报错(4xx/5xx)或请求超时，将自动切换到下一个可用规则，确保你可以正常使用coding工具。
 
+### 数据转流
+
+支持将openai的流式响应数据转换成Claude Code的流式数据，并支持实时转换，从而可以让你使用支持openAI的API服务来在Claude Code中使用。
+
+*不过，需要注意，如果你的API服务商不支持tools，或者所支持的max_tokens太小，是无法在Claude Code中使用的。*
+
 ## Skills管理
 
 你可以在 aicodeswitch 中集中统一管理 skills，把skills分发给claude code和codex，随时启用和停用skills。

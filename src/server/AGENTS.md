@@ -41,7 +41,7 @@ src/server/
 - **旧实现**: `database.ts` - SQLite/LevelDB 抽象
 - **新实现**: `fs-database.ts` - JSON 文件存储
 - **自动迁移**: `migrate-to-fs.ts` - 启动时检测并迁移旧数据
-- 数据文件位于: `~/.aicodeswitch/data/*.json`
+- 数据文件位于: `~/.aicodeswitch/fs-db/*.json`
 
 ### Proxy & Transformation
 - **请求路由**: `proxy-server.ts` 按内容类型匹配规则
