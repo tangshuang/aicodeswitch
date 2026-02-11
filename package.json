@@ -45,7 +45,7 @@
     "build:server": "tsc -p tsconfig.server.json",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "prepublishOnly": "npm run build",
-    "release": "standard-version",
+    "release": "standard-version --no-changelog",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build && node tauri/move-bundle.js",
     "tauri:icon": "tauri icon src/ui/assets/logo.png"

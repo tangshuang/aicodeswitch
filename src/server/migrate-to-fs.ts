@@ -116,7 +116,7 @@ export async function migrateToFileSystem(
     try {
       console.log('[Migration] Migrating request logs (last 5000)...');
       const logs = await oldDb.getLogs(5000, 0);
-      
+
       // 完整迁移所有日志，不进行任何截断
       if (logs.length > 0) {
         // 修复字段名：将 response 改为 responseBody
@@ -127,7 +127,7 @@ export async function migrateToFileSystem(
           // 移除旧的 response 字段（如果存在）
           response: undefined,
         }));
-        
+
         await fs.writeFile(
           path.join(targetDataPath, 'logs.json'),
           JSON.stringify(cleanedLogs, null, 2)
@@ -249,7 +249,7 @@ export async function needsMigration(sourceDataPath: string, targetDataPath: str
     // 检查是否存在旧的 SQLite 数据库
     const oldDbPath = path.join(sourceDataPath, 'app.db');
     const oldDbExists = await fs.access(oldDbPath).then(() => true).catch(() => false);
-    
+
     if (!oldDbExists) {
       return false;
     }
@@ -257,7 +257,7 @@ export async function needsMigration(sourceDataPath: string, targetDataPath: str
     // 检查是否已经存在新的文件系统数据库
     const newDbPath = path.join(targetDataPath, 'config.json');
     const newDbExists = await fs.access(newDbPath).then(() => true).catch(() => false);
-    
+
     // 如果旧数据库存在且新数据库不存在，则需要迁移
     return oldDbExists && !newDbExists;
   } catch (error) {

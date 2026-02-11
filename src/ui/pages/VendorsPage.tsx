@@ -238,6 +238,7 @@ function VendorsPage() {
       name: formData.get('name') as string,
       description: formData.get('description') as string,
       sortOrder: parseInt(formData.get('sortOrder') as string) || 0,
+      services: []
     };
 
     if (editingVendor) {
@@ -444,6 +445,7 @@ function VendorsPage() {
         name: vendorConfig.name,
         description: vendorConfig.description,
         sortOrder: 0,  // 添加默认排序值
+        services: []
       });
 
       console.log('[一键配置] 供应商创建成功:', vendorResult);
@@ -624,7 +626,7 @@ function VendorsPage() {
                     <td>{service.name}</td>
                     <td>{service.sourceType ? SOURCE_TYPE[service.sourceType] : '-'}</td>
                      <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={service.apiUrl}>{service.apiUrl}</td>
-                    <td>{service.supportedModels?.length ?? '*'} 个</td>
+                    <td>{service.supportedModels?.length ? `${service.supportedModels.length}个` : '*'}</td>
                     <td>
                       <div className="action-buttons">
                         <button className="btn btn-sm btn-secondary" onClick={() => handleEditService(service)}>编辑</button>

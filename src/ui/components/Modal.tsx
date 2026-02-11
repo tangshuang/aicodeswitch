@@ -26,7 +26,7 @@ export function Modal({
   return (
     <div
       className="modal-overlay"
-      style={{ zIndex: 10000 }}
+      style={{ zIndex: 1000000 }}
       onClick={(e) => {
         if (!closeOnOverlayClick) {
           e.stopPropagation();

@@ -567,7 +567,7 @@ function SkillsPage() {
       {isDiscovering ? renderDiscover() : renderInstalled()}
 
       {installState.skill && (
-        <div className="modal-overlay" style={{ zIndex: 10000 }}>
+        <div className="modal-overlay" style={{ zIndex: 1000000 }}>
           <button
             type="button"
             className="modal-close-btn"
@@ -680,7 +680,7 @@ function SkillsPage() {
       )}
 
       {deleteConfirm.skillId && (
-        <div className="modal-overlay" style={{ zIndex: 10001 }}>
+        <div className="modal-overlay" style={{ zIndex: 1000001 }}>
           <button
             type="button"
             className="modal-close-btn"

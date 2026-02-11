@@ -151,6 +151,7 @@ export interface RequestLog {
   error?: string;
 
   // 新增字段 - 用于日志筛选和详情展示
+  contentType?: ContentType;                       // 请求类型（规则内容类型）
   ruleId?: string;                                 // 使用的规则ID
   targetType?: TargetType;                         // 客户端类型
   targetServiceId?: string;                        // API服务ID

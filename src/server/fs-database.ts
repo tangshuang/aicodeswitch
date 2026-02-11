@@ -43,6 +43,8 @@ export class FileSystemDatabaseManager {
 
   // 持久化统计数据
   private statistics: Statistics = this.createEmptyStatistics();
+  private contentTypeDistributionInitialized = false;
+  private contentTypeDistributionInitializing = false;
 
   // 缓存机制
   private logsCountCache: { count: number; timestamp: number } | null = null;
@@ -106,7 +108,7 @@ export class FileSystemDatabaseManager {
 
     // 加载所有数据
     await this.loadAllData();
-    
+
     // 确保默认配置
     await this.ensureDefaultConfig();
   }
@@ -185,13 +187,7 @@ export class FileSystemDatabaseManager {
       // 保存新的 vendors.json
       await this.saveVendors();
 
-      // 备份旧文件
-      const timestamp = Date.now();
-      const backupFile = path.join(this.dataPath, `services.json.backup.${timestamp}`);
-      await fs.rename(oldServicesFile, backupFile);
-
       console.log(`[Database] 迁移完成：${migratedCount} 个服务已迁移`);
-      console.log(`[Database] 旧的 services.json 已备份到 ${backupFile}`);
 
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -314,18 +310,6 @@ export class FileSystemDatabaseManager {
     // 如果 routes.json 还是旧格式/缺失，或从旧 rules.json 合并过数据，或缺少 rules 字段，则写入新格式
     if (routesFileFormat !== 'combined' || merged || (routesFileFormat === 'combined' && !hasRulesInRoutesFile)) {
       await this.saveRoutesData();
-    }
-
-    // 备份旧的 rules.json 文件
-    if (oldRulesExists) {
-      try {
-        const timestamp = Date.now();
-        const backupFile = path.join(this.dataPath, `rules.json.backup.${timestamp}`);
-        await fs.rename(oldRulesFile, backupFile);
-        console.log(`[Database] 旧的 rules.json 已备份到 ${backupFile}`);
-      } catch (error) {
-        console.error('[Database] 备份 rules.json 失败:', error);
-      }
     }
   }
 
@@ -470,12 +454,6 @@ export class FileSystemDatabaseManager {
       await this.saveLogsIndex();
 
       console.log(`[Database] Successfully migrated ${migratedCount} log entries to ${this.logShardsIndex.length} shard(s)`);
-
-      // 备份旧文件
-      const backupFile = path.join(this.dataPath, 'logs.json.backup');
-      await fs.rename(oldLogsFile, backupFile);
-      console.log(`[Database] Old logs.json backed up to ${backupFile}`);
-
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         // 旧文件不存在，这是正常的
@@ -610,8 +588,10 @@ export class FileSystemDatabaseManager {
     try {
       const data = await fs.readFile(this.statisticsFile, 'utf-8');
       this.statistics = JSON.parse(data);
+      this.contentTypeDistributionInitialized = this.statistics.contentTypeDistribution.length > 0;
     } catch {
       this.statistics = this.createEmptyStatistics();
+      this.contentTypeDistributionInitialized = false;
       // 创建空文件
       await this.saveStatistics();
     }
@@ -901,7 +881,7 @@ export class FileSystemDatabaseManager {
   async updateRoute(id: string, route: Partial<Route>): Promise<boolean> {
     const index = this.routes.findIndex(r => r.id === id);
     if (index === -1) return false;
-    
+
     const now = Date.now();
     this.routes[index] = {
       ...this.routes[index],
@@ -916,11 +896,11 @@ export class FileSystemDatabaseManager {
   async deleteRoute(id: string): Promise<boolean> {
     const index = this.routes.findIndex(r => r.id === id);
     if (index === -1) return false;
-    
+
     // 删除关联的规则
     this.rules = this.rules.filter(r => r.routeId !== id);
     await this.saveRules();
-    
+
     this.routes.splice(index, 1);
     await this.saveRoutes();
     return true;
@@ -929,14 +909,14 @@ export class FileSystemDatabaseManager {
   async activateRoute(id: string): Promise<boolean> {
     const route = this.routes.find(r => r.id === id);
     if (!route) return false;
-    
+
     // 停用同类型的其他路由
     for (const r of this.routes) {
       if (r.targetType === route.targetType) {
         r.isActive = r.id === id;
       }
     }
-    
+
     await this.saveRoutes();
     return true;
   }
@@ -944,7 +924,7 @@ export class FileSystemDatabaseManager {
   async deactivateRoute(id: string): Promise<boolean> {
     const route = this.routes.find(r => r.id === id);
     if (!route) return false;
-    
+
     route.isActive = false;
     await this.saveRoutes();
     return true;
@@ -969,7 +949,7 @@ export class FileSystemDatabaseManager {
     const rules = routeId
       ? this.rules.filter(r => r.routeId === routeId)
       : this.rules;
-    
+
     return rules.sort((a, b) => {
       if (b.sortOrder !== a.sortOrder) {
         return (b.sortOrder || 0) - (a.sortOrder || 0);
@@ -1002,7 +982,7 @@ export class FileSystemDatabaseManager {
   async updateRule(id: string, rule: Partial<Rule>): Promise<boolean> {
     const index = this.rules.findIndex(r => r.id === id);
     if (index === -1) return false;
-    
+
     const now = Date.now();
     this.rules[index] = {
       ...this.rules[index],
@@ -1017,7 +997,7 @@ export class FileSystemDatabaseManager {
   async deleteRule(id: string): Promise<boolean> {
     const index = this.rules.findIndex(r => r.id === id);
     if (index === -1) return false;
-    
+
     this.rules.splice(index, 1);
     await this.saveRules();
     return true;
@@ -1168,7 +1148,8 @@ export class FileSystemDatabaseManager {
   // Log operations
   async addLog(log: Omit<RequestLog, 'id'>): Promise<void> {
     const id = crypto.randomUUID();
-    const logWithId = { ...log, id };
+    const contentType = this.resolveLogContentType(log);
+    const logWithId = { ...log, contentType, id };
 
     // 获取目标分片文件名
     const filename = await this.getLogShardFilename(logWithId.timestamp);
@@ -1484,6 +1465,87 @@ export class FileSystemDatabaseManager {
     }
   }
 
+  private inferContentTypeFromLog(log: Omit<RequestLog, 'id'>): ContentType {
+    const requestModel = log.requestModel?.toLowerCase() || '';
+    let bodyText = '';
+
+    if (typeof log.body === 'string') {
+      bodyText = log.body;
+    } else if (log.body !== undefined) {
+      try {
+        bodyText = JSON.stringify(log.body);
+      } catch {
+        bodyText = '';
+      }
+    }
+
+    const lowerBody = bodyText.toLowerCase();
+
+    if (lowerBody.includes('image') || lowerBody.includes('base64')) {
+      return 'image-understanding';
+    }
+    if (requestModel.includes('think')) {
+      return 'thinking';
+    }
+    if ((log.usage?.inputTokens || 0) > 12000) {
+      return 'long-context';
+    }
+
+    return 'default';
+  }
+
+  private resolveLogContentType(log: Omit<RequestLog, 'id'>): ContentType {
+    if (log.contentType) {
+      return log.contentType;
+    }
+
+    if (log.ruleId) {
+      const rule = this.getRule(log.ruleId);
+      if (rule?.contentType) {
+        return rule.contentType;
+      }
+    }
+
+    return this.inferContentTypeFromLog(log);
+  }
+
+  private async ensureContentTypeDistribution(): Promise<void> {
+    if (this.contentTypeDistributionInitialized || this.contentTypeDistributionInitializing) {
+      return;
+    }
+
+    this.contentTypeDistributionInitializing = true;
+    try {
+      if (this.logShardsIndex.length === 0) {
+        this.contentTypeDistributionInitialized = true;
+        return;
+      }
+
+      const counts = new Map<ContentType, number>();
+      let totalRequests = 0;
+
+      for (const shard of this.logShardsIndex) {
+        const shardLogs = await this.loadLogShard(shard.filename);
+        for (const log of shardLogs) {
+          totalRequests++;
+          const contentType = this.resolveLogContentType(log);
+          counts.set(contentType, (counts.get(contentType) || 0) + 1);
+        }
+      }
+
+      this.statistics.contentTypeDistribution = Array.from(counts.entries()).map(([contentType, count]) => ({
+        contentType,
+        count,
+        percentage: totalRequests > 0 ? Math.round((count / totalRequests) * 100) : 0,
+      }));
+
+      this.contentTypeDistributionInitialized = true;
+      await this.saveStatistics();
+    } finally {
+      this.contentTypeDistributionInitializing = false;
+    }
+  }
+
   // Statistics operations
   /**
    * 更新统计数据 - 在每次添加日志时调用
@@ -1594,6 +1656,20 @@ export class FileSystemDatabaseManager {
         (modelStats.avgResponseTime * (modelStats.totalRequests - 1) + responseTime) / modelStats.totalRequests;
     }
 
+    // 更新 contentTypeDistribution
+    const resolvedContentType = this.resolveLogContentType(log);
+    let contentTypeStats = this.statistics.contentTypeDistribution.find(s => s.contentType === resolvedContentType);
+    if (!contentTypeStats) {
+      contentTypeStats = { contentType: resolvedContentType, count: 0, percentage: 0 };
+      this.statistics.contentTypeDistribution.push(contentTypeStats);
+    }
+    contentTypeStats.count++;
+    const totalRequests = this.statistics.overview.totalRequests;
+    for (const entry of this.statistics.contentTypeDistribution) {
+      entry.percentage = totalRequests > 0 ? Math.round((entry.count / totalRequests) * 100) : 0;
+    }
+    this.contentTypeDistributionInitialized = true;
+
     // 更新 timeline
     const date = new Date(log.timestamp).toISOString().split('T')[0];
     let timelineStats = this.statistics.timeline.find(t => t.date === date);
@@ -1621,6 +1697,8 @@ export class FileSystemDatabaseManager {
    * @param days - 用于过滤 timeline 数据的天数
    */
   async getStatistics(days: number = 30): Promise<Statistics> {
+    await this.ensureContentTypeDistribution();
+
     const now = Date.now();
     const startTime = now - days * 24 * 60 * 60 * 1000;
 
@@ -1743,7 +1821,8 @@ export class FileSystemDatabaseManager {
     // 检查 body 中的 metadata.user_id（Claude Code）
     if (log.body) {
       try {
-        const body = JSON.parse(log.body);
+        // body 可能是对象（已解析）或字符串（未解析）
+        const body = typeof log.body === 'string' ? JSON.parse(log.body) : log.body;
         if (body.metadata?.user_id === sessionId) {
           return true;
         }
