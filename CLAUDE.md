@@ -174,8 +174,7 @@ aicos version            # Show current version information
 - **DatabaseFactory** (`server/database-factory.ts`): Auto-detects database type and handles migration
 - **Migration Tool** (`server/migrate-to-fs.ts`): Migrates data from SQLite/LevelDB to JSON files
 - **Data Files**: Stores data as JSON in `~/.aicodeswitch/data/`:
-  - `vendors.json` - AI service vendors
-  - `services.json` - API service configurations
+  - `vendors.json` - AI service vendors with nested API services
   - `routes.json` - Route definitions
   - `rules.json` - Routing rules
   - `config.json` - Application configuration
@@ -184,15 +183,30 @@ aicos version            # Show current version information
   - `error-logs.json` - Error logs
   - `blacklist.json` - Service blacklist entries
 
+**Data Structure**:
+- Vendors contain nested services array: `vendors[{ id, name, services: [{ id, name, apiUrl, ... }], ... }]`
+- Services are no longer stored in a separate file, they are embedded within their parent vendor
+- This structure ensures data consistency and simplifies cascade operations
+
 **Migration from SQLite**:
 - Automatic migration on first startup using `DatabaseFactory.createAuto()`
 - Detects old SQLite database (`app.db`) and automatically migrates to file system database
 - Migration process includes:
   - Exporting all data from SQLite (vendors, services, routes, rules, config, sessions, logs, error logs)
+  - Restructuring services to be nested within vendors
   - Creating JSON files in `~/.aicodeswitch/data/`
   - Backing up old database files to `~/.aicodeswitch/data/backup/`
   - Verifying migration success
 - If migration fails, a new file system database is created anyway (user can manually restore backup)
+
+**Migration from Old File System Database**:
+- Automatic migration on startup if `services.json` exists (old structure)
+- Migration process includes:
+  - Reading vendors.json and services.json
+  - Grouping services by vendorId
+  - Embedding services into vendors
+  - Backing up old services.json to `services.json.backup.{timestamp}`
+  - Saving new vendors.json with nested services
 
 #### 5. UI (React) - `ui/`
 - Main app: `App.tsx` - Navigation and layout with collapsible sidebar

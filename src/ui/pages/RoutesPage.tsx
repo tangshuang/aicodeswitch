@@ -151,7 +151,7 @@ export default function RoutesPage() {
     }
     setSelectedService('');
     setSelectedModel('');
-  }, [selectedVendor, allServices]);
+  }, [selectedVendor]);  // 移除 allServices 依赖，避免无限循环
 
   const loadRoutes = async () => {
     const data = await api.getRoutes();
@@ -480,9 +480,11 @@ export default function RoutesPage() {
     setSelectedContentType(rule.contentType);
     const service = allServices.find(s => s.id === rule.targetServiceId);
     if (service) {
-      setSelectedVendor(service.vendorId);
-      // 直接设置当前供应商的服务列表，避免 useEffect 的异步延迟
-      setServices(allServices.filter(s => s.vendorId === service.vendorId));
+      if (service.vendorId) {
+        setSelectedVendor(service.vendorId);
+        // 直接设置当前供应商的服务列表，避免 useEffect 的异步延迟
+        setServices(allServices.filter(s => s.vendorId === service.vendorId));
+      }
       // 使用 setTimeout 确保状态更新完成后再设置 selectedService 和 selectedModel
       setTimeout(() => {
         setSelectedService(service.id);
@@ -765,10 +767,10 @@ export default function RoutesPage() {
           ) : rules.length === 0 ? (
             <div className="empty-state"><p>暂无路由</p></div>
           ) : (
-            <table>
+            <table className="rules-table">
               <thead>
                 <tr>
-                  <th>优先级</th>
+                  <th className="col-priority">优先级</th>
                   <th>类型</th>
                   <th>API服务</th>
                   <th>状态</th>
@@ -783,7 +785,7 @@ export default function RoutesPage() {
                   const contentTypeLabel = CONTENT_TYPE_OPTIONS.find(opt => opt.value === rule.contentType)?.label;
                   return (
                     <tr key={rule.id}>
-                      <td>{rule.sortOrder || 0}</td>
+                      <td className="col-priority">{rule.sortOrder || 0}</td>
                       <td>
                         <div style={{ fontSize: '12px', whiteSpace: 'nowrap' }}>
                           {/* 为非默认类型添加图标 */}
@@ -847,7 +849,7 @@ export default function RoutesPage() {
                         </div>
                       </td>
                       <td>
-                        <div style={{ fontSize: '0.6em' }}>
+                        <div className='vendor-sevices-col' style={{ fontSize: '0.6em' }}>
                           <div>供应商：{vendor ? vendor.name : 'Unknown'}</div>
                           <div>服务：{service ? service.name : 'Unknown'}</div>
                           <div>模型：{rule.targetModel || '透传模型'}</div>

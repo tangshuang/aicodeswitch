@@ -47,8 +47,10 @@ export class DatabaseFactory {
    * 自动检测并创建数据库实例
    * 优先使用文件系统数据库，如果存在旧的 SQLite 数据库则自动迁移
    */
-  static async createAuto(dataPath: string) {
+  static async createAuto(dataPath: string, legacyDataPath?: string) {
     const fs = await import('fs/promises');
+
+    const legacyPath = legacyDataPath && legacyDataPath !== dataPath ? legacyDataPath : null;
 
     // 检查迁移完成标记文件
     const migrationMarkerPath = path.join(dataPath, '.migration-completed');
@@ -72,6 +74,63 @@ export class DatabaseFactory {
     if (fsDbExists) {
       console.log('[Database] Using existing filesystem database (no migration marker)');
       return this.create(dataPath, 'filesystem');
+    }
+
+    // 如果新目录为空，尝试从旧 data 目录迁移文件系统数据库
+    if (legacyPath) {
+      const legacyFsDbExists = await fs.access(path.join(legacyPath, 'config.json'))
+        .then(() => true)
+        .catch(() => false);
+
+      if (legacyFsDbExists) {
+        console.log('[Database] Found legacy filesystem database, migrating to new directory...');
+        try {
+          await migrateToFs.migrateLegacyFsData(legacyPath, dataPath);
+          await fs.writeFile(migrationMarkerPath, new Date().toISOString(), 'utf-8');
+          console.log('[Database] Legacy filesystem database migration completed');
+          return this.create(dataPath, 'filesystem');
+        } catch (error) {
+          console.error('[Database] Legacy filesystem migration failed:', error);
+          console.log('[Database] Falling back to create new filesystem database');
+        }
+      }
+    }
+
+    // 如果新目录为空，检查旧 data 目录是否存在 SQLite 数据库
+    if (legacyPath) {
+      const legacySqliteExists = await fs.access(path.join(legacyPath, 'app.db'))
+        .then(() => true)
+        .catch(() => false);
+
+      if (legacySqliteExists) {
+        console.log('[Database] Found legacy SQLite database, migrating to new filesystem directory...');
+        try {
+          await migrateToFs.migrateToFileSystem(legacyPath, dataPath);
+
+          console.log('[Database] Verifying migration...');
+          const verification = await migrateToFs.verifyMigration(dataPath);
+
+          if (verification.success) {
+            console.log('[Database] ✅ Migration verified successfully');
+            if (verification.warnings.length > 0) {
+              console.log('[Database] Warnings:', verification.warnings);
+            }
+
+            await fs.writeFile(migrationMarkerPath, new Date().toISOString(), 'utf-8');
+            console.log('[Database] Migration marker file created:', migrationMarkerPath);
+          } else {
+            console.error('[Database] ❌ Migration verification failed');
+            console.error('[Database] Errors:', verification.errors);
+            throw new Error('Migration verification failed');
+          }
+
+          console.log('[Database] Migration completed, using filesystem database');
+          return this.create(dataPath, 'filesystem');
+        } catch (error) {
+          console.error('[Database] Migration failed:', error);
+          console.log('[Database] Creating new filesystem database');
+        }
+      }
     }
 
     // 检查是否存在旧的 SQLite 数据库
