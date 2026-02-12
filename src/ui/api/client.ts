@@ -161,8 +161,18 @@ const requestJson = async <T>(path: string, options: RequestInit = {}): Promise<
       throw error;
     }
 
-    const message = await response.text();
-    throw new Error(message || response.statusText);
+    // 尝试解析 JSON 错误响应，如果失败则使用文本
+    const text = await response.text();
+    let parsedError: string | null = null;
+    try {
+      const jsonError = JSON.parse(text);
+      if (jsonError.error) {
+        parsedError = jsonError.error;
+      }
+    } catch {
+      // JSON 解析失败，使用原始文本
+    }
+    throw new Error(parsedError || text || response.statusText);
   }
 
   if (response.status === 204) {
