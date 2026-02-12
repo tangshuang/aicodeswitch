@@ -295,6 +295,21 @@ aicos version            # Show current version information
 - Writes/ restores Codex config files (`~/.codex/config.toml`, `~/.codex/auth.json`)
 - Exports/ imports encrypted configuration data
 
+#### Data Import/Export
+- **Export**: Exports all configuration data (vendors, services, routes, rules, config) as AES-encrypted JSON
+  - Export data format version: `3.0.0`
+  - Vendors contain nested services array (current format)
+- **Import**: Only supports current format (version `3.0.0`)
+  - **Strict validation**: Validates all required fields for vendors, services, routes, rules
+  - **Preview feature**: Shows data summary (counts of vendors, services, routes, rules) before import
+  - **User confirmation**: Requires explicit confirmation after preview
+  - **Detailed error messages**: Returns specific validation errors if data format is invalid
+  - **Breaking change**: No longer supports importing data from versions prior to 3.0.0
+- **API Endpoints**:
+  - `POST /api/export` - Export encrypted data
+  - `POST /api/import/preview` - Preview import data (new)
+  - `POST /api/import` - Import data with confirmation
+
 ### Skills Management
 - Lists global Skills for Claude Code and Codex
 - Provides discovery search (discover/return toggle button) and installs Skills into target tool directories

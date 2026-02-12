@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -54,7 +54,8 @@ interface BackendAPI {
   updateConfig: (config: AppConfig) => Promise<boolean>;
 
   exportData: (password: string) => Promise<string>;
-  importData: (encryptedData: string, password: string) => Promise<boolean>;
+  previewImportData: (encryptedData: string, password: string) => Promise<ImportPreview>;
+  importData: (encryptedData: string, password: string) => Promise<ImportResult>;
 
   writeClaudeConfig: () => Promise<boolean>;
   writeCodexConfig: () => Promise<boolean>;
@@ -236,10 +237,16 @@ export const api: BackendAPI = {
     return result.data;
   },
 
-  importData: (encryptedData, password) => requestJson(buildUrl('/api/import'), {
-    method: 'POST',
-    body: JSON.stringify({ encryptedData, password }),
-  }),
+  previewImportData: (encryptedData: string, password: string) =>
+    requestJson<ImportPreview>(buildUrl('/api/import/preview'), {
+      method: 'POST',
+      body: JSON.stringify({ encryptedData, password }),
+    }),
+  importData: (encryptedData: string, password: string) =>
+    requestJson<ImportResult>(buildUrl('/api/import'), {
+      method: 'POST',
+      body: JSON.stringify({ encryptedData, password }),
+    }),
 
   writeClaudeConfig: () => requestJson(buildUrl('/api/write-config/claude'), { method: 'POST' }),
   writeCodexConfig: () => requestJson(buildUrl('/api/write-config/codex'), { method: 'POST' }),

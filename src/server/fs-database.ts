@@ -15,6 +15,8 @@ import type {
   ContentType,
   ServiceBlacklistEntry,
   Session,
+  ImportResult,
+  ImportPreview,
 } from '../types';
 
 interface LogShardIndex {
@@ -1383,25 +1385,167 @@ export class FileSystemDatabaseManager {
   }
 
   // Export/Import operations
-  async exportData(password: string): Promise<string> {
-    // 扁平化所有服务（兼容旧格式）
-    const allServices: APIService[] = [];
-    for (const vendor of this.vendors) {
-      if (vendor.services) {
-        // 为每个服务添加 vendorId（兼容旧格式）
-        const servicesWithVendorId = vendor.services.map(s => ({
-          ...s,
-          vendorId: vendor.id
-        }));
-        allServices.push(...servicesWithVendorId);
+
+  /**
+   * 当前支持的导出数据版本
+   */
+  private readonly CURRENT_EXPORT_VERSION = '3.0.0';
+
+  /**
+   * 验证供应商数据格式
+   */
+  private validateVendor(vendor: any, index: number): { valid: boolean; error?: string } {
+    if (!vendor || typeof vendor !== 'object') {
+      return { valid: false, error: `供应商[${index}] 不是有效的对象` };
+    }
+    if (!vendor.id || typeof vendor.id !== 'string') {
+      return { valid: false, error: `供应商[${index}] 缺少有效的 id 字段` };
+    }
+    if (!vendor.name || typeof vendor.name !== 'string') {
+      return { valid: false, error: `供应商[${index}](${vendor.id}) 缺少有效的 name 字段` };
+    }
+    if (!Array.isArray(vendor.services)) {
+      return { valid: false, error: `供应商[${index}](${vendor.id}) 的 services 不是数组` };
+    }
+    for (let i = 0; i < vendor.services.length; i++) {
+      const service = vendor.services[i];
+      if (!service || typeof service !== 'object') {
+        return { valid: false, error: `供应商[${index}](${vendor.id}) 的服务[${i}] 不是有效的对象` };
+      }
+      if (!service.id || typeof service.id !== 'string') {
+        return { valid: false, error: `供应商[${index}](${vendor.id}) 的服务[${i}] 缺少有效的 id 字段` };
+      }
+      if (!service.name || typeof service.name !== 'string') {
+        return { valid: false, error: `供应商[${index}](${vendor.id}) 的服务[${i}] 缺少有效的 name 字段` };
+      }
+      if (!service.apiUrl || typeof service.apiUrl !== 'string') {
+        return { valid: false, error: `供应商[${index}](${vendor.id}) 的服务[${i}] 缺少有效的 apiUrl 字段` };
+      }
+      if (!service.apiKey || typeof service.apiKey !== 'string') {
+        return { valid: false, error: `供应商[${index}](${vendor.id}) 的服务[${i}] 缺少有效的 apiKey 字段` };
       }
     }
+    return { valid: true };
+  }
 
+  /**
+   * 验证路由数据格式
+   */
+  private validateRoute(route: any, index: number): { valid: boolean; error?: string } {
+    if (!route || typeof route !== 'object') {
+      return { valid: false, error: `路由[${index}] 不是有效的对象` };
+    }
+    if (!route.id || typeof route.id !== 'string') {
+      return { valid: false, error: `路由[${index}] 缺少有效的 id 字段` };
+    }
+    if (!route.name || typeof route.name !== 'string') {
+      return { valid: false, error: `路由[${index}](${route.id}) 缺少有效的 name 字段` };
+    }
+    if (!route.targetType || !['claude-code', 'codex'].includes(route.targetType)) {
+      return { valid: false, error: `路由[${index}](${route.id}) 的 targetType 必须是 'claude-code' 或 'codex'` };
+    }
+    if (typeof route.isActive !== 'boolean') {
+      return { valid: false, error: `路由[${index}](${route.id}) 的 isActive 必须是布尔值` };
+    }
+    return { valid: true };
+  }
+
+  /**
+   * 验证规则数据格式
+   */
+  private validateRule(rule: any, index: number): { valid: boolean; error?: string } {
+    if (!rule || typeof rule !== 'object') {
+      return { valid: false, error: `规则[${index}] 不是有效的对象` };
+    }
+    if (!rule.id || typeof rule.id !== 'string') {
+      return { valid: false, error: `规则[${index}] 缺少有效的 id 字段` };
+    }
+    if (!rule.routeId || typeof rule.routeId !== 'string') {
+      return { valid: false, error: `规则[${index}](${rule.id}) 缺少有效的 routeId 字段` };
+    }
+    if (!rule.targetServiceId || typeof rule.targetServiceId !== 'string') {
+      return { valid: false, error: `规则[${index}](${rule.id}) 缺少有效的 targetServiceId 字段` };
+    }
+    const validContentTypes = ['default', 'background', 'thinking', 'long-context', 'image-understanding', 'model-mapping'];
+    if (!rule.contentType || !validContentTypes.includes(rule.contentType)) {
+      return { valid: false, error: `规则[${index}](${rule.id}) 的 contentType 无效` };
+    }
+    return { valid: true };
+  }
+
+  /**
+   * 验证配置数据格式
+   */
+  private validateConfig(config: any): { valid: boolean; error?: string } {
+    if (!config || typeof config !== 'object') {
+      return { valid: false, error: 'config 不是有效的对象' };
+    }
+    return { valid: true };
+  }
+
+  /**
+   * 验证导出数据格式（严格校验）
+   */
+  private validateExportData(data: any): { valid: boolean; error?: string } {
+    if (!data || typeof data !== 'object') {
+      return { valid: false, error: '数据不是有效的对象' };
+    }
+
+    // 检查必需字段是否存在
+    if (!data.version || typeof data.version !== 'string') {
+      return { valid: false, error: '缺少有效的 version 字段' };
+    }
+
+    // 检查版本是否匹配当前版本
+    if (data.version !== this.CURRENT_EXPORT_VERSION) {
+      return { valid: false, error: `数据版本 ${data.version} 与当前支持的版本 ${this.CURRENT_EXPORT_VERSION} 不匹配。请使用相同版本的系统导出数据。` };
+    }
+
+    if (!data.exportDate || typeof data.exportDate !== 'number') {
+      return { valid: false, error: '缺少有效的 exportDate 字段' };
+    }
+
+    // 检查 vendors
+    if (!Array.isArray(data.vendors)) {
+      return { valid: false, error: 'vendors 不是数组' };
+    }
+    for (let i = 0; i < data.vendors.length; i++) {
+      const result = this.validateVendor(data.vendors[i], i);
+      if (!result.valid) return result;
+    }
+
+    // 检查 routes
+    if (!Array.isArray(data.routes)) {
+      return { valid: false, error: 'routes 不是数组' };
+    }
+    for (let i = 0; i < data.routes.length; i++) {
+      const result = this.validateRoute(data.routes[i], i);
+      if (!result.valid) return result;
+    }
+
+    // 检查 rules
+    if (!Array.isArray(data.rules)) {
+      return { valid: false, error: 'rules 不是数组' };
+    }
+    for (let i = 0; i < data.rules.length; i++) {
+      const result = this.validateRule(data.rules[i], i);
+      if (!result.valid) return result;
+    }
+
+    // 检查 config
+    const configResult = this.validateConfig(data.config);
+    if (!configResult.valid) return configResult;
+
+    return { valid: true };
+  }
+
+  async exportData(password: string): Promise<string> {
+    // 只导出当前格式，不再兼容旧格式
     const exportData: ExportData = {
-      version: '2.0.0',  // 更新版本号
+      version: this.CURRENT_EXPORT_VERSION,
       exportDate: Date.now(),
       vendors: this.vendors,
-      apiServices: allServices,  // 兼容旧格式
+      apiServices: [], // 保留字段以兼容类型定义，但内容为空
       routes: this.routes,
       rules: this.rules,
       config: this.config!,
@@ -1412,56 +1556,124 @@ export class FileSystemDatabaseManager {
     return encrypted;
   }
 
-  async importData(encryptedData: string, password: string): Promise<boolean> {
+  /**
+   * 预览导入数据
+   */
+  async previewImportData(encryptedData: string, password: string): Promise<ImportPreview> {
     try {
-      const decrypted = CryptoJS.AES.decrypt(encryptedData, password);
-      const jsonData = decrypted.toString(CryptoJS.enc.Utf8);
-      const importData: ExportData = JSON.parse(jsonData);
-
-      // 检测数据版本
-      const isNewFormat = importData.vendors.some((v: any) => v.services);
-
-      if (isNewFormat || importData.version >= '2.0.0') {
-        // 新格式：直接使用 vendors（已包含 services）
-        this.vendors = importData.vendors;
-      } else {
-        // 旧格式：需要重建 services 关系
-        const { vendors, apiServices } = importData;
-
-        // 构建 vendorId -> services 映射
-        const servicesByVendor = new Map<string, APIService[]>();
-        for (const service of apiServices) {
-          if (!service.vendorId) continue;
-
-          if (!servicesByVendor.has(service.vendorId)) {
-            servicesByVendor.set(service.vendorId, []);
-          }
-          const { vendorId, ...serviceWithoutVendorId } = service;
-          servicesByVendor.get(service.vendorId)!.push(serviceWithoutVendorId as APIService);
+      // 解密
+      let jsonData: string;
+      try {
+        const decrypted = CryptoJS.AES.decrypt(encryptedData, password);
+        jsonData = decrypted.toString(CryptoJS.enc.Utf8);
+        if (!jsonData) {
+          return { success: false, message: '解密失败：密码错误或数据损坏' };
         }
-
-        // 合并到 vendors
-        this.vendors = vendors.map((vendor: any) => ({
-          ...vendor,
-          services: servicesByVendor.get(vendor.id) || []
-        }));
+      } catch (error) {
+        return { success: false, message: '解密失败：密码错误或数据格式错误' };
       }
 
-      this.routes = importData.routes;
-      this.rules = importData.rules;
-      this.config = importData.config;
+      // 解析 JSON
+      let importData: any;
+      try {
+        importData = JSON.parse(jsonData);
+      } catch (error) {
+        return { success: false, message: '数据解析失败：不是有效的 JSON 格式' };
+      }
 
+      // 验证数据格式
+      const validation = this.validateExportData(importData);
+      if (!validation.valid) {
+        return { success: false, message: `数据验证失败：${validation.error}` };
+      }
+
+      // 计算服务数量
+      const servicesCount = importData.vendors.reduce((sum: number, v: Vendor) => sum + (v.services?.length || 0), 0);
+
+      return {
+        success: true,
+        data: {
+          vendors: importData.vendors.length,
+          services: servicesCount,
+          routes: importData.routes.length,
+          rules: importData.rules.length,
+          exportDate: importData.exportDate,
+          version: importData.version,
+        }
+      };
+    } catch (error) {
+      console.error('Preview import error:', error);
+      return { success: false, message: `预览失败：${error instanceof Error ? error.message : '未知错误'}` };
+    }
+  }
+
+  async importData(encryptedData: string, password: string): Promise<ImportResult> {
+    try {
+      // 解密
+      let jsonData: string;
+      try {
+        const decrypted = CryptoJS.AES.decrypt(encryptedData, password);
+        jsonData = decrypted.toString(CryptoJS.enc.Utf8);
+        if (!jsonData) {
+          return { success: false, message: '导入失败', details: '解密失败：密码错误或数据损坏' };
+        }
+      } catch (error) {
+        return { success: false, message: '导入失败', details: '解密失败：密码错误或数据格式错误' };
+      }
+
+      // 解析 JSON
+      let importData: any;
+      try {
+        importData = JSON.parse(jsonData);
+      } catch (error) {
+        return { success: false, message: '导入失败', details: '数据解析失败：不是有效的 JSON 格式' };
+      }
+
+      // 验证数据格式
+      const validation = this.validateExportData(importData);
+      if (!validation.valid) {
+        return { success: false, message: '导入失败', details: `数据验证失败：${validation.error}` };
+      }
+
+      // 导入数据（更新 updatedAt）
+      const now = Date.now();
+      this.vendors = importData.vendors.map((v: Vendor) => ({
+        ...v,
+        updatedAt: now
+      }));
+      this.routes = importData.routes.map((r: Route) => ({
+        ...r,
+        updatedAt: now
+      }));
+      this.rules = importData.rules.map((r: Rule) => ({
+        ...r,
+        updatedAt: now
+      }));
+      this.config = {
+        ...importData.config,
+        updatedAt: now
+      };
+
+      // 保存数据
       await Promise.all([
         this.saveVendors(),
-        // 删除: this.saveServices(),
         this.saveRoutes(),
         this.saveConfig(),
       ]);
 
-      return true;
+      const servicesCount = this.vendors.reduce((sum, v) => sum + (v.services?.length || 0), 0);
+      return {
+        success: true,
+        message: '导入成功',
+        details: `已导入 ${this.vendors.length} 个供应商、${servicesCount} 个服务、${this.routes.length} 个路由、${this.rules.length} 个规则`
+      };
     } catch (error) {
       console.error('Import error:', error);
-      return false;
+      return {
+        success: false,
+        message: '导入失败',
+        details: error instanceof Error ? error.message : '未知错误'
+      };
     }
   }
 

@@ -132,3 +132,91 @@ yarn dev:server
 # 类型检查
 npx tsc -p tsconfig.server.json --noEmit
 ```
+
+---
+
+## Import/Export Data Migration (2026-02-12)
+
+### 重构内容
+
+重构了数据导入/导出功能，仅支持当前数据库格式，添加严格数据校验和预览功能。
+
+### 后端修改
+
+#### `fs-database.ts`
+- **新增** `CURRENT_EXPORT_VERSION = '3.0.0'` 版本标记
+- **新增** `validateVendor()` - 验证供应商及其服务数据格式
+- **新增** `validateRoute()` - 验证路由数据格式
+- **新增** `validateRule()` - 验证规则数据格式
+- **新增** `validateConfig()` - 验证配置数据格式
+- **新增** `validateExportData()` - 严格验证整个导出数据结构
+- **新增** `previewImportData()` - 预览导入数据，返回数据概览
+- **重写** `exportData()` - 使用版本 3.0.0，移除旧格式兼容性
+- **重写** `importData()` - 返回 `ImportResult` 对象，包含详细错误信息
+
+#### `main.ts`
+- **新增** `/api/import/preview` 端点 - 用于预览导入数据
+- **修改** `/api/import` 端点 - 支持新的返回格式 `ImportResult`
+
+#### `types/index.ts`
+- **新增** `ImportResult` 接口 - 导入操作返回结果
+- **新增** `ImportPreview` 接口 - 预览操作返回结果
+
+### 前端修改
+
+#### `api/client.ts`
+- **新增** `previewImportData()` API 调用
+- **更新** `importData()` 返回类型为 `ImportResult`
+
+#### `pages/SettingsPage.tsx`
+- **新增** 预览状态管理 (`previewData`, `isPreviewing`, `isImporting`)
+- **新增** `handlePreview()` - 预览数据并显示概览
+- **新增** `handleCancelImport()` - 取消导入流程
+- **重写** 导入UI流程：
+  1. 输入密码和数据 → 点击"预览数据"
+  2. 显示数据概览（供应商数、服务数、路由数、规则数）
+  3. 用户确认后执行导入
+
+### 行为变更
+
+| 功能 | 旧行为 | 新行为 |
+|------|--------|--------|
+| 版本检查 | 字符串比较，兼容旧版本 | 严格等于 `3.0.0`，不兼容旧版本 |
+| 数据校验 | 无校验，直接导入 | 完整字段校验，提供具体错误信息 |
+| 导入流程 | 直接导入 | 先预览，再确认导入 |
+| 返回值 | `boolean` | `ImportResult` 对象 |
+
+### API 变更
+
+#### `POST /api/import/preview` (新增)
+```typescript
+Request: { encryptedData: string, password: string }
+Response: ImportPreview {
+  success: boolean;
+  message?: string;
+  data?: {
+    vendors: number;
+    services: number;
+    routes: number;
+    rules: number;
+    exportDate: number;
+    version: string;
+  };
+}
+```
+
+#### `POST /api/import` (修改)
+```typescript
+Request: { encryptedData: string, password: string }
+Response: ImportResult {
+  success: boolean;
+  message: string;
+  details?: string;
+}
+```
+
+### 注意事项
+
+- **破坏性变更**: 不再支持导入 3.0.0 版本之前导出的数据文件
+- **数据校验**: 导入时会验证所有必需字段，包括供应商、服务、路由、规则的完整结构
+- **错误信息**: 导入失败时会返回具体的错误原因（如"供应商[0]缺少有效的 id 字段"）

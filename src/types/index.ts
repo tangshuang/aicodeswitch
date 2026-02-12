@@ -228,6 +228,27 @@ export interface ExportData {
   config: AppConfig;
 }
 
+/** 导入结果 */
+export interface ImportResult {
+  success: boolean;
+  message: string;
+  details?: string;
+}
+
+/** 导入预览数据 */
+export interface ImportPreview {
+  success: boolean;
+  message?: string;
+  data?: {
+    vendors: number;
+    services: number;
+    routes: number;
+    rules: number;
+    exportDate: number;
+    version: string;
+  };
+}
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;

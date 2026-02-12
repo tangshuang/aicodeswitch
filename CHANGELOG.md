@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 3.3.0 (2026-02-12)
+
+#### Features
+* 重构数据导入/导出功能
+  - 仅支持当前数据库格式（版本 3.0.0），移除对旧版本数据的兼容性支持
+  - 添加严格的数据校验（供应商、服务、路由、规则的完整字段验证）
+  - 导入前增加预览功能，显示数据概览（供应商数、服务数、路由数、规则数、导出时间）
+  - 导入时需要用户确认后才能执行
+  - 导入/导出 API 返回详细的错误信息（success, message, details）
+  - 新增预览 API 端点 `POST /api/import/preview`
+  - 更新 `ImportResult` 和 `ImportPreview` 类型定义
+
+#### Breaking Changes
+* 不再支持导入 3.0.0 版本之前导出的数据文件
+* 导入 API 返回值格式从 `boolean` 改为 `ImportResult` 对象
+
 ### 3.2.0 (2026-02-12)
 
 #### Features
