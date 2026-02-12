@@ -6,6 +6,8 @@ import type { FileSystemDatabaseManager } from './fs-database';
 import {
   ClaudeToOpenAIChatEventTransform,
   OpenAIToClaudeEventTransform,
+  GeminiToClaudeEventTransform,
+  GeminiToOpenAIChatEventTransform,
   SSEParserTransform,
   SSESerializerTransform,
 } from './transformers/streaming';
@@ -18,6 +20,13 @@ import {
   transformClaudeResponseToOpenAIChat,
   transformOpenAIChatResponseToClaude,
 } from './transformers/claude-openai';
+import {
+  transformClaudeRequestToGemini,
+  transformGeminiResponseToClaude,
+  transformOpenAIChatRequestToGemini,
+  transformGeminiResponseToOpenAIChat,
+  extractTokenUsageFromGeminiUsage,
+} from './transformers/gemini';
 import type { AppConfig, Rule, APIService, Route, SourceType, TargetType, TokenUsage, ContentType, RequestLog } from '../types';
 import { AuthType } from '../types';
 
@@ -1132,8 +1141,28 @@ export class ProxyServer {
     return sourceType === 'openai-chat' || sourceType === 'openai-responses' || sourceType === 'deepseek-reasoning-chat';
   }
 
+  /** 判断是否为 Gemini 类型 */
+  private isGeminiSource(sourceType: SourceType) {
+    return sourceType === 'gemini';
+  }
+
   private isChatType(sourceType: SourceType) {
-    return sourceType.endsWith('-chat');
+    return sourceType.endsWith('-chat') || sourceType === 'gemini';
+  }
+
+  /**
+   * 构建 Gemini API 的完整 URL
+   * 用户只填写 base 地址（如 https://generativelanguage.googleapis.com）
+   * 需要根据模型名称拼接成完整的 URL
+   */
+  private buildGeminiUrl(baseUrl: string, model: string, streamRequested: boolean): string {
+    // 移除末尾的斜杠
+    const base = baseUrl.replace(/\/$/, '');
+    // 移除模型名称中可能包含的 models/ 前缀
+    const modelName = model.replace(/^models\//, '');
+    // 根据是否流式选择 endpoint
+    const endpoint = streamRequested ? 'streamGenerateContent' : 'generateContent';
+    return `${base}/v1beta/models/${modelName}:${endpoint}`;
   }
 
   /**
@@ -1238,7 +1267,7 @@ export class ProxyServer {
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(req.headers)) {
       // 排除原始认证头，防止与代理设置的认证头冲突
-      if (['host', 'connection', 'content-length', 'authorization', 'x-api-key', 'x-anthropic-api-key', 'anthropic-api-key'].includes(key.toLowerCase())) {
+      if (['host', 'connection', 'content-length', 'authorization', 'x-api-key', 'x-anthropic-api-key', 'anthropic-api-key', 'x-goog-api-key'].includes(key.toLowerCase())) {
         continue;
       }
       if (typeof value === 'string') {
@@ -1254,9 +1283,11 @@ export class ProxyServer {
 
     // 确定认证方式：优先使用服务配置的 authType，否则根据 sourceType 自动判断
     const authType = service.authType || AuthType.AUTO;
-    const useXApiKey = authType === AuthType.API_KEY || (authType === AuthType.AUTO && this.isClaudeSource(sourceType));
 
-    if (useXApiKey) {
+    if (authType === AuthType.G_API_KEY || (authType === AuthType.AUTO && this.isGeminiSource(sourceType))) {
+      // 使用 x-goog-api-key 认证（适用于 Google Gemini API）
+      headers['x-goog-api-key'] = service.apiKey;
+    } else if (authType === AuthType.API_KEY || (authType === AuthType.AUTO && this.isClaudeSource(sourceType))) {
       // 使用 x-api-key 认证（适用于 claude-chat, claude-code 及某些需要 x-api-key 的 openai-chat 兼容 API）
       headers['x-api-key'] = service.apiKey;
       if (this.isClaudeSource(sourceType) || authType === AuthType.API_KEY) {
@@ -1650,6 +1681,8 @@ export class ProxyServer {
           requestBody = this.applyModelOverride(requestBody, rule);
         } else if (this.isOpenAIChatSource(sourceType)) {
           requestBody = transformClaudeRequestToOpenAIChat(requestBody, rule.targetModel);
+        } else if (this.isGeminiSource(sourceType)) {
+          requestBody = transformClaudeRequestToGemini(requestBody);
         } else {
           res.status(400).json({ error: 'Unsupported source type for Claude Code.' });
           await finalizeLog(400, 'Unsupported source type for Claude Code');
@@ -1660,6 +1693,8 @@ export class ProxyServer {
           requestBody = this.applyModelOverride(requestBody, rule);
         } else if (this.isClaudeSource(sourceType)) {
           requestBody = transformClaudeRequestToOpenAIChat(requestBody, rule.targetModel);
+        } else if (this.isGeminiSource(sourceType)) {
+          requestBody = transformOpenAIChatRequestToGemini(requestBody);
         } else {
           res.status(400).json({ error: 'Unsupported source type for Codex.' });
           await finalizeLog(400, 'Unsupported source type for Codex');
@@ -1683,9 +1718,21 @@ export class ProxyServer {
       // 根据源工具类型和目标API类型,映射请求路径
       const mappedPath = this.mapRequestPath(route.targetType, sourceType, pathToAppend);
 
+      // 构建上游 URL
+      let upstreamUrl: string;
+      if (this.isGeminiSource(sourceType)) {
+        // Gemini 类型需要特殊处理：根据模型拼接完整 URL
+        const model = requestBody.model || rule.targetModel || 'gemini-pro';
+        upstreamUrl = this.buildGeminiUrl(service.apiUrl, model, streamRequested);
+      } else if (this.isChatType(sourceType)) {
+        upstreamUrl = service.apiUrl;
+      } else {
+        upstreamUrl = `${service.apiUrl}${mappedPath}`;
+      }
+
       const config: AxiosRequestConfig = {
         method: req.method as any,
-        url: this.isChatType(sourceType) ? service.apiUrl : `${service.apiUrl}${mappedPath}`,
+        url: upstreamUrl,
         headers: this.buildUpstreamHeaders(req, service, sourceType, streamRequested),
         timeout: rule.timeout || 3000000, // 默认300秒
         validateStatus: () => true,
@@ -1736,7 +1783,7 @@ export class ProxyServer {
       const upstreamHeaders = this.buildUpstreamHeaders(req, service, sourceType, streamRequested);
 
       upstreamRequestForLog = {
-        url: this.isChatType(sourceType) ? service.apiUrl : `${service.apiUrl}${mappedPath}`,
+        url: upstreamUrl,
         // model: actualModel,
         // [maxTokensFieldName]: actualMaxTokens,
         headers: upstreamHeaders,
@@ -1972,6 +2019,206 @@ export class ProxyServer {
           return;
         }
 
+        // Gemini -> Claude Code 流式转换
+        if (targetType === 'claude-code' && this.isGeminiSource(sourceType)) {
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache');
+          res.setHeader('Connection', 'keep-alive');
+
+          const parser = new SSEParserTransform();
+          const eventCollector = new SSEEventCollectorTransform();
+          const converter = new GeminiToClaudeEventTransform({ model: requestBody?.model });
+          const serializer = new SSESerializerTransform();
+
+          responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
+
+          const finalizeChunks = () => {
+            const usage = converter.getUsage();
+            if (usage) {
+              usageForLog = usage;
+            } else {
+              const extractedUsage = eventCollector.extractUsage();
+              if (extractedUsage) {
+                usageForLog = this.extractTokenUsage(extractedUsage);
+              }
+            }
+            streamChunksForLog = eventCollector.getChunks();
+            responseBodyForLog = streamChunksForLog.join('\n');
+            console.log('[Proxy] Gemini stream request finished (claude-code), collected chunks:', streamChunksForLog?.length || 0);
+            void finalizeLog(res.statusCode);
+          };
+
+          eventCollector.on('finish', () => {
+            console.log('[Proxy] EventCollector finished (gemini->claude-code), collecting chunks...');
+            finalizeChunks();
+          });
+
+          res.on('finish', () => {
+            console.log('[Proxy] Response finished (gemini->claude-code)');
+            if (!streamChunksForLog) {
+              console.log('[Proxy] Chunks not collected yet, forcing collection...');
+              finalizeChunks();
+            }
+          });
+
+          res.on('error', (err) => {
+            console.error('[Proxy] Response stream error:', err);
+          });
+
+          pipeline(response.data, parser, eventCollector, converter, serializer, res, async (error) => {
+            if (error) {
+              console.error('[Proxy] Pipeline error for gemini->claude-code:', error);
+
+              try {
+                const vendors = this.dbManager.getVendors();
+                const vendor = vendors.find(v => v.id === service.vendorId);
+
+                await this.dbManager.addErrorLog({
+                  timestamp: Date.now(),
+                  method: req.method,
+                  path: req.path,
+                  statusCode: 500,
+                  errorMessage: error.message || 'Stream processing error',
+                  errorStack: error.stack,
+                  requestHeaders: this.normalizeHeaders(req.headers),
+                  requestBody: req.body ? JSON.stringify(req.body) : undefined,
+                  upstreamRequest: upstreamRequestForLog,
+                  ruleId: rule.id,
+                  targetType,
+                  targetServiceId: service.id,
+                  targetServiceName: service.name,
+                  targetModel: rule.targetModel,
+                  vendorId: service.vendorId,
+                  vendorName: vendor?.name,
+                  requestModel: req.body?.model,
+                  responseTime: Date.now() - startTime,
+                });
+              } catch (logError) {
+                console.error('[Proxy] Failed to log error:', logError);
+              }
+
+              try {
+                if (!res.writableEnded) {
+                  const errorEvent = `event: error\ndata: ${JSON.stringify({
+                    type: 'error',
+                    error: {
+                      type: 'api_error',
+                      message: 'Stream processing error occurred'
+                    }
+                  })}\n\n`;
+                  res.write(errorEvent);
+                  res.end();
+                }
+              } catch (writeError) {
+                console.error('[Proxy] Failed to send error event:', writeError);
+              }
+
+              await finalizeLog(500, error.message);
+            }
+          });
+          return;
+        }
+
+        // Gemini -> Codex 流式转换
+        if (targetType === 'codex' && this.isGeminiSource(sourceType)) {
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache');
+          res.setHeader('Connection', 'keep-alive');
+
+          const parser = new SSEParserTransform();
+          const eventCollector = new SSEEventCollectorTransform();
+          const converter = new GeminiToOpenAIChatEventTransform({ model: requestBody?.model });
+          const serializer = new SSESerializerTransform();
+
+          responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
+
+          const finalizeChunks = () => {
+            const usage = converter.getUsage();
+            if (usage) {
+              usageForLog = {
+                inputTokens: usage.prompt_tokens,
+                outputTokens: usage.completion_tokens,
+                totalTokens: usage.total_tokens,
+              };
+            } else {
+              const extractedUsage = eventCollector.extractUsage();
+              if (extractedUsage) {
+                usageForLog = this.extractTokenUsage(extractedUsage);
+              }
+            }
+            streamChunksForLog = eventCollector.getChunks();
+            responseBodyForLog = streamChunksForLog.join('\n');
+            console.log('[Proxy] Gemini stream request finished (codex), collected chunks:', streamChunksForLog?.length || 0);
+            void finalizeLog(res.statusCode);
+          };
+
+          eventCollector.on('finish', () => {
+            console.log('[Proxy] EventCollector finished (gemini->codex), collecting chunks...');
+            finalizeChunks();
+          });
+
+          res.on('finish', () => {
+            console.log('[Proxy] Response finished (gemini->codex)');
+            if (!streamChunksForLog) {
+              console.log('[Proxy] Chunks not collected yet, forcing collection...');
+              finalizeChunks();
+            }
+          });
+
+          res.on('error', (err) => {
+            console.error('[Proxy] Response stream error:', err);
+          });
+
+          pipeline(response.data, parser, eventCollector, converter, serializer, res, async (error) => {
+            if (error) {
+              console.error('[Proxy] Pipeline error for gemini->codex:', error);
+
+              try {
+                const vendors = this.dbManager.getVendors();
+                const vendor = vendors.find(v => v.id === service.vendorId);
+
+                await this.dbManager.addErrorLog({
+                  timestamp: Date.now(),
+                  method: req.method,
+                  path: req.path,
+                  statusCode: 500,
+                  errorMessage: error.message || 'Stream processing error',
+                  errorStack: error.stack,
+                  requestHeaders: this.normalizeHeaders(req.headers),
+                  requestBody: req.body ? JSON.stringify(req.body) : undefined,
+                  upstreamRequest: upstreamRequestForLog,
+                  ruleId: rule.id,
+                  targetType,
+                  targetServiceId: service.id,
+                  targetServiceName: service.name,
+                  targetModel: rule.targetModel,
+                  vendorId: service.vendorId,
+                  vendorName: vendor?.name,
+                  requestModel: req.body?.model,
+                  responseTime: Date.now() - startTime,
+                });
+              } catch (logError) {
+                console.error('[Proxy] Failed to log error:', logError);
+              }
+
+              try {
+                if (!res.writableEnded) {
+                  const errorEvent = `data: ${JSON.stringify({
+                    error: 'Stream processing error occurred'
+                  })}\n\n`;
+                  res.write(errorEvent);
+                  res.end();
+                }
+              } catch (writeError) {
+                console.error('[Proxy] Failed to send error event:', writeError);
+              }
+
+              await finalizeLog(500, error.message);
+            }
+          });
+          return;
+        }
+
         // 默认stream处理(无转换)
         const parser = new SSEParserTransform();
         const eventCollector = new SSEEventCollectorTransform();
@@ -2113,9 +2360,19 @@ export class ProxyServer {
         // 记录转换后的响应体
         responseBodyForLog = JSON.stringify(converted);
         res.status(response.status).json(converted);
+      } else if (targetType === 'claude-code' && this.isGeminiSource(sourceType)) {
+        const converted = transformGeminiResponseToClaude(responseData, rule.targetModel);
+        usageForLog = extractTokenUsageFromGeminiUsage(responseData?.usageMetadata);
+        responseBodyForLog = JSON.stringify(converted);
+        res.status(response.status).json(converted);
       } else if (targetType === 'codex' && this.isClaudeSource(sourceType)) {
         const converted = transformClaudeResponseToOpenAIChat(responseData);
         usageForLog = extractTokenUsageFromClaudeUsage(responseData?.usage);
+        responseBodyForLog = JSON.stringify(converted);
+        res.status(response.status).json(converted);
+      } else if (targetType === 'codex' && this.isGeminiSource(sourceType)) {
+        const converted = transformGeminiResponseToOpenAIChat(responseData, rule.targetModel);
+        usageForLog = extractTokenUsageFromGeminiUsage(responseData?.usageMetadata);
         responseBodyForLog = JSON.stringify(converted);
         res.status(response.status).json(converted);
       } else {

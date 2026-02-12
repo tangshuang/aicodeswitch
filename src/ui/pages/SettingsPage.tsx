@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api/client';
-import type { AppConfig } from '../../types';
+import type { AppConfig, ImportPreview } from '../../types';
 import { toast } from '../components/Toast';
 import { Switch } from '../components/Switch';
 
@@ -15,6 +15,11 @@ function SettingsPage() {
     proxyUsername: '',
     proxyPassword: '',
   });
+
+  // 导入预览状态
+  const [previewData, setPreviewData] = useState<ImportPreview | null>(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
 
   useEffect(() => {
     loadConfig();
@@ -103,24 +108,59 @@ function SettingsPage() {
     }
   };
 
-  const handleImport = async () => {
+  // 预览导入数据
+  const handlePreview = async () => {
     if (!password || !importData) {
       toast.warning('请输入密码和导入数据');
       return;
     }
 
+    setIsPreviewing(true);
     try {
-      const success = await api.importData(importData, password);
-      if (success) {
-        toast.success('导入成功');
+      const result = await api.previewImportData(importData, password);
+      setPreviewData(result);
+      if (!result.success) {
+        toast.error(result.message || '预览失败');
+      }
+    } catch (error: any) {
+      toast.error('预览失败: ' + error.message);
+      setPreviewData({ success: false, message: error.message });
+    } finally {
+      setIsPreviewing(false);
+    }
+  };
+
+  // 执行导入
+  const handleImport = async () => {
+    if (!password || !importData || !previewData?.success) {
+      toast.warning('请先预览数据并确认无误');
+      return;
+    }
+
+    setIsImporting(true);
+    try {
+      const result = await api.importData(importData, password);
+      if (result.success) {
+        toast.success(result.message + (result.details ? ` (${result.details})` : ''));
+        // 重置状态
         setImportData('');
         setPassword('');
+        setPreviewData(null);
       } else {
-        toast.error('导入失败,请检查密码是否正确');
+        toast.error(result.message + (result.details ? `: ${result.details}` : ''));
       }
     } catch (error: any) {
       toast.error('导入失败: ' + error.message);
+    } finally {
+      setIsImporting(false);
     }
+  };
+
+  // 取消预览/导入
+  const handleCancelImport = () => {
+    setPreviewData(null);
+    setImportData('');
+    setPassword('');
   };
 
   if (!config) {
@@ -295,26 +335,108 @@ function SettingsPage() {
         <p style={{ color: '#e74c3c', fontSize: '14px', fontWeight: 500 }}>
           警告:导入数据将覆盖所有现有配置！请确保已备份重要数据。
         </p>
-        <div className="form-group">
-          <label>解密密码</label>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="用于解密导入数据"
-          />
-        </div>
-        <div className="form-group">
-          <label>导入数据</label>
-          <textarea
-            rows={6}
-            value={importData}
-            onChange={(e) => setImportData(e.target.value)}
-            placeholder="粘贴导出的加密数据"
-            style={{ fontFamily: 'monospace', fontSize: '12px' }}
-          />
-        </div>
-        <button className="btn btn-danger" onClick={handleImport}>导入数据</button>
+
+        {!previewData?.success ? (
+          // 第一步：输入密码和数据，进行预览
+          <>
+            <div className="form-group">
+              <label>解密密码</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="用于解密导入数据"
+              />
+            </div>
+            <div className="form-group">
+              <label>导入数据</label>
+              <textarea
+                rows={6}
+                value={importData}
+                onChange={(e) => setImportData(e.target.value)}
+                placeholder="粘贴导出的加密数据"
+                style={{ fontFamily: 'monospace', fontSize: '12px' }}
+              />
+            </div>
+            <button
+              className="btn btn-primary"
+              onClick={handlePreview}
+              disabled={isPreviewing || !password || !importData}
+            >
+              {isPreviewing ? '预览中...' : '预览数据'}
+            </button>
+            {previewData?.success === false && (
+              <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#fdeaea', borderRadius: '4px', color: '#e74c3c' }}>
+                <strong>预览失败：</strong>{previewData.message}
+              </div>
+            )}
+          </>
+        ) : (
+          // 第二步：显示预览结果，等待确认
+          <>
+            <div style={{
+              marginTop: '15px',
+              padding: '15px',
+              backgroundColor: '#e8f4fd',
+              borderRadius: '6px',
+              border: '1px solid #bee5eb'
+            }}>
+              <h4 style={{ margin: '0 0 12px 0', color: '#0c5460', fontSize: '16px' }}>
+                数据预览
+              </h4>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', marginBottom: '12px' }}>
+                <div style={{ padding: '10px', backgroundColor: 'white', borderRadius: '4px' }}>
+                  <div style={{ fontSize: '12px', color: '#666' }}>供应商</div>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#333' }}>{previewData.data?.vendors || 0}</div>
+                </div>
+                <div style={{ padding: '10px', backgroundColor: 'white', borderRadius: '4px' }}>
+                  <div style={{ fontSize: '12px', color: '#666' }}>API服务</div>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#333' }}>{previewData.data?.services || 0}</div>
+                </div>
+                <div style={{ padding: '10px', backgroundColor: 'white', borderRadius: '4px' }}>
+                  <div style={{ fontSize: '12px', color: '#666' }}>路由</div>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#333' }}>{previewData.data?.routes || 0}</div>
+                </div>
+                <div style={{ padding: '10px', backgroundColor: 'white', borderRadius: '4px' }}>
+                  <div style={{ fontSize: '12px', color: '#666' }}>规则</div>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#333' }}>{previewData.data?.rules || 0}</div>
+                </div>
+              </div>
+              <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
+                <div>数据版本: {previewData.data?.version}</div>
+                <div>导出时间: {previewData.data?.exportDate ? new Date(previewData.data.exportDate).toLocaleString('zh-CN') : '-'}</div>
+              </div>
+            </div>
+
+            <div style={{
+              marginTop: '15px',
+              padding: '12px',
+              backgroundColor: '#fff3cd',
+              borderRadius: '4px',
+              border: '1px solid #ffeaa7',
+              color: '#856404'
+            }}>
+              <strong>确认导入？</strong> 此操作将覆盖所有现有的供应商、服务、路由和规则配置，且无法撤销。
+            </div>
+
+            <div style={{ marginTop: '15px', display: 'flex', gap: '10px' }}>
+              <button
+                className="btn btn-danger"
+                onClick={handleImport}
+                disabled={isImporting}
+              >
+                {isImporting ? '导入中...' : '确认导入'}
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={handleCancelImport}
+                disabled={isImporting}
+              >
+                取消
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

@@ -105,6 +105,7 @@ Codex的配置覆盖逻辑一模一样。
 *   Claude Chat
 *   Claude Code
 *   DeepSeek Chat
+*   Gemini
 
 **有什么用？**
 

@@ -156,6 +156,18 @@ export default {
         ],
         is_oversea: true,
     },
+    google: {
+        name: 'Google AI',
+        description: 'Google AI 官方 API',
+        services: [
+            {
+                name: 'Gemini',
+                sourceType: 'gemini',
+                apiUrl: 'https://generativelanguage.googleapis.com',
+            }
+        ],
+        is_oversea: true,
+    },
     openrouter: {
         name: 'OpenRouter',
         description: '一站式 AI 模型路由平台 https://openrouter.ai',
@@ -171,7 +183,7 @@ export default {
                 name: '通用接口',
                 sourceType: 'openai-chat',
                 apiUrl: 'https://openrouter.ai/api/v1/chat/completions',
-                models: 'anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5, openai/gpt-5.2-codex, openai/gpt-5.2-chat, openai/gpt-5.2-pro, openai/gpt-5.2, openai/gpt-5.1-codex-max',
+                models: 'anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5, openai/gpt-5.2-codex, openai/gpt-5.2-chat, openai/gpt-5.2-pro, openai/gpt-5.2, openai/gpt-5.1-codex-max, google/gemini-3-flash-preview, google/gemini-3-pro-preview',
             },
         ],
         is_oversea: true,

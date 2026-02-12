@@ -10,7 +10,7 @@ export interface Vendor {
 }
 
 /** 供应商API接口的数据结构标准类型 */
-export type SourceType = 'openai-chat' | 'openai-responses' | 'claude-chat' | 'claude-code' | 'deepseek-reasoning-chat';
+export type SourceType = 'openai-chat' | 'openai-responses' | 'claude-chat' | 'claude-code' | 'deepseek-reasoning-chat' | 'gemini';
 /** 路由的目标对象类型，目前，仅支持claude-code和codex */
 export type TargetType = 'claude-code' | 'codex';
 
@@ -67,6 +67,7 @@ export interface SkillInstallResponse {
 export enum AuthType {
   AUTH_TOKEN = 'authorization',
   API_KEY = 'x-api-key',
+  G_API_KEY = 'x-goog-api-key',  // Google Gemini API 认证方式
   AUTO = 'auto',
 };
 
@@ -225,6 +226,27 @@ export interface ExportData {
   routes: Route[];
   rules: Rule[];
   config: AppConfig;
+}
+
+/** 导入结果 */
+export interface ImportResult {
+  success: boolean;
+  message: string;
+  details?: string;
+}
+
+/** 导入预览数据 */
+export interface ImportPreview {
+  success: boolean;
+  message?: string;
+  data?: {
+    vendors: number;
+    services: number;
+    routes: number;
+    rules: number;
+    exportDate: number;
+    version: string;
+  };
 }
 
 export interface TokenUsage {

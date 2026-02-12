@@ -1,12 +1,11 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
-import { useReadme } from '../hooks/docs';
+import readMeMd from '../../../README.md?raw';
 
 const UsagePage: React.FC = () => {
-  const usageContent = useReadme();
   return (
     <div className="markdown-content">
-      <ReactMarkdown>{usageContent}</ReactMarkdown>
+      <ReactMarkdown>{readMeMd}</ReactMarkdown>
     </div>
   );
 };

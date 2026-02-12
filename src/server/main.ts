@@ -1568,12 +1568,22 @@ ${instruction}
       res.json({ data });
     })
   );
+  // 导入数据预览
+  app.post(
+    '/api/import/preview',
+    asyncHandler(async (req, res) => {
+      const { encryptedData, password } = req.body as { encryptedData: string; password: string };
+      const result = await dbManager.previewImportData(encryptedData, password);
+      res.json(result);
+    })
+  );
+
   app.post(
     '/api/import',
     asyncHandler(async (req, res) => {
       const { encryptedData, password } = req.body as { encryptedData: string; password: string };
       const result = await dbManager.importData(encryptedData, password);
-      if (result) {
+      if (result.success) {
         await proxyServer.reloadRoutes();
       }
       res.json(result);
