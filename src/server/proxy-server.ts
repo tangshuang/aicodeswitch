@@ -2035,7 +2035,11 @@ export class ProxyServer {
           const finalizeChunks = () => {
             const usage = converter.getUsage();
             if (usage) {
-              usageForLog = usage;
+              usageForLog = {
+                inputTokens: usage.input_tokens,
+                outputTokens: usage.output_tokens,
+                cacheReadInputTokens: usage.cache_read_input_tokens,
+              };
             } else {
               const extractedUsage = eventCollector.extractUsage();
               if (extractedUsage) {
