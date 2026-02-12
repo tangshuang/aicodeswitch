@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 3.2.0 (2026-02-12)
+
+#### Features
+* 新增 Gemini API 支持 - 可以将 Claude Code/Codex 的请求转换为 Gemini GenerateContent API
+  - 新增 `src/server/transformers/gemini.ts` 转换器
+  - 支持 Claude ↔ Gemini 双向转换（请求/响应）
+  - 支持 OpenAI Chat ↔ Gemini 双向转换（请求/响应）
+  - 支持流式响应转换（GeminiToClaudeEventTransform / GeminiToOpenAIChatEventTransform）
+  - 支持图像内容转换（inlineData 格式）
+  - 支持工具调用转换（functionCall ↔ tool_use/tool_calls）
+  - 支持思考配置转换（thinking ↔ thinkingConfig）
+  - 新增 `gemini` SourceType 类型
+  - 更新 proxy-server.ts 支持 Gemini 流式/非流式转换
+  - 更新 CLAUDE.md 文档说明 Gemini 转换功能
+
+#### Changes
+* 更新 API 转换功能说明，新增 Gemini API 转换
+
 ### 3.1.1 (2026-02-11)
 
 #### Fixes

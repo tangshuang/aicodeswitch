@@ -19,6 +19,7 @@ import type { ToolInstallationStatus } from '../types';
 import './styles/App.css';
 import logoImage from './assets/logo.png';
 import { useUpgradeNotes } from './hooks/docs';
+import upgradMd from '../../UPGRADE.md?raw';
 
 function AppContent() {
   const navigate = useNavigate();
@@ -584,7 +585,7 @@ function AppContent() {
                         <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
                           最新版本
                         </div>
-                        <div style={{ fontSize: '18px', fontWeight: '600', color: 'var(--primary-color)' }}>
+                        <div style={{ fontSize: '18px', fontWeight: '600' }}>
                           v{latestVersion}
                         </div>
                       </div>
@@ -605,32 +606,37 @@ function AppContent() {
                 {hasUpdate && (
                   <div style={{
                     padding: '16px',
-                    backgroundColor: '#e7f3ff',
-                    border: '1px solid #b3d9ff',
+                    backgroundColor: 'var(--bg-info-blue)',
+                    border: '1px solid var(--border-info-blue)',
                     borderRadius: '8px',
                     marginBottom: '20px'
                   }}>
-                    <div style={{ fontSize: '14px', marginBottom: '8px', fontWeight: '500' }}>
+                    <div style={{ fontSize: '14px', marginBottom: '8px', fontWeight: '500', color: 'var(--text-primary)' }}>
                       更新命令：
                     </div>
                     <code style={{
                       display: 'block',
                       padding: '8px 12px',
-                      backgroundColor: '#f8f9fa',
-                      border: '1px solid #dee2e6',
+                      backgroundColor: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-primary)',
                       borderRadius: '4px',
                       fontSize: '13px',
-                      color: '#c7254e'
+                      color: 'var(--accent-danger)'
                     }}>
                       npm i -g aicodeswitch
                     </code>
                   </div>
                 )}
-                {upgradeNotes ? (
+                {hasUpdate ? (upgradeNotes ? (
                   <div className="markdown-content" style={{ maxHeight: '400px', overflow: 'auto' }}>
                     <ReactMarkdown>{upgradeNotes}</ReactMarkdown>
                   </div>
-                ) : null}
+                ) : null) : (upgradMd ? (
+                  <div className="markdown-content">
+                    <h4 style={{ marginBottom: 12 }}>当前版本提示：</h4>
+                    <ReactMarkdown>{upgradMd}</ReactMarkdown>
+                  </div>
+                ) : null)}
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-primary" onClick={() => setShowVersionModal(false)}>

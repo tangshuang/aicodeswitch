@@ -805,6 +805,17 @@ x-goog-api-key: YOUR_API_KEY
 Content-Type: application/json
 ```
 
+### 在 AI Code Switch 中配置 Gemini
+
+**API URL 配置**：
+- 只需填写 base 地址：`https://generativelanguage.googleapis.com`
+- 代理会自动根据模型拼接完整 URL（如 `/v1beta/models/gemini-2.0-flash:generateContent`）
+
+**认证方式**：
+- 选择 `GOOGLE_API_KEY` (x-goog-api-key) 认证方式
+- 或选择 `自动`，系统会根据 Gemini 类型自动使用 x-goog-api-key
+- API Key 从你的 Google AI Studio 获取
+
 ### 支持的 MIME 类型
 
 **图像**：

@@ -1,5 +1,5 @@
 import { Transform } from 'stream';
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 import { convertOpenAIUsageToClaude, mapStopReason as mapOpenAIToClaudeStopReason } from './claude-openai';
 
 // 导出 SSEEvent 类型供其他模块使用
@@ -513,7 +513,7 @@ export class OpenAIToClaudeEventTransform extends Transform {
     if (this.finalized) return;
     this.ensureMessageStart();
 
-    for (const toolBlockIndex of this.toolCallIndexToBlockIndex.values()) {
+    for (const toolBlockIndex of Array.from(this.toolCallIndexToBlockIndex.values())) {
       this.pushEvent('content_block_stop', {
         type: 'content_block_stop',
         index: toolBlockIndex,
@@ -736,6 +736,474 @@ export class ClaudeToOpenAIChatEventTransform extends Transform {
         return 'stop';
       case 'content_filter':
         return 'content_filter';
+      default:
+        return 'stop';
+    }
+  }
+}
+
+// ============================================================================
+// Gemini 流式转换器
+// ============================================================================
+
+/**
+ * 将 Gemini SSE 流式事件转换为 Claude 格式
+ */
+export class GeminiToClaudeEventTransform extends Transform {
+  private contentIndex = 0;
+  private textBlockIndex: number | null = null;
+  private thinkingBlockIndex: number | null = null;
+  private toolCalls = new Map<number, { id: string; name: string; arguments: string }>();
+  private toolCallIndexToBlockIndex = new Map<number, number>();
+  private hasMessageStart = false;
+  private stopReason: string = 'end_turn';
+  private usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number } | null = null;
+  private messageId: string | null = null;
+  private model: string | null = null;
+  private finalized = false;
+  private errorEmitted = false;
+  private accumulatedText = new Map<number, string>(); // 累积每个候选的文本
+  private accumulatedToolCalls = new Map<number, Array<{ name: string; args: Record<string, unknown> }>>();
+
+  constructor(options?: { model?: string }) {
+    super({ objectMode: true });
+    this.model = options?.model ?? null;
+
+    this.on('error', (err) => {
+      console.error('[GeminiToClaudeEventTransform] Stream error:', err);
+      this.errorEmitted = true;
+    });
+  }
+
+  getUsage() {
+    if (!this.usage) return undefined;
+    return { ...this.usage };
+  }
+
+  _transform(event: SSEEvent, _encoding: BufferEncoding, callback: (error?: Error | null) => void) {
+    if (this.errorEmitted) {
+      callback();
+      return;
+    }
+
+    try {
+      if (this.finalized) {
+        callback();
+        return;
+      }
+
+      if (event.data?.type === 'done') {
+        this.finalize();
+        callback();
+        return;
+      }
+
+      const chunk = event.data;
+      if (!chunk) {
+        callback();
+        return;
+      }
+
+      // Gemini 流式响应格式: { candidates: [{ content: { parts: [...] }, finishReason: ... }], usageMetadata: {...} }
+      const candidates = Array.isArray(chunk.candidates) ? chunk.candidates : [];
+      const usageMetadata = chunk.usageMetadata;
+
+      // 处理 usage
+      if (usageMetadata) {
+        this.usage = {
+          input_tokens: usageMetadata.promptTokenCount || 0,
+          output_tokens: usageMetadata.candidatesTokenCount || 0,
+          cache_read_input_tokens: usageMetadata.cachedContentTokenCount || 0,
+        };
+      }
+
+      // 处理 candidates
+      for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
+        const candidate = candidates[candidateIndex];
+        const content = candidate.content;
+
+        // 处理 finishReason
+        if (candidate.finishReason) {
+          this.stopReason = this.mapGeminiFinishReason(candidate.finishReason);
+        }
+
+        if (!content || !Array.isArray(content.parts)) {
+          continue;
+        }
+
+        this.ensureMessageStart();
+
+        // 处理 parts
+        for (const part of content.parts) {
+          // 处理文本
+          if (part.text && typeof part.text === 'string') {
+            if (this.textBlockIndex === null) {
+              this.textBlockIndex = this.assignContentBlockIndex();
+              this.pushEvent('content_block_start', {
+                type: 'content_block_start',
+                index: this.textBlockIndex,
+                content_block: { type: 'text' },
+              });
+            }
+
+            // 累积文本
+            const currentText = this.accumulatedText.get(candidateIndex) || '';
+            this.accumulatedText.set(candidateIndex, currentText + part.text);
+
+            this.pushEvent('content_block_delta', {
+              type: 'content_block_delta',
+              index: this.textBlockIndex,
+              delta: {
+                type: 'text_delta',
+                text: part.text,
+              },
+            });
+          }
+
+          // 处理 functionCall -> tool_use
+          if (part.functionCall) {
+            const toolCalls = this.accumulatedToolCalls.get(candidateIndex) || [];
+            toolCalls.push({
+              name: part.functionCall.name || 'tool',
+              args: part.functionCall.args || {},
+            });
+            this.accumulatedToolCalls.set(candidateIndex, toolCalls);
+
+            const toolBlockIndex = this.assignContentBlockIndex();
+            this.toolCalls.set(toolCalls.length - 1, {
+              id: `tool_${toolCalls.length}_${Date.now()}`,
+              name: part.functionCall.name || 'tool',
+              arguments: JSON.stringify(part.functionCall.args || {}),
+            });
+            this.toolCallIndexToBlockIndex.set(toolCalls.length - 1, toolBlockIndex);
+
+            this.pushEvent('content_block_start', {
+              type: 'content_block_start',
+              index: toolBlockIndex,
+              content_block: {
+                type: 'tool_use',
+                id: this.toolCalls.get(toolCalls.length - 1)!.id,
+                name: part.functionCall.name || 'tool',
+              },
+            });
+
+            // 发送完整的参数
+            this.pushEvent('content_block_delta', {
+              type: 'content_block_delta',
+              index: toolBlockIndex,
+              delta: {
+                type: 'input_json_delta',
+                partial_json: JSON.stringify(part.functionCall.args || {}),
+              },
+            });
+          }
+
+          // 处理 inlineData (图像输出，罕见)
+          if (part.inlineData) {
+            // 图像输出作为单独的内容块
+            const imageBlockIndex = this.assignContentBlockIndex();
+            this.pushEvent('content_block_start', {
+              type: 'content_block_start',
+              index: imageBlockIndex,
+              content_block: {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: part.inlineData.mimeType,
+                  data: part.inlineData.data,
+                },
+              },
+            });
+            this.pushEvent('content_block_stop', {
+              type: 'content_block_stop',
+              index: imageBlockIndex,
+            });
+          }
+        }
+      }
+
+      callback();
+    } catch (error) {
+      console.error('[GeminiToClaudeEventTransform] Error in _transform:', error);
+      callback();
+    }
+  }
+
+  _flush(callback: (error?: Error | null) => void) {
+    try {
+      this.finalize();
+      callback();
+    } catch (error) {
+      console.error('[GeminiToClaudeEventTransform] Error in _flush:', error);
+      callback();
+    }
+  }
+
+  private assignContentBlockIndex() {
+    const index = this.contentIndex;
+    this.contentIndex += 1;
+    return index;
+  }
+
+  private pushEvent(type: string, data: any) {
+    this.push({ event: type, data });
+  }
+
+  private ensureMessageStart() {
+    if (this.hasMessageStart) return;
+    const message = {
+      id: this.messageId || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      type: 'message',
+      role: 'assistant',
+      content: [],
+      model: this.model || 'gemini',
+      stop_reason: null,
+      stop_sequence: null,
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+      },
+    };
+    this.pushEvent('message_start', { type: 'message_start', message });
+    this.hasMessageStart = true;
+  }
+
+  private mapGeminiFinishReason(finishReason: string): string {
+    switch (finishReason) {
+      case 'STOP':
+        return 'end_turn';
+      case 'MAX_TOKENS':
+        return 'max_tokens';
+      case 'SAFETY':
+      case 'RECITATION':
+        return 'content_filter';
+      case 'MALFORMED_FUNCTION_CALL':
+        return 'tool_use';
+      default:
+        return 'end_turn';
+    }
+  }
+
+  private finalize() {
+    if (this.finalized) return;
+    this.ensureMessageStart();
+
+    // 关闭所有工具调用块
+    for (const toolBlockIndex of Array.from(this.toolCallIndexToBlockIndex.values())) {
+      this.pushEvent('content_block_stop', {
+        type: 'content_block_stop',
+        index: toolBlockIndex,
+      });
+    }
+
+    // 关闭文本块
+    if (this.textBlockIndex !== null) {
+      this.pushEvent('content_block_stop', {
+        type: 'content_block_stop',
+        index: this.textBlockIndex,
+      });
+      this.textBlockIndex = null;
+    }
+
+    const usage = this.usage || {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
+
+    this.pushEvent('message_delta', {
+      type: 'message_delta',
+      delta: {
+        stop_reason: this.stopReason,
+        stop_sequence: null,
+      },
+      usage,
+    });
+
+    this.pushEvent('message_stop', { type: 'message_stop' });
+    this.finalized = true;
+  }
+}
+
+/**
+ * 将 Gemini SSE 流式事件转换为 OpenAI Chat 格式
+ */
+export class GeminiToOpenAIChatEventTransform extends Transform {
+  private pendingToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
+  private usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null = null;
+  private finished = false;
+  private model: string | null = null;
+  private stopReason: string = 'stop';
+  private errorEmitted = false;
+  private accumulatedText = '';
+
+  constructor(options?: { model?: string }) {
+    super({ objectMode: true });
+    this.model = options?.model ?? null;
+
+    this.on('error', (err) => {
+      console.error('[GeminiToOpenAIChatEventTransform] Stream error:', err);
+      this.errorEmitted = true;
+    });
+  }
+
+  getUsage() {
+    return this.usage;
+  }
+
+  _transform(event: SSEEvent, _encoding: BufferEncoding, callback: (error?: Error | null) => void) {
+    if (this.errorEmitted) {
+      callback();
+      return;
+    }
+
+    try {
+      if (this.finished) {
+        callback();
+        return;
+      }
+
+      if (event.data?.type === 'done') {
+        this.finished = true;
+        this.push({ event: null, data: { id: '', model: this.model, choices: [{ index: 0, delta: {}, finish_reason: this.stopReason }] } });
+        this.push({ event: 'done', data: { type: 'done' } });
+        callback();
+        return;
+      }
+
+      const chunk = event.data;
+      if (!chunk) {
+        callback();
+        return;
+      }
+
+      // 处理 usage
+      if (chunk.usageMetadata) {
+        this.usage = {
+          prompt_tokens: chunk.usageMetadata.promptTokenCount || 0,
+          completion_tokens: chunk.usageMetadata.candidatesTokenCount || 0,
+          total_tokens: chunk.usageMetadata.totalTokenCount || 0,
+        };
+      }
+
+      const candidates = Array.isArray(chunk.candidates) ? chunk.candidates : [];
+
+      for (const candidate of candidates) {
+        // 处理 finishReason
+        if (candidate.finishReason) {
+          this.stopReason = this.mapGeminiFinishReason(candidate.finishReason);
+        }
+
+        if (!candidate.content || !Array.isArray(candidate.content.parts)) {
+          continue;
+        }
+
+        // 处理 parts
+        for (const part of candidate.content.parts) {
+          // 处理文本
+          if (part.text && typeof part.text === 'string') {
+            this.accumulatedText += part.text;
+            this.push({ event: null, data: { id: '', model: this.model, choices: [{ index: 0, delta: { content: part.text } }] } });
+          }
+
+          // 处理 functionCall -> tool_calls
+          if (part.functionCall) {
+            const toolCallId = `call_${this.pendingToolCalls.length}_${Date.now()}`;
+            this.pendingToolCalls.push({
+              id: toolCallId,
+              name: part.functionCall.name || 'tool',
+              arguments: JSON.stringify(part.functionCall.args || {}),
+            });
+
+            this.push({
+              event: null,
+              data: {
+                id: '',
+                model: this.model,
+                choices: [{
+                  index: 0,
+                  delta: {
+                    tool_calls: [{
+                      id: toolCallId,
+                      type: 'function',
+                      function: {
+                        name: part.functionCall.name || 'tool',
+                        arguments: JSON.stringify(part.functionCall.args || {}),
+                      },
+                    }],
+                  },
+                }],
+              },
+            });
+          }
+
+          // 处理 inlineData (图像输出，罕见)
+          if (part.inlineData) {
+            // 图像作为 content 的一部分发送
+            const imageDataUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+            this.push({
+              event: null,
+              data: {
+                id: '',
+                model: this.model,
+                choices: [{
+                  index: 0,
+                  delta: {
+                    content: [{
+                      type: 'image_url',
+                      image_url: { url: imageDataUrl },
+                    }],
+                  },
+                }],
+              },
+            });
+          }
+        }
+      }
+
+      callback();
+    } catch (error) {
+      console.error('[GeminiToOpenAIChatEventTransform] Error in _transform:', error);
+      callback();
+    }
+  }
+
+  _flush(callback: (error?: Error | null) => void) {
+    try {
+      if (!this.finished) {
+        this.finished = true;
+        this.push({
+          event: null,
+          data: {
+            id: '',
+            model: this.model,
+            choices: [{
+              index: 0,
+              delta: {},
+              finish_reason: this.stopReason,
+            }],
+          },
+        });
+        this.push({ event: 'done', data: { type: 'done' } });
+      }
+      callback();
+    } catch (error) {
+      console.error('[GeminiToOpenAIChatEventTransform] Error in _flush:', error);
+      callback();
+    }
+  }
+
+  private mapGeminiFinishReason(finishReason: string): string {
+    switch (finishReason) {
+      case 'STOP':
+        return 'stop';
+      case 'MAX_TOKENS':
+        return 'length';
+      case 'SAFETY':
+      case 'RECITATION':
+        return 'content_filter';
+      case 'MALFORMED_FUNCTION_CALL':
+        return 'tool_calls';
       default:
         return 'stop';
     }

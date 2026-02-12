@@ -222,12 +222,18 @@ function VendorsPage() {
     });
 
     if (confirmed) {
-      await api.deleteVendor(id);
-      loadVendors();
-      if (selectedVendor && selectedVendor.id === id) {
-        setSelectedVendor(null);
+      try {
+        await api.deleteVendor(id);
+        loadVendors();
+        if (selectedVendor && selectedVendor.id === id) {
+          setSelectedVendor(null);
+        }
+        toast.success('供应商已删除');
+      } catch (error) {
+        // 显示错误信息
+        const errorMessage = error instanceof Error ? error.message : '删除失败';
+        toast.error(errorMessage);
       }
-      toast.success('供应商已删除');
     }
   };
 
@@ -306,17 +312,23 @@ function VendorsPage() {
     });
 
     if (confirmed) {
-      await api.deleteAPIService(id);
-      // 重新加载供应商（服务已自动包含）
-      const updatedVendors = await loadVendors();
-      if (selectedVendor) {
-        // 刷新选中供应商
-        const updatedVendor = updatedVendors.find(v => v.id === selectedVendor.id);
-        if (updatedVendor) {
-          setSelectedVendor(updatedVendor);
+      try {
+        await api.deleteAPIService(id);
+        // 重新加载供应商（服务已自动包含）
+        const updatedVendors = await loadVendors();
+        if (selectedVendor) {
+          // 刷新选中供应商
+          const updatedVendor = updatedVendors.find(v => v.id === selectedVendor.id);
+          if (updatedVendor) {
+            setSelectedVendor(updatedVendor);
+          }
         }
+        toast.success('API服务已删除');
+      } catch (error) {
+        // 显示错误信息
+        const errorMessage = error instanceof Error ? error.message : '删除失败';
+        toast.error(errorMessage);
       }
-      toast.success('API服务已删除');
     }
   };
 
@@ -1273,7 +1285,7 @@ function VendorsPage() {
                           <span style={{
                             fontSize: '14px',
                             fontWeight: isChecked ? '600' : '400',
-                            color: isChecked ? 'var(--accent-primary)' : 'var(--text-primary)',
+                            color: 'var(--text-primary)',
                             transition: 'all 0.2s ease'
                           }}>
                             {service.name} - {SOURCE_TYPE[service.sourceType as keyof typeof SOURCE_TYPE]}
@@ -1282,7 +1294,7 @@ function VendorsPage() {
                             <span style={{
                               marginLeft: 'auto',
                               fontSize: '16px',
-                              color: 'var(--accent-primary)'
+                              color: 'var(--text-primary)'
                             }}>✓</span>
                           )}
                         </label>

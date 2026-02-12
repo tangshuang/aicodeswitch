@@ -147,18 +147,30 @@ aicos version            # Show current version information
 
 #### 3. Transformers - `server/transformers/`
 - **streaming.ts**: SSE parsing/serialization and event transformation
+  - OpenAI ↔ Claude event transformation
+  - Gemini ↔ Claude/OpenAI event transformation (streaming)
 - **claude-openai.ts**: Claude ↔ OpenAI Chat format conversion
   - Image content block conversion (Claude ↔ OpenAI formats)
   - Tool choice mapping (auto/any/tool ↔ auto/none/required)
   - Stop reason mapping (including max_thinking_length)
   - System prompt handling (string and array formats)
   - Thinking/Reasoning content conversion
+- **gemini.ts**: Gemini ↔ Claude/OpenAI Chat format conversion
+  - Claude Messages API ↔ Gemini GenerateContent API
+  - OpenAI Chat Completions API ↔ Gemini GenerateContent API
+  - Image content block conversion (Claude/OpenAI ↔ Gemini inlineData)
+  - Tool calls conversion (tool_use/tool_calls ↔ functionCall)
+  - System instruction handling (system ↔ systemInstruction)
+  - Thinking configuration conversion (thinking ↔ thinkingConfig)
+  - Finish reason mapping (STOP/MAX_TOKENS/SAFETY ↔ end_turn/max_tokens/content_filter)
 - **chunk-collector.ts**: Collects streaming chunks for logging
 
 **API 转换功能**：
 转换器实现了以下 API 格式之间的双向转换：
 - **Claude Messages API** ↔ **OpenAI Chat Completions API**
 - **Claude Messages API** ↔ **OpenAI Responses API**
+- **Claude Messages API** ↔ **Gemini GenerateContent API**
+- **OpenAI Chat Completions API** ↔ **Gemini GenerateContent API**
 - **DeepSeek Chat** ↔ 其他格式（支持 developer 角色映射）
 
 **支持的转换内容**：
