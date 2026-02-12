@@ -752,7 +752,6 @@ export class ClaudeToOpenAIChatEventTransform extends Transform {
 export class GeminiToClaudeEventTransform extends Transform {
   private contentIndex = 0;
   private textBlockIndex: number | null = null;
-  private thinkingBlockIndex: number | null = null;
   private toolCalls = new Map<number, { id: string; name: string; arguments: string }>();
   private toolCallIndexToBlockIndex = new Map<number, number>();
   private hasMessageStart = false;
