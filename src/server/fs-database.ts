@@ -678,7 +678,7 @@ export class FileSystemDatabaseManager {
     const rulesUsingServices = this.rules.filter(r => serviceIds.includes(r.targetServiceId));
 
     if (rulesUsingServices.length > 0) {
-      throw new Error(`无法删除供应商：有 ${rulesUsingServices.length} 个规则正在使用该供应商的服务`);
+      throw new Error(`无法删除供应商：有 ${rulesUsingServices.length} 个路由规则正在使用该供应商的服务`);
     }
 
     this.vendors.splice(index, 1);
@@ -817,7 +817,7 @@ export class FileSystemDatabaseManager {
     // 检查是否有规则正在使用此服务
     const rulesUsingService = this.rules.filter(r => r.targetServiceId === id);
     if (rulesUsingService.length > 0) {
-      throw new Error(`无法删除服务：有 ${rulesUsingService.length} 个规则正在使用此服务`);
+      throw new Error(`无法删除服务：有 ${rulesUsingService.length} 个路由规则正在使用此服务`);
     }
 
     vendor.services!.splice(index, 1);
