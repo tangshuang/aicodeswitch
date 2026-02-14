@@ -25,13 +25,13 @@ export default {
                 name: 'Coding Plan Claude Code',
                 sourceType: 'claude-code',
                 apiUrl: 'https://api.minimaxi.com/anthropic',
-                models: 'MiniMax-M2.1',
+                models: 'MiniMax-M2.5',
             },
             {
                 name: 'Coding Plan Codex',
                 sourceType: 'openai-chat',
                 apiUrl: 'https://api.minimaxi.com/v1',
-                models: 'codex-MiniMax-M2.1',
+                models: 'codex-MiniMax-M2.1, codex-MiniMax-M2.5',
             }
         ]
     },
