@@ -80,7 +80,7 @@ app.use(express.json({ limit: 'Infinity' }));
 app.use(express.urlencoded({ extended: true, limit: 'Infinity' }));
 
 const asyncHandler =
-  (handler: (req: Request, res: Response, next: NextFunction) => Promise<void> | void) =>
+  (handler: (req: Request, res: Response, next: NextFunction) => Promise<unknown> | unknown) =>
   (req: Request, res: Response, next: NextFunction) => {
     Promise.resolve(handler(req, res, next)).catch((err) => {
       console.error('[asyncHandler] Caught error:', err);
