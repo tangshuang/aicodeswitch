@@ -2,7 +2,6 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-<<<<<<< HEAD
 ### 3.3.2 (2026-02-15)
 
 #### Fixes
@@ -24,13 +23,6 @@ All notable changes to this project will be documented in this file. See [standa
   - 选择 claude-chat 或 claude-code 数据源时，自动将认证方式设置为 `API_KEY`
   - 选择其他数据源时，自动将认证方式设置为 `AUTH_TOKEN`
   - 编辑已有服务时也能正确处理认证方式的自动推导
-=======
-### 3.0.6 (2026-02-14)
-
-### 3.0.5 (2026-02-14)
-
-### 3.0.4 (2026-02-12)
->>>>>>> origin/main
 
 ### 3.3.0 (2026-02-12)
 
