@@ -50,6 +50,11 @@
     "tauri:build": "tauri build && node tauri/move-bundle.js",
     "tauri:icon": "tauri icon src/ui/assets/logo.png"
   },
+  "standard-version": {
+    "skip": {
+      "changelog": true
+    }
+  },
   "dependencies": {
     "@types/jsonwebtoken": "^9.0.10",
     "axios": "^1.6.7",
