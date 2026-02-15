@@ -38,7 +38,7 @@ const version = () => {
   ));
 
   console.log(chalk.cyan('💡 Tips:\n'));
-  console.log(chalk.white('  • Check for updates: ') + chalk.yellow('aicos update'));
+  console.log(chalk.white('  • Check for updates: ') + chalk.yellow('aicos upgrade'));
   console.log(chalk.white('  • Restart server:     ') + chalk.yellow('aicos restart\n'));
 
   process.exit(0);

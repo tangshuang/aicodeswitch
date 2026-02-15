@@ -40,7 +40,7 @@ aicodeswitch/
 | API 格式转换 | `src/server/transformers/` | Claude ↔ OpenAI 数据格式互转 |
 | 数据库层 | `src/server/fs-database.ts` | JSON 文件存储 CRUD |
 | UI 页面 | `src/ui/pages/` | 供应商管理、路由配置、日志等 |
-| CLI 命令 | `bin/*.js` | start/stop/ui/update/restore 等 |
+| CLI 命令 | `bin/*.js` | start/stop/ui/upgrade/restore 等 |
 | Tauri 主进程 | `tauri/src/main.rs` | Rust 窗口管理、Node 进程生命周期 |
 | 构建配置 | `package.json` scripts | dev/build/tauri:dev 等 |
 
