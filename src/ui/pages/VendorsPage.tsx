@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api } from '../api/client';
 import type { Vendor, APIService, SourceType } from '../../types';
@@ -114,6 +114,7 @@ function TagInput({ value = [], onChange, placeholder, inputValue, onInputChange
 
 function VendorsPage() {
   const { confirm } = useConfirm();
+  const authTypeSelectRef = useRef<HTMLSelectElement>(null);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   // 移除独立的 services 状态，现在从 selectedVendor.services 获取
   const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null);
@@ -142,7 +143,28 @@ function VendorsPage() {
   // 当前选择的数据源类型（用于动态显示API地址提示）
   const [currentSourceType, setCurrentSourceType] = useState<SourceType>('openai-chat');
   // 当前选择的认证方式（用于动态显示认证方式提示）
-  const [currentAuthType, setCurrentAuthType] = useState<AuthType>(AuthType.AUTO);
+  const [currentAuthType, setCurrentAuthType] = useState<AuthType>(AuthType.AUTH_TOKEN);
+
+  // 处理数据源类型变化，自动设置合适的认证方式
+  const handleSourceTypeChange = (sourceType: SourceType) => {
+    setCurrentSourceType(sourceType);
+    let newAuthType: AuthType;
+
+    if (sourceType === 'gemini') {
+      newAuthType = AuthType.G_API_KEY;
+    } else if (sourceType === 'claude-chat' || sourceType === 'claude-code') {
+      newAuthType = AuthType.API_KEY;
+    } else {
+      newAuthType = AuthType.AUTH_TOKEN;
+    }
+
+    setCurrentAuthType(newAuthType);
+
+    // 更新选择器的值
+    if (authTypeSelectRef.current) {
+      authTypeSelectRef.current.value = newAuthType;
+    }
+  };
 
   // 一键配置相关状态
   const [quickSetupVendorKey, setQuickSetupVendorKey] = useState<string>('');
@@ -273,6 +295,7 @@ function VendorsPage() {
     setRequestResetInterval(undefined);
     setRequestResetBaseTime(undefined);
     setCurrentSourceType('openai-chat');
+    setCurrentAuthType(AuthType.AUTH_TOKEN);
     setShowServiceModal(true);
   };
 
@@ -295,8 +318,26 @@ function VendorsPage() {
     setRequestResetBaseTime(
       (service as any).requestResetBaseTime ? new Date((service as any).requestResetBaseTime) : undefined
     );
-    setCurrentSourceType(service.sourceType || 'openai-chat');
-    setCurrentAuthType(service.authType || AuthType.AUTO);
+
+    const sourceType = service.sourceType || 'openai-chat';
+    setCurrentSourceType(sourceType);
+
+    // 如果服务有明确的 authType 且不是 'auto'，使用它；否则根据 sourceType 推导
+    if (service.authType) {
+      setCurrentAuthType(service.authType);
+    } else {
+      // 根据 sourceType 自动推导 authType
+      let derivedAuthType: AuthType;
+      if (sourceType === 'gemini') {
+        derivedAuthType = AuthType.G_API_KEY;
+      } else if (sourceType === 'claude-chat' || sourceType === 'claude-code') {
+        derivedAuthType = AuthType.API_KEY;
+      } else {
+        derivedAuthType = AuthType.AUTH_TOKEN;
+      }
+      setCurrentAuthType(derivedAuthType);
+    }
+
     setShowServiceModal(true);
   };
 
@@ -716,7 +757,7 @@ function VendorsPage() {
                 <select
                   name="sourceType"
                   defaultValue={editingService ? editingService.sourceType || '' : ''}
-                  onChange={(e) => setCurrentSourceType(e.target.value as SourceType)}
+                  onChange={(e) => handleSourceTypeChange(e.target.value as SourceType)}
                   required
                 >
                   <option value="" disabled>请选择源类型</option>
@@ -737,10 +778,11 @@ function VendorsPage() {
                 <input type="password" name="apiKey" defaultValue={editingService ? editingService.apiKey : ''} required />
               </div>
               <div className="form-group">
-                <label>API认证方式 <small>API 请求使用的认证方式</small></label>
+                <label>供应商API认证方式 <small>请在供应商的文档中查阅相关信息</small></label>
                 <select
+                  ref={authTypeSelectRef}
                   name="authType"
-                  defaultValue={editingService ? editingService.authType || AuthType.AUTO : AuthType.AUTO}
+                  defaultValue={editingService ? editingService.authType || AuthType.AUTH_TOKEN : AuthType.AUTH_TOKEN}
                   onChange={(e) => setCurrentAuthType(e.target.value as AuthType)}
                 >
                   {Object.keys(AUTH_TYPE).map((type) => (

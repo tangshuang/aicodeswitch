@@ -68,7 +68,8 @@ export enum AuthType {
   AUTH_TOKEN = 'authorization',
   API_KEY = 'x-api-key',
   G_API_KEY = 'x-goog-api-key',  // Google Gemini API 认证方式
-  AUTO = 'auto',
+  // 注意: 'auto' 值已从前端移除，但后端仍保留兼容性处理
+  // AUTO = 'auto',  // 已废弃
 };
 
 /** 供应商API服务 */
@@ -79,7 +80,7 @@ export interface APIService {
   apiUrl: string;
   apiKey: string;
   sourceType?: SourceType;
-  authType?: AuthType; // 认证方式，默认为 'auto'（根据 sourceType 自动判断）
+  authType?: AuthType; // 认证方式（ AUTH_TOKEN/API_KEY/G_API_KEY），默认为 AUTH_TOKEN
   supportedModels?: string[];
   modelLimits?: Record<string, number>; // 模型名 -> 最大输出tokens映射
   enableProxy?: boolean; // 是否启用代理

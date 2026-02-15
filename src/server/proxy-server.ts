@@ -1263,11 +1263,17 @@ export class ProxyServer {
     return body?.stream === true || accept.includes('text/event-stream');
   }
 
-  private buildUpstreamHeaders(req: Request, service: APIService, sourceType: SourceType, streamRequested: boolean) {
+  private buildUpstreamHeaders(
+    req: Request,
+    service: APIService,
+    sourceType: SourceType,
+    streamRequested: boolean,
+    requestBody?: any
+  ) {
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(req.headers)) {
       // 排除原始认证头，防止与代理设置的认证头冲突
-      if (['host', 'connection', 'content-length', 'authorization', 'x-api-key', 'x-anthropic-api-key', 'anthropic-api-key', 'x-goog-api-key'].includes(key.toLowerCase())) {
+      if (['host', 'content-length', 'authorization', 'x-api-key', 'x-anthropic-api-key', 'anthropic-api-key', 'x-goog-api-key'].includes(key.toLowerCase())) {
         continue;
       }
       if (typeof value === 'string') {
@@ -1277,32 +1283,48 @@ export class ProxyServer {
       }
     }
 
-    if (streamRequested) {
-      headers.accept = 'text/event-stream';
-    }
+    // 确定认证方式：优先使用服务配置的 authType
+    // 注意：向下兼容 'auto' 字符串值（前端已移除 AuthType.AUTO 枚举，但旧数据可能包含此值）
+    const authType = service.authType || AuthType.AUTH_TOKEN;
+    // 向下兼容：检测旧数据的 'auto' 值
+    // TODO: 删除
+    const isAuto = authType === 'auto' as any;
 
-    // 确定认证方式：优先使用服务配置的 authType，否则根据 sourceType 自动判断
-    const authType = service.authType || AuthType.AUTO;
-
-    if (authType === AuthType.G_API_KEY || (authType === AuthType.AUTO && this.isGeminiSource(sourceType))) {
-      // 使用 x-goog-api-key 认证（适用于 Google Gemini API）
+    // 使用 x-goog-api-key 认证（适用于 Google Gemini API）
+    if (authType === AuthType.G_API_KEY || (isAuto && this.isGeminiSource(sourceType))) {
       headers['x-goog-api-key'] = service.apiKey;
-    } else if (authType === AuthType.API_KEY || (authType === AuthType.AUTO && this.isClaudeSource(sourceType))) {
-      // 使用 x-api-key 认证（适用于 claude-chat, claude-code 及某些需要 x-api-key 的 openai-chat 兼容 API）
+    }
+    // 使用 x-api-key 认证（适用于 claude-chat, claude-code 及某些需要 x-api-key 的 openai-chat 兼容 API）
+    else if (authType === AuthType.API_KEY || (isAuto && this.isClaudeSource(sourceType))) {
       headers['x-api-key'] = service.apiKey;
       if (this.isClaudeSource(sourceType) || authType === AuthType.API_KEY) {
         // 仅在明确配置或 Claude 源时添加 anthropic-version
         headers['anthropic-version'] = headers['anthropic-version'] || '2023-06-01';
       }
-    } else {
-      // 使用 Authorization 认证（适用于 openai-chat, openai-responses, deepseek-reasoning-chat 等）
-      delete headers['anthropic-version'];
-      delete headers['anthropic-beta'];
+    }
+    // 使用 Authorization 认证（适用于 openai-chat, openai-responses, deepseek-reasoning-chat 等）
+    else {
       headers.authorization = `Bearer ${service.apiKey}`;
+    }
+
+    if (streamRequested && !headers.accept) {
+      headers.accept = 'text/event-stream';
+    }
+
+    if (!headers.connection) {
+      if (streamRequested) {
+        headers.connection = 'keep-alive';
+      }
     }
 
     if (!headers['content-type']) {
       headers['content-type'] = 'application/json';
+    }
+
+    // 添加 content-length（对于有请求体的方法）
+    if (requestBody && ['POST', 'PUT', 'PATCH'].includes(req.method.toUpperCase())) {
+      const bodyStr = JSON.stringify(requestBody);
+      headers['content-length'] = Buffer.byteLength(bodyStr, 'utf8').toString();
     }
 
     return headers;
@@ -1733,7 +1755,7 @@ export class ProxyServer {
       const config: AxiosRequestConfig = {
         method: req.method as any,
         url: upstreamUrl,
-        headers: this.buildUpstreamHeaders(req, service, sourceType, streamRequested),
+        headers: this.buildUpstreamHeaders(req, service, sourceType, streamRequested, requestBody),
         timeout: rule.timeout || 3000000, // 默认300秒
         validateStatus: () => true,
         responseType: streamRequested ? 'stream' : 'json',
@@ -1780,7 +1802,7 @@ export class ProxyServer {
       // const actualModel = requestBody?.model || '';
       // const maxTokensFieldName = this.getMaxTokensFieldName(actualModel);
       // const actualMaxTokens = requestBody?.[maxTokensFieldName] || requestBody?.max_tokens;
-      const upstreamHeaders = this.buildUpstreamHeaders(req, service, sourceType, streamRequested);
+      const upstreamHeaders = this.buildUpstreamHeaders(req, service, sourceType, streamRequested, requestBody);
 
       upstreamRequestForLog = {
         url: upstreamUrl,
