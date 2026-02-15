@@ -27,17 +27,15 @@ export const SOURCE_TYPE_MESSAGE: Record<SourceType, string> = {
 
 /** 认证方式类型 */
 export const AUTH_TYPE: Record<AuthType, string> = {
-  [AuthType.AUTO]: '自动',
   [AuthType.AUTH_TOKEN]: 'AUTH_TOKEN',
   [AuthType.API_KEY]: 'API_KEY',
   [AuthType.G_API_KEY]: 'GOOGLE_API_KEY',
 };
 
 export const AUTH_TYPE_MESSAGE: Record<AuthType, string> = {
-  [AuthType.AUTO]: '根据数据源类型自动判断：Claude 相关类型使用 x-api-key header，OpenAI 相关类型使用 Authorization: Bearer header，Gemini 使用 x-goog-api-key header',
-  [AuthType.AUTH_TOKEN]: '使用 Authorization: Bearer <token> 进行认证（对应 Claude Code 的 ANTHROPIC_AUTH_TOKEN，以及OpenAI的所有请求）',
-  [AuthType.API_KEY]: '使用 x-api-key: <token> 进行认证（对应 Claude Code 的 ANTHROPIC_API_KEY）',
-  [AuthType.G_API_KEY]: '使用 x-goog-api-key: <token> 进行认证（对应 Google Gemini API）',
+  [AuthType.AUTH_TOKEN]: '使用 Authorization: Bearer <token> 进行认证',
+  [AuthType.API_KEY]: '使用 x-api-key: <token> 进行认证',
+  [AuthType.G_API_KEY]: '使用 x-goog-api-key: <token> 进行认证',
 };
 
 /** 默认请求超时时间 */

@@ -26,7 +26,6 @@ export default {
                 sourceType: 'claude-code',
                 apiUrl: 'https://api.minimaxi.com/anthropic',
                 models: 'MiniMax-M2.5',
-                authType: AuthType.AUTH_TOKEN,
             },
             {
                 name: 'Coding Plan Codex',
@@ -178,7 +177,6 @@ export default {
                 sourceType: 'claude-code',
                 apiUrl: 'https://openrouter.ai/api',
                 models: 'anthropic/claude-opus-4.6, anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5',
-                authType: AuthType.AUTH_TOKEN,
             },
             {
                 name: '通用接口',

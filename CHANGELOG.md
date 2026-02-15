@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 3.3.2 (2026-02-15)
+
+#### Fixes
+* 在 upstream 请求头中添加 `content-length` 字段
+  - 修改 `buildUpstreamHeaders` 方法，新增 `requestBody` 参数
+  - 对于 POST/PUT/PATCH 请求，自动计算并设置 `content-length`
+  - 确保 axios 发送请求和日志记录都包含正确的 content-length 信息
+
+### 3.3.1 (2026-02-15)
+
+#### Changes
+* 移除前端的 `AuthType.AUTO` 选项
+  - 从类型定义中移除 `AuthType.AUTO` 枚举值（已废弃，保留注释）
+  - 从前端常量 `AUTH_TYPE` 和 `AUTH_TYPE_MESSAGE` 中移除 AUTO 相关配置
+  - 前端默认认证方式改为 `AuthType.AUTH_TOKEN`
+  - 后端保留对旧数据中 `'auto'` 字符串值的兼容性处理
+* 新增智能认证方式选择
+  - 选择 gemini 数据源时，自动将认证方式设置为 `GOOGLE_API_KEY`
+  - 选择 claude-chat 或 claude-code 数据源时，自动将认证方式设置为 `API_KEY`
+  - 选择其他数据源时，自动将认证方式设置为 `AUTH_TOKEN`
+  - 编辑已有服务时也能正确处理认证方式的自动推导
+
 ### 3.3.0 (2026-02-12)
 
 #### Features
