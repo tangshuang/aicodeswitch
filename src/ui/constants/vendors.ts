@@ -26,6 +26,7 @@ export default {
                 sourceType: 'claude-code',
                 apiUrl: 'https://api.minimaxi.com/anthropic',
                 models: 'MiniMax-M2.5',
+                authType: AuthType.AUTH_TOKEN,
             },
             {
                 name: 'Coding Plan Codex',
