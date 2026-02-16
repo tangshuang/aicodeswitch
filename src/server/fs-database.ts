@@ -1279,6 +1279,111 @@ export class FileSystemDatabaseManager {
     return count;
   }
 
+  /**
+   * 搜索请求日志内容
+   * @param query 搜索关键词
+   * @param limit 返回��量限制
+   * @param offset 偏移量
+   * @returns 匹配的日志列表
+   */
+  async searchLogs(query: string, limit: number = 100, offset: number = 0): Promise<RequestLog[]> {
+    const searchQuery = query.toLowerCase().trim();
+    if (!searchQuery) {
+      return this.getLogs(limit, offset);
+    }
+
+    const allMatches: RequestLog[] = [];
+    const sortedShards = [...this.logShardsIndex].sort((a, b) => b.endTime - a.endTime);
+
+    // 遍历所有分片进行搜索
+    for (const shard of sortedShards) {
+      const shardLogs = await this.loadLogShard(shard.filename);
+
+      for (const log of shardLogs) {
+        if (this.logMatchesQuery(log, searchQuery)) {
+          allMatches.push(log);
+        }
+      }
+    }
+
+    // 按时间倒序排列并分页
+    return allMatches
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(offset, offset + limit);
+  }
+
+  /**
+   * 搜索请求日志内容数量
+   * @param query 搜索关键词
+   * @returns 匹配的日志数量
+   */
+  async searchLogsCount(query: string): Promise<number> {
+    const searchQuery = query.toLowerCase().trim();
+    if (!searchQuery) {
+      return this.getLogsCount();
+    }
+
+    let count = 0;
+    for (const shard of this.logShardsIndex) {
+      const shardLogs = await this.loadLogShard(shard.filename);
+      for (const log of shardLogs) {
+        if (this.logMatchesQuery(log, searchQuery)) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }
+
+  /**
+   * 检查日志是否匹配搜索查询
+   */
+  private logMatchesQuery(log: RequestLog, query: string): boolean {
+    // 搜索请求体
+    if (log.body) {
+      const bodyStr = typeof log.body === 'string' ? log.body : JSON.stringify(log.body);
+      if (bodyStr.toLowerCase().includes(query)) {
+        return true;
+      }
+    }
+
+    // 搜索响应体
+    if (log.responseBody && typeof log.responseBody === 'string') {
+      if (log.responseBody.toLowerCase().includes(query)) {
+        return true;
+      }
+    }
+
+    // 搜索流式响应块
+    if (log.streamChunks && log.streamChunks.length > 0) {
+      for (const chunk of log.streamChunks) {
+        if (chunk.toLowerCase().includes(query)) {
+          return true;
+        }
+      }
+    }
+
+    // 搜索错误信息
+    if (log.error && log.error.toLowerCase().includes(query)) {
+      return true;
+    }
+
+    // 搜索路径
+    if (log.path && log.path.toLowerCase().includes(query)) {
+      return true;
+    }
+
+    // 搜索模型名称
+    if (log.requestModel && log.requestModel.toLowerCase().includes(query)) {
+      return true;
+    }
+    if (log.targetModel && log.targetModel.toLowerCase().includes(query)) {
+      return true;
+    }
+
+    return false;
+  }
+
   // Error log operations
   async addErrorLog(log: Omit<ErrorLog, 'id'>): Promise<void> {
     const id = crypto.randomUUID();
@@ -1305,6 +1410,85 @@ export class FileSystemDatabaseManager {
     const count = this.errorLogs.length;
     this.errorLogsCountCache = { count, timestamp: now };
     return count;
+  }
+
+  /**
+   * 搜索错误日志内容
+   * @param query 搜索关键词
+   * @param limit 返回数量限制
+   * @param offset 偏移量
+   * @returns 匹配的错误日志列表
+   */
+  async searchErrorLogs(query: string, limit: number = 100, offset: number = 0): Promise<ErrorLog[]> {
+    const searchQuery = query.toLowerCase().trim();
+    if (!searchQuery) {
+      return this.getErrorLogs(limit, offset);
+    }
+
+    const matches = this.errorLogs.filter(log => this.errorLogMatchesQuery(log, searchQuery));
+    return matches
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(offset, offset + limit);
+  }
+
+  /**
+   * 搜索错误日志内容数量
+   * @param query 搜索关键词
+   * @returns 匹配的错误日志数量
+   */
+  async searchErrorLogsCount(query: string): Promise<number> {
+    const searchQuery = query.toLowerCase().trim();
+    if (!searchQuery) {
+      return this.getErrorLogsCount();
+    }
+
+    return this.errorLogs.filter(log => this.errorLogMatchesQuery(log, searchQuery)).length;
+  }
+
+  /**
+   * 检查错误日志是否匹配搜索查询
+   */
+  private errorLogMatchesQuery(log: ErrorLog, query: string): boolean {
+    // 搜索错误信息
+    if (log.errorMessage && log.errorMessage.toLowerCase().includes(query)) {
+      return true;
+    }
+
+    // 搜索错误堆栈
+    if (log.errorStack && log.errorStack.toLowerCase().includes(query)) {
+      return true;
+    }
+
+    // 搜索请求体
+    if (log.requestBody) {
+      const bodyStr = typeof log.requestBody === 'string' ? log.requestBody : JSON.stringify(log.requestBody);
+      if (bodyStr.toLowerCase().includes(query)) {
+        return true;
+      }
+    }
+
+    // 搜索响应体
+    if (log.responseBody) {
+      const bodyStr = typeof log.responseBody === 'string' ? log.responseBody : JSON.stringify(log.responseBody);
+      if (bodyStr.toLowerCase().includes(query)) {
+        return true;
+      }
+    }
+
+    // 搜索路径
+    if (log.path && log.path.toLowerCase().includes(query)) {
+      return true;
+    }
+
+    // 搜索模型名称
+    if (log.requestModel && log.requestModel.toLowerCase().includes(query)) {
+      return true;
+    }
+    if (log.targetModel && log.targetModel.toLowerCase().includes(query)) {
+      return true;
+    }
+
+    return false;
   }
 
   // Service blacklist operations

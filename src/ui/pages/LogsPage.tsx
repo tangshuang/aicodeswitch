@@ -295,11 +295,15 @@ function LogsPage() {
   const [filterServiceId, setFilterServiceId] = useState<string>('');
   const [filterModel, setFilterModel] = useState<string>('');
 
+  // 内容搜索相关state
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [errorSearchQuery, setErrorSearchQuery] = useState<string>('');
+
   const logDetailZIndex = selectedSession ? LOG_MODAL_TOP_Z_INDEX : LOG_MODAL_Z_INDEX;
 
   useEffect(() => {
     loadLogs();
-  }, [activeTab, requestLogsPage, requestLogsPageSize, errorLogsPage, errorLogsPageSize, sessionsPage, sessionsPageSize]);
+  }, [activeTab, requestLogsPage, requestLogsPageSize, errorLogsPage, errorLogsPageSize, sessionsPage, sessionsPageSize, searchQuery, errorSearchQuery]);
 
   useEffect(() => {
     loadVendorsAndServices();
@@ -342,16 +346,24 @@ function LogsPage() {
       if (activeTab === 'request') {
         const offset = (requestLogsPage - 1) * requestLogsPageSize;
         const [data, countResult] = await Promise.all([
-          api.getLogs(requestLogsPageSize, offset),
-          api.getLogsCount()
+          searchQuery.trim()
+            ? api.searchLogs(searchQuery.trim(), requestLogsPageSize, offset)
+            : api.getLogs(requestLogsPageSize, offset),
+          searchQuery.trim()
+            ? api.searchLogsCount(searchQuery.trim())
+            : api.getLogsCount()
         ]);
         setRequestLogs(data);
         setRequestLogsTotal(countResult.count);
       } else if (activeTab === 'error') {
         const offset = (errorLogsPage - 1) * errorLogsPageSize;
         const [data, countResult] = await Promise.all([
-          api.getErrorLogs(errorLogsPageSize, offset),
-          api.getErrorLogsCount()
+          errorSearchQuery.trim()
+            ? api.searchErrorLogs(errorSearchQuery.trim(), errorLogsPageSize, offset)
+            : api.getErrorLogs(errorLogsPageSize, offset),
+          errorSearchQuery.trim()
+            ? api.searchErrorLogsCount(errorSearchQuery.trim())
+            : api.getErrorLogsCount()
         ]);
         setErrorLogs(data);
         setErrorLogsTotal(countResult.count);
@@ -762,6 +774,99 @@ function LogsPage() {
             {activeTab === 'sessions' && '会话列表'}
           </h3>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            {/* 内容搜索框 */}
+            {activeTab === 'request' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <input
+                  type="text"
+                  placeholder="搜索日志内容..."
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setRequestLogsPage(1); // 重置到第一页
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      loadLogs();
+                    }
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid var(--border-primary)',
+                    background: 'var(--bg-card)',
+                    color: 'var(--text-primary)',
+                    width: '200px',
+                    fontSize: '14px'
+                  }}
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => {
+                      setSearchQuery('');
+                      setRequestLogsPage(1);
+                    }}
+                    style={{
+                      padding: '6px 10px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-primary)',
+                      background: 'var(--bg-secondary)',
+                      color: 'var(--text-primary)',
+                      cursor: 'pointer',
+                      fontSize: '13px'
+                    }}
+                  >
+                    清除
+                  </button>
+                )}
+              </div>
+            )}
+            {activeTab === 'error' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <input
+                  type="text"
+                  placeholder="搜索错误日志..."
+                  value={errorSearchQuery}
+                  onChange={(e) => {
+                    setErrorSearchQuery(e.target.value);
+                    setErrorLogsPage(1);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      loadLogs();
+                    }
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid var(--border-primary)',
+                    background: 'var(--bg-card)',
+                    color: 'var(--text-primary)',
+                    width: '200px',
+                    fontSize: '14px'
+                  }}
+                />
+                {errorSearchQuery && (
+                  <button
+                    onClick={() => {
+                      setErrorSearchQuery('');
+                      setErrorLogsPage(1);
+                    }}
+                    style={{
+                      padding: '6px 10px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-primary)',
+                      background: 'var(--bg-secondary)',
+                      color: 'var(--text-primary)',
+                      cursor: 'pointer',
+                      fontSize: '13px'
+                    }}
+                  >
+                    清除
+                  </button>
+                )}
+              </div>
+            )}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px', background: 'var(--bg-secondary)', borderRadius: '8px' }}>
               <input
                 type="checkbox"

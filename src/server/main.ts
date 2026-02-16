@@ -1109,9 +1109,53 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
   );
 
   app.get(
+    '/api/logs/search',
+    asyncHandler(async (req, res) => {
+      const query = typeof req.query.query === 'string' ? req.query.query : '';
+      const rawLimit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : NaN;
+      const rawOffset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : NaN;
+      const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
+      const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
+      const logs = await dbManager.searchLogs(query, limit, offset);
+      res.json(logs);
+    })
+  );
+
+  app.get(
+    '/api/logs/search/count',
+    asyncHandler(async (req, res) => {
+      const query = typeof req.query.query === 'string' ? req.query.query : '';
+      const count = await dbManager.searchLogsCount(query);
+      res.json({ count });
+    })
+  );
+
+  app.get(
     '/api/error-logs/count',
     asyncHandler(async (_req, res) => {
       const count = await dbManager.getErrorLogsCount();
+      res.json({ count });
+    })
+  );
+
+  app.get(
+    '/api/error-logs/search',
+    asyncHandler(async (req, res) => {
+      const query = typeof req.query.query === 'string' ? req.query.query : '';
+      const rawLimit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : NaN;
+      const rawOffset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : NaN;
+      const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
+      const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
+      const logs = await dbManager.searchErrorLogs(query, limit, offset);
+      res.json(logs);
+    })
+  );
+
+  app.get(
+    '/api/error-logs/search/count',
+    asyncHandler(async (req, res) => {
+      const query = typeof req.query.query === 'string' ? req.query.query : '';
+      const count = await dbManager.searchErrorLogsCount(query);
       res.json({ count });
     })
   );

@@ -42,10 +42,14 @@ interface BackendAPI {
   getLogs: (limit: number, offset: number) => Promise<RequestLog[]>;
   clearLogs: () => Promise<boolean>;
   getLogsCount: () => Promise<{ count: number }>;
+  searchLogs: (query: string, limit: number, offset: number) => Promise<RequestLog[]>;
+  searchLogsCount: (query: string) => Promise<{ count: number }>;
 
   getErrorLogs: (limit: number, offset: number) => Promise<ErrorLog[]>;
   clearErrorLogs: () => Promise<boolean>;
   getErrorLogsCount: () => Promise<{ count: number }>;
+  searchErrorLogs: (query: string, limit: number, offset: number) => Promise<ErrorLog[]>;
+  searchErrorLogsCount: (query: string) => Promise<{ count: number }>;
 
   getStatistics: (days?: number) => Promise<Statistics>;
   resetStatistics: () => Promise<boolean>;
@@ -239,6 +243,11 @@ export const api: BackendAPI = {
 
   getLogsCount: () => requestJson<{ count: number }>(buildUrl('/api/logs/count')),
   getErrorLogsCount: () => requestJson<{ count: number }>(buildUrl('/api/error-logs/count')),
+
+  searchLogs: (query, limit, offset) => requestJson(buildUrl('/api/logs/search', { query, limit, offset })),
+  searchLogsCount: (query) => requestJson<{ count: number }>(buildUrl('/api/logs/search/count', { query })),
+  searchErrorLogs: (query, limit, offset) => requestJson(buildUrl('/api/error-logs/search', { query, limit, offset })),
+  searchErrorLogsCount: (query) => requestJson<{ count: number }>(buildUrl('/api/error-logs/search/count', { query })),
 
   getStatistics: (days = 30) => requestJson(buildUrl('/api/statistics', { days })),
   resetStatistics: () => requestJson(buildUrl('/api/statistics'), { method: 'DELETE' }),

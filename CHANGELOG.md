@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file. See [standa
 ### 3.4.0 (2026-02-16)
 
 #### Features
+* 日志模块新增内容搜索功能
+  - 请求日志支持通过内容关键词搜索（请求体、响应体、流式响应、错误信息、路径、模型名）
+  - 错误日志支持通过内容关键词搜索（错误信息、错误堆栈、请求体、响应体、路径、模型名）
+  - 新增搜索 API 端点：`/api/logs/search` 和 `/api/error-logs/search`
+  - 前端日志页面添加搜索输入框，支持回车键触发搜索
 * 新增 MCP 管理模块
   - 支持添加、编辑、删除 MCP 工具
   - 支持三种 MCP 类型：stdio、http、sse
