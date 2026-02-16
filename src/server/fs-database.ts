@@ -17,6 +17,8 @@ import type {
   Session,
   ImportResult,
   ImportPreview,
+  MCPServer,
+  TargetType,
 } from '../types';
 
 interface LogShardIndex {
@@ -42,6 +44,7 @@ export class FileSystemDatabaseManager {
   private logShardsIndex: LogShardIndex[] = [];
   private errorLogs: ErrorLog[] = [];
   private blacklist: Map<string, ServiceBlacklistEntry> = new Map();
+  private mcps: MCPServer[] = [];
 
   // 持久化统计数据
   private statistics: Statistics = this.createEmptyStatistics();
@@ -69,6 +72,7 @@ export class FileSystemDatabaseManager {
   private get errorLogsFile() { return path.join(this.dataPath, 'error-logs.json'); }
   private get blacklistFile() { return path.join(this.dataPath, 'blacklist.json'); }
   private get statisticsFile() { return path.join(this.dataPath, 'statistics.json'); }
+  private get mcpFile() { return path.join(this.dataPath, 'mcps.json'); }
 
   // 创建空的统计数据结构
   private createEmptyStatistics(): Statistics {
@@ -126,6 +130,7 @@ export class FileSystemDatabaseManager {
       this.loadErrorLogs(),
       this.loadBlacklist(),
       this.loadStatistics(),
+      this.loadMCPs(),
     ]);
   }
 
@@ -601,6 +606,19 @@ export class FileSystemDatabaseManager {
 
   private async saveStatistics() {
     await fs.writeFile(this.statisticsFile, JSON.stringify(this.statistics, null, 2));
+  }
+
+  private async loadMCPs() {
+    try {
+      const data = await fs.readFile(this.mcpFile, 'utf-8');
+      this.mcps = JSON.parse(data);
+    } catch {
+      this.mcps = [];
+    }
+  }
+
+  private async saveMCPs() {
+    await fs.writeFile(this.mcpFile, JSON.stringify(this.mcps, null, 2));
   }
 
   private async ensureDefaultConfig() {
@@ -2119,6 +2137,57 @@ export class FileSystemDatabaseManager {
     }
 
     return entry;
+  }
+
+  // MCP 工具相关操作
+  getMCPs(): MCPServer[] {
+    return this.mcps.sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  getMCP(id: string): MCPServer | undefined {
+    return this.mcps.find(m => m.id === id);
+  }
+
+  getMCPsByTarget(targetType: TargetType): MCPServer[] {
+    return this.mcps.filter(m => m.targets?.includes(targetType));
+  }
+
+  async createMCP(mcp: Omit<MCPServer, 'id' | 'createdAt' | 'updatedAt'>): Promise<MCPServer> {
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    const newMCP: MCPServer = {
+      ...mcp,
+      id,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.mcps.push(newMCP);
+    await this.saveMCPs();
+    return newMCP;
+  }
+
+  async updateMCP(id: string, mcp: Partial<MCPServer>): Promise<boolean> {
+    const index = this.mcps.findIndex(m => m.id === id);
+    if (index === -1) return false;
+
+    const now = Date.now();
+    this.mcps[index] = {
+      ...this.mcps[index],
+      ...mcp,
+      id,
+      updatedAt: now,
+    };
+    await this.saveMCPs();
+    return true;
+  }
+
+  async deleteMCP(id: string): Promise<boolean> {
+    const index = this.mcps.findIndex(m => m.id === id);
+    if (index === -1) return false;
+
+    this.mcps.splice(index, 1);
+    await this.saveMCPs();
+    return true;
   }
 
   // Close method for compatibility (no-op for filesystem database)

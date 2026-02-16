@@ -194,6 +194,7 @@ aicos version            # Show current version information
   - `logs.json` - Request logs
   - `error-logs.json` - Error logs
   - `blacklist.json` - Service blacklist entries
+  - `mcps.json` - MCP (Model Context Protocol) tools
 
 **Data Structure**:
 - Vendors contain nested services array: `vendors[{ id, name, services: [{ id, name, apiUrl, ... }], ... }]`
@@ -231,6 +232,7 @@ aicos version            # Show current version information
 - Pages:
   - `VendorsPage.tsx` - Manage AI service vendors
   - `SkillsPage.tsx` - Manage global Skills and discovery
+  - `MCPPage.tsx` - Manage MCP (Model Context Protocol) tools
   - `RoutesPage.tsx` - Configure routing rules
   - `LogsPage.tsx` - View request/access/error logs
   - `SettingsPage.tsx` - Application settings
@@ -313,6 +315,17 @@ aicos version            # Show current version information
 ### Skills Management
 - Lists global Skills for Claude Code and Codex
 - Provides discovery search (discover/return toggle button) and installs Skills into target tool directories
+
+### MCP Management
+- Lists and manages Model Context Protocol (MCP) tools
+- Supports three types: stdio, http, sse
+- Allows configuration of command, URL, headers, and environment variables
+- One-click installation for GLM MCP tools (Vision, Web Search, Web Reader, ZRead)
+- Configures MCPs to target tools (Claude Code, Codex)
+- **MCP Configuration Sync**: When a route is activated, MCP tools are automatically written to the target tool's global configuration file
+  - For Claude Code: Writes to `~/.claude.json` under `mcpServers`
+  - For Codex: Configuration support planned
+  - MCPs are only written when there are active routes with enabled targets
 
 ### Logging
 - Request logs: Detailed API call records with token usage

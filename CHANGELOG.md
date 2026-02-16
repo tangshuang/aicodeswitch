@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 3.4.0 (2026-02-16)
+
+#### Features
+* 新增 MCP 管理模块
+  - 支持添加、编辑、删除 MCP 工具
+  - 支持三种 MCP 类型：stdio、http、sse
+  - 支持配置命令、URL、请求头、环境变量等参数
+  - 支持为 Claude Code 和 Codex 分别启用 MCP
+  - 新增一键安装 GLM MCP 工具（视觉理解、联网搜索、网页读取、开源仓库）
+* MCP 配置自动同步
+  - 激活路由时，自动将启用的 MCP 写入目标工具的全局配置文件
+  - 仅在有激活路由且该目标有启用的 MCP 时才执行写入
+* 数据库新增 mcps.json 文件存储 MCP 工具配置
+
 ### 3.3.2 (2026-02-15)
 
 #### Fixes
