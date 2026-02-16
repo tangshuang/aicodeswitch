@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import type { MCPServer, TargetType } from '../../types';
 import { toast } from '../components/Toast';
-import { Modal } from '../components/Modal';
 
 interface MCPFormData {
   name: string;
@@ -312,7 +311,7 @@ function MCPPage() {
         url: def.url,
         env: def.env ? { ...def.env, Z_AI_API_KEY: quickInstall.apiKey.trim() } : undefined,
         headers: { Authorization: `Bearer ${quickInstall.apiKey.trim()}` },
-        targets: ['claude-code', 'codex'],
+        targets: ['claude-code', 'codex'] as TargetType[],
       };
 
       await api.createMCP(mcpData);
@@ -420,7 +419,7 @@ function MCPPage() {
                       onChange={async (e) => {
                         const targets = mcp.targets || [];
                         const newTargets = e.target.checked
-                          ? [...targets, 'claude-code']
+                          ? [...targets, 'claude-code'] as TargetType[]
                           : targets.filter((t) => t !== 'claude-code');
                         await api.updateMCP(mcp.id, { targets: newTargets });
                         await loadMCPs();
@@ -436,7 +435,7 @@ function MCPPage() {
                       onChange={async (e) => {
                         const targets = mcp.targets || [];
                         const newTargets = e.target.checked
-                          ? [...targets, 'codex']
+                          ? [...targets, 'codex'] as TargetType[]
                           : targets.filter((t) => t !== 'codex');
                         await api.updateMCP(mcp.id, { targets: newTargets });
                         await loadMCPs();
@@ -734,30 +733,40 @@ function MCPPage() {
                       点击下方的卡片，快速安装 MCP 工具到您的系统中：
                     </p>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-                      {QUICK_INSTALL_MCP_DEFINITIONS.map((def) => (
-                        <div
-                          key={def.id}
-                          className="card"
-                          style={{
-                            padding: '16px',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s ease',
-                          }}
-                          onClick={() => handleSelectMCP(def)}
-                        >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                            <div style={{ fontWeight: '600', fontSize: '16px' }}>{def.name}</div>
-                            <div className="badge badge-secondary" style={{ fontSize: '12px' }}>{getTypeLabel(def.type)}</div>
-                          </div>
-                          <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '12px' }}>{def.description}</div>
-                          <button
-                            className="btn btn-primary"
-                            style={{ width: '100%' }}
+                      {QUICK_INSTALL_MCP_DEFINITIONS.map((def) => {
+                        const isInstalled = mcps.some(mcp => mcp.name === def.name);
+                        return (
+                          <div
+                            key={def.id}
+                            className="card"
+                            style={{
+                              padding: '16px',
+                              cursor: isInstalled ? 'not-allowed' : 'pointer',
+                              transition: 'all 0.2s ease',
+                              opacity: isInstalled ? 0.7 : 1,
+                            }}
+                            onClick={() => !isInstalled && handleSelectMCP(def)}
                           >
-                            安装
-                          </button>
-                        </div>
-                      ))}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                              <div style={{ fontWeight: '600', fontSize: '16px' }}>{def.name}</div>
+                              <div style={{ display: 'flex', gap: '8px' }}>
+                                {isInstalled && (
+                                  <div className="badge badge-success" style={{ fontSize: '12px' }}>已安装</div>
+                                )}
+                                <div className="badge badge-secondary" style={{ fontSize: '12px' }}>{getTypeLabel(def.type)}</div>
+                              </div>
+                            </div>
+                            <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '12px' }}>{def.description}</div>
+                            <button
+                              className="btn btn-primary"
+                              style={{ width: '100%' }}
+                              disabled={isInstalled}
+                            >
+                              {isInstalled ? '已安装' : '安装'}
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </>
                 )}

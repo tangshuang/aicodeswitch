@@ -29,6 +29,13 @@ import {
 } from './transformers/gemini';
 import type { AppConfig, Rule, APIService, Route, SourceType, TargetType, TokenUsage, ContentType, RequestLog } from '../types';
 import { AuthType } from '../types';
+import {
+  isRuleUsingMCP,
+  isMCPAvailable,
+  extractImagesFromMessages,
+  constructMCPMessages,
+  cleanupTempImages,
+} from './mcp-image-handler';
 
 type ContentTypeDetector = {
   type: ContentType;
@@ -1571,6 +1578,56 @@ export class ProxyServer {
     let usageForLog: TokenUsage | undefined;
     let logged = false;
 
+    // MCP 图像理解处理
+    let tempImageFiles: string[] = [];
+    let useMCPProcessing = false;
+    let mcpConfig: any = undefined;
+
+    // 检查 MCP 是否可用
+    if (isRuleUsingMCP(rule)) {
+      const mcps = this.dbManager.getMCPs();
+      if (isMCPAvailable(rule, mcps)) {
+        useMCPProcessing = true;
+        // 获取 MCP 配置
+        mcpConfig = mcps.find(m => m.id === rule.mcpId);
+      } else {
+        console.warn('[MCP] MCP is not available, falling back to default image processing');
+        console.warn(`[MCP] Rule ID: ${rule.id}, MCP ID: ${rule.mcpId || 'not configured'}`);
+      }
+    }
+
+    // 只有在 MCP 可用时才进行 MCP 处理
+    if (useMCPProcessing) {
+      try {
+        // 提取消息中的图片
+        const messages = requestBody.messages || [];
+        const imageInfos = await extractImagesFromMessages(messages);
+
+        if (imageInfos.length > 0) {
+          // 记录临时文件路径以便后续清理
+          tempImageFiles = imageInfos.map(info => info.filePath);
+
+          // 构造 MCP 消息体（将图片替换为本地路径引用，并添加明确的 MCP 调用指示）
+          requestBody.messages = constructMCPMessages(messages, imageInfos, mcpConfig);
+
+          console.log(`[MCP] Processed ${imageInfos.length} images for MCP request`);
+          console.log(`[MCP] Using MCP tool: ${mcpConfig?.name || 'Unknown'}`);
+          for (const info of imageInfos) {
+            console.log(`[MCP] Image saved to: ${info.filePath}`);
+          }
+        }
+      } catch (error: any) {
+        console.error('[MCP] Failed to process images, falling back to default processing:', error);
+        // 清理已创建的临时文件
+        if (tempImageFiles.length > 0) {
+          cleanupTempImages(tempImageFiles);
+          tempImageFiles = []; // 重置，因为已经清理了
+        }
+        // 不返回错误，而是继续使用默认处理逻辑
+        useMCPProcessing = false;
+      }
+    }
+
     // 用于收集响应数据的变量
     let responseHeadersForLog: Record<string, string> | undefined;
     let responseBodyForLog: string | undefined;
@@ -1694,6 +1751,12 @@ export class ProxyServer {
         if (Math.random() < 0.01) { // 1%概率清理，避免每次都清理
           this.cleanExpiredDedupeCache();
         }
+      }
+
+      // 清理 MCP 临时图片文件
+      if (tempImageFiles.length > 0) {
+        cleanupTempImages(tempImageFiles);
+        console.log(`[MCP] Cleaned up ${tempImageFiles.length} temporary image files`);
       }
     };
 

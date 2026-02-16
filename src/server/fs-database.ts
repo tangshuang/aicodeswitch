@@ -1481,12 +1481,21 @@ export class FileSystemDatabaseManager {
     if (!rule.routeId || typeof rule.routeId !== 'string') {
       return { valid: false, error: `规则[${index}](${rule.id}) 缺少有效的 routeId 字段` };
     }
-    if (!rule.targetServiceId || typeof rule.targetServiceId !== 'string') {
-      return { valid: false, error: `规则[${index}](${rule.id}) 缺少有效的 targetServiceId 字段` };
-    }
     const validContentTypes = ['default', 'background', 'thinking', 'long-context', 'image-understanding', 'model-mapping'];
     if (!rule.contentType || !validContentTypes.includes(rule.contentType)) {
       return { valid: false, error: `规则[${index}](${rule.id}) 的 contentType 无效` };
+    }
+
+    // 如果使用MCP（仅对图像理解类型有效），则不需要验证targetServiceId
+    if (rule.useMCP === true && rule.contentType === 'image-understanding') {
+      if (!rule.mcpId || typeof rule.mcpId !== 'string') {
+        return { valid: false, error: `规则[${index}](${rule.id}) 使用MCP时缺少有效的 mcpId 字段` };
+      }
+    } else {
+      // 不使用MCP时，必须验证targetServiceId
+      if (!rule.targetServiceId || typeof rule.targetServiceId !== 'string') {
+        return { valid: false, error: `规则[${index}](${rule.id}) 缺少有效的 targetServiceId 字段` };
+      }
     }
     return { valid: true };
   }

@@ -133,6 +133,8 @@ export interface Rule {
   requestLastResetAt?: number;   // 上次次数重置时间戳
   requestResetBaseTime?: number; // 下一次重置的时间基点（Unix时间戳）
   isDisabled?: boolean;          // 是否临时屏蔽该规则
+  useMCP?: boolean;              // 是否使用MCP（仅适用于图像理解）
+  mcpId?: string;                // MCP工具ID（仅当useMCP为true时）
   createdAt: number;
   updatedAt: number;
 }

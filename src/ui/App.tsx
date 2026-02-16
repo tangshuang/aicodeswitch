@@ -630,7 +630,7 @@ function AppContent() {
                       fontSize: '13px',
                       color: 'var(--accent-danger)'
                     }}>
-                      npm i -g aicodeswitch
+                      npm i -g aicodeswitch@latest
                     </code>
                   </div>
                 )}
