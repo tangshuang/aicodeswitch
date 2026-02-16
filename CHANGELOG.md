@@ -28,6 +28,9 @@ All notable changes to this project will be documented in this file. See [standa
   - 提供 MCP 工具详细信息（名称、类型、说明）引导 Agent 主动调用
   - 支持自动清理临时图片文件
   - 规则列表中展示 MCP 工具信息
+  - 新增详细的 MCP 诊断日志，帮助排查 MCP 未触发的原因
+  - 日志包含规则配置检查、MCP 可用性验证、图片提取过程等详细信息
+  - 所有诊断日志以 `[MCP-DIAG]` 前缀标记，便于在 server.log 中筛选
   - 新增降级机制：当 MCP 不可用时自动降级到默认图像处理逻辑
   - 降级条件包括：mcpId 缺失、MCP 未注册、图片处理失败
   - 确保请求不会因 MCP 问题而失败

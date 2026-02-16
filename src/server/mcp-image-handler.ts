@@ -30,17 +30,6 @@ function extractBase64Image(dataUrl: string): { mimeType: string; data: string }
 }
 
 /**
- * 从 URL 数据中提取图片类型
- */
-function getImageTypeFromUrl(url: string): string {
-  const urlLower = url.toLowerCase();
-  if (urlLower.includes('.png')) return 'image/png';
-  if (urlLower.includes('.gif')) return 'image/gif';
-  if (urlLower.includes('.webp')) return 'image/webp';
-  return 'image/jpeg'; // 默认
-}
-
-/**
  * 将图片保存到临时文件
  * @param imageData 图片��据（base64 或 URL）
  * @param isBase64 是否为 base64 编码

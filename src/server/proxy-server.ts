@@ -1583,25 +1583,81 @@ export class ProxyServer {
     let useMCPProcessing = false;
     let mcpConfig: any = undefined;
 
+    // 只对图像理解请求进行 MCP 诊断
+    if (rule.contentType === 'image-understanding') {
+      // 诊断日志：检查规则的MCP配置
+      console.log('[MCP-DIAG] Checking MCP configuration for image-understanding rule:', {
+        ruleId: rule.id,
+        contentType: rule.contentType,
+        useMCP: rule.useMCP,
+        mcpId: rule.mcpId,
+        isRuleUsingMCP: isRuleUsingMCP(rule)
+      });
+    }
+
     // 检查 MCP 是否可用
     if (isRuleUsingMCP(rule)) {
+      if (rule.contentType === 'image-understanding') {
+        console.log('[MCP-DIAG] Rule is configured to use MCP');
+      }
       const mcps = this.dbManager.getMCPs();
+
       if (isMCPAvailable(rule, mcps)) {
+        if (rule.contentType === 'image-understanding') {
+          console.log('[MCP-DIAG] MCP is available, enabling MCP processing');
+          console.log('[MCP-DIAG] Available MCPs:', mcps.map(m => ({ id: m.id, name: m.name })));
+        }
         useMCPProcessing = true;
         // 获取 MCP 配置
         mcpConfig = mcps.find(m => m.id === rule.mcpId);
+        if (rule.contentType === 'image-understanding') {
+          console.log('[MCP-DIAG] MCP config found:', mcpConfig ? { id: mcpConfig.id, name: mcpConfig.name } : null);
+        }
       } else {
-        console.warn('[MCP] MCP is not available, falling back to default image processing');
-        console.warn(`[MCP] Rule ID: ${rule.id}, MCP ID: ${rule.mcpId || 'not configured'}`);
+        if (rule.contentType === 'image-understanding') {
+          console.warn('[MCP-DIAG] MCP is NOT available');
+          console.warn('[MCP-DIAG] Availability check failed for:');
+          console.warn('  - Rule ID:', rule.id);
+          console.warn('  - Configured MCP ID:', rule.mcpId || 'not configured');
+          console.warn('  - useMCP flag:', rule.useMCP);
+          console.warn('  - contentType:', rule.contentType);
+          console.warn('  - MCPs in database:', mcps.length);
+          if (rule.mcpId) {
+            const found = mcps.find(m => m.id === rule.mcpId);
+            console.warn('  - MCP found in database:', !!found);
+          }
+        }
+      }
+    } else {
+      if (rule.contentType === 'image-understanding') {
+        console.warn('[MCP-DIAG] Rule is NOT configured to use MCP');
+        console.warn('[MCP-DIAG] Rule details:', {
+          contentType: rule.contentType,
+          useMCP: rule.useMCP,
+          mcpId: rule.mcpId,
+          contentTypeCheck: rule.contentType === 'image-understanding',
+          useMCPCheck: rule.useMCP === true,
+          mcpIdCheck: !!rule.mcpId
+        });
       }
     }
 
     // 只有在 MCP 可用时才进行 MCP 处理
     if (useMCPProcessing) {
+      if (rule.contentType === 'image-understanding') {
+        console.log('[MCP-DIAG] Starting MCP image processing');
+      }
       try {
         // 提取消息中的图片
         const messages = requestBody.messages || [];
+        if (rule.contentType === 'image-understanding') {
+          console.log('[MCP-DIAG] Request messages count:', messages.length);
+        }
+
         const imageInfos = await extractImagesFromMessages(messages);
+        if (rule.contentType === 'image-understanding') {
+          console.log('[MCP-DIAG] Extracted images count:', imageInfos.length);
+        }
 
         if (imageInfos.length > 0) {
           // 记录临时文件路径以便后续清理
@@ -1615,9 +1671,25 @@ export class ProxyServer {
           for (const info of imageInfos) {
             console.log(`[MCP] Image saved to: ${info.filePath}`);
           }
+        } else {
+          if (rule.contentType === 'image-understanding') {
+            console.warn('[MCP-DIAG] No images found in request messages');
+            console.warn('[MCP-DIAG] Message structure:');
+            messages.forEach((msg: any, idx: number) => {
+              if (msg.content && Array.isArray(msg.content)) {
+                console.warn(`  Message ${idx}: ${msg.content.length} blocks`);
+                msg.content.forEach((block: any, bidx: number) => {
+                  console.warn(`    Block ${bidx}: type=${block.type}, hasSource=${!!block.source}, hasData=${!!(block.source && block.source.data)}`);
+                });
+              }
+            });
+          }
         }
       } catch (error: any) {
-        console.error('[MCP] Failed to process images, falling back to default processing:', error);
+        if (rule.contentType === 'image-understanding') {
+          console.error('[MCP-DIAG] Failed to process images:', error);
+          console.error('[MCP-DIAG] Error stack:', error.stack);
+        }
         // 清理已创建的临时文件
         if (tempImageFiles.length > 0) {
           cleanupTempImages(tempImageFiles);

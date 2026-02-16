@@ -18,7 +18,6 @@ import type {
   SkillInstallRequest,
   SkillInstallResponse,
   TargetType,
-  MCPServer,
   MCPInstallRequest,
 } from '../types';
 import os from 'os';
@@ -1967,11 +1966,9 @@ ${instruction}
         fs.writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2));
         return true;
       } else if (targetType === 'codex') {
-        // Codex配置文件路径
-        const codexConfigPath = path.join(homeDir, '.codex', 'config.toml');
-
         // Codex使用TOML格式，我们暂时不直接写入
         // 需要后续处理Codex的MCP配置格式
+        // TODO: 实现 Codex MCP 配置写入
         console.log('[MCP] Codex MCP配置写入暂未实现');
         return true;
       }
