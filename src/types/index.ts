@@ -108,6 +108,7 @@ export interface Route {
   description?: string;
   targetType: TargetType;
   isActive: boolean;
+  enableAgentTeams?: boolean;  // 是否启用Agent Teams功能（仅Claude Code）
   createdAt: number;
   updatedAt: number;
 }
