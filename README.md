@@ -153,6 +153,11 @@ aicodeswitch内部，会根据“源类型”来转换数据。例如，你的�
 你可以在 aicodeswitch 中集中统一管理 skills，把skills分发给claude code和codex，随时启用和停用skills。
 另外，你可以基于自然语言搜索skills，找到skill之后，支持一键安装。
 
+## MCP管理
+
+你可以在 aicodeswitch 中集中统一管理 MCP，把MCP分发给claude code和codex，随时启用和停用MCP。
+并且，你还可以通过MCP来实现图像理解。
+
 ## 日志
 
 在**日志**页面，您可以查看：
