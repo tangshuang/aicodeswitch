@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file. See [standa
 
 ### 3.4.0 (2026-02-16)
 
+#### Fixes
+* 修复激活状态下切换 Agent Teams 功能开关时复选框状态不更新的问题
+  - 路由激活时同时更新配置文件和路由数据库的 enableAgentTeams 字段
+  - 确保前端复选框状态与实际配置保持同步
+
 #### Features
 * 路由管理新增 Agent Teams 功能配置
   - Claude Code 路由规则容器下方新增"Claude Code"配置容器

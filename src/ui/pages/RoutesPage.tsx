@@ -543,12 +543,17 @@ export default function RoutesPage() {
 
     try {
       if (selectedRoute.isActive) {
+        // 路由激活时：同时更新配置文件和路由数据库
         await api.updateClaudeAgentTeams(newValue);
+        await api.updateRoute(selectedRoute.id, { enableAgentTeams: newValue });
         toast.success(newValue ? 'Agent Teams 功能已开启' : 'Agent Teams 功能已关闭');
       } else {
+        // 路由未激活时：只更新路由数据库
         await api.updateRoute(selectedRoute.id, { enableAgentTeams: newValue });
         toast.success(newValue ? 'Agent Teams 设置已保存（将在激活时生效）' : 'Agent Teams 设置已取消');
       }
+      // 立即更新 selectedRoute 状态，避免 UI 延迟
+      setSelectedRoute({ ...selectedRoute, enableAgentTeams: newValue });
       await loadRoutes();
     } catch (error: any) {
       toast.error('更新失败: ' + error.message);
