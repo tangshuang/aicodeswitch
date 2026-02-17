@@ -29,6 +29,7 @@ import { createToolInstallationWSServer } from './websocket-service';
 import { createRulesStatusWSServer } from './rules-status-service';
 import {
   saveMetadata,
+  loadMetadata,
   deleteMetadata,
   checkClaudeConfigStatus,
   checkCodexConfigStatus,
@@ -99,7 +100,7 @@ const asyncHandler =
     });
   };
 
-const writeClaudeConfig = async (dbManager: FileSystemDatabaseManager): Promise<boolean> => {
+const writeClaudeConfig = async (dbManager: FileSystemDatabaseManager, enableAgentTeams?: boolean): Promise<boolean> => {
   try {
     const homeDir = os.homedir();
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
@@ -139,14 +140,22 @@ const writeClaudeConfig = async (dbManager: FileSystemDatabaseManager): Promise<
       fs.mkdirSync(claudeDir, { recursive: true });
     }
 
+    // 构建环境变量配置
+    const claudeSettingsEnv: Record<string, any> = {
+      ANTHROPIC_AUTH_TOKEN: config.apiKey || "api_key",
+      ANTHROPIC_API_KEY: "",
+      ANTHROPIC_BASE_URL: `http://${host}:${port}/claude-code`,
+      API_TIMEOUT_MS: "3000000",
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1
+    };
+
+    // 如果启用Agent Teams功能，添加对应的环境变量
+    if (enableAgentTeams) {
+      claudeSettingsEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
+    }
+
     const claudeSettings = {
-      env: {
-        ANTHROPIC_AUTH_TOKEN: config.apiKey || "api_key",
-        ANTHROPIC_API_KEY: "",
-        ANTHROPIC_BASE_URL: `http://${host}:${port}/claude-code`,
-        API_TIMEOUT_MS: "3000000",
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1
-      }
+      env: claudeSettingsEnv
     };
 
     fs.writeFileSync(claudeSettingsPath, JSON.stringify(claudeSettings, null, 2));
@@ -195,6 +204,59 @@ const writeClaudeConfig = async (dbManager: FileSystemDatabaseManager): Promise<
     return true;
   } catch (error) {
     console.error('Failed to write Claude config files:', error);
+    return false;
+  }
+};
+
+/**
+ * 更新Claude Code配置中的Agent Teams设置
+ * 此函数假设配置文件已经被代理覆盖，直接修改环境变量而不重新备份
+ */
+const updateClaudeAgentTeamsConfig = async (enableAgentTeams: boolean): Promise<boolean> => {
+  try {
+    const homeDir = os.homedir();
+    const claudeSettingsPath = path.join(homeDir, '.claude/settings.json');
+
+    // 检查配置文件是否存在
+    if (!fs.existsSync(claudeSettingsPath)) {
+      console.error('Claude settings.json does not exist');
+      return false;
+    }
+
+    // 读取当前配置
+    const currentContent = fs.readFileSync(claudeSettingsPath, 'utf-8');
+    const currentConfig = JSON.parse(currentContent);
+
+    // 检查是否是代理配置
+    const configStatus = checkClaudeConfigStatus();
+    if (!configStatus.isOverwritten) {
+      console.error('Claude config is not overwritten by proxy. Please activate a route first.');
+      return false;
+    }
+
+    // 更新或删除Agent Teams环境变量
+    if (enableAgentTeams) {
+      currentConfig.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
+    } else {
+      delete currentConfig.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS;
+    }
+
+    // 写入更新后的配置
+    fs.writeFileSync(claudeSettingsPath, JSON.stringify(currentConfig, null, 2));
+
+    // 更新元数据中的当前配置hash
+    const metadata = loadMetadata('claude');
+    if (metadata && metadata.files[0]) {
+      metadata.files[0].currentHash = createHash('sha256')
+        .update(fs.readFileSync(claudeSettingsPath, 'utf-8'))
+        .digest('hex');
+      metadata.timestamp = Date.now();
+      saveMetadata(metadata);
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Failed to update Claude Agent Teams config:', error);
     return false;
   }
 };
@@ -1602,8 +1664,9 @@ ${instruction}
 
   app.post(
     '/api/write-config/claude',
-    asyncHandler(async (_req, res) => {
-      const result = await writeClaudeConfig(dbManager);
+    asyncHandler(async (req, res) => {
+      const enableAgentTeams = req.body.enableAgentTeams as boolean | undefined;
+      const result = await writeClaudeConfig(dbManager, enableAgentTeams);
       res.json(result);
     })
   );
@@ -1612,6 +1675,16 @@ ${instruction}
     '/api/write-config/codex',
     asyncHandler(async (_req, res) => {
       const result = await writeCodexConfig(dbManager);
+      res.json(result);
+    })
+  );
+
+  // 更新Claude Code配置中的Agent Teams设置（当路由已激活时）
+  app.post(
+    '/api/update-claude-agent-teams',
+    asyncHandler(async (req, res) => {
+      const { enableAgentTeams } = req.body as { enableAgentTeams: boolean };
+      const result = await updateClaudeAgentTeamsConfig(enableAgentTeams);
       res.json(result);
     })
   );

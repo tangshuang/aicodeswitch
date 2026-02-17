@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
-import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry, MCPServer } from '../../types';
+import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry, MCPServer, ToolInstallationStatus } from '../../types';
 import { useFlipAnimation } from '../hooks/useFlipAnimation';
 import { useConfirm } from '../components/Confirm';
 import { toast } from '../components/Toast';
@@ -47,17 +47,17 @@ function formatDateTimeLocal(date: Date): string {
 const getConfigApi = (targetType: 'claude-code' | 'codex') => {
   return targetType === 'claude-code'
     ? {
-        write: api.writeClaudeConfig,
-        restore: api.restoreClaudeConfig,
-        checkBackup: api.checkClaudeBackup,
-        toolName: 'Claude Code'
-      }
+      write: api.writeClaudeConfig,
+      restore: api.restoreClaudeConfig,
+      checkBackup: api.checkClaudeBackup,
+      toolName: 'Claude Code'
+    }
     : {
-        write: api.writeCodexConfig,
-        restore: api.restoreCodexConfig,
-        checkBackup: api.checkCodexBackup,
-        toolName: 'Codex'
-      };
+      write: api.writeCodexConfig,
+      restore: api.restoreCodexConfig,
+      checkBackup: api.checkCodexBackup,
+      toolName: 'Codex'
+    };
 };
 
 export default function RoutesPage() {
@@ -103,6 +103,9 @@ export default function RoutesPage() {
   const [showTokenLimit, setShowTokenLimit] = useState(false);
   const [showRequestLimit, setShowRequestLimit] = useState(false);
 
+  // Claude Code 版本检查状态
+  const [claudeVersionCheck, setClaudeVersionCheck] = useState<ToolInstallationStatus | null>(null);
+
   // 配置文件备份状态
   const [backupStatus, setBackupStatus] = useState<{
     'claude-code': boolean;
@@ -126,6 +129,7 @@ export default function RoutesPage() {
     loadAllServices();
     loadMCPs();
     checkBackupStatus();
+    checkClaudeVersion();
   }, []);
 
   // 添加页面刷新保护
@@ -169,6 +173,37 @@ export default function RoutesPage() {
     if (sortedData.length > 0 && !selectedRoute) {
       setSelectedRoute(sortedData[0]);
     }
+  };
+
+  // 检查Claude Code版本
+  const checkClaudeVersion = async () => {
+    try {
+      const versionInfo = await api.checkClaudeVersion();
+      setClaudeVersionCheck(versionInfo);
+    } catch (error) {
+      console.error('Failed to check Claude version:', error);
+    }
+  };
+
+  // 比较版本号（返回: 1=version1>version2, -1=version1<version2, 0=equal）
+  const compareVersions = (v1: string | null | undefined, v2: string): number => {
+    if (!v1) return -1;
+    const parts1 = v1.split('.').map(Number);
+    const parts2 = v2.split('.').map(Number);
+
+    for (let i = 0; i < 3; i++) {
+      const p1 = parts1[i] || 0;
+      const p2 = parts2[i] || 0;
+      if (p1 > p2) return 1;
+      if (p1 < p2) return -1;
+    }
+    return 0;
+  };
+
+  // 检查是否支持 Agent Teams 功能
+  const isAgentTeamsSupported = () => {
+    if (!claudeVersionCheck?.claudeCode?.version) return false;
+    return compareVersions(claudeVersionCheck.claudeCode.version, '2.1.32') >= 0;
   };
 
   const loadRules = async (routeId: string) => {
@@ -241,7 +276,12 @@ export default function RoutesPage() {
       if (needsConfigWrite) {
         try {
           const configApi = getConfigApi(route.targetType);
-          await configApi.write();
+          // 对于Claude Code路由，传递enableAgentTeams设置
+          if (route.targetType === 'claude-code') {
+            await api.writeClaudeConfig(route.enableAgentTeams);
+          } else {
+            await configApi.write();
+          }
           configWritten = true;
         } catch (error: any) {
           throw new Error(`配置文件覆盖失败: ${error.message || '未知错误'}`);
@@ -492,6 +532,29 @@ export default function RoutesPage() {
     }
   };
 
+  const handleToggleAgentTeams = async (newValue: boolean) => {
+    if (!selectedRoute) return;
+
+    // 检查版本是否支持
+    if (newValue && !isAgentTeamsSupported()) {
+      toast.error('当前 Claude Code 版本不支持 Agent Teams 功能，需要版本 ≥ 2.1.32');
+      return;
+    }
+
+    try {
+      if (selectedRoute.isActive) {
+        await api.updateClaudeAgentTeams(newValue);
+        toast.success(newValue ? 'Agent Teams 功能已开启' : 'Agent Teams 功能已关闭');
+      } else {
+        await api.updateRoute(selectedRoute.id, { enableAgentTeams: newValue });
+        toast.success(newValue ? 'Agent Teams 设置已保存（将在激活时生效）' : 'Agent Teams 设置已取消');
+      }
+      await loadRoutes();
+    } catch (error: any) {
+      toast.error('更新失败: ' + error.message);
+    }
+  };
+
   const getAvailableContentTypes = () => {
     // 取消对象请求类型的互斥限制，允许添加多个相同类型的规则
     // 通过 sort_order 字段区分优先级
@@ -536,9 +599,9 @@ export default function RoutesPage() {
           // 检查规则的限制是否与 API 服务一致
           // 规则必须有完整的配置才认为是继承的
           const isTokenInherited = rule.tokenLimit === service.tokenLimit &&
-                                   rule.resetInterval === (service.tokenResetInterval || undefined) &&
-                                   rule.tokenLimit !== null &&
-                                   rule.resetInterval !== null;
+            rule.resetInterval === (service.tokenResetInterval || undefined) &&
+            rule.tokenLimit !== null &&
+            rule.resetInterval !== null;
           setInheritedTokenLimit(isTokenInherited);
         } else {
           setMaxTokenLimit(undefined);
@@ -550,9 +613,9 @@ export default function RoutesPage() {
           // 检查规则的限制是否与 API 服务一致
           // 规则必须有完整的配置才认为是继承的
           const isRequestInherited = rule.requestCountLimit === service.requestCountLimit &&
-                                     rule.requestResetInterval === (service.requestResetInterval || undefined) &&
-                                     rule.requestCountLimit !== null &&
-                                     rule.requestResetInterval !== null;
+            rule.requestResetInterval === (service.requestResetInterval || undefined) &&
+            rule.requestCountLimit !== null &&
+            rule.requestResetInterval !== null;
           setInheritedRequestLimit(isRequestInherited);
         } else {
           setMaxRequestCountLimit(undefined);
@@ -695,279 +758,165 @@ export default function RoutesPage() {
         <p>管理API路由和路由配置</p>
       </div>
 
-      <div style={{ display: 'flex', gap: '20px' }}>
-        <div className="card" style={{ flex: '0 0 25%', minWidth: 300 }}>
-          <div className="toolbar">
-            <h3>路由</h3>
-            <button className="btn btn-primary" onClick={() => setShowRouteModal(true)}>新建</button>
-          </div>
-          {routes.length === 0 ? (
-            <div className="empty-state"><p>暂无路由</p></div>
-          ) : (
-            <div style={{ marginTop: '10px' }}>
-              {routes.map((route) => (
-                <div
-                  key={route.id}
-                  ref={(el) => {
-                    if (el) {
-                      routeRefs.current.set(route.id, el);
-                    } else {
-                      routeRefs.current.delete(route.id);
-                    }
-                  }}
-                  onClick={() => setSelectedRoute(route)}
-                  style={{
-                    padding: '12px',
-                    marginBottom: '8px',
-                    backgroundColor: selectedRoute && selectedRoute.id === route.id
-                      ? 'var(--bg-route-item-selected)'
-                      : 'var(--bg-route-item)',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    border: '1px solid var(--border-primary)',
-                    position: 'relative',
-                  }}
-                >
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ fontWeight: 500 }}>{route.name}</div>
-                      {route.isActive && <span className={`badge ${route.targetType === 'claude-code' ? 'badge-claude-code' : 'badge-codex'}`}
-                        style={{
-                          position: 'absolute',
-                          top: -16,
-                          right: -8
-                        }}>{TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label} 已激活</span>}
-                    </div>
-                     <div style={{ fontSize: '12px', color: 'var(--text-route-muted)', marginTop: '2px' }}>
-                       客户端工具: {TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label}
-                     </div>
-                    <div className="action-buttons" style={{ marginTop: '8px' }}>
-                      {!route.isActive ? (
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', gap: '20px' }}>
+          <div className="card" style={{ flex: '0 0 25%', minWidth: 300 }}>
+            <div className="toolbar">
+              <h3>路由</h3>
+              <button className="btn btn-primary" onClick={() => setShowRouteModal(true)}>新建</button>
+            </div>
+            {routes.length === 0 ? (
+              <div className="empty-state"><p>暂无路由</p></div>
+            ) : (
+              <div style={{ marginTop: '10px' }}>
+                {routes.map((route) => (
+                  <div
+                    key={route.id}
+                    ref={(el) => {
+                      if (el) {
+                        routeRefs.current.set(route.id, el);
+                      } else {
+                        routeRefs.current.delete(route.id);
+                      }
+                    }}
+                    onClick={() => setSelectedRoute(route)}
+                    style={{
+                      padding: '12px',
+                      marginBottom: '8px',
+                      backgroundColor: selectedRoute && selectedRoute.id === route.id
+                        ? 'var(--bg-route-item-selected)'
+                        : 'var(--bg-route-item)',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      border: '1px solid var(--border-primary)',
+                      position: 'relative',
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ fontWeight: 500 }}>{route.name}</div>
+                        {route.isActive && <span className={`badge ${route.targetType === 'claude-code' ? 'badge-claude-code' : 'badge-codex'}`}
+                          style={{
+                            position: 'absolute',
+                            top: -16,
+                            right: -8
+                          }}>{TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label} 已激活</span>}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-route-muted)', marginTop: '2px' }}>
+                        客户端工具: {TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label}
+                      </div>
+                      <div className="action-buttons" style={{ marginTop: '8px' }}>
+                        {!route.isActive ? (
+                          <button
+                            className="btn btn-success"
+                            style={{ padding: '4px 8px', fontSize: '12px' }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleActivateRoute(route.id);
+                            }}
+                            disabled={isConfiguringRoute !== null}
+                          >
+                            {isConfiguringRoute === route.id ? '处理中...' : '激活'}
+                          </button>
+                        ) : (
+                          <button
+                            className="btn btn-warning"
+                            style={{ padding: '4px 8px', fontSize: '12px' }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeactivateRoute(route.id);
+                            }}
+                            disabled={isConfiguringRoute !== null}
+                          >
+                            {isConfiguringRoute === route.id ? '处理中...' : '停用'}
+                          </button>
+                        )}
                         <button
-                          className="btn btn-success"
+                          className="btn btn-secondary"
                           style={{ padding: '4px 8px', fontSize: '12px' }}
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleActivateRoute(route.id);
+                            setEditingRoute(route);
+                            setShowRouteModal(true);
                           }}
-                          disabled={isConfiguringRoute !== null}
-                        >
-                          {isConfiguringRoute === route.id ? '处理中...' : '激活'}
-                        </button>
-                      ) : (
+                        >编辑</button>
                         <button
-                          className="btn btn-warning"
+                          className="btn btn-danger"
                           style={{ padding: '4px 8px', fontSize: '12px' }}
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleDeactivateRoute(route.id);
+                            handleDeleteRoute(route.id);
                           }}
-                          disabled={isConfiguringRoute !== null}
-                        >
-                          {isConfiguringRoute === route.id ? '处理中...' : '停用'}
-                        </button>
-                      )}
-                      <button
-                        className="btn btn-secondary"
-                        style={{ padding: '4px 8px', fontSize: '12px' }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingRoute(route);
-                          setShowRouteModal(true);
-                        }}
-                      >编辑</button>
-                      <button
-                        className="btn btn-danger"
-                        style={{ padding: '4px 8px', fontSize: '12px' }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteRoute(route.id);
-                        }}
-                        disabled={route.isActive}
-                      >删除</button>
+                          disabled={route.isActive}
+                        >删除</button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="card" style={{ flex: 1 }}>
-          <div className="toolbar">
-            <h3>规则列表</h3>
-            {selectedRoute && (
-              <button className="btn btn-primary" onClick={handleNewRule}>新建规则</button>
+                ))}
+              </div>
             )}
           </div>
-          {!selectedRoute ? (
-            <div className="empty-state"><p>请先选择一个路由</p></div>
-          ) : rules.length === 0 ? (
-            <div className="empty-state"><p>暂无路由</p></div>
-          ) : (
-            <table className="rules-table">
-              <thead>
-                <tr>
-                  <th className="col-priority">优先级</th>
-                  <th>类型</th>
-                  <th>API服务</th>
-                  <th>状态</th>
-                  <th>用量情况</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rules.map((rule) => {
-                  const service = allServices.find(s => s.id === rule.targetServiceId);
-                  const vendor = vendors.find(v => v.id === service?.vendorId);
-                  const contentTypeLabel = CONTENT_TYPE_OPTIONS.find(opt => opt.value === rule.contentType)?.label;
-                  return (
-                    <tr key={rule.id}>
-                      <td className="col-priority">{rule.sortOrder || 0}</td>
-                      <td>
-                        <div style={{ fontSize: '12px', whiteSpace: 'nowrap' }}>
-                          {/* 为非默认类型添加图标 */}
-                          {rule.contentType !== 'default' && CONTENT_TYPE_ICONS[rule.contentType] && (
-                            <span style={{ fontSize: '14px' }}>
-                              {CONTENT_TYPE_ICONS[rule.contentType]}
-                            </span>
-                          )}
-                          <span>{contentTypeLabel}</span>
-                          {rule.contentType === 'model-mapping' && rule.replacedModel && (
-                            <div
-                              style={{ position: 'relative', display: 'inline-block' }}
-                              onMouseEnter={() => setHoveredRuleId(rule.id)}
-                              onMouseLeave={() => setHoveredRuleId(null)}
-                            >
-                              <span
-                                style={{
-                                  cursor: 'help',
-                                  fontSize: '14px',
-                                  color: 'var(--text-info)',
-                                  fontWeight: 'bold',
-                                }}
-                              >
-                                ⓘ
-                              </span>
-                              {hoveredRuleId === rule.id && (
-                                <div
-                                  style={{
-                                    position: 'absolute',
-                                    left: '50%',
-                                    transform: 'translateX(-50%)',
-                                    bottom: 'calc(100% + 8px)',
-                                    backgroundColor: 'var(--bg-popover, #333)',
-                                    color: 'var(--text-popover, #fff)',
-                                    padding: '6px 10px',
-                                    borderRadius: '4px',
-                                    fontSize: '12px',
-                                    whiteSpace: 'nowrap',
-                                    zIndex: 1000,
-                                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-                                  }}
-                                >
-                                  被顶替的模型是: {rule.replacedModel}
-                                  <div
-                                    style={{
-                                      position: 'absolute',
-                                      left: '50%',
-                                      transform: 'translateX(-50%)',
-                                      bottom: '-4px',
-                                      width: '0',
-                                      height: '0',
-                                      borderLeft: '4px solid transparent',
-                                      borderRight: '4px solid transparent',
-                                      borderTop: '4px solid var(--bg-popover, #333)',
-                                    }}
-                                  />
-                                </div>
+
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <div className="card" style={{ flex: 1 }}>
+              <div className="toolbar">
+                <h3>规则列表</h3>
+                {selectedRoute && (
+                  <button className="btn btn-primary" onClick={handleNewRule}>新建规则</button>
+                )}
+              </div>
+              {!selectedRoute ? (
+                <div className="empty-state"><p>请先选择一个路由</p></div>
+              ) : rules.length === 0 ? (
+                <div className="empty-state"><p>暂无路由</p></div>
+              ) : (
+                <table className="rules-table">
+                  <thead>
+                    <tr>
+                      <th className="col-priority">优先级</th>
+                      <th>类型</th>
+                      <th>API服务</th>
+                      <th>状态</th>
+                      <th>用量情况</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rules.map((rule) => {
+                      const service = allServices.find(s => s.id === rule.targetServiceId);
+                      const vendor = vendors.find(v => v.id === service?.vendorId);
+                      const contentTypeLabel = CONTENT_TYPE_OPTIONS.find(opt => opt.value === rule.contentType)?.label;
+                      return (
+                        <tr key={rule.id}>
+                          <td className="col-priority">{rule.sortOrder || 0}</td>
+                          <td>
+                            <div style={{ fontSize: '12px', whiteSpace: 'nowrap' }}>
+                              {/* 为非默认类型添加图标 */}
+                              {rule.contentType !== 'default' && CONTENT_TYPE_ICONS[rule.contentType] && (
+                                <span style={{ fontSize: '14px' }}>
+                                  {CONTENT_TYPE_ICONS[rule.contentType]}
+                                </span>
                               )}
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                      <td>
-                        <div className='vendor-sevices-col' style={{ fontSize: '0.6em' }}>
-                          {rule.useMCP ? (
-                            <>
-                              <div>MCP：{mcps.find(m => m.id === rule.mcpId)?.name || 'Unknown'}</div>
-                              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>使用MCP工具</div>
-                            </>
-                          ) : (
-                            <>
-                              <div>供应商：{vendor ? vendor.name : 'Unknown'}</div>
-                              <div>服务：{service ? service.name : 'Unknown'}</div>
-                              <div>模型：{rule.targetModel || '透传模型'}</div>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {/* 新增：状态列 */}
-                        {(() => {
-                          const ruleStatus = getRuleStatus(rule);
-                          const blacklistStatus = blacklistStatuses[rule.id];
-                          const isBlacklistedOnly = blacklistStatus?.isBlacklisted &&
-                            !ruleStatus.reason?.includes('Token超限') &&
-                            !ruleStatus.reason?.includes('次数超限');
-
-                          // 如果规则被屏蔽，显示屏蔽状态
-                          if (rule.isDisabled) {
-                            return (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <span style={{ color: '#6c757d', fontWeight: 'bold', fontSize: '14px' }}>⊘</span>
-                                <span style={{ fontSize: '13px', color: '#6c757d', fontWeight: 'bold' }}>
-                                  已屏蔽
-                                </span>
-                              </div>
-                            );
-                          }
-
-                          return (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                {ruleStatus.status === 'success' && (
-                                  <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '14px' }}>✓</span>
-                                )}
-                                {ruleStatus.status === 'warning' && (
-                                  <span style={{ color: '#ffc107', fontWeight: 'bold', fontSize: '14px' }}>⚠</span>
-                                )}
-                                {ruleStatus.status === 'error' && (
-                                  <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '14px' }}>✗</span>
-                                )}
-                                {ruleStatus.status === 'in_use' && (
-                                  <>
-                                    <span
-                                      style={{
-                                        color: '#007bff',
-                                        fontWeight: 'bold',
-                                        fontSize: '14px',
-                                        animation: 'pulse 1.5s ease-in-out infinite',
-                                      }}
-                                    >
-                                        ●
-                                      </span>
-                                    </>
-                                )}
-                                <span style={{
-                                  fontSize: '13px',
-                                  color: ruleStatus.status === 'success' ? '#28a745' :
-                                         ruleStatus.status === 'warning' ? '#ffc107' :
-                                         ruleStatus.status === 'in_use' ? '#007bff' :
-                                         '#dc3545',
-                                  fontWeight: ruleStatus.status !== 'success' ? 'bold' : 'normal'
-                                }}>
-                                  {ruleStatus.label}
-                                </span>
-                                {ruleStatus.reason && (
-                                  <div
-                                    style={{ position: 'relative', display: 'inline-block', cursor: 'help' }}
-                                    onMouseEnter={() => setHoveredRuleId(rule.id + '-status')}
-                                    onMouseLeave={() => setHoveredRuleId(null)}
+                              <span>{contentTypeLabel}</span>
+                              {rule.contentType === 'model-mapping' && rule.replacedModel && (
+                                <div
+                                  style={{ position: 'relative', display: 'inline-block' }}
+                                  onMouseEnter={() => setHoveredRuleId(rule.id)}
+                                  onMouseLeave={() => setHoveredRuleId(null)}
+                                >
+                                  <span
+                                    style={{
+                                      cursor: 'help',
+                                      fontSize: '14px',
+                                      color: 'var(--text-info)',
+                                      fontWeight: 'bold',
+                                    }}
                                   >
-                                    <span style={{ fontSize: '12px', color: '#999', marginLeft: '4px' }}> ⓘ</span>
-                                    {hoveredRuleId === rule.id + '-status' && (
-                                      <div style={{
+                                    ⓘ
+                                  </span>
+                                  {hoveredRuleId === rule.id && (
+                                    <div
+                                      style={{
                                         position: 'absolute',
                                         left: '50%',
                                         transform: 'translateX(-50%)',
@@ -980,9 +929,11 @@ export default function RoutesPage() {
                                         whiteSpace: 'nowrap',
                                         zIndex: 1000,
                                         boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-                                      }}>
-                                        {ruleStatus.reason}
-                                        <div style={{
+                                      }}
+                                    >
+                                      被顶替的模型是: {rule.replacedModel}
+                                      <div
+                                        style={{
                                           position: 'absolute',
                                           left: '50%',
                                           transform: 'translateX(-50%)',
@@ -992,128 +943,293 @@ export default function RoutesPage() {
                                           borderLeft: '4px solid transparent',
                                           borderRight: '4px solid transparent',
                                           borderTop: '4px solid var(--bg-popover, #333)',
-                                        }}/>
+                                        }}
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td>
+                            <div className='vendor-sevices-col' style={{ fontSize: '0.6em' }}>
+                              {rule.useMCP ? (
+                                <>
+                                  <div>MCP：{mcps.find(m => m.id === rule.mcpId)?.name || 'Unknown'}</div>
+                                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>使用MCP工具</div>
+                                </>
+                              ) : (
+                                <>
+                                  <div>供应商：{vendor ? vendor.name : 'Unknown'}</div>
+                                  <div>服务：{service ? service.name : 'Unknown'}</div>
+                                  <div>模型：{rule.targetModel || '透传模型'}</div>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                          <td style={{ whiteSpace: 'nowrap' }}>
+                            {/* 新增：状态列 */}
+                            {(() => {
+                              const ruleStatus = getRuleStatus(rule);
+                              const blacklistStatus = blacklistStatuses[rule.id];
+                              const isBlacklistedOnly = blacklistStatus?.isBlacklisted &&
+                                !ruleStatus.reason?.includes('Token超限') &&
+                                !ruleStatus.reason?.includes('次数超限');
+
+                              // 如果规则被屏蔽，显示屏蔽状态
+                              if (rule.isDisabled) {
+                                return (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span style={{ color: '#6c757d', fontWeight: 'bold', fontSize: '14px' }}>⊘</span>
+                                    <span style={{ fontSize: '13px', color: '#6c757d', fontWeight: 'bold' }}>
+                                      已屏蔽
+                                    </span>
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    {ruleStatus.status === 'success' && (
+                                      <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '14px' }}>✓</span>
+                                    )}
+                                    {ruleStatus.status === 'warning' && (
+                                      <span style={{ color: '#ffc107', fontWeight: 'bold', fontSize: '14px' }}>⚠</span>
+                                    )}
+                                    {ruleStatus.status === 'error' && (
+                                      <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '14px' }}>✗</span>
+                                    )}
+                                    {ruleStatus.status === 'in_use' && (
+                                      <>
+                                        <span
+                                          style={{
+                                            color: '#007bff',
+                                            fontWeight: 'bold',
+                                            fontSize: '14px',
+                                            animation: 'pulse 1.5s ease-in-out infinite',
+                                          }}
+                                        >
+                                          ●
+                                        </span>
+                                      </>
+                                    )}
+                                    <span style={{
+                                      fontSize: '13px',
+                                      color: ruleStatus.status === 'success' ? '#28a745' :
+                                        ruleStatus.status === 'warning' ? '#ffc107' :
+                                          ruleStatus.status === 'in_use' ? '#007bff' :
+                                            '#dc3545',
+                                      fontWeight: ruleStatus.status !== 'success' ? 'bold' : 'normal'
+                                    }}>
+                                      {ruleStatus.label}
+                                    </span>
+                                    {ruleStatus.reason && (
+                                      <div
+                                        style={{ position: 'relative', display: 'inline-block', cursor: 'help' }}
+                                        onMouseEnter={() => setHoveredRuleId(rule.id + '-status')}
+                                        onMouseLeave={() => setHoveredRuleId(null)}
+                                      >
+                                        <span style={{ fontSize: '12px', color: '#999', marginLeft: '4px' }}> ⓘ</span>
+                                        {hoveredRuleId === rule.id + '-status' && (
+                                          <div style={{
+                                            position: 'absolute',
+                                            left: '50%',
+                                            transform: 'translateX(-50%)',
+                                            bottom: 'calc(100% + 8px)',
+                                            backgroundColor: 'var(--bg-popover, #333)',
+                                            color: 'var(--text-popover, #fff)',
+                                            padding: '6px 10px',
+                                            borderRadius: '4px',
+                                            fontSize: '12px',
+                                            whiteSpace: 'nowrap',
+                                            zIndex: 1000,
+                                            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                                          }}>
+                                            {ruleStatus.reason}
+                                            <div style={{
+                                              position: 'absolute',
+                                              left: '50%',
+                                              transform: 'translateX(-50%)',
+                                              bottom: '-4px',
+                                              width: '0',
+                                              height: '0',
+                                              borderLeft: '4px solid transparent',
+                                              borderRight: '4px solid transparent',
+                                              borderTop: '4px solid var(--bg-popover, #333)',
+                                            }} />
+                                          </div>
+                                        )}
                                       </div>
                                     )}
                                   </div>
+                                  {isBlacklistedOnly && (
+                                    <button
+                                      className="btn btn-info"
+                                      style={{ padding: '2px 8px', fontSize: '11px' }}
+                                      onClick={() => handleClearBlacklist(rule.id)}
+                                    >
+                                      恢复
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </td>
+                          <td>
+                            <div style={{ fontSize: '13px' }}>
+                              {/* Token限制 */}
+                              <div style={{ whiteSpace: 'nowrap' }}>
+                                <span style={{ fontWeight: 'bold', fontSize: '12px' }}>Tokens:</span>
+                                {rule.tokenLimit ? (
+                                  <>
+                                    {/* 使用 WebSocket 实时数据 */}
+                                    <span style={{
+                                      color: (() => {
+                                        const currentTokensUsed = ruleStatuses[rule.id]?.totalTokensUsed ?? rule.totalTokensUsed;
+                                        return currentTokensUsed && rule.tokenLimit && currentTokensUsed >= rule.tokenLimit * 1000 ? 'red' : 'inherit';
+                                      })()
+                                    }}>
+                                      {(((ruleStatuses[rule.id]?.totalTokensUsed ?? rule.totalTokensUsed) || 0) / 1000).toFixed(1)}K/{rule.tokenLimit.toFixed(0)}K
+                                    </span>
+                                    {(() => {
+                                      const currentTokensUsed = ruleStatuses[rule.id]?.totalTokensUsed ?? rule.totalTokensUsed;
+                                      return currentTokensUsed && rule.tokenLimit && currentTokensUsed >= rule.tokenLimit * 1000 ? (
+                                        <span style={{ color: 'red', marginLeft: '4px', fontWeight: 'bold', fontSize: '11px' }}>超限</span>
+                                      ) : null;
+                                    })()}
+                                  </>
+                                ) : (
+                                  <span style={{ color: '#999' }}>不限制</span>
                                 )}
                               </div>
-                              {isBlacklistedOnly && (
-                                <button
-                                  className="btn btn-info"
-                                  style={{ padding: '2px 8px', fontSize: '11px' }}
-                                  onClick={() => handleClearBlacklist(rule.id)}
-                                >
-                                  恢复
-                                </button>
-                              )}
+                              {/* 请求次数限制 */}
+                              <div style={{ marginTop: '6px' }}>
+                                <span style={{ fontWeight: 'bold', fontSize: '12px' }}>次数:</span>
+                                {rule.requestCountLimit ? (
+                                  <>
+                                    {/* 使用 WebSocket 实时数据 */}
+                                    <span style={{
+                                      color: (() => {
+                                        const currentRequestsUsed = ruleStatuses[rule.id]?.totalRequestsUsed ?? rule.totalRequestsUsed;
+                                        return currentRequestsUsed && rule.requestCountLimit && currentRequestsUsed >= rule.requestCountLimit ? 'red' : 'inherit';
+                                      })()
+                                    }}>
+                                      {(ruleStatuses[rule.id]?.totalRequestsUsed ?? rule.totalRequestsUsed) || 0}/{rule.requestCountLimit}
+                                    </span>
+                                    {(() => {
+                                      const currentRequestsUsed = ruleStatuses[rule.id]?.totalRequestsUsed ?? rule.totalRequestsUsed;
+                                      return currentRequestsUsed && rule.requestCountLimit && currentRequestsUsed >= rule.requestCountLimit ? (
+                                        <span style={{ color: 'red', marginLeft: '4px', fontWeight: 'bold', fontSize: '11px' }}>超限</span>
+                                      ) : null;
+                                    })()}
+                                  </>
+                                ) : (
+                                  <span style={{ color: '#999' }}>不限制</span>
+                                )}
+                              </div>
                             </div>
-                          );
-                        })()}
-                      </td>
-                      <td>
-                        <div style={{ fontSize: '13px' }}>
-                          {/* Token限制 */}
-                          <div style={{ whiteSpace: 'nowrap' }}>
-                            <span style={{ fontWeight: 'bold', fontSize: '12px' }}>Tokens:</span>
-                            {rule.tokenLimit ? (
-                              <>
-                                {/* 使用 WebSocket 实时数据 */}
-                                <span style={{
-                                  color: (() => {
-                                    const currentTokensUsed = ruleStatuses[rule.id]?.totalTokensUsed ?? rule.totalTokensUsed;
-                                    return currentTokensUsed && rule.tokenLimit && currentTokensUsed >= rule.tokenLimit * 1000 ? 'red' : 'inherit';
-                                  })()
-                                }}>
-                                  {(((ruleStatuses[rule.id]?.totalTokensUsed ?? rule.totalTokensUsed) || 0) / 1000).toFixed(1)}K/{rule.tokenLimit.toFixed(0)}K
-                                </span>
-                                {(() => {
-                                  const currentTokensUsed = ruleStatuses[rule.id]?.totalTokensUsed ?? rule.totalTokensUsed;
-                                  return currentTokensUsed && rule.tokenLimit && currentTokensUsed >= rule.tokenLimit * 1000 ? (
-                                    <span style={{ color: 'red', marginLeft: '4px', fontWeight: 'bold', fontSize: '11px' }}>超限</span>
-                                  ) : null;
-                                })()}
-                              </>
-                            ) : (
-                              <span style={{ color: '#999' }}>不限制</span>
-                            )}
-                          </div>
-                          {/* 请求次数限制 */}
-                          <div style={{ marginTop: '6px' }}>
-                            <span style={{ fontWeight: 'bold', fontSize: '12px' }}>次数:</span>
-                            {rule.requestCountLimit ? (
-                              <>
-                                {/* 使用 WebSocket 实时数据 */}
-                                <span style={{
-                                  color: (() => {
-                                    const currentRequestsUsed = ruleStatuses[rule.id]?.totalRequestsUsed ?? rule.totalRequestsUsed;
-                                    return currentRequestsUsed && rule.requestCountLimit && currentRequestsUsed >= rule.requestCountLimit ? 'red' : 'inherit';
-                                  })()
-                                }}>
-                                  {(ruleStatuses[rule.id]?.totalRequestsUsed ?? rule.totalRequestsUsed) || 0}/{rule.requestCountLimit}
-                                </span>
-                                {(() => {
-                                  const currentRequestsUsed = ruleStatuses[rule.id]?.totalRequestsUsed ?? rule.totalRequestsUsed;
-                                  return currentRequestsUsed && rule.requestCountLimit && currentRequestsUsed >= rule.requestCountLimit ? (
-                                    <span style={{ color: 'red', marginLeft: '4px', fontWeight: 'bold', fontSize: '11px' }}>超限</span>
-                                  ) : null;
-                                })()}
-                              </>
-                            ) : (
-                              <span style={{ color: '#999' }}>不限制</span>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="action-buttons" style={{ justifyContent: 'flex-end' }}>
-                          <button
-                            className={`btn ${rule.isDisabled ? 'btn-success' : 'btn-warning'}`}
-                            onClick={() => handleToggleRuleDisable(rule.id)}
-                            title={rule.isDisabled ? '启用规则' : '临时屏蔽规则'}
-                          >
-                            {rule.isDisabled ? '启用' : '屏蔽'}
-                          </button>
-                          <button className="btn btn-secondary" onClick={() => handleEditRule(rule)}>编辑</button>
-                          {/* {rule.tokenLimit && (
-                            <button className="btn btn-info" onClick={() => handleResetTokens(rule.id)}>重置Token</button>
-                          )} */}
-                          {/* {rule.requestCountLimit && (
-                            <button className="btn btn-info" onClick={() => handleResetRequests(rule.id)}>重置次数</button>
-                          )} */}
-                          <button className="btn btn-danger" onClick={() => handleDeleteRule(rule.id)}>删除</button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-          {selectedRoute && rules.length > 0 && (
-            <div style={{
-              fontSize: '12px',
-              color: 'var(--text-info-box)',
-              marginTop: '16px',
-              padding: '12px',
-              backgroundColor: 'var(--bg-info-box)',
-              borderRadius: '6px',
-              border: '1px solid var(--border-info-box)',
-              lineHeight: '1.6'
-            }}>
-              <strong>💡 智能故障切换机制</strong>
-              <div style={{ marginTop: '6px' }}>
-                • 当同一请求类型配置多个规则时,系统会按排序优先使用第一个<br/>
-                • 如果某个服务报错(4xx/5xx)或请求超时,将自动切换到下一个可用服务<br/>
-                • 报错或超时的服务会被标记为不可用,有效期10分钟<br/>
-                • 10分钟后自动解除标记,如果再次报错或超时则重新标记<br/>
-                • 确保您的请求始终路由到稳定可用的服务<br/>
-                • 规则状态列会实时显示每个规则的可用性状态<br/>
-                • 如不需要此功能,可在<strong>设置</strong>页面关闭"启用智能故障切换"选项
-              </div>
+                          </td>
+                          <td>
+                            <div className="action-buttons" style={{ justifyContent: 'flex-end' }}>
+                              <button
+                                className={`btn ${rule.isDisabled ? 'btn-success' : 'btn-warning'}`}
+                                onClick={() => handleToggleRuleDisable(rule.id)}
+                                title={rule.isDisabled ? '启用规则' : '临时屏蔽规则'}
+                              >
+                                {rule.isDisabled ? '启用' : '屏蔽'}
+                              </button>
+                              <button className="btn btn-secondary" onClick={() => handleEditRule(rule)}>编辑</button>
+                              {/* {rule.tokenLimit && (
+                              <button className="btn btn-info" onClick={() => handleResetTokens(rule.id)}>重置Token</button>
+                            )} */}
+                              {/* {rule.requestCountLimit && (
+                              <button className="btn btn-info" onClick={() => handleResetRequests(rule.id)}>重置次数</button>
+                            )} */}
+                              <button className="btn btn-danger" onClick={() => handleDeleteRule(rule.id)}>删除</button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+              {selectedRoute && rules.length > 0 && (
+                <div style={{
+                  fontSize: '12px',
+                  color: 'var(--text-info-box)',
+                  marginTop: '16px',
+                  padding: '12px',
+                  backgroundColor: 'var(--bg-info-box)',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-info-box)',
+                  lineHeight: '1.6'
+                }}>
+                  <strong>💡 智能故障切换机制</strong>
+                  <div style={{ marginTop: '6px' }}>
+                    • 当同一请求类型配置多个规则时,系统会按排序优先使用第一个<br />
+                    • 如果某个服务报错(4xx/5xx)或请求超时,将自动切换到下一个可用服务<br />
+                    • 报错或超时的服务会被标记为不可用,有效期10分钟<br />
+                    • 10分钟后自动解除标记,如果再次报错或超时则重新标记<br />
+                    • 确保您的请求始终路由到稳定可用的服务<br />
+                    • 规则状态列会实时显示每个规则的可用性状态<br />
+                    • 如不需要此功能,可在<strong>设置</strong>页面关闭"启用智能故障切换"选项
+                  </div>
+                </div>
+              )}
             </div>
-          )}
+            {/* Claude Code 配置容器 - 独立卡片，仅对 Claude Code 路由显示 */}
+            {selectedRoute && selectedRoute.targetType === 'claude-code' && (
+              <div className="card">
+                <div className="toolbar">
+                  <h3>Claude Code 配置</h3>
+                </div>
+                <div style={{ padding: '20px' }}>
+                  {!isAgentTeamsSupported() && claudeVersionCheck?.claudeCode?.version && (
+                    <div style={{
+                      backgroundColor: 'var(--bg-warning, #fff3cd)',
+                      border: '1px solid var(--border-warning, #ffc107)',
+                      borderRadius: '6px',
+                      padding: '12px',
+                      marginBottom: '12px',
+                      fontSize: '13px',
+                      color: 'var(--text-warning, #856404)'
+                    }}>
+                      ⚠️ 当前 Claude Code 版本 ({claudeVersionCheck.claudeCode.version}) 不支持 Agent Teams 功能。<br />
+                      Agent Teams 功能需要 Claude Code 版本 ≥ 2.1.32。请升级 Claude Code 后再使用此功能。
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <input
+                      type="checkbox"
+                      id="agent-teams-toggle"
+                      checked={selectedRoute.enableAgentTeams || false}
+                      onChange={(e) => handleToggleAgentTeams(e.target.checked)}
+                      disabled={!isAgentTeamsSupported()}
+                      style={{ cursor: isAgentTeamsSupported() ? 'pointer' : 'not-allowed', width: '16px', height: '16px' }}
+                    />
+                    <label
+                      htmlFor="agent-teams-toggle"
+                      style={{ cursor: isAgentTeamsSupported() ? 'pointer' : 'not-allowed', fontSize: '14px', userSelect: 'none', color: isAgentTeamsSupported() ? 'inherit' : 'var(--text-muted)' }}
+                    >
+                      开启 Agent Teams 功能
+                    </label>
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+                    {!isAgentTeamsSupported()
+                      ? 'Agent Teams 功能需要 Claude Code 版本 ≥ 2.1.32。请升级 Claude Code 后再使用此功能。'
+                      : selectedRoute.isActive
+                        ? '开启后将在 Claude Code 中启用 Agent Teams 实验性功能，已立即生效。'
+                        : '开启后将在激活此路由时启用 Agent Teams 实验性功能。'}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
+
+
       </div>
 
       {/* 配置文件自动管理说明 - 独立容器 */}
@@ -1203,29 +1319,29 @@ export default function RoutesPage() {
               <div className="modal-header">
                 <h2>{editingRoute ? '编辑路由' : '新建路由'}</h2>
               </div>
-            <form onSubmit={handleSaveRoute}>
-              <div className="form-group">
-                <label>路由名称</label>
-                <input type="text" name="name" defaultValue={editingRoute ? editingRoute.name : ''} required />
-              </div>
-              <div className="form-group">
-                <label>描述</label>
-                <textarea name="description" rows={3} defaultValue={editingRoute ? editingRoute.description : ''} />
-              </div>
-              <div className="form-group">
-                <label>客户端工具</label>
-                <select name="targetType" defaultValue={editingRoute ? editingRoute.targetType : 'claude-code'} required>
-                  {TARGET_TYPE_OPTIONS.map(opt => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
+              <form onSubmit={handleSaveRoute}>
+                <div className="form-group">
+                  <label>路由名称</label>
+                  <input type="text" name="name" defaultValue={editingRoute ? editingRoute.name : ''} required />
+                </div>
+                <div className="form-group">
+                  <label>描述</label>
+                  <textarea name="description" rows={3} defaultValue={editingRoute ? editingRoute.description : ''} />
+                </div>
+                <div className="form-group">
+                  <label>客户端工具</label>
+                  <select name="targetType" defaultValue={editingRoute ? editingRoute.targetType : 'claude-code'} required>
+                    {TARGET_TYPE_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
 
-              <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowRouteModal(false)}>取消</button>
-                <button type="submit" className="btn btn-primary">保存</button>
-              </div>
-            </form>
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowRouteModal(false)}>取消</button>
+                  <button type="submit" className="btn btn-primary">保存</button>
+                </div>
+              </form>
             </div>
           </div>
         </div>
@@ -1246,447 +1362,447 @@ export default function RoutesPage() {
               <div className="modal-header">
                 <h2>{editingRule ? '编辑规则' : '新建规则'}</h2>
               </div>
-            <form onSubmit={handleSaveRule}>
-              <div className="form-group">
-                <label>对象请求类型</label>
-                <select
-                  name="contentType"
-                  value={selectedContentType}
-                  required
-                  onChange={(e) => {
-                    setSelectedContentType(e.target.value);
-                  }}
-                >
-                  {getAvailableContentTypes().map(opt => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* 新增：被顶替模型字段，仅在选择模型顶替时显示 */}
-              {selectedContentType === 'model-mapping' && (
+              <form onSubmit={handleSaveRule}>
                 <div className="form-group">
-                  <label>被顶替模型 <small>（可在日志中找出想要顶替的模型名）</small></label>
-                  <input
-                    type="text"
-                    value={selectedReplacedModel}
-                    onChange={(e) => setSelectedReplacedModel(e.target.value)}
-                    placeholder="例如：gpt-4"
-                  />
+                  <label>对象请求类型</label>
+                  <select
+                    name="contentType"
+                    value={selectedContentType}
+                    required
+                    onChange={(e) => {
+                      setSelectedContentType(e.target.value);
+                    }}
+                  >
+                    {getAvailableContentTypes().map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
                 </div>
-              )}
 
-              {/* 图像理解类型显示使用MCP开关 */}
-              {selectedContentType === 'image-understanding' && (
-                <div className="form-group">
-                  <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                {/* 新增：被顶替模型字段，仅在选择模型顶替时显示 */}
+                {selectedContentType === 'model-mapping' && (
+                  <div className="form-group">
+                    <label>被顶替模型 <small>（可在日志中找出想要顶替的模型名）</small></label>
                     <input
-                      type="checkbox"
-                      checked={useMCP}
-                      onChange={(e) => setUseMCP(e.target.checked)}
-                      style={{ marginRight: '8px', cursor: 'pointer', width: '16px', height: '16px' }}
+                      type="text"
+                      value={selectedReplacedModel}
+                      onChange={(e) => setSelectedReplacedModel(e.target.value)}
+                      placeholder="例如：gpt-4"
                     />
-                    <span>使用MCP</span>
-                  </label>
+                  </div>
+                )}
+
+                {/* 图像理解类型显示使用MCP开关 */}
+                {selectedContentType === 'image-understanding' && (
+                  <div className="form-group">
+                    <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={useMCP}
+                        onChange={(e) => setUseMCP(e.target.checked)}
+                        style={{ marginRight: '8px', cursor: 'pointer', width: '16px', height: '16px' }}
+                      />
+                      <span>使用MCP</span>
+                    </label>
+                    <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                      开启后，将使用MCP工具处理图像理解请求，而不是直接调用API服务
+                    </small>
+                  </div>
+                )}
+
+                {/* MCP选择列表（仅当图像理解+使用MCP时显示） */}
+                {selectedContentType === 'image-understanding' && useMCP && (
+                  <div className="form-group">
+                    <label>选择MCP工具 <span className="required">*</span></label>
+                    <div style={{
+                      maxHeight: '300px',
+                      overflowY: 'auto',
+                      border: '1px solid var(--border-primary)',
+                      borderRadius: '6px',
+                      padding: '8px'
+                    }}>
+                      {mcps.length === 0 ? (
+                        <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                          暂无MCP工具，请先在MCP管理页面添加
+                        </div>
+                      ) : (
+                        mcps.map((mcp) => (
+                          <div
+                            key={mcp.id}
+                            onClick={() => setSelectedMCPId(mcp.id)}
+                            style={{
+                              padding: '12px',
+                              marginBottom: '8px',
+                              border: `2px solid ${selectedMCPId === mcp.id ? 'var(--primary-color)' : 'var(--border-primary)'}`,
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              backgroundColor: selectedMCPId === mcp.id ? 'var(--bg-info-blue)' : 'var(--bg-card)',
+                              transition: 'all 0.2s ease',
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div style={{ fontWeight: 600, fontSize: '14px' }}>{mcp.name}</div>
+                              <div className="badge badge-secondary" style={{ fontSize: '11px' }}>
+                                {mcp.type === 'stdio' ? '命令行' : mcp.type.toUpperCase()}
+                              </div>
+                            </div>
+                            {mcp.description && (
+                              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                                {mcp.description}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* 供应商相关字段（当不使用MCP时显示） */}
+                {!useMCP && (
+                  <>
+                    <div className="form-group">
+                      <label>供应商</label>
+                      <select
+                        value={selectedVendor}
+                        onChange={(e) => setSelectedVendor(e.target.value)}
+                        required
+                      >
+                        <option value="" disabled>请选择供应商</option>
+                        {vendors.map(vendor => (
+                          <option key={vendor.id} value={vendor.id}>{vendor.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label>供应商API服务</label>
+                      <select
+                        value={selectedService}
+                        onChange={(e) => {
+                          const serviceId = e.target.value;
+                          setSelectedService(serviceId);
+                          setSelectedModel('');
+
+                          // 获取选中的API服务
+                          const service = allServices.find(s => s.id === serviceId);
+                          if (service) {
+                            // 如果API服务启用了Token超量限制，自动填充并设置最大值
+                            if (service.enableTokenLimit && service.tokenLimit) {
+                              // API服务的tokenLimit已经是k值，直接使用
+                              setSelectedTokenLimit(service.tokenLimit);
+                              setSelectedResetInterval(service.tokenResetInterval);
+                              setSelectedTokenResetBaseTime(
+                                service.tokenResetBaseTime ? new Date(service.tokenResetBaseTime) : undefined
+                              );
+                              setMaxTokenLimit(service.tokenLimit);
+                              setInheritedTokenLimit(true);
+                              setShowTokenLimit(true); // 自动展开
+                            } else {
+                              setMaxTokenLimit(undefined);
+                              setInheritedTokenLimit(false);
+                              setShowTokenLimit(false); // 收起
+                            }
+
+                            // 如果API服务启用了请求次数超量限制，自动填充并设置最大值
+                            if (service.enableRequestLimit && service.requestCountLimit) {
+                              setSelectedRequestCountLimit(service.requestCountLimit);
+                              setSelectedRequestResetInterval(service.requestResetInterval);
+                              setSelectedRequestResetBaseTime(
+                                service.requestResetBaseTime ? new Date(service.requestResetBaseTime) : undefined
+                              );
+                              setMaxRequestCountLimit(service.requestCountLimit);
+                              setInheritedRequestLimit(true);
+                              setShowRequestLimit(true); // 自动展开
+                            } else {
+                              setMaxRequestCountLimit(undefined);
+                              setInheritedRequestLimit(false);
+                              setShowRequestLimit(false); // 收起
+                            }
+                          }
+                        }}
+                        required
+                        disabled={!selectedVendor}
+                      >
+                        <option value="" disabled>请选择API服务</option>
+                        {services.map(service => (
+                          <option key={service.id} value={service.id}>{service.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label>供应商模型</label>
+                      <select
+                        value={selectedModel}
+                        onChange={(e) => setSelectedModel(e.target.value)}
+                        disabled={!selectedService}
+                      >
+                        <option value="">透传模型名</option>
+                        {allServices.find(s => s.id === selectedService)?.supportedModels?.map(model => (
+                          <option key={model} value={model}>{model}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Tokens超量配置 */}
+                    <div className="form-group">
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', cursor: inheritedTokenLimit ? 'not-allowed' : 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={showTokenLimit}
+                            onChange={(e) => setShowTokenLimit(e.target.checked)}
+                            disabled={inheritedTokenLimit}
+                            style={{ marginRight: '8px', cursor: inheritedTokenLimit ? 'not-allowed' : 'pointer', width: '16px', height: '16px' }}
+                          />
+                          <span>启用Tokens超量限制</span>
+                          {inheritedTokenLimit && (
+                            <small style={{ color: '#999', fontSize: '12px', marginLeft: '8px' }}>（从API服务继承）</small>
+                          )}
+                        </label>
+                        {inheritedTokenLimit && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-secondary"
+                            onClick={() => setInheritedTokenLimit(false)}
+                            style={{ padding: '4px 12px', fontSize: '12px' }}
+                          >
+                            自定义限制
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {showTokenLimit && !inheritedTokenLimit && (
+                      <>
+                        {/* Tokens超量字段 */}
+                        <div className="form-group">
+                          <label>Tokens超量（单位：k）</label>
+                          <input
+                            type="number"
+                            value={selectedTokenLimit || ''}
+                            onChange={(e) => {
+                              const value = e.target.value ? parseInt(e.target.value) : undefined;
+                              if (value !== undefined && maxTokenLimit !== undefined && value > maxTokenLimit) {
+                                toast.warning(`Token超量值不能超过API服务的限制 (${maxTokenLimit}k)`);
+                                return;
+                              }
+                              setSelectedTokenLimit(value);
+                              // 如果值改变，自动解除继承状态
+                              if (inheritedTokenLimit && value !== maxTokenLimit) {
+                                setInheritedTokenLimit(false);
+                              }
+                            }}
+                            min="0"
+                            max={maxTokenLimit}
+                            placeholder={maxTokenLimit ? `最大 ${maxTokenLimit}k` : "不限制"}
+                            disabled={inheritedTokenLimit}
+                          />
+                          {maxTokenLimit && (
+                            <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                              ⚠️ API服务限制：最大 {maxTokenLimit}k，当前值不能超过此限制
+                            </small>
+                          )}
+                          <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                            当编程工具的请求tokens达到这个量时，在配置了其他规则的情况下，本条规则将失效，从而保护你的余额。例如：输入100表示100k即100,000个tokens
+                          </small>
+                        </div>
+
+                        {/* 重置时间字段 */}
+                        <div className="form-group">
+                          <label>Tokens超量自动重置间隔（小时）</label>
+                          <input
+                            type="number"
+                            value={selectedResetInterval || ''}
+                            onChange={(e) => {
+                              setSelectedResetInterval(e.target.value ? parseInt(e.target.value) : undefined);
+                              // 如果值改变，自动解除继承状态
+                              if (inheritedTokenLimit) {
+                                setInheritedTokenLimit(false);
+                              }
+                            }}
+                            min="1"
+                            placeholder="不自动重置"
+                            disabled={inheritedTokenLimit}
+                          />
+                          <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                            设置后，系统将每隔指定小时数自动重置token计数。例如设置5小时，则每5小时重置一次
+                          </small>
+                        </div>
+
+                        {/* Token下一次重置时间基点字段 */}
+                        <div className="form-group">
+                          <label>Token下一次重置时间基点</label>
+                          <input
+                            type="datetime-local"
+                            value={selectedTokenResetBaseTime ? formatDateTimeLocal(selectedTokenResetBaseTime) : ''}
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                setSelectedTokenResetBaseTime(new Date(e.target.value));
+                              } else {
+                                setSelectedTokenResetBaseTime(undefined);
+                              }
+                              // 如果值改变，自动解除继承状态
+                              if (inheritedTokenLimit) {
+                                setInheritedTokenLimit(false);
+                              }
+                            }}
+                            disabled={!selectedResetInterval || inheritedTokenLimit}
+                            className="datetime-picker-input"
+                          />
+                          <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                            配合"Tokens超量自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
+                          </small>
+                        </div>
+                      </>
+                    )}
+
+                    {/* 请求次数超量配置 */}
+                    <div className="form-group">
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', cursor: inheritedRequestLimit ? 'not-allowed' : 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={showRequestLimit}
+                            onChange={(e) => setShowRequestLimit(e.target.checked)}
+                            disabled={inheritedRequestLimit}
+                            style={{ marginRight: '8px', cursor: inheritedRequestLimit ? 'not-allowed' : 'pointer', width: '16px', height: '16px' }}
+                          />
+                          <span>启用请求次数超量限制</span>
+                          {inheritedRequestLimit && (
+                            <small style={{ color: '#999', fontSize: '12px', marginLeft: '8px' }}>（从API服务继承）</small>
+                          )}
+                        </label>
+                        {inheritedRequestLimit && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-secondary"
+                            onClick={() => setInheritedRequestLimit(false)}
+                            style={{ padding: '4px 12px', fontSize: '12px' }}
+                          >
+                            自定义限制
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {showRequestLimit && !inheritedRequestLimit && (
+                      <>
+                        {/* 请求次数超量字段 */}
+                        <div className="form-group">
+                          <label>请求次数超量</label>
+                          <input
+                            type="number"
+                            value={selectedRequestCountLimit || ''}
+                            onChange={(e) => {
+                              const value = e.target.value ? parseInt(e.target.value) : undefined;
+                              if (value !== undefined && maxRequestCountLimit !== undefined && value > maxRequestCountLimit) {
+                                toast.warning(`请求次数超量值不能超过API服务的限制 (${maxRequestCountLimit})`);
+                                return;
+                              }
+                              setSelectedRequestCountLimit(value);
+                              // 如果值改变，自动解除继承状态
+                              if (inheritedRequestLimit && value !== maxRequestCountLimit) {
+                                setInheritedRequestLimit(false);
+                              }
+                            }}
+                            min="0"
+                            max={maxRequestCountLimit}
+                            placeholder={maxRequestCountLimit ? `最大 ${maxRequestCountLimit}` : "不限制"}
+                            disabled={inheritedRequestLimit}
+                          />
+                          {maxRequestCountLimit && (
+                            <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                              ⚠️ API服务限制：最大 {maxRequestCountLimit}，当前值不能超过此限制
+                            </small>
+                          )}
+                          <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                            当请求次数达到这个量时，在配置了其他规则的情况下，本条规则将失效
+                          </small>
+                        </div>
+
+                        {/* 请求次数自动重置间隔字段 */}
+                        <div className="form-group">
+                          <label>请求次数自动重置间隔（小时）</label>
+                          <input
+                            type="number"
+                            value={selectedRequestResetInterval || ''}
+                            onChange={(e) => {
+                              setSelectedRequestResetInterval(e.target.value ? parseInt(e.target.value) : undefined);
+                              // 如果值改变，自动解除继承状态
+                              if (inheritedRequestLimit) {
+                                setInheritedRequestLimit(false);
+                              }
+                            }}
+                            min="1"
+                            placeholder="不自动重置"
+                            disabled={inheritedRequestLimit}
+                          />
+                          <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                            设置后，系统将每隔指定小时数自动重置请求次数计数。例如设置24小时，则每24小时重置一次
+                          </small>
+                        </div>
+
+                        {/* 下一次重置时间基点字段 */}
+                        <div className="form-group">
+                          <label>下一次重置时间基点</label>
+                          <input
+                            type="datetime-local"
+                            value={selectedRequestResetBaseTime ? formatDateTimeLocal(selectedRequestResetBaseTime) : ''}
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                setSelectedRequestResetBaseTime(new Date(e.target.value));
+                              } else {
+                                setSelectedRequestResetBaseTime(undefined);
+                              }
+                              // 如果值改变，自动解除继承状态
+                              if (inheritedRequestLimit) {
+                                setInheritedRequestLimit(false);
+                              }
+                            }}
+                            disabled={!selectedRequestResetInterval || inheritedRequestLimit}
+                            className="datetime-picker-input"
+                          />
+                          <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                            配合"请求次数自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
+                          </small>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+
+                {/* 超时时间字段 */}
+                <div className="form-group">
+                  <label>超时时间（秒）</label>
+                  <input
+                    type="number"
+                    value={selectedTimeout || ''}
+                    onChange={(e) => setSelectedTimeout(e.target.value ? parseInt(e.target.value) : undefined)}
+                    min="1"
+                    placeholder="默认300秒"
+                  />
                   <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    开启后，将使用MCP工具处理图像理解请求，而不是直接调用API服务
+                    设置此规则的API请求超时时间。不设置则使用默认值300秒（5分钟）
                   </small>
                 </div>
-              )}
 
-              {/* MCP选择列表（仅当图像理解+使用MCP时显示） */}
-              {selectedContentType === 'image-understanding' && useMCP && (
+                {/* 排序字段 */}
                 <div className="form-group">
-                  <label>选择MCP工具 <span className="required">*</span></label>
-                  <div style={{
-                    maxHeight: '300px',
-                    overflowY: 'auto',
-                    border: '1px solid var(--border-primary)',
-                    borderRadius: '6px',
-                    padding: '8px'
-                  }}>
-                    {mcps.length === 0 ? (
-                      <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                        暂无MCP工具，请先在MCP管理页面添加
-                      </div>
-                    ) : (
-                      mcps.map((mcp) => (
-                        <div
-                          key={mcp.id}
-                          onClick={() => setSelectedMCPId(mcp.id)}
-                          style={{
-                            padding: '12px',
-                            marginBottom: '8px',
-                            border: `2px solid ${selectedMCPId === mcp.id ? 'var(--primary-color)' : 'var(--border-primary)'}`,
-                            borderRadius: '6px',
-                            cursor: 'pointer',
-                            backgroundColor: selectedMCPId === mcp.id ? 'var(--bg-info-blue)' : 'var(--bg-card)',
-                            transition: 'all 0.2s ease',
-                          }}
-                        >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div style={{ fontWeight: 600, fontSize: '14px' }}>{mcp.name}</div>
-                            <div className="badge badge-secondary" style={{ fontSize: '11px' }}>
-                              {mcp.type === 'stdio' ? '命令行' : mcp.type.toUpperCase()}
-                            </div>
-                          </div>
-                          {mcp.description && (
-                            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                              {mcp.description}
-                            </div>
-                          )}
-                        </div>
-                      ))
-                    )}
-                  </div>
+                  <label>排序（值越大优先级越高）</label>
+                  <input
+                    type="number"
+                    value={selectedSortOrder}
+                    onChange={(e) => setSelectedSortOrder(parseInt(e.target.value) || 0)}
+                    min="0"
+                    max="1000"
+                  />
                 </div>
-              )}
 
-              {/* 供应商相关字段（当不使用MCP时显示） */}
-              {!useMCP && (
-                <>
-                  <div className="form-group">
-                    <label>供应商</label>
-                    <select
-                      value={selectedVendor}
-                      onChange={(e) => setSelectedVendor(e.target.value)}
-                      required
-                    >
-                      <option value="" disabled>请选择供应商</option>
-                      {vendors.map(vendor => (
-                        <option key={vendor.id} value={vendor.id}>{vendor.name}</option>
-                      ))}
-                    </select>
-                  </div>
-              <div className="form-group">
-                <label>供应商API服务</label>
-                <select
-                  value={selectedService}
-                  onChange={(e) => {
-                    const serviceId = e.target.value;
-                    setSelectedService(serviceId);
-                    setSelectedModel('');
-
-                    // 获取选中的API服务
-                    const service = allServices.find(s => s.id === serviceId);
-                    if (service) {
-                      // 如果API服务启用了Token超量限制，自动填充并设置最大值
-                      if (service.enableTokenLimit && service.tokenLimit) {
-                        // API服务的tokenLimit已经是k值，直接使用
-                        setSelectedTokenLimit(service.tokenLimit);
-                        setSelectedResetInterval(service.tokenResetInterval);
-                        setSelectedTokenResetBaseTime(
-                          service.tokenResetBaseTime ? new Date(service.tokenResetBaseTime) : undefined
-                        );
-                        setMaxTokenLimit(service.tokenLimit);
-                        setInheritedTokenLimit(true);
-                        setShowTokenLimit(true); // 自动展开
-                      } else {
-                        setMaxTokenLimit(undefined);
-                        setInheritedTokenLimit(false);
-                        setShowTokenLimit(false); // 收起
-                      }
-
-                      // 如果API服务启用了请求次数超量限制，自动填充并设置最大值
-                      if (service.enableRequestLimit && service.requestCountLimit) {
-                        setSelectedRequestCountLimit(service.requestCountLimit);
-                        setSelectedRequestResetInterval(service.requestResetInterval);
-                        setSelectedRequestResetBaseTime(
-                          service.requestResetBaseTime ? new Date(service.requestResetBaseTime) : undefined
-                        );
-                        setMaxRequestCountLimit(service.requestCountLimit);
-                        setInheritedRequestLimit(true);
-                        setShowRequestLimit(true); // 自动展开
-                      } else {
-                        setMaxRequestCountLimit(undefined);
-                        setInheritedRequestLimit(false);
-                        setShowRequestLimit(false); // 收起
-                      }
-                    }
-                  }}
-                  required
-                  disabled={!selectedVendor}
-                >
-                  <option value="" disabled>请选择API服务</option>
-                  {services.map(service => (
-                    <option key={service.id} value={service.id}>{service.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="form-group">
-                <label>供应商模型</label>
-                <select
-                  value={selectedModel}
-                  onChange={(e) => setSelectedModel(e.target.value)}
-                  disabled={!selectedService}
-                >
-                  <option value="">透传模型名</option>
-                  {allServices.find(s => s.id === selectedService)?.supportedModels?.map(model => (
-                    <option key={model} value={model}>{model}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Tokens超量配置 */}
-              <div className="form-group">
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', cursor: inheritedTokenLimit ? 'not-allowed' : 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={showTokenLimit}
-                      onChange={(e) => setShowTokenLimit(e.target.checked)}
-                      disabled={inheritedTokenLimit}
-                      style={{ marginRight: '8px', cursor: inheritedTokenLimit ? 'not-allowed' : 'pointer', width: '16px', height: '16px' }}
-                    />
-                    <span>启用Tokens超量限制</span>
-                    {inheritedTokenLimit && (
-                      <small style={{ color: '#999', fontSize: '12px', marginLeft: '8px' }}>（从API服务继承）</small>
-                    )}
-                  </label>
-                  {inheritedTokenLimit && (
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-secondary"
-                      onClick={() => setInheritedTokenLimit(false)}
-                      style={{ padding: '4px 12px', fontSize: '12px' }}
-                    >
-                      自定义限制
-                    </button>
-                  )}
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowRuleModal(false)}>取消</button>
+                  <button type="submit" className="btn btn-primary">保存</button>
                 </div>
-              </div>
-
-              {showTokenLimit && !inheritedTokenLimit && (
-                <>
-                  {/* Tokens超量字段 */}
-                  <div className="form-group">
-                    <label>Tokens超量（单位：k）</label>
-                    <input
-                      type="number"
-                      value={selectedTokenLimit || ''}
-                      onChange={(e) => {
-                        const value = e.target.value ? parseInt(e.target.value) : undefined;
-                        if (value !== undefined && maxTokenLimit !== undefined && value > maxTokenLimit) {
-                          toast.warning(`Token超量值不能超过API服务的限制 (${maxTokenLimit}k)`);
-                          return;
-                        }
-                        setSelectedTokenLimit(value);
-                        // 如果值改变，自动解除继承状态
-                        if (inheritedTokenLimit && value !== maxTokenLimit) {
-                          setInheritedTokenLimit(false);
-                        }
-                      }}
-                      min="0"
-                      max={maxTokenLimit}
-                      placeholder={maxTokenLimit ? `最大 ${maxTokenLimit}k` : "不限制"}
-                      disabled={inheritedTokenLimit}
-                    />
-                    {maxTokenLimit && (
-                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                        ⚠️ API服务限制：最大 {maxTokenLimit}k，当前值不能超过此限制
-                      </small>
-                    )}
-                    <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                      当编程工具的请求tokens达到这个量时，在配置了其他规则的情况下，本条规则将失效，从而保护你的余额。例如：输入100表示100k即100,000个tokens
-                    </small>
-                  </div>
-
-                  {/* 重置时间字段 */}
-                  <div className="form-group">
-                    <label>Tokens超量自动重置间隔（小时）</label>
-                    <input
-                      type="number"
-                      value={selectedResetInterval || ''}
-                      onChange={(e) => {
-                        setSelectedResetInterval(e.target.value ? parseInt(e.target.value) : undefined);
-                        // 如果值改变，自动解除继承状态
-                        if (inheritedTokenLimit) {
-                          setInheritedTokenLimit(false);
-                        }
-                      }}
-                      min="1"
-                      placeholder="不自动重置"
-                      disabled={inheritedTokenLimit}
-                    />
-                    <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                      设置后，系统将每隔指定小时数自动重置token计数。例如设置5小时，则每5小时重置一次
-                    </small>
-                  </div>
-
-                  {/* Token下一次重置时间基点字段 */}
-                  <div className="form-group">
-                    <label>Token下一次重置时间基点</label>
-                    <input
-                      type="datetime-local"
-                      value={selectedTokenResetBaseTime ? formatDateTimeLocal(selectedTokenResetBaseTime) : ''}
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          setSelectedTokenResetBaseTime(new Date(e.target.value));
-                        } else {
-                          setSelectedTokenResetBaseTime(undefined);
-                        }
-                        // 如果值改变，自动解除继承状态
-                        if (inheritedTokenLimit) {
-                          setInheritedTokenLimit(false);
-                        }
-                      }}
-                      disabled={!selectedResetInterval || inheritedTokenLimit}
-                      className="datetime-picker-input"
-                    />
-                    <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                      配合"Tokens超量自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
-                    </small>
-                  </div>
-                </>
-              )}
-
-              {/* 请求次数超量配置 */}
-              <div className="form-group">
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', cursor: inheritedRequestLimit ? 'not-allowed' : 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={showRequestLimit}
-                      onChange={(e) => setShowRequestLimit(e.target.checked)}
-                      disabled={inheritedRequestLimit}
-                      style={{ marginRight: '8px', cursor: inheritedRequestLimit ? 'not-allowed' : 'pointer', width: '16px', height: '16px' }}
-                    />
-                    <span>启用请求次数超量限制</span>
-                    {inheritedRequestLimit && (
-                      <small style={{ color: '#999', fontSize: '12px', marginLeft: '8px' }}>（从API服务继承）</small>
-                    )}
-                  </label>
-                  {inheritedRequestLimit && (
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-secondary"
-                      onClick={() => setInheritedRequestLimit(false)}
-                      style={{ padding: '4px 12px', fontSize: '12px' }}
-                    >
-                      自定义限制
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {showRequestLimit && !inheritedRequestLimit && (
-                <>
-                  {/* 请求次数超量字段 */}
-                  <div className="form-group">
-                    <label>请求次数超量</label>
-                    <input
-                      type="number"
-                      value={selectedRequestCountLimit || ''}
-                      onChange={(e) => {
-                        const value = e.target.value ? parseInt(e.target.value) : undefined;
-                        if (value !== undefined && maxRequestCountLimit !== undefined && value > maxRequestCountLimit) {
-                          toast.warning(`请求次数超量值不能超过API服务的限制 (${maxRequestCountLimit})`);
-                          return;
-                        }
-                        setSelectedRequestCountLimit(value);
-                        // 如果值改变，自动解除继承状态
-                        if (inheritedRequestLimit && value !== maxRequestCountLimit) {
-                          setInheritedRequestLimit(false);
-                        }
-                      }}
-                      min="0"
-                      max={maxRequestCountLimit}
-                      placeholder={maxRequestCountLimit ? `最大 ${maxRequestCountLimit}` : "不限制"}
-                      disabled={inheritedRequestLimit}
-                    />
-                    {maxRequestCountLimit && (
-                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                        ⚠️ API服务限制：最大 {maxRequestCountLimit}，当前值不能超过此限制
-                      </small>
-                    )}
-                    <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                      当请求次数达到这个量时，在配置了其他规则的情况下，本条规则将失效
-                    </small>
-                  </div>
-
-                  {/* 请求次数自动重置间隔字段 */}
-                  <div className="form-group">
-                    <label>请求次数自动重置间隔（小时）</label>
-                    <input
-                      type="number"
-                      value={selectedRequestResetInterval || ''}
-                      onChange={(e) => {
-                        setSelectedRequestResetInterval(e.target.value ? parseInt(e.target.value) : undefined);
-                        // 如果值改变，自动解除继承状态
-                        if (inheritedRequestLimit) {
-                          setInheritedRequestLimit(false);
-                        }
-                      }}
-                      min="1"
-                      placeholder="不自动重置"
-                      disabled={inheritedRequestLimit}
-                    />
-                    <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                      设置后，系统将每隔指定小时数自动重置请求次数计数。例如设置24小时，则每24小时重置一次
-                    </small>
-                  </div>
-
-                  {/* 下一次重置时间基点字段 */}
-                  <div className="form-group">
-                    <label>下一次重置时间基点</label>
-                    <input
-                      type="datetime-local"
-                      value={selectedRequestResetBaseTime ? formatDateTimeLocal(selectedRequestResetBaseTime) : ''}
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          setSelectedRequestResetBaseTime(new Date(e.target.value));
-                        } else {
-                          setSelectedRequestResetBaseTime(undefined);
-                        }
-                        // 如果值改变，自动解除继承状态
-                        if (inheritedRequestLimit) {
-                          setInheritedRequestLimit(false);
-                        }
-                      }}
-                      disabled={!selectedRequestResetInterval || inheritedRequestLimit}
-                      className="datetime-picker-input"
-                    />
-                    <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                      配合"请求次数自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
-                    </small>
-                  </div>
-                </>
-              )}
-                </>
-              )}
-
-              {/* 超时时间字段 */}
-              <div className="form-group">
-                <label>超时时间（秒）</label>
-                <input
-                  type="number"
-                  value={selectedTimeout || ''}
-                  onChange={(e) => setSelectedTimeout(e.target.value ? parseInt(e.target.value) : undefined)}
-                  min="1"
-                  placeholder="默认300秒"
-                />
-                <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                  设置此规则的API请求超时时间。不设置则使用默认值300秒（5分钟）
-                </small>
-              </div>
-
-              {/* 排序字段 */}
-              <div className="form-group">
-                <label>排序（值越大优先级越高）</label>
-                <input
-                  type="number"
-                  value={selectedSortOrder}
-                  onChange={(e) => setSelectedSortOrder(parseInt(e.target.value) || 0)}
-                  min="0"
-                  max="1000"
-                />
-              </div>
-
-              <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowRuleModal(false)}>取消</button>
-                <button type="submit" className="btn btn-primary">保存</button>
-              </div>
-            </form>
+              </form>
             </div>
           </div>
         </div>

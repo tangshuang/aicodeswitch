@@ -7,6 +7,7 @@ interface BackendAPI {
 
   // 版本检查
   checkVersion: () => Promise<{ hasUpdate: boolean; currentVersion: string | null; latestVersion: string | null }>;
+  checkClaudeVersion: () => Promise<ToolInstallationStatus>;
 
   getVendors: () => Promise<Vendor[]>;
   createVendor: (vendor: Omit<Vendor, 'id' | 'createdAt' | 'updatedAt'>) => Promise<Vendor>;
@@ -61,12 +62,13 @@ interface BackendAPI {
   previewImportData: (encryptedData: string, password: string) => Promise<ImportPreview>;
   importData: (encryptedData: string, password: string) => Promise<ImportResult>;
 
-  writeClaudeConfig: () => Promise<boolean>;
+  writeClaudeConfig: (enableAgentTeams?: boolean) => Promise<boolean>;
   writeCodexConfig: () => Promise<boolean>;
   restoreClaudeConfig: () => Promise<boolean>;
   restoreCodexConfig: () => Promise<boolean>;
   checkClaudeBackup: () => Promise<{ exists: boolean }>;
   checkCodexBackup: () => Promise<{ exists: boolean }>;
+  updateClaudeAgentTeams: (enableAgentTeams: boolean) => Promise<boolean>;
   // 新的详细配置状态 API
   getClaudeConfigStatus: () => Promise<{
     isOverwritten: boolean;
@@ -274,12 +276,22 @@ export const api: BackendAPI = {
       body: JSON.stringify({ encryptedData, password }),
     }),
 
-  writeClaudeConfig: () => requestJson(buildUrl('/api/write-config/claude'), { method: 'POST' }),
+  writeClaudeConfig: (enableAgentTeams?: boolean) =>
+    requestJson(buildUrl('/api/write-config/claude'), {
+      method: 'POST',
+      body: JSON.stringify({ enableAgentTeams })
+    }),
   writeCodexConfig: () => requestJson(buildUrl('/api/write-config/codex'), { method: 'POST' }),
   restoreClaudeConfig: () => requestJson(buildUrl('/api/restore-config/claude'), { method: 'POST' }),
   restoreCodexConfig: () => requestJson(buildUrl('/api/restore-config/codex'), { method: 'POST' }),
+  updateClaudeAgentTeams: (enableAgentTeams: boolean) =>
+    requestJson(buildUrl('/api/update-claude-agent-teams'), {
+      method: 'POST',
+      body: JSON.stringify({ enableAgentTeams })
+    }),
   checkClaudeBackup: () => requestJson(buildUrl('/api/check-backup/claude')),
   checkCodexBackup: () => requestJson(buildUrl('/api/check-backup/codex')),
+  checkClaudeVersion: () => requestJson(buildUrl('/api/tools/status')),
   // 新的详细配置状态 API
   getClaudeConfigStatus: () => requestJson(buildUrl('/api/config-status/claude')),
   getCodexConfigStatus: () => requestJson(buildUrl('/api/config-status/codex')),

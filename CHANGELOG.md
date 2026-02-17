@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file. See [standa
 ### 3.4.0 (2026-02-16)
 
 #### Features
+* 路由管理新增 Agent Teams 功能配置
+  - Claude Code 路由规则容器下方新增"Claude Code"配置容器
+  - 新增"开启Agent Teams功能"开关
+  - 开启后会设置 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"` 环境变量
+  - 路由已激活时，实时更新配置文件；路由未激活时，待激活时应用
+  - 新增 Claude Code 版本检查，仅版本 ≥ 2.1.32 时支持 Agent Teams 功能
+  - 版本不支持时自动禁用开关并显示警告提示
 * 日志模块新增内容搜索功能
   - 请求日志支持通过内容关键词搜索（请求体、响应体、流式响应、错误信息、路径、模型名）
   - 错误日志支持通过内容关键词搜索（错误信息、错误堆栈、请求体、响应体、路径、模型名）
