@@ -8,7 +8,18 @@ import { HttpsProxyAgent } from 'https-proxy-agent';
 import { DatabaseFactory } from './database-factory';
 import { ProxyServer } from './proxy-server';
 import type { FileSystemDatabaseManager } from './fs-database';
-import type { AppConfig, LoginRequest, LoginResponse, AuthStatus, InstalledSkill, SkillCatalogItem, SkillInstallRequest, SkillInstallResponse, TargetType } from '../types';
+import type {
+  AppConfig,
+  LoginRequest,
+  LoginResponse,
+  AuthStatus,
+  InstalledSkill,
+  SkillCatalogItem,
+  SkillInstallRequest,
+  SkillInstallResponse,
+  TargetType,
+  MCPInstallRequest,
+} from '../types';
 import os from 'os';
 import { isAuthEnabled, verifyAuthCode, generateToken, authMiddleware } from './auth';
 import { checkVersionUpdate } from './version-check';
@@ -891,6 +902,17 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
       const result = await dbManager.activateRoute(req.params.id);
       if (result) {
         await proxyServer.reloadRoutes();
+
+        // 激活路由后，同步MCP配置
+        const routes = dbManager.getRoutes();
+        const route = routes.find(r => r.id === req.params.id);
+        if (route) {
+          const mcps = dbManager.getMCPs();
+          const hasMCPForTarget = mcps.some(m => m.targets?.includes(route.targetType));
+          if (hasMCPForTarget) {
+            await writeMCPConfig(route.targetType);
+          }
+        }
       }
       res.json(result);
     })
@@ -1086,9 +1108,53 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
   );
 
   app.get(
+    '/api/logs/search',
+    asyncHandler(async (req, res) => {
+      const query = typeof req.query.query === 'string' ? req.query.query : '';
+      const rawLimit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : NaN;
+      const rawOffset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : NaN;
+      const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
+      const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
+      const logs = await dbManager.searchLogs(query, limit, offset);
+      res.json(logs);
+    })
+  );
+
+  app.get(
+    '/api/logs/search/count',
+    asyncHandler(async (req, res) => {
+      const query = typeof req.query.query === 'string' ? req.query.query : '';
+      const count = await dbManager.searchLogsCount(query);
+      res.json({ count });
+    })
+  );
+
+  app.get(
     '/api/error-logs/count',
     asyncHandler(async (_req, res) => {
       const count = await dbManager.getErrorLogsCount();
+      res.json({ count });
+    })
+  );
+
+  app.get(
+    '/api/error-logs/search',
+    asyncHandler(async (req, res) => {
+      const query = typeof req.query.query === 'string' ? req.query.query : '';
+      const rawLimit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : NaN;
+      const rawOffset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : NaN;
+      const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
+      const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
+      const logs = await dbManager.searchErrorLogs(query, limit, offset);
+      res.json(logs);
+    })
+  );
+
+  app.get(
+    '/api/error-logs/search/count',
+    asyncHandler(async (req, res) => {
+      const query = typeof req.query.query === 'string' ? req.query.query : '';
+      const count = await dbManager.searchErrorLogsCount(query);
       res.json({ count });
     })
   );
@@ -1790,6 +1856,157 @@ ${instruction}
       res.status(500).json({ error: '获取工具状态失败' });
     }
   }));
+
+  // MCP 工具管理相关路由
+  app.get('/api/mcps', (_req, res) => {
+    res.json(dbManager.getMCPs());
+  });
+
+  app.get('/api/mcps/:id', (req, res) => {
+    const mcp = dbManager.getMCP(req.params.id);
+    if (!mcp) {
+      res.status(404).json({ error: 'MCP工具不存在' });
+      return;
+    }
+    res.json(mcp);
+  });
+
+  app.post('/api/mcps', asyncHandler(async (req, res) => {
+    const mcpData: MCPInstallRequest = req.body;
+    const result = await dbManager.createMCP({
+      ...mcpData,
+      targets: mcpData.targets || [],
+    });
+
+    // 如果有激活的路由，立即写入MCP配置
+    if (mcpData.targets) {
+      const routes = dbManager.getRoutes();
+      for (const target of mcpData.targets) {
+        const activeRoute = routes.find(r => r.targetType === target && r.isActive);
+        if (activeRoute) {
+          await writeMCPConfig(target);
+        }
+      }
+    }
+
+    res.json(result);
+  }));
+
+  app.put('/api/mcps/:id', asyncHandler(async (req, res) => {
+    const result = await dbManager.updateMCP(req.params.id, req.body);
+    res.json(result);
+  }));
+
+  app.delete('/api/mcps/:id', asyncHandler(async (req, res) => {
+    const mcp = dbManager.getMCP(req.params.id);
+    if (!mcp) {
+      res.status(404).json({ error: 'MCP工具不存在' });
+      return;
+    }
+
+    const result = await dbManager.deleteMCP(req.params.id);
+
+    // 从Claude Code和Codex配置中移除该MCP
+    if (mcp.targets) {
+      for (const target of mcp.targets) {
+        await removeMCPFromConfig(target, mcp.id);
+      }
+    }
+
+    res.json(result);
+  }));
+
+  // 写入MCP配置到Claude Code或Codex的全局配置文件
+  const writeMCPConfig = async (targetType: TargetType): Promise<boolean> => {
+    try {
+      const homeDir = os.homedir();
+      const mcps = dbManager.getMCPsByTarget(targetType);
+
+      if (targetType === 'claude-code') {
+        // Claude Code配置文件路径
+        const claudeJsonPath = path.join(homeDir, '.claude.json');
+        let claudeJson: any = {};
+
+        // 读取现有配置
+        if (fs.existsSync(claudeJsonPath)) {
+          claudeJson = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8'));
+        }
+
+        // 确保mcpServers存在
+        if (!claudeJson.mcpServers) {
+          claudeJson.mcpServers = {};
+        }
+
+        // 写入所有启用的MCP
+        for (const mcp of mcps) {
+          const mcpConfig: any = {
+            type: mcp.type,
+          };
+
+          if (mcp.type === 'stdio') {
+            mcpConfig.command = mcp.command;
+            mcpConfig.args = mcp.args;
+          } else if (mcp.type === 'http') {
+            mcpConfig.url = mcp.url;
+          } else if (mcp.type === 'sse') {
+            mcpConfig.url = mcp.url;
+          }
+
+          if (mcp.headers && Object.keys(mcp.headers).length > 0) {
+            mcpConfig.headers = mcp.headers;
+          }
+
+          if (mcp.env && Object.keys(mcp.env).length > 0) {
+            mcpConfig.env = mcp.env;
+          }
+
+          claudeJson.mcpServers[mcp.id] = mcpConfig;
+        }
+
+        fs.writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2));
+        return true;
+      } else if (targetType === 'codex') {
+        // Codex使用TOML格式，我们暂时不直接写入
+        // 需要后续处理Codex的MCP配置格式
+        // TODO: 实现 Codex MCP 配置写入
+        console.log('[MCP] Codex MCP配置写入暂未实现');
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      console.error('Failed to write MCP config:', error);
+      return false;
+    }
+  };
+
+  // 从配置中移除MCP
+  const removeMCPFromConfig = async (targetType: TargetType, mcpId: string): Promise<boolean> => {
+    try {
+      if (targetType === 'claude-code') {
+        const homeDir = os.homedir();
+        const claudeJsonPath = path.join(homeDir, '.claude.json');
+
+        if (!fs.existsSync(claudeJsonPath)) {
+          return true;
+        }
+
+        const claudeJson: any = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8'));
+
+        if (claudeJson.mcpServers && claudeJson.mcpServers[mcpId]) {
+          delete claudeJson.mcpServers[mcpId];
+          fs.writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2));
+        }
+
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      console.error('Failed to remove MCP from config:', error);
+      return false;
+    }
+  };
 
 };
 

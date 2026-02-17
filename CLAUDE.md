@@ -54,7 +54,7 @@ aicos start              # Start the proxy server
 aicos stop               # Stop the proxy server
 aicos restart            # Restart the proxy server
 aicos ui                 # Open web UI in browser (starts server if needed)
-aicos update             # Update to the latest version and restart
+aicos upgrade            # Upgrade to the latest version and restart
 aicos restore            # Restore original configuration files
 aicos version            # Show current version information
 ```
@@ -165,6 +165,20 @@ aicos version            # Show current version information
   - Finish reason mapping (STOP/MAX_TOKENS/SAFETY ↔ end_turn/max_tokens/content_filter)
 - **chunk-collector.ts**: Collects streaming chunks for logging
 
+#### 4. MCP Image Handler - `server/mcp-image-handler.ts`
+- **Purpose**: Handle image-understanding requests using MCP tools
+- **Key Features**:
+  - Extracts images from request messages (supports both Claude and OpenAI formats)
+  - Saves images to temporary files (`/tmp/aicodeswitch-images/`)
+  - Constructs MCP-compatible messages with local file path references
+  - Automatically cleans up temporary files after request completion
+- **Functions**:
+  - `extractImagesFromMessages()`: Extracts all images from message array
+  - `saveImageToTempFile()`: Saves base64 encoded images to temporary files
+  - `constructMCPMessages()`: Replaces image content blocks with local file path references
+  - `cleanupTempImages()`: Removes temporary image files
+  - `isRuleUsingMCP()`: Checks if a rule is configured to use MCP for image understanding
+
 **API 转换功能**：
 转换器实现了以下 API 格式之间的双向转换：
 - **Claude Messages API** ↔ **OpenAI Chat Completions API**
@@ -181,7 +195,7 @@ aicos version            # Show current version information
 - 思考内容 (thinking ↔ reasoning/thinking)
 - 系统提示词 (system - 支持字符串和数组格式)
 
-#### 4. Database - `server/fs-database.ts`
+#### 5. Database - `server/fs-database.ts`
 - **FileSystemDatabaseManager**: Pure JSON file-based storage (no database dependencies)
 - **DatabaseFactory** (`server/database-factory.ts`): Auto-detects database type and handles migration
 - **Migration Tool** (`server/migrate-to-fs.ts`): Migrates data from SQLite/LevelDB to JSON files
@@ -194,6 +208,7 @@ aicos version            # Show current version information
   - `logs.json` - Request logs
   - `error-logs.json` - Error logs
   - `blacklist.json` - Service blacklist entries
+  - `mcps.json` - MCP (Model Context Protocol) tools
 
 **Data Structure**:
 - Vendors contain nested services array: `vendors[{ id, name, services: [{ id, name, apiUrl, ... }], ... }]`
@@ -220,7 +235,7 @@ aicos version            # Show current version information
   - Backing up old services.json to `services.json.backup.{timestamp}`
   - Saving new vendors.json with nested services
 
-#### 5. UI (React) - `ui/`
+#### 6. UI (React) - `ui/`
 - Main app: `App.tsx` - Navigation and layout with collapsible sidebar
 - Components:
   - `Tooltip.tsx` - Tooltip component for displaying menu text when sidebar is collapsed
@@ -231,6 +246,7 @@ aicos version            # Show current version information
 - Pages:
   - `VendorsPage.tsx` - Manage AI service vendors
   - `SkillsPage.tsx` - Manage global Skills and discovery
+  - `MCPPage.tsx` - Manage MCP (Model Context Protocol) tools
   - `RoutesPage.tsx` - Configure routing rules
   - `LogsPage.tsx` - View request/access/error logs
   - `SettingsPage.tsx` - Application settings
@@ -240,20 +256,20 @@ aicos version            # Show current version information
   - `App.css` - Main application styles with sidebar collapse animations
   - `Tooltip.css` - Tooltip component styles
 
-#### 6. CLI - `bin/`
+#### 7. CLI - `bin/`
 - `cli.js` - Main CLI entry point
 - `start.js` - Server startup with PID management
 - `stop.js` - Server shutdown
 - `restart.js` - Restart server
 
-#### 7. Types - `types/`
+#### 8. Types - `types/`
 - TypeScript type definitions for:
   - Database models (Vendors, Services, Routes, Rules)
   - API requests/responses
   - Configuration
   - Token usage tracking
 
-#### 8. Tauri Desktop Application - `tauri/`
+#### 9. Tauri Desktop Application - `tauri/`
 - **src/main.rs**: Tauri main process (Rust)
   - Node.js process lifecycle management
   - Server startup/shutdown commands
@@ -276,6 +292,10 @@ aicos version            # Show current version information
 - **Rules**: Match requests by content type and route to specific API services
 - **Content Type Detection**:
   - `image-understanding`: Requests with image content
+    - 支持使用 MCP 工具处理图像理解请求
+    - 开启 MCP 后，图片会被提取并保存到临时文件
+    - 请求消息中的图片引用会被替换为本地文件路径
+    - MCP 工具会自动识别并处理本地图片
   - `thinking`: Requests with reasoning/thinking signals
   - `long-context`: Requests with large context (≥12000 chars or ≥8000 max tokens)
   - `background`: Background/priority requests, including `/count_tokens` endpoint requests and token counting requests with `{"role": "user", "content": "count"}`
@@ -313,6 +333,17 @@ aicos version            # Show current version information
 ### Skills Management
 - Lists global Skills for Claude Code and Codex
 - Provides discovery search (discover/return toggle button) and installs Skills into target tool directories
+
+### MCP Management
+- Lists and manages Model Context Protocol (MCP) tools
+- Supports three types: stdio, http, sse
+- Allows configuration of command, URL, headers, and environment variables
+- One-click installation for GLM MCP tools (Vision, Web Search, Web Reader, ZRead)
+- Configures MCPs to target tools (Claude Code, Codex)
+- **MCP Configuration Sync**: When a route is activated, MCP tools are automatically written to the target tool's global configuration file
+  - For Claude Code: Writes to `~/.claude.json` under `mcpServers`
+  - For Codex: Configuration support planned
+  - MCPs are only written when there are active routes with enabled targets
 
 ### Logging
 - Request logs: Detailed API call records with token usage

@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 3.4.0 (2026-02-16)
+
+#### Features
+* 日志模块新增内容搜索功能
+  - 请求日志支持通过内容关键词搜索（请求体、响应体、流式响应、错误信息、路径、模型名）
+  - 错误日志支持通过内容关键词搜索（错误信息、错误堆栈、请求体、响应体、路径、模型名）
+  - 新增搜索 API 端点：`/api/logs/search` 和 `/api/error-logs/search`
+  - 前端日志页面添加搜索输入框，支持回车键触发搜索
+* 新增 MCP 管理模块
+  - 支持添加、编辑、删除 MCP 工具
+  - 支持三种 MCP 类型：stdio、http、sse
+  - 支持配置命令、URL、请求头、环境变量等参数
+  - 支持为 Claude Code 和 Codex 分别启用 MCP
+  - 新增一键安装 GLM MCP 工具（视觉理解、联网搜索、网页读取、开源仓库）
+  - 一键安��弹层中自动标记已安装的 MCP 工具，防止重复安装
+* MCP 配置自动同步
+  - 激活路由时，自动将启用的 MCP 写入目标工具的全局配置文件
+  - 仅在有激活路由且该目标有启用的 MCP 时才执行写入
+* 图像理解路由规则支持 MCP
+  - 为"图像理解"类型的路由规则新增"使用MCP"开关
+  - 开启后可选择已配置的 MCP 工具处理图像理解请求
+  - 后端自动提取图片并保存到临时文件，修改请求消息为本地路径引用
+  - 消息中明确指示 Agent 使用指定的 MCP 工具处理图片
+  - 提供 MCP 工具详细信息（名称、类型、说明）引导 Agent 主动调用
+  - 支持自动清理临时图片文件
+  - 规则列表中展示 MCP 工具信息
+  - 新增详细的 MCP 诊断日志，帮助排查 MCP 未触发的原因
+  - 日志包含规则配置检查、MCP 可用性验证、图片提取过程等详细信息
+  - 所有诊断日志以 `[MCP-DIAG]` 前缀标记，便于在 server.log 中筛选
+  - 新增降级机制：当 MCP 不可用时自动降级到默认图像处理逻辑
+  - 降级条件包括：mcpId 缺失、MCP 未注册、图片处理失败
+  - 确保请求不会因 MCP 问题而失败
+* 数据库新增 mcps.json 文件存储 MCP 工具配置
+
 ### 3.3.2 (2026-02-15)
 
 #### Fixes

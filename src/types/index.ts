@@ -133,6 +133,8 @@ export interface Rule {
   requestLastResetAt?: number;   // 上次次数重置时间戳
   requestResetBaseTime?: number; // 下一次重置的时间基点（Unix时间戳）
   isDisabled?: boolean;          // 是否临时屏蔽该规则
+  useMCP?: boolean;              // 是否使用MCP（仅适用于图像理解）
+  mcpId?: string;                // MCP工具ID（仅当useMCP为true时）
   createdAt: number;
   updatedAt: number;
 }
@@ -388,4 +390,40 @@ export interface InstallToolRequest {
 export interface InstallToolResponse {
   success: boolean;
   message?: string;
+}
+
+/** MCP 工具类型 */
+export interface MCPServer {
+  id: string;
+  name: string;
+  description?: string;
+  type: 'stdio' | 'http' | 'sse';
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  env?: Record<string, string>;
+  targets?: TargetType[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** MCP 工具安装请求 */
+export interface MCPInstallRequest {
+  name: string;
+  description?: string;
+  type: 'stdio' | 'http' | 'sse';
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  env?: Record<string, string>;
+  targets?: TargetType[];
+}
+
+/** MCP 工具启用/禁用请求 */
+export interface MCPEnableRequest {
+  mcpId: string;
+  target: TargetType;
+  enabled: boolean;
 }

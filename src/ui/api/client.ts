@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -42,10 +42,14 @@ interface BackendAPI {
   getLogs: (limit: number, offset: number) => Promise<RequestLog[]>;
   clearLogs: () => Promise<boolean>;
   getLogsCount: () => Promise<{ count: number }>;
+  searchLogs: (query: string, limit: number, offset: number) => Promise<RequestLog[]>;
+  searchLogsCount: (query: string) => Promise<{ count: number }>;
 
   getErrorLogs: (limit: number, offset: number) => Promise<ErrorLog[]>;
   clearErrorLogs: () => Promise<boolean>;
   getErrorLogsCount: () => Promise<{ count: number }>;
+  searchErrorLogs: (query: string, limit: number, offset: number) => Promise<ErrorLog[]>;
+  searchErrorLogsCount: (query: string) => Promise<{ count: number }>;
 
   getStatistics: (days?: number) => Promise<Statistics>;
   resetStatistics: () => Promise<boolean>;
@@ -119,6 +123,13 @@ interface BackendAPI {
     onClose?: (code: number | null, success: boolean) => void;
     onError?: (error: string) => void;
   }) => (() => void) & { sendInput?: (input: string) => void }; // 返回取消函数和发送输入函数
+
+  // MCP 工具管理相关
+  getMCPs: () => Promise<MCPServer[]>;
+  getMCP: (id: string) => Promise<MCPServer | null>;
+  createMCP: (mcp: MCPInstallRequest) => Promise<MCPServer>;
+  updateMCP: (id: string, mcp: Partial<MCPServer>) => Promise<boolean>;
+  deleteMCP: (id: string) => Promise<boolean>;
 }
 
 const buildUrl = (
@@ -233,6 +244,11 @@ export const api: BackendAPI = {
   getLogsCount: () => requestJson<{ count: number }>(buildUrl('/api/logs/count')),
   getErrorLogsCount: () => requestJson<{ count: number }>(buildUrl('/api/error-logs/count')),
 
+  searchLogs: (query, limit, offset) => requestJson(buildUrl('/api/logs/search', { query, limit, offset })),
+  searchLogsCount: (query) => requestJson<{ count: number }>(buildUrl('/api/logs/search/count', { query })),
+  searchErrorLogs: (query, limit, offset) => requestJson(buildUrl('/api/error-logs/search', { query, limit, offset })),
+  searchErrorLogsCount: (query) => requestJson<{ count: number }>(buildUrl('/api/error-logs/search/count', { query })),
+
   getStatistics: (days = 30) => requestJson(buildUrl('/api/statistics', { days })),
   resetStatistics: () => requestJson(buildUrl('/api/statistics'), { method: 'DELETE' }),
 
@@ -321,6 +337,21 @@ export const api: BackendAPI = {
 
   // 工具安装相关
   getToolsStatus: () => requestJson<ToolInstallationStatus>(buildUrl('/api/tools/status')),
+
+  // MCP 工具管理相关
+  getMCPs: () => requestJson<MCPServer[]>(buildUrl('/api/mcps')),
+  getMCP: (id: string) => requestJson<MCPServer | null>(buildUrl(`/api/mcps/${id}`)),
+  createMCP: (mcp: MCPInstallRequest) => requestJson<MCPServer>(buildUrl('/api/mcps'), {
+    method: 'POST',
+    body: JSON.stringify(mcp)
+  }),
+  updateMCP: (id: string, mcp: Partial<MCPServer>) => requestJson<boolean>(buildUrl(`/api/mcps/${id}`), {
+    method: 'PUT',
+    body: JSON.stringify(mcp)
+  }),
+  deleteMCP: (id: string) => requestJson<boolean>(buildUrl(`/api/mcps/${id}`), {
+    method: 'DELETE'
+  }),
   installTool: (tool, callbacks) => {
     console.log('[API Client] 开始安装工具:', tool);
 

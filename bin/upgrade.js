@@ -29,7 +29,7 @@ const getLatestVersion = () => {
       path: `/${PACKAGE_NAME}`,
       method: 'GET',
       headers: {
-        'User-Agent': 'aicodeswitch-update'
+        'User-Agent': 'aicodeswitch-upgrade'
       }
     };
 
@@ -142,8 +142,8 @@ const compareVersions = (v1, v2) => {
   return 0;
 };
 
-// 主更新逻辑
-const update = async () => {
+// 主升级逻辑
+const upgrade = async () => {
   console.log('\n');
 
   const currentVersion = getCurrentVersion();
@@ -180,8 +180,8 @@ const update = async () => {
   } catch (err) {
     checkSpinner.fail(chalk.red('Failed to check for updates'));
     console.log(chalk.yellow(`\nError: ${err.message}\n`));
-    console.log(chalk.white('You can manually update by running:\n'));
-    console.log(chalk.cyan('  npm update -g aicodeswitch\n'));
+    console.log(chalk.white('You can manually upgrade by running:\n'));
+    console.log(chalk.cyan('  npm install -g aicodeswitch\n'));
     process.exit(1);
   }
 
@@ -212,7 +212,7 @@ const update = async () => {
     chalk.yellow.bold('⬆️  New version available!\n\n') +
     chalk.white('Current: ') + chalk.gray(currentVersion) + '\n' +
     chalk.white('Latest:  ') + chalk.green.bold(latestVersion) + '\n\n' +
-    chalk.gray('Preparing to update...'),
+    chalk.gray('Preparing to upgrade...'),
     {
       padding: 1,
       margin: 1,
@@ -230,9 +230,9 @@ const update = async () => {
     console.log(boxen(
       chalk.yellow.bold('⚠️  Sudo privileges required\n\n') +
       chalk.white('This operation requires ') + chalk.yellow.bold('sudo') + chalk.white(' privileges.\n\n') +
-      chalk.white('Please run the following command to update:\n\n') +
+      chalk.white('Please run the following command to upgrade:\n\n') +
       chalk.cyan.bold('  sudo npm install -g ' + PACKAGE_NAME + '@latest\n\n') +
-      chalk.gray('After updating, run ') + chalk.cyan('aicos restart') + chalk.gray(' to restart the server.'),
+      chalk.gray('After upgrading, run ') + chalk.cyan('aicos restart') + chalk.gray(' to restart the server.'),
       {
         padding: 1,
         margin: 1,
@@ -244,26 +244,26 @@ const update = async () => {
     process.exit(0);
   }
 
-  // 执行更新
-  const updateSpinner = ora({
-    text: chalk.cyan('Updating to latest version...'),
+  // 执行升级
+  const upgradeSpinner = ora({
+    text: chalk.cyan('Upgrading to latest version...'),
     color: 'cyan'
   }).start();
 
   try {
     await execCommand('npm', ['install', '-g', `${PACKAGE_NAME}@latest`]);
-    updateSpinner.succeed(chalk.green('Update successful!'));
+    upgradeSpinner.succeed(chalk.green('Upgrade successful!'));
   } catch (err) {
-    updateSpinner.fail(chalk.red('Update failed'));
-    console.log(chalk.yellow(`\nUpdate failed with error code ${err.code || 'unknown'}\n`));
-    console.log(chalk.white('You can try manually updating:\n'));
+    upgradeSpinner.fail(chalk.red('Upgrade failed'));
+    console.log(chalk.yellow(`\nUpgrade failed with error code ${err.code || 'unknown'}\n`));
+    console.log(chalk.white('You can try manually upgrading:\n'));
     console.log(chalk.cyan(`  npm install -g ${PACKAGE_NAME}@latest\n`));
     process.exit(1);
   }
 
   console.log('');
   console.log(boxen(
-    chalk.green.bold('✓ Successfully updated!\n\n') +
+    chalk.green.bold('✓ Successfully upgraded!\n\n') +
     chalk.white('Previous version: ') + chalk.gray(currentVersion) + '\n' +
     chalk.white('New version:     ') + chalk.green.bold(latestVersion),
     {
@@ -280,4 +280,4 @@ const update = async () => {
   console.log('\n');
 };
 
-module.exports = update;
+module.exports = upgrade;

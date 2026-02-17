@@ -10,6 +10,7 @@ import WriteConfigPage from './pages/WriteConfigPage';
 import UsagePage from './pages/UsagePage';
 import StatisticsPage from './pages/StatisticsPage';
 import SkillsPage from './pages/SkillsPage';
+import MCPPage from './pages/MCPPage';
 import { ToastContainer } from './components/Toast';
 import { ConfirmProvider } from './components/Confirm';
 import ToolsInstallModal from './components/ToolsInstallModal';
@@ -400,6 +401,11 @@ function AppContent() {
             </NavItemWithTooltip>
           </li>
           <li>
+            <NavItemWithTooltip text="MCP 管理" showTooltip={sidebarCollapsed}>
+              <NavLink to="/mcp"><span className="nav-icon">🧰</span><span className="nav-text">MCP 管理</span></NavLink>
+            </NavItemWithTooltip>
+          </li>
+          <li>
             <NavItemWithTooltip text="数据统计" showTooltip={sidebarCollapsed}>
               <NavLink to="/statistics"><span className="nav-icon">📊</span><span className="nav-text">数据统计</span></NavLink>
             </NavItemWithTooltip>
@@ -466,6 +472,7 @@ function AppContent() {
             <Route path="/routes" element={<RouteGroupsPage />} />
             <Route path="/vendors" element={<VendorsPage />} />
             <Route path="/skills" element={<SkillsPage />} />
+            <Route path="/mcp" element={<MCPPage />} />
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/write-config" element={<WriteConfigPage />} />
             <Route path="/settings" element={<SettingsPage />} />
@@ -623,7 +630,7 @@ function AppContent() {
                       fontSize: '13px',
                       color: 'var(--accent-danger)'
                     }}>
-                      npm i -g aicodeswitch
+                      npm i -g aicodeswitch@latest
                     </code>
                   </div>
                 )}

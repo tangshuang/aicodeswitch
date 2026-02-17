@@ -17,6 +17,8 @@ import type {
   Session,
   ImportResult,
   ImportPreview,
+  MCPServer,
+  TargetType,
 } from '../types';
 
 interface LogShardIndex {
@@ -42,6 +44,7 @@ export class FileSystemDatabaseManager {
   private logShardsIndex: LogShardIndex[] = [];
   private errorLogs: ErrorLog[] = [];
   private blacklist: Map<string, ServiceBlacklistEntry> = new Map();
+  private mcps: MCPServer[] = [];
 
   // 持久化统计数据
   private statistics: Statistics = this.createEmptyStatistics();
@@ -69,6 +72,7 @@ export class FileSystemDatabaseManager {
   private get errorLogsFile() { return path.join(this.dataPath, 'error-logs.json'); }
   private get blacklistFile() { return path.join(this.dataPath, 'blacklist.json'); }
   private get statisticsFile() { return path.join(this.dataPath, 'statistics.json'); }
+  private get mcpFile() { return path.join(this.dataPath, 'mcps.json'); }
 
   // 创建空的统计数据结构
   private createEmptyStatistics(): Statistics {
@@ -126,6 +130,7 @@ export class FileSystemDatabaseManager {
       this.loadErrorLogs(),
       this.loadBlacklist(),
       this.loadStatistics(),
+      this.loadMCPs(),
     ]);
   }
 
@@ -601,6 +606,19 @@ export class FileSystemDatabaseManager {
 
   private async saveStatistics() {
     await fs.writeFile(this.statisticsFile, JSON.stringify(this.statistics, null, 2));
+  }
+
+  private async loadMCPs() {
+    try {
+      const data = await fs.readFile(this.mcpFile, 'utf-8');
+      this.mcps = JSON.parse(data);
+    } catch {
+      this.mcps = [];
+    }
+  }
+
+  private async saveMCPs() {
+    await fs.writeFile(this.mcpFile, JSON.stringify(this.mcps, null, 2));
   }
 
   private async ensureDefaultConfig() {
@@ -1261,6 +1279,111 @@ export class FileSystemDatabaseManager {
     return count;
   }
 
+  /**
+   * 搜索请求日志内容
+   * @param query 搜索关键词
+   * @param limit 返回��量限制
+   * @param offset 偏移量
+   * @returns 匹配的日志列表
+   */
+  async searchLogs(query: string, limit: number = 100, offset: number = 0): Promise<RequestLog[]> {
+    const searchQuery = query.toLowerCase().trim();
+    if (!searchQuery) {
+      return this.getLogs(limit, offset);
+    }
+
+    const allMatches: RequestLog[] = [];
+    const sortedShards = [...this.logShardsIndex].sort((a, b) => b.endTime - a.endTime);
+
+    // 遍历所有分片进行搜索
+    for (const shard of sortedShards) {
+      const shardLogs = await this.loadLogShard(shard.filename);
+
+      for (const log of shardLogs) {
+        if (this.logMatchesQuery(log, searchQuery)) {
+          allMatches.push(log);
+        }
+      }
+    }
+
+    // 按时间倒序排列并分页
+    return allMatches
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(offset, offset + limit);
+  }
+
+  /**
+   * 搜索请求日志内容数量
+   * @param query 搜索关键词
+   * @returns 匹配的日志数量
+   */
+  async searchLogsCount(query: string): Promise<number> {
+    const searchQuery = query.toLowerCase().trim();
+    if (!searchQuery) {
+      return this.getLogsCount();
+    }
+
+    let count = 0;
+    for (const shard of this.logShardsIndex) {
+      const shardLogs = await this.loadLogShard(shard.filename);
+      for (const log of shardLogs) {
+        if (this.logMatchesQuery(log, searchQuery)) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }
+
+  /**
+   * 检查日志是否匹配搜索查询
+   */
+  private logMatchesQuery(log: RequestLog, query: string): boolean {
+    // 搜索请求体
+    if (log.body) {
+      const bodyStr = typeof log.body === 'string' ? log.body : JSON.stringify(log.body);
+      if (bodyStr.toLowerCase().includes(query)) {
+        return true;
+      }
+    }
+
+    // 搜索响应体
+    if (log.responseBody && typeof log.responseBody === 'string') {
+      if (log.responseBody.toLowerCase().includes(query)) {
+        return true;
+      }
+    }
+
+    // 搜索流式响应块
+    if (log.streamChunks && log.streamChunks.length > 0) {
+      for (const chunk of log.streamChunks) {
+        if (chunk.toLowerCase().includes(query)) {
+          return true;
+        }
+      }
+    }
+
+    // 搜索错误信息
+    if (log.error && log.error.toLowerCase().includes(query)) {
+      return true;
+    }
+
+    // 搜索路径
+    if (log.path && log.path.toLowerCase().includes(query)) {
+      return true;
+    }
+
+    // 搜索模型名称
+    if (log.requestModel && log.requestModel.toLowerCase().includes(query)) {
+      return true;
+    }
+    if (log.targetModel && log.targetModel.toLowerCase().includes(query)) {
+      return true;
+    }
+
+    return false;
+  }
+
   // Error log operations
   async addErrorLog(log: Omit<ErrorLog, 'id'>): Promise<void> {
     const id = crypto.randomUUID();
@@ -1287,6 +1410,85 @@ export class FileSystemDatabaseManager {
     const count = this.errorLogs.length;
     this.errorLogsCountCache = { count, timestamp: now };
     return count;
+  }
+
+  /**
+   * 搜索错误日志内容
+   * @param query 搜索关键词
+   * @param limit 返回数量限制
+   * @param offset 偏移量
+   * @returns 匹配的错误日志列表
+   */
+  async searchErrorLogs(query: string, limit: number = 100, offset: number = 0): Promise<ErrorLog[]> {
+    const searchQuery = query.toLowerCase().trim();
+    if (!searchQuery) {
+      return this.getErrorLogs(limit, offset);
+    }
+
+    const matches = this.errorLogs.filter(log => this.errorLogMatchesQuery(log, searchQuery));
+    return matches
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(offset, offset + limit);
+  }
+
+  /**
+   * 搜索错误日志内容数量
+   * @param query 搜索关键词
+   * @returns 匹配的错误日志数量
+   */
+  async searchErrorLogsCount(query: string): Promise<number> {
+    const searchQuery = query.toLowerCase().trim();
+    if (!searchQuery) {
+      return this.getErrorLogsCount();
+    }
+
+    return this.errorLogs.filter(log => this.errorLogMatchesQuery(log, searchQuery)).length;
+  }
+
+  /**
+   * 检查错误日志是否匹配搜索查询
+   */
+  private errorLogMatchesQuery(log: ErrorLog, query: string): boolean {
+    // 搜索错误信息
+    if (log.errorMessage && log.errorMessage.toLowerCase().includes(query)) {
+      return true;
+    }
+
+    // 搜索错误堆栈
+    if (log.errorStack && log.errorStack.toLowerCase().includes(query)) {
+      return true;
+    }
+
+    // 搜索请求体
+    if (log.requestBody) {
+      const bodyStr = typeof log.requestBody === 'string' ? log.requestBody : JSON.stringify(log.requestBody);
+      if (bodyStr.toLowerCase().includes(query)) {
+        return true;
+      }
+    }
+
+    // 搜索响应体
+    if (log.responseBody) {
+      const bodyStr = typeof log.responseBody === 'string' ? log.responseBody : JSON.stringify(log.responseBody);
+      if (bodyStr.toLowerCase().includes(query)) {
+        return true;
+      }
+    }
+
+    // 搜索路径
+    if (log.path && log.path.toLowerCase().includes(query)) {
+      return true;
+    }
+
+    // 搜索模型名称
+    if (log.requestModel && log.requestModel.toLowerCase().includes(query)) {
+      return true;
+    }
+    if (log.targetModel && log.targetModel.toLowerCase().includes(query)) {
+      return true;
+    }
+
+    return false;
   }
 
   // Service blacklist operations
@@ -1463,12 +1665,21 @@ export class FileSystemDatabaseManager {
     if (!rule.routeId || typeof rule.routeId !== 'string') {
       return { valid: false, error: `规则[${index}](${rule.id}) 缺少有效的 routeId 字段` };
     }
-    if (!rule.targetServiceId || typeof rule.targetServiceId !== 'string') {
-      return { valid: false, error: `规则[${index}](${rule.id}) 缺少有效的 targetServiceId 字段` };
-    }
     const validContentTypes = ['default', 'background', 'thinking', 'long-context', 'image-understanding', 'model-mapping'];
     if (!rule.contentType || !validContentTypes.includes(rule.contentType)) {
       return { valid: false, error: `规则[${index}](${rule.id}) 的 contentType 无效` };
+    }
+
+    // 如果使用MCP（仅对图像理解类型有效），则不需要验证targetServiceId
+    if (rule.useMCP === true && rule.contentType === 'image-understanding') {
+      if (!rule.mcpId || typeof rule.mcpId !== 'string') {
+        return { valid: false, error: `规则[${index}](${rule.id}) 使用MCP时缺少有效的 mcpId 字段` };
+      }
+    } else {
+      // 不使用MCP时，必须验证targetServiceId
+      if (!rule.targetServiceId || typeof rule.targetServiceId !== 'string') {
+        return { valid: false, error: `规则[${index}](${rule.id}) 缺少有效的 targetServiceId 字段` };
+      }
     }
     return { valid: true };
   }
@@ -2119,6 +2330,57 @@ export class FileSystemDatabaseManager {
     }
 
     return entry;
+  }
+
+  // MCP 工具相关操作
+  getMCPs(): MCPServer[] {
+    return this.mcps.sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  getMCP(id: string): MCPServer | undefined {
+    return this.mcps.find(m => m.id === id);
+  }
+
+  getMCPsByTarget(targetType: TargetType): MCPServer[] {
+    return this.mcps.filter(m => m.targets?.includes(targetType));
+  }
+
+  async createMCP(mcp: Omit<MCPServer, 'id' | 'createdAt' | 'updatedAt'>): Promise<MCPServer> {
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    const newMCP: MCPServer = {
+      ...mcp,
+      id,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.mcps.push(newMCP);
+    await this.saveMCPs();
+    return newMCP;
+  }
+
+  async updateMCP(id: string, mcp: Partial<MCPServer>): Promise<boolean> {
+    const index = this.mcps.findIndex(m => m.id === id);
+    if (index === -1) return false;
+
+    const now = Date.now();
+    this.mcps[index] = {
+      ...this.mcps[index],
+      ...mcp,
+      id,
+      updatedAt: now,
+    };
+    await this.saveMCPs();
+    return true;
+  }
+
+  async deleteMCP(id: string): Promise<boolean> {
+    const index = this.mcps.findIndex(m => m.id === id);
+    if (index === -1) return false;
+
+    this.mcps.splice(index, 1);
+    await this.saveMCPs();
+    return true;
   }
 
   // Close method for compatibility (no-op for filesystem database)

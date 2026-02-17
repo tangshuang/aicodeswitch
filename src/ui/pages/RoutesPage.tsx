@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
-import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry } from '../../types';
+import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry, MCPServer } from '../../types';
 import { useFlipAnimation } from '../hooks/useFlipAnimation';
 import { useConfirm } from '../components/Confirm';
 import { toast } from '../components/Toast';
@@ -68,6 +68,7 @@ export default function RoutesPage() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [allServices, setAllServices] = useState<APIService[]>([]);
   const [services, setServices] = useState<APIService[]>([]);
+  const [mcps, setMCPs] = useState<MCPServer[]>([]);
   const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
   const [showRouteModal, setShowRouteModal] = useState(false);
   const [showRuleModal, setShowRuleModal] = useState(false);
@@ -95,6 +96,8 @@ export default function RoutesPage() {
     isBlacklisted: boolean;
     blacklistEntry?: ServiceBlacklistEntry;
   }>>({});
+  const [useMCP, setUseMCP] = useState<boolean>(false);
+  const [selectedMCPId, setSelectedMCPId] = useState<string>('');
 
   // 超量配置展开状态
   const [showTokenLimit, setShowTokenLimit] = useState(false);
@@ -121,6 +124,7 @@ export default function RoutesPage() {
     loadRoutes();
     loadVendors();
     loadAllServices();
+    loadMCPs();
     checkBackupStatus();
   }, []);
 
@@ -194,6 +198,11 @@ export default function RoutesPage() {
   const loadAllServices = async () => {
     const data = await api.getAPIServices();
     setAllServices(data);
+  };
+
+  const loadMCPs = async () => {
+    const data = await api.getMCPs();
+    setMCPs(data);
   };
 
   const checkBackupStatus = async () => {
@@ -369,13 +378,25 @@ export default function RoutesPage() {
   const handleSaveRule = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
+    // 如果使用MCP，验证必须选择MCP
+    if (selectedContentType === 'image-understanding' && useMCP && !selectedMCPId) {
+      toast.warning('请选择一个MCP工具');
+      return;
+    }
+
+    // 如果不使用MCP，验证必须选择服务
+    if (!useMCP && !selectedService) {
+      toast.warning('请选择供应商API服务');
+      return;
+    }
+
     // 验证超量值不超过API服务的限制
-    if (selectedTokenLimit !== undefined && maxTokenLimit !== undefined && selectedTokenLimit > maxTokenLimit) {
+    if (!useMCP && selectedTokenLimit !== undefined && maxTokenLimit !== undefined && selectedTokenLimit > maxTokenLimit) {
       toast.warning(`Token超量值 (${selectedTokenLimit}k) 不能超过API服务的限制 (${maxTokenLimit}k)`);
       return;
     }
 
-    if (selectedRequestCountLimit !== undefined && maxRequestCountLimit !== undefined && selectedRequestCountLimit > maxRequestCountLimit) {
+    if (!useMCP && selectedRequestCountLimit !== undefined && maxRequestCountLimit !== undefined && selectedRequestCountLimit > maxRequestCountLimit) {
       toast.warning(`请求次数超量值 (${selectedRequestCountLimit}) 不能超过API服务的限制 (${maxRequestCountLimit})`);
       return;
     }
@@ -384,17 +405,19 @@ export default function RoutesPage() {
     const rule = {
       routeId: selectedRoute!.id,
       contentType: formData.get('contentType') as ContentType,
-      targetServiceId: selectedService,
-      targetModel: selectedModel || undefined,
+      targetServiceId: useMCP ? '' : selectedService,
+      targetModel: useMCP ? undefined : (selectedModel || undefined),
       replacedModel: selectedReplacedModel || undefined,
       sortOrder: selectedSortOrder,
       timeout: selectedTimeout ? selectedTimeout * 1000 : undefined, // 转换为毫秒
-      tokenLimit: selectedTokenLimit || undefined, // k值（与Service保持一致）
-      resetInterval: selectedResetInterval,
-      tokenResetBaseTime: selectedTokenResetBaseTime ? selectedTokenResetBaseTime.getTime() : undefined,
-      requestCountLimit: selectedRequestCountLimit,
-      requestResetInterval: selectedRequestResetInterval,
-      requestResetBaseTime: selectedRequestResetBaseTime ? selectedRequestResetBaseTime.getTime() : undefined,
+      tokenLimit: useMCP ? undefined : (selectedTokenLimit || undefined), // k值（与Service保持一致）
+      resetInterval: useMCP ? undefined : selectedResetInterval,
+      tokenResetBaseTime: useMCP ? undefined : (selectedTokenResetBaseTime ? selectedTokenResetBaseTime.getTime() : undefined),
+      requestCountLimit: useMCP ? undefined : selectedRequestCountLimit,
+      requestResetInterval: useMCP ? undefined : selectedRequestResetInterval,
+      requestResetBaseTime: useMCP ? undefined : (selectedRequestResetBaseTime ? selectedRequestResetBaseTime.getTime() : undefined),
+      useMCP: selectedContentType === 'image-understanding' ? useMCP : false,
+      mcpId: (selectedContentType === 'image-understanding' && useMCP) ? selectedMCPId : undefined,
     };
 
     if (editingRule) {
@@ -478,6 +501,9 @@ export default function RoutesPage() {
   const handleEditRule = (rule: Rule) => {
     setEditingRule(rule);
     setSelectedContentType(rule.contentType);
+    setUseMCP(rule.useMCP || false);
+    setSelectedMCPId(rule.mcpId || '');
+
     const service = allServices.find(s => s.id === rule.targetServiceId);
     if (service) {
       if (service.vendorId) {
@@ -537,6 +563,16 @@ export default function RoutesPage() {
         setShowTokenLimit(!!rule.tokenLimit);
         setShowRequestLimit(!!rule.requestCountLimit);
       }, 0);
+    } else if (rule.useMCP) {
+      // 如果使用MCP，清空供应商相关字段
+      setSelectedVendor('');
+      setSelectedService('');
+      setSelectedModel('');
+      setSelectedReplacedModel('');
+      setSelectedSortOrder(rule.sortOrder || 0);
+      setSelectedTimeout(rule.timeout ? rule.timeout / 1000 : undefined);
+      setShowTokenLimit(false);
+      setShowRequestLimit(false);
     }
     setShowRuleModal(true);
   };
@@ -647,6 +683,8 @@ export default function RoutesPage() {
     setMaxRequestCountLimit(undefined);
     setShowTokenLimit(false);
     setShowRequestLimit(false);
+    setUseMCP(false);
+    setSelectedMCPId('');
     setShowRuleModal(true);
   };
 
@@ -850,9 +888,18 @@ export default function RoutesPage() {
                       </td>
                       <td>
                         <div className='vendor-sevices-col' style={{ fontSize: '0.6em' }}>
-                          <div>供应商：{vendor ? vendor.name : 'Unknown'}</div>
-                          <div>服务：{service ? service.name : 'Unknown'}</div>
-                          <div>模型：{rule.targetModel || '透传模型'}</div>
+                          {rule.useMCP ? (
+                            <>
+                              <div>MCP：{mcps.find(m => m.id === rule.mcpId)?.name || 'Unknown'}</div>
+                              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>使用MCP工具</div>
+                            </>
+                          ) : (
+                            <>
+                              <div>供应商：{vendor ? vendor.name : 'Unknown'}</div>
+                              <div>服务：{service ? service.name : 'Unknown'}</div>
+                              <div>模型：{rule.targetModel || '透传模型'}</div>
+                            </>
+                          )}
                         </div>
                       </td>
                       <td style={{ whiteSpace: 'nowrap' }}>
@@ -1229,19 +1276,88 @@ export default function RoutesPage() {
                 </div>
               )}
 
-              <div className="form-group">
-                <label>供应商</label>
-                <select
-                  value={selectedVendor}
-                  onChange={(e) => setSelectedVendor(e.target.value)}
-                  required
-                >
-                  <option value="" disabled>请选择供应商</option>
-                  {vendors.map(vendor => (
-                    <option key={vendor.id} value={vendor.id}>{vendor.name}</option>
-                  ))}
-                </select>
-              </div>
+              {/* 图像理解类型显示使用MCP开关 */}
+              {selectedContentType === 'image-understanding' && (
+                <div className="form-group">
+                  <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={useMCP}
+                      onChange={(e) => setUseMCP(e.target.checked)}
+                      style={{ marginRight: '8px', cursor: 'pointer', width: '16px', height: '16px' }}
+                    />
+                    <span>使用MCP</span>
+                  </label>
+                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                    开启后，将使用MCP工具处理图像理解请求，而不是直接调用API服务
+                  </small>
+                </div>
+              )}
+
+              {/* MCP选择列表（仅当图像理解+使用MCP时显示） */}
+              {selectedContentType === 'image-understanding' && useMCP && (
+                <div className="form-group">
+                  <label>选择MCP工具 <span className="required">*</span></label>
+                  <div style={{
+                    maxHeight: '300px',
+                    overflowY: 'auto',
+                    border: '1px solid var(--border-primary)',
+                    borderRadius: '6px',
+                    padding: '8px'
+                  }}>
+                    {mcps.length === 0 ? (
+                      <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                        暂无MCP工具，请先在MCP管理页面添加
+                      </div>
+                    ) : (
+                      mcps.map((mcp) => (
+                        <div
+                          key={mcp.id}
+                          onClick={() => setSelectedMCPId(mcp.id)}
+                          style={{
+                            padding: '12px',
+                            marginBottom: '8px',
+                            border: `2px solid ${selectedMCPId === mcp.id ? 'var(--primary-color)' : 'var(--border-primary)'}`,
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            backgroundColor: selectedMCPId === mcp.id ? 'var(--bg-info-blue)' : 'var(--bg-card)',
+                            transition: 'all 0.2s ease',
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ fontWeight: 600, fontSize: '14px' }}>{mcp.name}</div>
+                            <div className="badge badge-secondary" style={{ fontSize: '11px' }}>
+                              {mcp.type === 'stdio' ? '命令行' : mcp.type.toUpperCase()}
+                            </div>
+                          </div>
+                          {mcp.description && (
+                            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                              {mcp.description}
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 供应商相关字段（当不使用MCP时显示） */}
+              {!useMCP && (
+                <>
+                  <div className="form-group">
+                    <label>供应商</label>
+                    <select
+                      value={selectedVendor}
+                      onChange={(e) => setSelectedVendor(e.target.value)}
+                      required
+                    >
+                      <option value="" disabled>请选择供应商</option>
+                      {vendors.map(vendor => (
+                        <option key={vendor.id} value={vendor.id}>{vendor.name}</option>
+                      ))}
+                    </select>
+                  </div>
               <div className="form-group">
                 <label>供应商API服务</label>
                 <select
@@ -1534,6 +1650,8 @@ export default function RoutesPage() {
                       配合"请求次数自动重置间隔"使用，设置下一次重置的精确时间点。例如，每月1日0点重置（间隔720小时），或每周一0点重置（间隔168小时）。设置后，系统会基于此时间点自动计算后续重置周期
                     </small>
                   </div>
+                </>
+              )}
                 </>
               )}
 
