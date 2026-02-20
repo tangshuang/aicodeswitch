@@ -640,6 +640,42 @@ The Tauri build uses a **hybrid approach** that preserves the existing Node.js b
 - **Implementation**: Custom Yargs-like CLI
 - **Process Management**: Node.js child_process
 
+## CI/CD Pipeline
+
+### NPM 发布流程
+当 PR 合并到 main 分支时，自动触发 npm 发布：
+1. 运行 `npm run release` 创建版本 tag
+2. 发布到 npm registry
+3. 推送 tag 到 GitHub
+
+### Tauri 应用构建流程
+npm 发布成功后，自动触发 Tauri 应用构建：
+1. **触发条件**:
+   - "Publish To NPM" 工作流成功完成
+   - 或手动触发（可指定版本号）
+
+2. **构建矩阵**:
+   - **Linux**: Ubuntu 22.04 (x86_64)
+     - 输出: `.deb`, `.AppImage`
+   - **macOS**: (两个架构分别构建)
+     - Intel (x86_64): `.dmg`, `.app`
+     - Apple Silicon (aarch64): `.dmg`, `.app`
+   - **Windows**: Windows Latest (x86_64)
+     - 输出: `.msi`, `.exe` (NSIS)
+
+3. **发布到 GitHub Release**:
+   - 自动创建或更新 Release
+   - 上传所有平台的安装包
+   - 包含下载说明和系统要求
+
+4. **手动触发构建**:
+   - 在 GitHub Actions 页面选择 "Build and Release Tauri App"
+   - 可选：指定版本号（不指定则使用 package.json 中的版本）
+
+### 工作流文件
+- `.github/workflows/publish-to-npm.yaml` - NPM 发布
+- `.github/workflows/build-tauri.yaml` - Tauri 构建和发布
+
 ## Development
 
 * 使用yarn作为包管理器，请使用yarn安装依赖，使用yarn来运行脚本。
@@ -652,3 +688,4 @@ The Tauri build uses a **hybrid approach** that preserves the existing Node.js b
 * 禁止运行 dev:ui, dev:server, tauri:dev 等命令来进行测试。
 * 如果你需要创建文档，必须将文档放在 documents 目录下
 * 如果你需要创建测试脚本，必须将脚本文件放在 scripts 目录下
+* currentDate: Today's date is 2026-02-20.
