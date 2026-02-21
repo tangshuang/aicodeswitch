@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file. See [standa
   - **新流程**：PR 合并 → Tauri 构建 → npm 发布（创建 tag）
   - **修复**：自动触发时直接构建，不检查 tag 是否存在
   - **修复**：使用 `npx tauri build` 代替 `tauri-action`，适配自定义构建脚本
+  - **修复**：Linux 构建依赖从 libwebkit2gtk-4.0 升级到 4.1
   - 支持手动触发构建（可指定版本号）
   - 新增强制构建选项：允许为已发布的版本重新构建 Tauri 应用
   - 跨平台构建支持：Linux (deb/AppImage)、macOS (dmg/app - Intel 和 Apple Silicon)、Windows (msi/exe)
