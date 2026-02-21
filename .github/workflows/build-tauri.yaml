@@ -89,7 +89,7 @@ jobs:
             arch: x64
             target: x86_64-unknown-linux-gnu
             args: ""
-            bundle: "deb appimage"
+            bundle: "deb"  # 暂时只构建 deb，AppImage 在 CI 环境中有问题
           - os: macos-latest
             platform: macos
             arch: aarch64
@@ -185,7 +185,6 @@ jobs:
           name: tauri-linux
           path: |
             tauri/target/release/bundle/deb/*.deb
-            tauri/target/release/bundle/appimage/*.AppImage
 
       - name: Rename macOS artifacts
         if: matrix.os == 'macos-latest'
@@ -269,7 +268,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.dmg" -o -name "*.zip" -o -name "*.msi" -o -name "*.exe" \) -exec cp {} release-assets/ \;
+          find artifacts -type f \( -name "*.deb" -o -name "*.dmg" -o -name "*.zip" -o -name "*.msi" -o -name "*.exe" \) -exec cp {} release-assets/ \;
 
       - name: Display structure of downloaded files
         run: ls -la release-assets/
@@ -296,7 +295,12 @@ jobs:
 
             ### Linux
             - `.deb` - Debian/Ubuntu 软件包
-            - `.AppImage` - 通用 Linux 可执行文件
+            - **注意**：AppImage 暂时不可用，请使用 DEB 包或从源码构建
+
+            **安装 DEB 包**：
+            ```bash
+            sudo dpkg -i AI\ Code\ Switch_*_amd64.deb
+            ```
 
             ## 系统要求
             - **Node.js**: 必须预先安装 Node.js 18.0.0 或更高版本

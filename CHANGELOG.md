@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file. See [standa
   - **修复**：Linux AppImage 构建添加缺失的 GStreamer 依赖
   - **修复**：Linux 添加 libunwind-dev 依赖解决 GStreamer 安装问题
   - **修复**：Windows 构建日志命令使用 bash 兼容语法
+  - **临时调整**：Linux 暂时仅构建 DEB 包，跳过不稳定的 AppImage 构建
   - 支持手动触发构建（可指定版本号）
   - 新增强制构建选项：允许为已发布的版本重新构建 Tauri 应用
   - 跨平台构建支持：Linux (deb/AppImage)、macOS (dmg/app - Intel 和 Apple Silicon)、Windows (msi/exe)
