@@ -13,6 +13,8 @@ All notable changes to this project will be documented in this file. See [standa
   - **修复**：Linux 构建依赖从 libwebkit2gtk-4.0 升级到 4.1
   - **改进**：macOS 构建添加更详细的错误日志和目录检查
   - **修复**：Linux AppImage 构建添加缺失的 GStreamer 依赖
+  - **修复**：Linux 添加 libunwind-dev 依赖解决 GStreamer 安装问题
+  - **修复**：Windows 构建日志命令使用 bash 兼容语法
   - 支持手动触发构建（可指定版本号）
   - 新增强制构建选项：允许为已发布的版本重新构建 Tauri 应用
   - 跨平台构建支持：Linux (deb/AppImage)、macOS (dmg/app - Intel 和 Apple Silicon)、Windows (msi/exe)

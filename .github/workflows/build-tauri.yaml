@@ -151,6 +151,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             librsvg2-bin \
+            libunwind-dev \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
             libgstreamer-plugins-good1.0-dev \
@@ -169,7 +170,13 @@ jobs:
           echo "Building Tauri app with args: ${{ matrix.args }} --bundles ${{ matrix.bundle }}"
           npx tauri build ${{ matrix.args }} --bundles ${{ matrix.bundle }}
           echo "Build completed, checking output..."
-          ls -la tauri/target/release/bundle/ || echo "Bundle directory not found"
+          if [ -d "tauri/target/release/bundle" ]; then
+            ls -la tauri/target/release/bundle/
+          else
+            echo "Bundle directory not found, listing release directory:"
+            ls -la tauri/target/release/ || echo "Release directory not found"
+          fi
+        shell: bash
 
       - name: Upload artifacts (Linux)
         if: matrix.os == 'ubuntu-22.04'
