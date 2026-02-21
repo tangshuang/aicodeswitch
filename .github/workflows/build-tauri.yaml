@@ -1,0 +1,268 @@
+name: Build and Release Tauri App
+
+on:
+  workflow_run:
+    workflows: ["Publish To NPM"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 3.0.6)'
+        required: false
+
+jobs:
+  check-release:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check if should build
+        id: check
+        run: |
+          # 如果是手动触发，使用输入的版本
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            if [ -z "$VERSION" ]; then
+              # 从 package.json 提取版本
+              VERSION=$(node -p "require('./package.json').version")
+            fi
+            TAG="v${VERSION}"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+            echo "tag=${TAG}" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 如果是 workflow_run 触发，检查是否成功
+          if [ "${{ github.event.workflow_run.conclusion }}" != "success" ]; then
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 从 package.json 提取版本
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+
+          # 检查这个 tag 是否已经存在
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists, skipping build"
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+            echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          fi
+
+  build-tauri:
+    needs: check-release
+    if: needs.check-release.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux
+            arch: x64
+            target: x86_64-unknown-linux-gnu
+            args: ""
+            bundle: "deb appimage"
+          - os: macos-latest
+            platform: macos
+            arch: aarch64
+            target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
+            bundle: "dmg app"
+            suffix: "-apple-silicon"
+          - os: macos-latest
+            platform: macos
+            arch: x64
+            target: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin"
+            bundle: "dmg app"
+            suffix: "-intel"
+          - os: windows-latest
+            platform: windows
+            arch: x64
+            target: x86_64-pc-windows-msvc
+            args: ""
+            bundle: "msi nsis"
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install dependencies (Ubuntu only)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.0-dev build-essential curl wget file libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install Node.js dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build UI and Server
+        run: yarn build
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ needs.check-release.outputs.tag }}
+          releaseName: 'AI Code Switch v__VERSION__'
+          releaseBody: 'See CHANGELOG.md for details.'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+          bundles: ${{ matrix.bundle }}
+
+      - name: Upload artifacts (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-linux
+          path: |
+            tauri/target/release/bundle/deb/*.deb
+            tauri/target/release/bundle/appimage/*.AppImage
+
+      - name: Rename macOS artifacts
+        if: matrix.os == 'macos-latest'
+        run: |
+          VERSION="${{ needs.check-release.outputs.version }}"
+          cd tauri/target/release/bundle
+
+          # Rename DMG files
+          if [ -d "dmg" ]; then
+            for file in dmg/*.dmg; do
+              if [ -f "$file" ]; then
+                base=$(basename "$file" .dmg)
+                if [ "${{ matrix.arch }}" = "aarch64" ]; then
+                  mv "$file" "dmg/${base}-${VERSION}-apple-silicon.dmg"
+                else
+                  mv "$file" "dmg/${base}-${VERSION}-intel.dmg"
+                fi
+              fi
+            done
+          fi
+
+          # Rename .app bundles (compress to zip)
+          if [ -d "macos" ]; then
+            for app in macos/*.app; do
+              if [ -d "$app" ]; then
+                base=$(basename "$app" .app)
+                if [ "${{ matrix.arch }}" = "aarch64" ]; then
+                  zip -r "macos/${base}-${VERSION}-apple-silicon.zip" "$app"
+                else
+                  zip -r "macos/${base}-${VERSION}-intel.zip" "$app"
+                fi
+                rm -rf "$app"
+              fi
+            done
+          fi
+
+      - name: Upload artifacts (macOS)
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-macos-${{ matrix.arch }}
+          path: |
+            tauri/target/release/bundle/dmg/*.dmg
+            tauri/target/release/bundle/macos/*.zip
+
+      - name: Upload artifacts (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-windows
+          path: |
+            tauri/target/release/bundle/msi/*.msi
+            tauri/target/release/bundle/nsis/*.exe
+
+  create-release:
+    needs: [check-release, build-tauri]
+    runs-on: ubuntu-latest
+    if: needs.check-release.outputs.should_build == 'true'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.dmg" -o -name "*.zip" -o -name "*.msi" -o -name "*.exe" \) -exec cp {} release-assets/ \;
+
+      - name: Display structure of downloaded files
+        run: ls -la release-assets/
+
+      - name: Create or Update Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.check-release.outputs.tag }}
+          name: AI Code Switch v${{ needs.check-release.outputs.version }}
+          body: |
+            # AI Code Switch v${{ needs.check-release.outputs.version }}
+
+            ## 下载说明
+
+            ### Windows
+            - `.msi` - Windows 安装包（推荐）
+            - `.exe` - NSIS 安装包
+
+            ### macOS
+            **请根据你的 Mac 芯片类型选择对应版本：**
+            - `*-apple-silicon.dmg` - Apple Silicon (M1/M2/M3) 芯片版本
+            - `*-intel.dmg` - Intel 芯片版本
+            - `*.zip` - 应用程序包（可选）
+
+            ### Linux
+            - `.deb` - Debian/Ubuntu 软件包
+            - `.AppImage` - 通用 Linux 可执行文件
+
+            ## 系统要求
+            - **Node.js**: 必须预先安装 Node.js 18.0.0 或更高版本
+            - **其他要求**: 请参考 [CLAUDE.md](./CLAUDE.md) 中的 "Tauri Desktop Application Build" 章节
+
+            ## 更新日志
+            请查看 [CHANGELOG.md](./CHANGELOG.md) 了解详细变更。
+          files: release-assets/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts to existing release
+        run: |
+          echo "Release created successfully with version ${{ needs.check-release.outputs.version }}"
+          echo "Tag: ${{ needs.check-release.outputs.tag }}"

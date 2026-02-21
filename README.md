@@ -10,6 +10,26 @@ AI Code Switch 是帮助你在本地管理 AI 编程工具接入大模型的工�
 - 视频演示：[https://www.bilibili.com/video/BV1uEznBuEJd/](https://www.bilibili.com/video/BV1uEznBuEJd/?from=github)
 - 1分钟让Claude Code接入GLM国产模型：[https://www.bilibili.com/video/BV1a865B8ErA/](https://www.bilibili.com/video/BV1a865B8ErA/)
 
+## 功能要点
+
+* 可登记任意的大模型API接口服务，让你可以在一个面板管理你的大模型厂商
+* 供应商API一键切换：可以注册多个供应商的多个API接口，当想要切换供应商时，只需要点击一个按钮就可以立即切换
+* 自动配置：无需你手动去修改claude code或codex的系统配置文件，aicodeswitch自动帮你修改，你只要启动它，似乎claude code或codex就尽在掌握
+* 一键配置供应商，省去复杂的供应商配置流程
+* API转流：将兼容openai接口标准的模型，轻松接入到claude code中，支持将符合openai、anthropic、gemini的数据格式转发给claude code或codex
+* 按需代理：根据请求类型，让不同的模型来处理不同的任务，节省成本，基于该特性，可以让glm等原生非多模态模型支持图像识别
+* 智能故障切换：当API服务发生故障时，智能切换到其他API服务进行尝试，特别适用于中转服务商
+* 代理：针对无法直接访问的模型服务，例如地区被ban，支持设置代理来解决
+* tokens超量限制：避免其中一个服务商的用量超过限制，浪费了钱，适合有免费额度的服务商
+* 次数超量限制：次数到达一定量后，切换其他服务商，适合coding plan的服务商
+* 日志：超精细的日志记录和会话记录，帮助你发现编程工具本身的问题，以及专研工具的agent逻辑
+* 统计：丰富且详细的统计数据，用量信息快速掌握，发掘自己的编程习惯
+* Skills管理：一键搜索和安装Skills，一键启用skill到claude code或codex
+* MCP管理：一键安装预设MCP，一键启用MCP
+* 导入和导出：一键备份数据，在多太电脑间共享aicodeswitch配置
+* 自定义API Key，支持B/S架构，让aicodeswitch成为在线服务，提供给团队使用
+* 数据完全本地，自主可控
+
 ## 命令行工具
 
 ### 安装

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 3.5.0 (2026-02-20)
+
+#### Features
+* 新增 GitHub Actions CI/CD 流水线用于 Tauri 应用构建和发布
+  - 在 npm 发布成功后自动触发 Tauri 应用构建
+  - 支持手动触发构建（可指定版本号）
+  - 跨平台构建支持：Linux (deb/AppImage)、macOS (dmg/app - Intel 和 Apple Silicon)、Windows (msi/exe)
+  - 自动创建 GitHub Release 并上传所有平台的安装包
+  - macOS 平台同时构建两个独立版本：Intel 芯片 (x86_64) 和 Apple Silicon (M1/M2/M3)
+  - macOS 构建文件自动添加架构标识（-apple-silicon / -intel）
+  - .app 文件压缩为 .zip 格式以便发布
+
 ### 3.4.0 (2026-02-16)
 
 #### Fixes
