@@ -154,17 +154,9 @@ jobs:
         run: yarn build
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ needs.check-release.outputs.tag }}
-          releaseName: 'AI Code Switch v__VERSION__'
-          releaseBody: 'See CHANGELOG.md for details.'
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.args }}
-          bundles: ${{ matrix.bundle }}
+        run: |
+          # 直接运行 tauri build，不运行 move-bundle.js
+          npx tauri build ${{ matrix.args }} --bundles ${{ matrix.bundle }}
 
       - name: Upload artifacts (Linux)
         if: matrix.os == 'ubuntu-22.04'
