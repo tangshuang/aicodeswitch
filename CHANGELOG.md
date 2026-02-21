@@ -6,8 +6,9 @@ All notable changes to this project will be documented in this file. See [standa
 
 #### Features
 * 新增 GitHub Actions CI/CD 流水线用于 Tauri 应用构建和发布
-  - 在 npm 发布成功后自动触发 Tauri 应用构建
-  - **修复**：自动触发时直接构建，不检查 tag 是否存在（因为 npm 发布已创建 tag）
+  - **重要调整**：Tauri 构建优先于 npm 发布，确保桌面应用可用后才发布 npm 包
+  - **新流程**：PR 合并 → Tauri 构建 → npm 发布（创建 tag）
+  - **修复**：自动触发时直接构建，不检查 tag 是否存在
   - **修复**：使用 `npx tauri build` 代替 `tauri-action`，适配自定义构建脚本
   - 支持手动触发构建（可指定版本号）
   - 新增强制构建选项：允许为已发布的版本重新构建 Tauri 应用
