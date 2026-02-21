@@ -1,10 +1,11 @@
 name: Build and Release Tauri App
 
 on:
-  workflow_run:
-    workflows: ["Publish To NPM"]
+  pull_request:
     types:
-      - completed
+      - closed
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       version:
@@ -23,6 +24,7 @@ jobs:
       should_build: ${{ steps.check.outputs.should_build }}
       version: ${{ steps.check.outputs.version }}
       tag: ${{ steps.check.outputs.tag }}
+    if: (github.event_name == 'pull_request' && github.event.pull_request.merged == true) || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v5
         with:
@@ -31,25 +33,6 @@ jobs:
       - name: Check if should build
         id: check
         run: |
-          # 如果是 workflow_run 触发（npm 发布后自动触发）
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            # 检查 npm 发布是否成功
-            if [ "${{ github.event.workflow_run.conclusion }}" != "success" ]; then
-              echo "NPM publish workflow failed, skipping build"
-              echo "should_build=false" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-
-            # 从 package.json 提取版本并直接构建
-            VERSION=$(node -p "require('./package.json').version")
-            TAG="v${VERSION}"
-            echo "NPM publish successful, building Tauri app for version ${VERSION}"
-            echo "should_build=true" >> $GITHUB_OUTPUT
-            echo "version=${VERSION}" >> $GITHUB_OUTPUT
-            echo "tag=${TAG}" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
           # 如果是手动触发（workflow_dispatch）
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${{ github.event.inputs.version }}"
@@ -79,6 +62,18 @@ jobs:
               echo "version=${VERSION}" >> $GITHUB_OUTPUT
               echo "tag=${TAG}" >> $GITHUB_OUTPUT
             fi
+            exit 0
+          fi
+
+          # 如果是 PR 合并触发（pull_request closed & merged）
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # 从 package.json 提取版本
+            VERSION=$(node -p "require('./package.json').version")
+            TAG="v${VERSION}"
+            echo "PR merged, building Tauri app for version ${VERSION}"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+            echo "tag=${TAG}" >> $GITHUB_OUTPUT
             exit 0
           fi
 
@@ -154,17 +149,9 @@ jobs:
         run: yarn build
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ needs.check-release.outputs.tag }}
-          releaseName: 'AI Code Switch v__VERSION__'
-          releaseBody: 'See CHANGELOG.md for details.'
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.args }}
-          bundles: ${{ matrix.bundle }}
+        run: |
+          # 直接运行 tauri build，不运行 move-bundle.js
+          npx tauri build ${{ matrix.args }} --bundles ${{ matrix.bundle }}
 
       - name: Upload artifacts (Linux)
         if: matrix.os == 'ubuntu-22.04'
