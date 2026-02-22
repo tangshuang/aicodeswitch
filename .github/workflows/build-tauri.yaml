@@ -117,6 +117,22 @@ jobs:
       - name: Prepare Tauri resources
         run: node tauri/prepare-resources.js
 
+      - name: Clean previous build artifacts
+        run: |
+          echo "🧹 Cleaning previous build artifacts..."
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            BUNDLE_DIR="tauri/target/${{ matrix.target }}/release/bundle"
+          else
+            BUNDLE_DIR="tauri/target/release/bundle"
+          fi
+
+          if [ -d "$BUNDLE_DIR" ]; then
+            echo "Removing $BUNDLE_DIR..."
+            rm -rf "$BUNDLE_DIR"
+          fi
+          echo "✅ Clean completed"
+        shell: bash
+
       - name: Build Tauri app
         # 核心修复：添加环境变量以跳过 macOS 签名报错
         env:
