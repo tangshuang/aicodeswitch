@@ -40,7 +40,6 @@ npm run tauri:icon       # Generate application icons from source image
 - Rust toolchain (rustc, cargo) - Install from https://rustup.rs/
 - Windows: Microsoft Visual Studio C++ Build Tools
 - macOS: Xcode Command Line Tools
-- Linux: Development packages (webkit2gtk, etc.)
 
 ### Linting
 ```bash
@@ -569,11 +568,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 - `tauri/target/release/bundle/dmg/` - DMG installer
 - `tauri/target/release/bundle/macos/` - .app bundle
 
-**Linux:**
-- `tauri/target/release/aicodeswitch` - Executable
-- `tauri/target/release/bundle/deb/` - DEB package
-- `tauri/target/release/bundle/appimage/` - AppImage
-
 #### Application Size Comparison
 
 | Build Type | Size | Notes |
@@ -608,7 +602,7 @@ The Tauri build uses a **hybrid approach** that preserves the existing Node.js b
 - ✅ All existing Node.js code works as-is
 - ✅ Significantly smaller application size
 - ✅ Better system integration
-- ✅ Cross-platform support (Windows, macOS, Linux)
+- ✅ Cross-platform support (Windows, macOS)
 - ✅ Future migration path to full Rust backend if desired
 
 ## Technology Stack
@@ -632,7 +626,7 @@ The Tauri build uses a **hybrid approach** that preserves the existing Node.js b
 ### Desktop Application (Tauri)
 - **Core**: Tauri 2.0
 - **Language**: Rust (main process)
-- **WebView**: System native (WebView2 on Windows, WebKit on macOS/Linux)
+- **WebView**: System native (WebView2 on Windows, WebKit on macOS)
 - **IPC**: Tauri command system
 - **Process Management**: Rust std::process
 
@@ -655,8 +649,6 @@ npm 发布成功后，自动触发 Tauri 应用构建：
    - 或手动触发（可指定版本号）
 
 2. **构建矩阵**:
-   - **Linux**: Ubuntu 22.04 (x86_64)
-     - 输出: `.deb`, `.AppImage`
    - **macOS**: (两个架构分别构建)
      - Intel (x86_64): `.dmg`, `.app`
      - Apple Silicon (aarch64): `.dmg`, `.app`
