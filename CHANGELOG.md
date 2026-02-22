@@ -10,20 +10,17 @@ All notable changes to this project will be documented in this file. See [standa
   - **新流程**：PR 合并 → Tauri 构建 → npm 发布（创建 tag）
   - **修复**：自动触发时直接构建，不检查 tag 是否存在
   - **修复**：使用 `npx tauri build` 代替 `tauri-action`，适配自定义构建脚本
-  - **修复**：Linux 构建依赖从 libwebkit2gtk-4.0 升级到 4.1
   - **改进**：macOS 构建添加更详细的错误日志和目录检查
-  - **修复**：Linux AppImage 构建添加缺失的 GStreamer 依赖
-  - **修复**：Linux 添加 libunwind-dev 依赖解决 GStreamer 安装问题
   - **修复**：Windows 构建日志命令使用 bash 兼容语法
-  - **临时调整**：Linux 暂时仅构建 DEB 包，跳过不稳定的 AppImage 构建
   - 支持手动触发构建（可指定版本号）
   - 新增强制构建选项：允许为已发布的版本重新构建 Tauri 应用
-  - 跨平台构建支持：Linux (deb/AppImage)、macOS (dmg/app - Intel 和 Apple Silicon)、Windows (msi/exe)
+  - 跨平台构建支持：macOS (dmg/app - Intel 和 Apple Silicon)、Windows (msi/exe)
   - 自动创建或更新 GitHub Release 并上传所有平台的安装包
   - macOS 平台同时构建两个独立版本：Intel 芯片 (x86_64) 和 Apple Silicon (M1/M2/M3)
   - macOS 构建文件自动添加架构标识（-apple-silicon / -intel）
   - .app 文件压缩为 .zip 格式以便发布
   - 新增详细的使用文档和故障排查指南
+  - **注意**：移除 Linux 平台支持以确保 macOS 和 Windows 构建的稳定性
 
 ### 3.4.0 (2026-02-16)
 

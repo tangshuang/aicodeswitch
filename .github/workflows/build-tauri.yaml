@@ -84,12 +84,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-22.04
-            platform: linux
-            arch: x64
-            target: x86_64-unknown-linux-gnu
-            args: ""
-            bundle: "deb"  # 暂时只构建 deb，AppImage 在 CI 环境中有问题
           - os: macos-latest
             platform: macos
             arch: aarch64
@@ -136,28 +130,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install dependencies (Ubuntu only)
-        if: matrix.os == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libssl-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            librsvg2-bin \
-            libunwind-dev \
-            libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev \
-            libgstreamer-plugins-good1.0-dev \
-            gstreamer1.0-plugins-base \
-            gstreamer1.0-plugins-good
-
       - name: Install Node.js dependencies
         run: yarn install --frozen-lockfile
 
@@ -166,7 +138,6 @@ jobs:
 
       - name: Build Tauri app
         run: |
-          # 直接运行 tauri build，不运行 move-bundle.js
           echo "Building Tauri app with args: ${{ matrix.args }} --bundles ${{ matrix.bundle }}"
           npx tauri build ${{ matrix.args }} --bundles ${{ matrix.bundle }}
           echo "Build completed, checking output..."
@@ -177,14 +148,6 @@ jobs:
             ls -la tauri/target/release/ || echo "Release directory not found"
           fi
         shell: bash
-
-      - name: Upload artifacts (Linux)
-        if: matrix.os == 'ubuntu-22.04'
-        uses: actions/upload-artifact@v4
-        with:
-          name: tauri-linux
-          path: |
-            tauri/target/release/bundle/deb/*.deb
 
       - name: Rename macOS artifacts
         if: matrix.os == 'macos-latest'
@@ -268,7 +231,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name "*.deb" -o -name "*.dmg" -o -name "*.zip" -o -name "*.msi" -o -name "*.exe" \) -exec cp {} release-assets/ \;
+          find artifacts -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.msi" -o -name "*.exe" \) -exec cp {} release-assets/ \;
 
       - name: Display structure of downloaded files
         run: ls -la release-assets/
@@ -292,15 +255,6 @@ jobs:
             - `*-apple-silicon.dmg` - Apple Silicon (M1/M2/M3) 芯片版本
             - `*-intel.dmg` - Intel 芯片版本
             - `*.zip` - 应用程序包（可选）
-
-            ### Linux
-            - `.deb` - Debian/Ubuntu 软件包
-            - **注意**：AppImage 暂时不可用，请使用 DEB 包或从源码构建
-
-            **安装 DEB 包**：
-            ```bash
-            sudo dpkg -i AI\ Code\ Switch_*_amd64.deb
-            ```
 
             ## 系统要求
             - **Node.js**: 必须预先安装 Node.js 18.0.0 或更高版本
