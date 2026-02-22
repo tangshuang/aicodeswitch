@@ -105,12 +105,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             tauri/target
-            # 【方案二核心】：排除所有 bundle 目录，防止旧版本安装包被缓存
             !tauri/target/**/bundle
-          # 建议在 key 中加入版本号或随机字符，以强制刷新一次缓存
-          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-v2-
+            ${{ runner.os }}-cargo-v3-
 
       - name: Install Node.js dependencies
         run: yarn install --frozen-lockfile
@@ -124,11 +122,16 @@ jobs:
       - name: Clean previous build artifacts
         run: |
           echo "🧹 Cleaning previous build artifacts..."
-          # 更加激进的清理：直接删除所有潜在的产物文件，确保不会被重复打包
-          find tauri/target -name "*.msi" -type f -delete
-          find tauri/target -name "*.exe" -type f -delete
-          find tauri/target -name "*.dmg" -type f -delete
-          find tauri/target -name "*.zip" -type f -delete
+          # 核心修复：增加目录存在性判断 [ -d "tauri/target" ]
+          if [ -d "tauri/target" ]; then
+            echo "Target directory exists, cleaning up old bundles..."
+            find tauri/target -name "*.msi" -type f -delete
+            find tauri/target -name "*.exe" -type f -delete
+            find tauri/target -name "*.dmg" -type f -delete
+            find tauri/target -name "*.zip" -type f -delete
+          else
+            echo "Target directory does not exist, skipping clean."
+          fi
           echo "✅ Clean completed"
         shell: bash
 
@@ -239,7 +242,6 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          # 查找下载的 artifacts 中所有产物并汇聚到发布目录
           find artifacts -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.msi" -o -name "*.exe" \) -exec cp {} release-assets/ \;
 
       - name: Create or Update Release
