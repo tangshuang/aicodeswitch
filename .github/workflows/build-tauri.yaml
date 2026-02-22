@@ -1,11 +1,10 @@
 name: Build and Release Tauri App
 
 on:
-  pull_request:
+  workflow_run:
+    workflows: ["Publish To NPM"]
     types:
-      - closed
-    branches:
-      - main
+      - completed
   workflow_dispatch:
     inputs:
       version:
@@ -24,7 +23,7 @@ jobs:
       should_build: ${{ steps.check.outputs.should_build }}
       version: ${{ steps.check.outputs.version }}
       tag: ${{ steps.check.outputs.tag }}
-    if: (github.event_name == 'pull_request' && github.event.pull_request.merged == true) || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v5
         with:
@@ -92,7 +91,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.x' # 建议使用 LTS 版本更稳定
+          node-version: '20.x'
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -106,7 +105,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            # 【方案二核心】：排除所有 bundle 目录，防止旧版本安装包被缓存
+            !tauri/target/**/bundle
+          # 建议在 key 中加入版本号或随机字符，以强制刷新一次缓存
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-v2-
 
       - name: Install Node.js dependencies
         run: yarn install --frozen-lockfile
@@ -120,21 +124,15 @@ jobs:
       - name: Clean previous build artifacts
         run: |
           echo "🧹 Cleaning previous build artifacts..."
-          if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            BUNDLE_DIR="tauri/target/${{ matrix.target }}/release/bundle"
-          else
-            BUNDLE_DIR="tauri/target/release/bundle"
-          fi
-
-          if [ -d "$BUNDLE_DIR" ]; then
-            echo "Removing $BUNDLE_DIR..."
-            rm -rf "$BUNDLE_DIR"
-          fi
+          # 更加激进的清理：直接删除所有潜在的产物文件，确保不会被重复打包
+          find tauri/target -name "*.msi" -type f -delete
+          find tauri/target -name "*.exe" -type f -delete
+          find tauri/target -name "*.dmg" -type f -delete
+          find tauri/target -name "*.zip" -type f -delete
           echo "✅ Clean completed"
         shell: bash
 
       - name: Build Tauri app
-        # 核心修复：添加环境变量以跳过 macOS 签名报错
         env:
           APPLE_IDENTITY: ""
           CSC_SKIP_SIGN: true
@@ -155,20 +153,16 @@ jobs:
           fi
 
           cd "$BUNDLE_DIR"
-          # 处理 DMG
           if [ -d "dmg" ]; then
             for file in dmg/*.dmg; do
               [ -e "$file" ] || continue
               base=$(basename "$file" .dmg)
-              # macOS-AppleSilicon 或 macOS-Intel
               arch_label=$([ "${{ matrix.arch }}" = "aarch64" ] && echo "AppleSilicon" || echo "Intel")
               new_name="dmg/${base}-${VERSION}-macOS-${arch_label}.dmg"
               mv "$file" "$new_name"
-              echo "✅ Renamed: $new_name"
             done
           fi
 
-          # 处理 APP 并压缩
           if [ -d "macos" ]; then
             for app in macos/*.app; do
               [ -e "$app" ] || continue
@@ -176,7 +170,6 @@ jobs:
               arch_label=$([ "${{ matrix.arch }}" = "aarch64" ] && echo "AppleSilicon" || echo "Intel")
               zip -r "macos/${base}-${VERSION}-macOS-${arch_label}.zip" "$app"
               rm -rf "$app"
-              echo "✅ Created: macos/${base}-${VERSION}-macOS-${arch_label}.zip"
             done
           fi
 
@@ -192,26 +185,21 @@ jobs:
           fi
 
           cd "$BUNDLE_DIR"
-
-          # 处理 MSI
           if [ -d "msi" ]; then
             for file in msi/*.msi; do
               [ -e "$file" ] || continue
               base=$(basename "$file" .msi)
               new_name="msi/${base}-${VERSION}-Windows-x64.msi"
               mv "$file" "$new_name"
-              echo "✅ Renamed: $new_name"
             done
           fi
 
-          # 处理 NSIS EXE
           if [ -d "nsis" ]; then
             for file in nsis/*.exe; do
               [ -e "$file" ] || continue
               base=$(basename "$file" .exe)
               new_name="nsis/${base}-${VERSION}-Windows-x64.exe"
               mv "$file" "$new_name"
-              echo "✅ Renamed: $new_name"
             done
           fi
         shell: bash
@@ -251,6 +239,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
+          # 查找下载的 artifacts 中所有产物并汇聚到发布目录
           find artifacts -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.msi" -o -name "*.exe" \) -exec cp {} release-assets/ \;
 
       - name: Create or Update Release
