@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file. See [standa
   - **修复**：使用 `npx tauri build` 代替 `tauri-action`，适配自定义构建脚本
   - **改进**：macOS 构建添加更详细的错误日志和目录检查
   - **修复**：Windows 构建日志命令使用 bash 兼容语法
+  - **修复**：macOS cross-compilation 构建路径问题（使用 target triple 子目录）
   - 支持手动触发构建（可指定版本号）
   - 新增强制构建选项：允许为已发布的版本重新构建 Tauri 应用
   - 跨平台构建支持：macOS (dmg/app - Intel 和 Apple Silicon)、Windows (msi/exe)
