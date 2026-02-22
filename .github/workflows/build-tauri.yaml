@@ -144,8 +144,11 @@ jobs:
             for file in dmg/*.dmg; do
               [ -e "$file" ] || continue
               base=$(basename "$file" .dmg)
-              new_name="dmg/${base}-${VERSION}-${{ matrix.arch }}.dmg"
+              # macOS-AppleSilicon 或 macOS-Intel
+              arch_label=$([ "${{ matrix.arch }}" = "aarch64" ] && echo "AppleSilicon" || echo "Intel")
+              new_name="dmg/${base}-${VERSION}-macOS-${arch_label}.dmg"
               mv "$file" "$new_name"
+              echo "✅ Renamed: $new_name"
             done
           fi
 
@@ -154,10 +157,48 @@ jobs:
             for app in macos/*.app; do
               [ -e "$app" ] || continue
               base=$(basename "$app" .app)
-              zip -r "macos/${base}-${VERSION}-${{ matrix.arch }}.zip" "$app"
+              arch_label=$([ "${{ matrix.arch }}" = "aarch64" ] && echo "AppleSilicon" || echo "Intel")
+              zip -r "macos/${base}-${VERSION}-macOS-${arch_label}.zip" "$app"
               rm -rf "$app"
+              echo "✅ Created: macos/${base}-${VERSION}-macOS-${arch_label}.zip"
             done
           fi
+
+      - name: Rename Windows artifacts
+        if: matrix.os == 'windows-latest'
+        run: |
+          VERSION="${{ needs.check-release.outputs.version }}"
+          BUNDLE_DIR="tauri/target/release/bundle"
+
+          if [ ! -d "$BUNDLE_DIR" ]; then
+            echo "❌ Bundle directory not found!"
+            exit 1
+          fi
+
+          cd "$BUNDLE_DIR"
+
+          # 处理 MSI
+          if [ -d "msi" ]; then
+            for file in msi/*.msi; do
+              [ -e "$file" ] || continue
+              base=$(basename "$file" .msi)
+              new_name="msi/${base}-${VERSION}-Windows-x64.msi"
+              mv "$file" "$new_name"
+              echo "✅ Renamed: $new_name"
+            done
+          fi
+
+          # 处理 NSIS EXE
+          if [ -d "nsis" ]; then
+            for file in nsis/*.exe; do
+              [ -e "$file" ] || continue
+              base=$(basename "$file" .exe)
+              new_name="nsis/${base}-${VERSION}-Windows-x64.exe"
+              mv "$file" "$new_name"
+              echo "✅ Renamed: $new_name"
+            done
+          fi
+        shell: bash
 
       - name: Upload artifacts (macOS)
         if: matrix.os == 'macos-latest'
