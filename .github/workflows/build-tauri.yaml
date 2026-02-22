@@ -136,17 +136,44 @@ jobs:
       - name: Build UI and Server
         run: yarn build
 
+      - name: Prepare Tauri resources
+        run: node tauri/prepare-resources.js
+
       - name: Build Tauri app
         run: |
           echo "Building Tauri app with args: ${{ matrix.args }} --bundles ${{ matrix.bundle }}"
-          npx tauri build ${{ matrix.args }} --bundles ${{ matrix.bundle }}
-          echo "Build completed, checking output..."
-          if [ -d "tauri/target/release/bundle" ]; then
-            ls -la tauri/target/release/bundle/
-          else
-            echo "Bundle directory not found, listing release directory:"
-            ls -la tauri/target/release/ || echo "Release directory not found"
+
+          # 执行构建
+          npx tauri build ${{ matrix.args }} --bundles ${{ matrix.bundle }} 2>&1 | tee build-output.log
+          BUILD_EXIT_CODE=${PIPESTATUS[0]}
+
+          # 检查构建退出码
+          if [ $BUILD_EXIT_CODE -ne 0 ]; then
+            echo "❌ Tauri build failed with exit code $BUILD_EXIT_CODE!"
+            echo ""
+            echo "Build output:"
+            cat build-output.log
+            exit 1
           fi
+
+          # 检查构建结果
+          echo ""
+          echo "Build completed, checking output..."
+          if [ ! -d "tauri/target/release/bundle" ]; then
+            echo "❌ Bundle directory not found!"
+            echo "Listing tauri/target/release contents:"
+            ls -la tauri/target/release/ || echo "Release directory not found"
+            echo ""
+            echo "Listing tauri/target contents:"
+            ls -la tauri/target/ || echo "Target directory not found"
+            echo ""
+            echo "Build output:"
+            cat build-output.log
+            exit 1
+          fi
+
+          echo "✅ Bundle directory found:"
+          ls -la tauri/target/release/bundle/
         shell: bash
 
       - name: Rename macOS artifacts
