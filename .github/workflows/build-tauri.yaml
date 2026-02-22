@@ -106,22 +106,27 @@ jobs:
             ~/.cargo/git
             tauri/target
             !tauri/target/**/bundle
-          key: ${{ runner.os }}-cargo-v4-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-v5-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-v4-
+            ${{ runner.os }}-cargo-v5-
 
       - name: Install Node.js dependencies
         run: yarn install --frozen-lockfile
 
-      # 【新增：版本同步步骤】
-      # 这将确保 Tauri 构建出来的原始文件名和内部属性就是正确的版本号
       - name: Sync version to Tauri
         run: |
           VERSION="${{ needs.check-release.outputs.version }}"
-          echo "Updating tauri.conf.json to version $VERSION"
-          # 自动查找并更新 tauri.conf.json 中的版本号
-          CONFIG_FILE=$(find . -name tauri.conf.json)
-          jq ".package.version = \"$VERSION\"" "$CONFIG_FILE" > temp.json && mv temp.json "$CONFIG_FILE"
+          node -e "
+            const fs = require('fs');
+            const paths = ['src-tauri/tauri.conf.json', 'tauri/tauri.conf.json', 'tauri.conf.json'];
+            let path = paths.find(p => fs.existsSync(p));
+            if (!path) { console.log('Config not found, skipping sync'); process.exit(0); }
+            const config = JSON.parse(fs.readFileSync(path, 'utf8'));
+            if (config.package) { config.package.version = '$VERSION'; }
+            else { config.version = '$VERSION'; }
+            fs.writeFileSync(path, JSON.stringify(config, null, 2));
+            console.log('Updated ' + path + ' to $VERSION');
+          "
         shell: bash
 
       - name: Build UI and Server
@@ -153,17 +158,13 @@ jobs:
           VERSION="${{ needs.check-release.outputs.version }}"
           BUNDLE_DIR="tauri/target/${{ matrix.target }}/release/bundle"
           arch_label=$([ "${{ matrix.arch }}" = "aarch64" ] && echo "AppleSilicon" || echo "Intel")
-
           cd "$BUNDLE_DIR"
-          # 处理 DMG：不再保留原始 base，直接重命名为干净的格式
           if [ -d "dmg" ]; then
             for file in dmg/*.dmg; do
               [ -e "$file" ] || continue
               mv "$file" "dmg/AI-Code-Switch-${VERSION}-macOS-${arch_label}.dmg"
             done
           fi
-
-          # 处理 APP
           if [ -d "macos" ]; then
             for app in macos/*.app; do
               [ -e "$app" ] || continue
@@ -177,17 +178,13 @@ jobs:
         run: |
           VERSION="${{ needs.check-release.outputs.version }}"
           BUNDLE_DIR="tauri/target/release/bundle"
-
           cd "$BUNDLE_DIR"
-          # 处理 MSI
           if [ -d "msi" ]; then
             for file in msi/*.msi; do
               [ -e "$file" ] || continue
               mv "$file" "msi/AI-Code-Switch-${VERSION}-Windows-x64.msi"
             done
           fi
-
-          # 处理 EXE
           if [ -d "nsis" ]; then
             for file in nsis/*.exe; do
               [ -e "$file" ] || continue
@@ -222,25 +219,20 @@ jobs:
     if: needs.check-release.outputs.should_build == 'true'
     steps:
       - uses: actions/checkout@v5
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          # 只拷贝你重命名后的标准文件
-          find artifacts -type f \( -name "AI-Code-Switch-*.dmg" -o -name "AI-Code-Switch-*.zip" -o -name "AI-Code-Switch-*.msi" -o -name "AI-Code-Switch-*.exe" \) -exec cp {} release-assets/ \;
-
+          find artifacts -type f \( -name "AI-Code-Switch-*" \) -exec cp {} release-assets/ \;
       - name: Create or Update Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ needs.check-release.outputs.tag }}
           name: AI Code Switch v${{ needs.check-release.outputs.version }}
-          body: |
-            # AI Code Switch v${{ needs.check-release.outputs.version }} 自动构建发布。
+          body: "自动构建发布。"
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
