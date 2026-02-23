@@ -133,6 +133,8 @@ export interface Rule {
   requestResetInterval?: number; // 次数重置间隔（小时）
   requestLastResetAt?: number;   // 上次次数重置时间戳
   requestResetBaseTime?: number; // 下一次重置的时间基点（Unix时间戳）
+  frequencyLimit?: number;       // 频率限制次数（如每分钟最多N个请求）
+  frequencyWindow?: number;      // 频率限制时间窗口（秒）
   isDisabled?: boolean;          // 是否临时屏蔽该规则
   useMCP?: boolean;              // 是否使用MCP（仅适用于图像理解）
   mcpId?: string;                // MCP工具ID（仅当useMCP为true时）

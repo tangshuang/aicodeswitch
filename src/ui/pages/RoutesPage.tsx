@@ -97,6 +97,8 @@ export default function RoutesPage() {
   const [selectedRequestCountLimit, setSelectedRequestCountLimit] = useState<number | undefined>(undefined);
   const [selectedRequestResetInterval, setSelectedRequestResetInterval] = useState<number | undefined>(undefined);
   const [selectedRequestResetBaseTime, setSelectedRequestResetBaseTime] = useState<Date | undefined>(undefined);
+  const [selectedFrequencyLimit, setSelectedFrequencyLimit] = useState<number | undefined>(undefined);
+  const [selectedFrequencyWindow, setSelectedFrequencyWindow] = useState<number | undefined>(undefined);
   const [hoveredRuleId, setHoveredRuleId] = useState<string | null>(null);
   const [inheritedTokenLimit, setInheritedTokenLimit] = useState<boolean>(false);
   const [inheritedRequestLimit, setInheritedRequestLimit] = useState<boolean>(false);
@@ -466,6 +468,8 @@ export default function RoutesPage() {
       requestCountLimit: useMCP ? undefined : selectedRequestCountLimit,
       requestResetInterval: useMCP ? undefined : selectedRequestResetInterval,
       requestResetBaseTime: useMCP ? undefined : (selectedRequestResetBaseTime ? selectedRequestResetBaseTime.getTime() : undefined),
+      frequencyLimit: selectedFrequencyLimit,
+      frequencyWindow: selectedFrequencyWindow,
       useMCP: selectedContentType === 'image-understanding' ? useMCP : false,
       mcpId: (selectedContentType === 'image-understanding' && useMCP) ? selectedMCPId : undefined,
     };
@@ -652,6 +656,10 @@ export default function RoutesPage() {
         setSelectedRequestResetBaseTime(
           (rule as any).requestResetBaseTime ? new Date((rule as any).requestResetBaseTime) : undefined
         );
+
+        // 加载频率限制
+        setSelectedFrequencyLimit(rule.frequencyLimit);
+        setSelectedFrequencyWindow(rule.frequencyWindow);
 
         // 设置API服务的限制值和继承状态
         // 只有当规则的限制值与 API 服务的值完全一致时，才显示为继承状态
@@ -1860,6 +1868,67 @@ export default function RoutesPage() {
                         </div>
                       </>
                     )}
+                  </>
+                )}
+
+                {/* 频率限制配置 */}
+                <div className="form-group">
+                  <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={!!selectedFrequencyLimit}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedFrequencyLimit(10); // 默认值
+                          setSelectedFrequencyWindow(0); // 默认0秒（同一时刻）
+                        } else {
+                          setSelectedFrequencyLimit(undefined);
+                          setSelectedFrequencyWindow(undefined);
+                        }
+                      }}
+                      style={{ marginRight: '8px', cursor: 'pointer', width: '16px', height: '16px' }}
+                    />
+                    <span>启用请求频率限制</span>
+                  </label>
+                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                    启用后，当同一内容类型的请求频率超过限制时，系统会自动切换到其他同类型规则
+                  </small>
+                </div>
+
+                {selectedFrequencyLimit && (
+                  <>
+                    {/* 频率限制次数字段 */}
+                    <div className="form-group">
+                      <label>频率限制次数（并发数）</label>
+                      <input
+                        type="number"
+                        value={selectedFrequencyLimit || ''}
+                        onChange={(e) => setSelectedFrequencyLimit(e.target.value ? parseInt(e.target.value) : undefined)}
+                        min="1"
+                        placeholder="例如: 10"
+                      />
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        在指定时间窗口内允许的最大请求次数
+                      </small>
+                    </div>
+
+                    {/* 频率限制时间窗口字段 */}
+                    <div className="form-group">
+                      <label>频率限制时间窗口（秒，0=同一时刻）</label>
+                      <input
+                        type="number"
+                        value={selectedFrequencyWindow === 0 ? 0 : (selectedFrequencyWindow || '')}
+                        onChange={(e) => {
+                          const value = e.target.value ? parseInt(e.target.value) : undefined;
+                          setSelectedFrequencyWindow(value === 0 ? 0 : value);
+                        }}
+                        min="0"
+                        placeholder="0 表示同一时刻"
+                      />
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        时间窗口大小。0 表示同一时刻（并发数），持续累积；设置为 60 则在 60 秒内最多允许 N 次请求
+                      </small>
+                    </div>
                   </>
                 )}
 

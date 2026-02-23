@@ -58,6 +58,10 @@ export class ProxyServer {
   private requestDedupeCache = new Map<string, number>();
   private readonly DEDUPE_CACHE_TTL = 60000; // 去重缓存1分钟过期
 
+  // 频率限制跟踪：用于跟踪每个规则在当前时间窗口内的请求数
+  // key: ruleId, value: { count: number, windowStart: number }
+  private frequencyLimitTracker = new Map<string, { count: number; windowStart: number }>();
+
   constructor(dbManager: FileSystemDatabaseManager, app: express.Application) {
     this.dbManager = dbManager;
     this.config = dbManager.getConfig();
@@ -487,6 +491,10 @@ export class ProxyServer {
     return routeRules.sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0));
   }
 
+  private getRuleById(ruleId: string): Rule | undefined {
+    return this.dbManager.getRule(ruleId);
+  }
+
   private findMatchingRoute(req: Request): Route | undefined {
     // 根据请求路径确定目标类型
     let targetType: TargetType | undefined;
@@ -593,6 +601,35 @@ export class ProxyServer {
     for (const [hash, timestamp] of this.requestDedupeCache.entries()) {
       if (now - timestamp > this.DEDUPE_CACHE_TTL) {
         this.requestDedupeCache.delete(hash);
+      }
+    }
+  }
+
+  /**
+   * 清理过期的频率限制跟踪数据
+   */
+  private cleanExpiredFrequencyTrackers(): void {
+    const now = Date.now();
+    const rules = this.dbManager.getRules();
+    const activeRuleIds = new Set(rules.map((r: Rule) => r.id));
+
+    for (const ruleId of this.frequencyLimitTracker.keys()) {
+      // 清理不再存在的规则的跟踪数据
+      if (!activeRuleIds.has(ruleId)) {
+        this.frequencyLimitTracker.delete(ruleId);
+        continue;
+      }
+
+      // 清理超时的跟踪数据
+      const tracker = this.frequencyLimitTracker.get(ruleId);
+      if (tracker) {
+        const rule = this.dbManager.getRule(ruleId);
+        if (rule && rule.frequencyWindow) {
+          const windowMs = rule.frequencyWindow * 1000;
+          if (now - tracker.windowStart > windowMs * 2) {
+            this.frequencyLimitTracker.delete(ruleId);
+          }
+        }
       }
     }
   }
@@ -736,6 +773,11 @@ export class ProxyServer {
           continue; // 跳过超限规则
         }
 
+        // 检查频率限制
+        if (this.isFrequencyLimitExceeded(rule)) {
+          continue; // 跳过达到频率限制的规则
+        }
+
         return rule;
       }
     }
@@ -769,6 +811,11 @@ export class ProxyServer {
         continue; // 跳过超限规则
       }
 
+      // 检查频率限制
+      if (this.isFrequencyLimitExceeded(rule)) {
+        continue; // 跳过达到频率限制的规则
+      }
+
       return rule;
     }
 
@@ -798,6 +845,11 @@ export class ProxyServer {
       // 检查请求次数限制
       if (rule.requestCountLimit && rule.totalRequestsUsed !== undefined && rule.totalRequestsUsed >= rule.requestCountLimit) {
         continue; // 跳过超限规则
+      }
+
+      // 检查频率限制
+      if (this.isFrequencyLimitExceeded(rule)) {
+        continue; // 跳过达到频率限制的规则
       }
 
       return rule;
@@ -858,6 +910,10 @@ export class ProxyServer {
             return false;
           }
         }
+        // 检查频率限制
+        if (this.isFrequencyLimitExceeded(rule)) {
+          return false;
+        }
         return true; // 没有设置限制的规则总是可用
       });
 
@@ -868,6 +924,98 @@ export class ProxyServer {
     }
 
     return candidates;
+  }
+
+  /**
+   * 检查规则是否达到频率限制
+   * 如果设置了频率限制(frequencyLimit)和时间窗口(frequencyWindow)，
+   * 则跟踪当前时间窗口内的请求数，超过限制则返回true
+   *
+   * frequencyWindow = 0 表示"同一时刻"，计数器不会按时间窗口重置，
+   * 持续累积直到达到 frequencyLimit
+   */
+  private isFrequencyLimitExceeded(rule: Rule): boolean {
+    if (!rule.frequencyLimit || rule.frequencyLimit <= 0) {
+      return false; // 没有设置频率限制，不超过限制
+    }
+
+    // frequencyWindow 为 0 表示"同一时刻"（不按时间窗口重置）
+    const isZeroWindow = rule.frequencyWindow === 0;
+
+    if (!rule.frequencyWindow && !isZeroWindow) {
+      return false; // 没有设置时间窗口且不是0，不启用频率限制
+    }
+
+    const now = Date.now();
+    const existing = this.frequencyLimitTracker.get(rule.id);
+
+    if (!existing) {
+      // 首次请求，创建新记录
+      this.frequencyLimitTracker.set(rule.id, { count: 1, windowStart: now });
+      return false;
+    }
+
+    // 如果是零窗口（同一时刻），不按时间重置，持续累积
+    if (!isZeroWindow && rule.frequencyWindow) {
+      const windowMs = rule.frequencyWindow * 1000;
+      // 检查是否在当前时间窗口内
+      if (now - existing.windowStart >= windowMs) {
+        // 时间窗口已过，重置计数器
+        this.frequencyLimitTracker.set(rule.id, { count: 1, windowStart: now });
+        return false;
+      }
+    }
+
+    // 检查是否超过限制
+    if (existing.count >= rule.frequencyLimit) {
+      return true; // 超过频率限制
+    }
+
+    // 增加计数
+    existing.count++;
+    this.frequencyLimitTracker.set(rule.id, existing);
+    return false;
+  }
+
+  /**
+   * 记录请求（增加频率计数）
+   * 在请求成功处理后调用
+   * frequencyWindow = 0 表示"同一时刻"，计数器不会按时间窗口重置
+   */
+  private recordRequest(ruleId: string): void {
+    const rule = this.getRuleById(ruleId);
+    if (!rule || !rule.frequencyLimit || rule.frequencyLimit <= 0) {
+      return;
+    }
+
+    // frequencyWindow 为 0 表示"同一时刻"
+    const isZeroWindow = rule.frequencyWindow === 0;
+
+    // 如果 frequencyWindow 既不是 0 也不是正数，则不记录
+    if (!isZeroWindow && !rule.frequencyWindow) {
+      return;
+    }
+
+    const now = Date.now();
+    const existing = this.frequencyLimitTracker.get(ruleId);
+
+    if (!existing) {
+      this.frequencyLimitTracker.set(ruleId, { count: 1, windowStart: now });
+    } else if (isZeroWindow) {
+      // 零窗口：持续累积，不按时间重置
+      existing.count++;
+      this.frequencyLimitTracker.set(ruleId, existing);
+    } else if (rule.frequencyWindow) {
+      const windowMs = rule.frequencyWindow * 1000;
+      if (now - existing.windowStart < windowMs) {
+        // 在时间窗口内，增加计数
+        existing.count++;
+        this.frequencyLimitTracker.set(ruleId, existing);
+      } else {
+        // 时间窗口已过，重置
+        this.frequencyLimitTracker.set(ruleId, { count: 1, windowStart: now });
+      }
+    }
   }
 
   private determineContentType(req: Request): ContentType {
@@ -1809,6 +1957,9 @@ export class ProxyServer {
         if (!this.isRequestProcessed(requestHash)) {
           this.dbManager.incrementRuleRequestCount(rule.id, 1);
 
+          // 更新频率限制跟踪
+          this.recordRequest(rule.id);
+
           // 获取更新后的规则数据并广播
           const updatedRule = this.dbManager.getRule(rule.id);
           if (updatedRule) {
@@ -1823,6 +1974,11 @@ export class ProxyServer {
         if (Math.random() < 0.01) { // 1%概率清理，避免每次都清理
           this.cleanExpiredDedupeCache();
         }
+      }
+
+      // 定期清理过期的频率限制跟踪数据
+      if (Math.random() < 0.01) { // 1%概率清理
+        this.cleanExpiredFrequencyTrackers();
       }
 
       // 清理 MCP 临时图片文件
