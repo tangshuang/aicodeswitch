@@ -362,6 +362,40 @@ table th {
   }
 }
 
+.col-priority-box {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+/* 优先级箭头按钮 */
+.priority-arrow-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  vertical-align: middle;
+}
+
+.priority-arrow-btn:hover {
+  background-color: var(--primary-color);
+  border-color: var(--primary-color);
+  color: #fff;
+}
+
+.priority-arrow-btn:active {
+  transform: scale(0.95);
+}
+
 
 
 .form-group {

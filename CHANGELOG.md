@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file. See [standa
 ### 3.5.0 (2026-02-21)
 
 #### Features
+* 新增路由规则"请求频率限制"功能
+  - 用户可以为规则设置请求频率限制（次数 + 时间窗口）
+  - 当同一内容类型的请求频率超过限制时，系统会自动切换到其他同类型规则
+  - 支持按内容类型（default/background/thinking/long-context/image-understanding/model-mapping）分别限制
+  - 频率限制仅在同一内容类型存在多个规则时生效，用于实现负载均衡
+  - 如果没有其他同类型规则，则继续使用当前规则（原行为不变）
+
+#### Fixes
 * 新增 GitHub Actions CI/CD 流水线用于 Tauri 应用构建和发布
   - **重要调整**：Tauri 构建优先于 npm 发布，确保桌面应用可用后才发布 npm 包
   - **新流程**：PR 合并 → Tauri 构建 → npm 发布（创建 tag）

@@ -15,6 +15,16 @@ const CONTENT_TYPE_OPTIONS = [
   { value: 'model-mapping', label: '模型顶替', icon: '🔄' },
 ];
 
+// 类型排序权重（数值越小越靠前）
+const CONTENT_TYPE_ORDER: Record<string, number> = {
+  'default': 0,
+  'background': 1,
+  'thinking': 2,
+  'long-context': 3,
+  'image-understanding': 4,
+  'model-mapping': 5,
+};
+
 // 类型到图标的映射
 const CONTENT_TYPE_ICONS: Record<string, string> = {
   'background': '🧱',
@@ -87,6 +97,8 @@ export default function RoutesPage() {
   const [selectedRequestCountLimit, setSelectedRequestCountLimit] = useState<number | undefined>(undefined);
   const [selectedRequestResetInterval, setSelectedRequestResetInterval] = useState<number | undefined>(undefined);
   const [selectedRequestResetBaseTime, setSelectedRequestResetBaseTime] = useState<Date | undefined>(undefined);
+  const [selectedFrequencyLimit, setSelectedFrequencyLimit] = useState<number | undefined>(undefined);
+  const [selectedFrequencyWindow, setSelectedFrequencyWindow] = useState<number | undefined>(undefined);
   const [hoveredRuleId, setHoveredRuleId] = useState<string | null>(null);
   const [inheritedTokenLimit, setInheritedTokenLimit] = useState<boolean>(false);
   const [inheritedRequestLimit, setInheritedRequestLimit] = useState<boolean>(false);
@@ -456,6 +468,8 @@ export default function RoutesPage() {
       requestCountLimit: useMCP ? undefined : selectedRequestCountLimit,
       requestResetInterval: useMCP ? undefined : selectedRequestResetInterval,
       requestResetBaseTime: useMCP ? undefined : (selectedRequestResetBaseTime ? selectedRequestResetBaseTime.getTime() : undefined),
+      frequencyLimit: selectedFrequencyLimit,
+      frequencyWindow: selectedFrequencyWindow,
       useMCP: selectedContentType === 'image-understanding' ? useMCP : false,
       mcpId: (selectedContentType === 'image-understanding' && useMCP) ? selectedMCPId : undefined,
     };
@@ -532,6 +546,52 @@ export default function RoutesPage() {
     }
   };
 
+  // 提升规则优先级（sortOrder + 1）
+  const handleIncreasePriority = async (id: string) => {
+    try {
+      // 找到对应的规则
+      const rule = rules.find(r => r.id === id);
+      if (!rule) return;
+
+      // 计算新的优先级（当前优先级 + 1）
+      const newSortOrder = (rule.sortOrder || 0) + 1;
+
+      // 调用 API 更新
+      await api.updateRule(id, { sortOrder: newSortOrder });
+
+      // 重新加载规则列表
+      if (selectedRoute) {
+        loadRules(selectedRoute.id);
+      }
+      toast.success('优先级已提升');
+    } catch (error: any) {
+      toast.error('操作失败: ' + error.message);
+    }
+  };
+
+  // 降低规则优先级（sortOrder - 1）
+  const handleDecreasePriority = async (id: string) => {
+    try {
+      // 找到对应的规则
+      const rule = rules.find(r => r.id === id);
+      if (!rule) return;
+
+      // 计算新的优先级（当前优先级 - 1），最小为 0
+      const newSortOrder = Math.max(0, (rule.sortOrder || 0) - 1);
+
+      // 调用 API 更新
+      await api.updateRule(id, { sortOrder: newSortOrder });
+
+      // 重新加载规则列表
+      if (selectedRoute) {
+        loadRules(selectedRoute.id);
+      }
+      toast.success('优先级已降低');
+    } catch (error: any) {
+      toast.error('操作失败: ' + error.message);
+    }
+  };
+
   const handleToggleAgentTeams = async (newValue: boolean) => {
     if (!selectedRoute) return;
 
@@ -596,6 +656,10 @@ export default function RoutesPage() {
         setSelectedRequestResetBaseTime(
           (rule as any).requestResetBaseTime ? new Date((rule as any).requestResetBaseTime) : undefined
         );
+
+        // 加载频率限制
+        setSelectedFrequencyLimit(rule.frequencyLimit);
+        setSelectedFrequencyWindow(rule.frequencyWindow);
 
         // 设置API服务的限制值和继承状态
         // 只有当规则的限制值与 API 服务的值完全一致时，才显示为继承状态
@@ -887,13 +951,43 @@ export default function RoutesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {rules.map((rule) => {
+                    {/* 排序规则：先按 sortOrder 倒序，再按 contentType 分类排序 */}
+                    {[...rules].sort((a, b) => {
+                      // 首先按 sortOrder 倒序
+                      const sortOrderA = a.sortOrder || 0;
+                      const sortOrderB = b.sortOrder || 0;
+                      if (sortOrderA !== sortOrderB) {
+                        return sortOrderB - sortOrderA;
+                      }
+                      // sortOrder 相同时，按 contentType 分类排序
+                      const orderA = CONTENT_TYPE_ORDER[a.contentType] ?? 999;
+                      const orderB = CONTENT_TYPE_ORDER[b.contentType] ?? 999;
+                      return orderA - orderB;
+                    }).map((rule) => {
                       const service = allServices.find(s => s.id === rule.targetServiceId);
                       const vendor = vendors.find(v => v.id === service?.vendorId);
                       const contentTypeLabel = CONTENT_TYPE_OPTIONS.find(opt => opt.value === rule.contentType)?.label;
                       return (
                         <tr key={rule.id}>
-                          <td className="col-priority">{rule.sortOrder || 0}</td>
+                          <td className="col-priority">
+                            <div className='col-priority-box'>
+                              <span>{rule.sortOrder || 0}</span>
+                              <button
+                                className="priority-arrow-btn"
+                                onClick={() => handleDecreasePriority(rule.id)}
+                                title="降低优先级"
+                              >
+                                ↓
+                              </button>
+                              <button
+                                className="priority-arrow-btn"
+                                onClick={() => handleIncreasePriority(rule.id)}
+                                title="提升优先级"
+                              >
+                                ↑
+                              </button>
+                            </div>
+                          </td>
                           <td>
                             <div style={{ fontSize: '12px', whiteSpace: 'nowrap' }}>
                               {/* 为非默认类型添加图标 */}
@@ -1082,11 +1176,13 @@ export default function RoutesPage() {
                             })()}
                           </td>
                           <td>
+                            {/* 当 tokenLimit 和 requestCountLimit 都不限制时，不显示用量情况 */}
+                            {(rule.tokenLimit || rule.requestCountLimit) ? (
                             <div style={{ fontSize: '13px' }}>
                               {/* Token限制 */}
+                              {rule.tokenLimit && (
                               <div style={{ whiteSpace: 'nowrap' }}>
                                 <span style={{ fontWeight: 'bold', fontSize: '12px' }}>Tokens:</span>
-                                {rule.tokenLimit ? (
                                   <>
                                     {/* 使用 WebSocket 实时数据 */}
                                     <span style={{
@@ -1104,14 +1200,12 @@ export default function RoutesPage() {
                                       ) : null;
                                     })()}
                                   </>
-                                ) : (
-                                  <span style={{ color: '#999' }}>不限制</span>
-                                )}
                               </div>
+                              )}
                               {/* 请求次数限制 */}
-                              <div style={{ marginTop: '6px' }}>
+                              {rule.requestCountLimit && (
+                              <div style={{ marginTop: rule.tokenLimit ? '6px' : 0 }}>
                                 <span style={{ fontWeight: 'bold', fontSize: '12px' }}>次数:</span>
-                                {rule.requestCountLimit ? (
                                   <>
                                     {/* 使用 WebSocket 实时数据 */}
                                     <span style={{
@@ -1120,7 +1214,7 @@ export default function RoutesPage() {
                                         return currentRequestsUsed && rule.requestCountLimit && currentRequestsUsed >= rule.requestCountLimit ? 'red' : 'inherit';
                                       })()
                                     }}>
-                                      {(ruleStatuses[rule.id]?.totalRequestsUsed ?? rule.totalRequestsUsed) || 0}/{rule.requestCountLimit}
+                                      {(ruleStatuses[rule.id]?.totalRequestsUsed ?? rule.totalTokensUsed) || 0}/{rule.requestCountLimit}
                                     </span>
                                     {(() => {
                                       const currentRequestsUsed = ruleStatuses[rule.id]?.totalRequestsUsed ?? rule.totalRequestsUsed;
@@ -1129,11 +1223,12 @@ export default function RoutesPage() {
                                       ) : null;
                                     })()}
                                   </>
-                                ) : (
-                                  <span style={{ color: '#999' }}>不限制</span>
-                                )}
                               </div>
+                              )}
                             </div>
+                            ) : (
+                              <span style={{ color: '#999', fontSize: '12px' }}>不限制</span>
+                            )}
                           </td>
                           <td>
                             <div className="action-buttons" style={{ justifyContent: 'flex-end' }}>
@@ -1773,6 +1868,67 @@ export default function RoutesPage() {
                         </div>
                       </>
                     )}
+                  </>
+                )}
+
+                {/* 频率限制配置 */}
+                <div className="form-group">
+                  <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={!!selectedFrequencyLimit}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedFrequencyLimit(10); // 默认值
+                          setSelectedFrequencyWindow(0); // 默认0秒（同一时刻）
+                        } else {
+                          setSelectedFrequencyLimit(undefined);
+                          setSelectedFrequencyWindow(undefined);
+                        }
+                      }}
+                      style={{ marginRight: '8px', cursor: 'pointer', width: '16px', height: '16px' }}
+                    />
+                    <span>启用请求频率限制</span>
+                  </label>
+                  <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                    启用后，当同一内容类型的请求频率超过限制时，系统会自动切换到其他同类型规则
+                  </small>
+                </div>
+
+                {selectedFrequencyLimit && (
+                  <>
+                    {/* 频率限制次数字段 */}
+                    <div className="form-group">
+                      <label>频率限制次数（并发数）</label>
+                      <input
+                        type="number"
+                        value={selectedFrequencyLimit || ''}
+                        onChange={(e) => setSelectedFrequencyLimit(e.target.value ? parseInt(e.target.value) : undefined)}
+                        min="1"
+                        placeholder="例如: 10"
+                      />
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        在指定时间窗口内允许的最大请求次数
+                      </small>
+                    </div>
+
+                    {/* 频率限制时间窗口字段 */}
+                    <div className="form-group">
+                      <label>频率限制时间窗口（秒，0=同一时刻）</label>
+                      <input
+                        type="number"
+                        value={selectedFrequencyWindow === 0 ? 0 : (selectedFrequencyWindow || '')}
+                        onChange={(e) => {
+                          const value = e.target.value ? parseInt(e.target.value) : undefined;
+                          setSelectedFrequencyWindow(value === 0 ? 0 : value);
+                        }}
+                        min="0"
+                        placeholder="0 表示同一时刻"
+                      />
+                      <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                        时间窗口大小。0 表示同一时刻（并发数），持续累积；设置为 60 则在 60 秒内最多允许 N 次请求
+                      </small>
+                    </div>
                   </>
                 )}
 

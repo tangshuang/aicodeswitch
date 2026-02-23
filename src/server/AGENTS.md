@@ -593,3 +593,193 @@ if (useMCPProcessing) {
 | `types/index.ts` | 修改：Rule 接口添加 `useMCP` 和 `mcpId` |
 | `ui/pages/RoutesPage.tsx` | 修改：前端 MCP 配置界面 |
 
+---
+
+## Request Frequency Limit (2026-02-23)
+
+### 功能概述
+
+为路由规则添加请求频率限制功能，允许用户设置规则在特定时间窗口内的最大请求次数。当同一内容类型的请求频率超过限制时，系统会自动切换到其他同类型规则，实现负载均衡。
+
+### 核心组件
+
+#### 1. `types/index.ts` (修改)
+
+在 `Rule` 接口中添加频率限制字段：
+
+```typescript
+export interface Rule {
+  // ... 其他字段
+  frequencyLimit?: number;       // 频率限制次数（并发数）
+  frequencyWindow?: number;      // 频率限制时间窗口（秒），0 表示"同一时刻"
+}
+```
+
+#### 2. `proxy-server.ts` (修改)
+
+**新增属性**：
+
+```typescript
+// 频率限制跟踪：用于跟踪每个规则在当前时间窗口内的请求数
+// key: ruleId, value: { count: number, windowStart: number }
+private frequencyLimitTracker = new Map<string, { count: number; windowStart: number }>();
+```
+
+**新增方法**：
+
+1. **`isFrequencyLimitExceeded(rule: Rule): boolean`**
+   - 检查规则是否达到频率限制
+   - 如果设置了 `frequencyLimit`，则跟踪请求数
+   - `frequencyWindow = 0` 表示"同一时刻"（并发数），计数器持续累积
+   - `frequencyWindow > 0` 表示时间窗口，计数器按时间窗口重置
+   - 超过限制返回 `true`，否则返回 `false`
+
+2. **`recordRequest(ruleId: string): void`**
+   - 在请求成功后更新频率计数
+   - 维护 `frequencyLimitTracker` 中的请求计数
+   - 支持 `frequencyWindow = 0`（持续累积）和 `> 0`（按时间窗口重置）两种模式
+
+3. **`cleanExpiredFrequencyTrackers(): void`**
+   - 定期清理过期的频率限制跟踪数据
+   - 清理不再存在的规则的跟踪数据
+
+**修改的方法**：
+
+1. **`findMatchingRule()`** - 在规则匹配检查中添加频率限制检查
+2. **`getAllMatchingRules()`** - 在候选规则过滤中添加频率限制检查
+3. **`proxyRequest()`** - 在请求完成后调用 `recordRequest()` 更新频率计数
+
+#### 3. `ui/pages/RoutesPage.tsx` (修改)
+
+**新增状态**：
+
+```typescript
+const [selectedFrequencyLimit, setSelectedFrequencyLimit] = useState<number | undefined>(undefined);
+const [selectedFrequencyWindow, setSelectedFrequencyWindow] = useState<number | undefined>(undefined);
+```
+
+**新增 UI 组件**：
+
+- 启用请求频率限制复选框
+- 频率限制次数输入框（请求数）
+- 时间窗口输入框（秒）
+
+### 工作原理
+
+#### 1. 频率限制检查流程
+
+```
+请求进入 → findMatchingRule() / getAllMatchingRules()
+           ↓
+    检查规则是否设置了频率限制
+           ↓
+    是 → 检查 frequencyLimitTracker 中当前计数
+         ↓                              ↓
+    超过限制                   未超过限制
+         ↓                              ↓
+    跳过该规则              增加计数，返回规则
+    尝试其他同类型规则
+```
+
+#### 2. 频率计数更新
+
+```
+请求成功 → proxyRequest() 中的 finalizeLog()
+           ↓
+    调用 recordRequest(rule.id)
+           ↓
+    更新 frequencyLimitTracker 中的计数
+```
+
+#### 3. 规则切换逻辑
+
+当同一内容类型存在多个规则时：
+1. 系统按优先级尝试每个规则
+2. 如果某规则达到频率限制，自动跳过
+3. 继续尝试下一个同类型规则
+4. 如果没有其他同类型规则，则继续使用当前规则（原行为不变）
+
+### 配置示例
+
+**路由规则配置** (在 UI 中):
+
+**示例 1：限制并发数（同一时刻）**
+```typescript
+{
+  id: "rule-123",
+  routeId: "route-456",
+  contentType: "default",
+  targetServiceId: "service-789",
+  frequencyLimit: 3,       // 最多3个并发请求
+  frequencyWindow: 0,      // 0 表示"同一时刻"，计数器持续累积
+  sortOrder: 100
+}
+```
+效果：该规则最多同时处理 3 个请求，超过 3 个后自动切换到其他同类型规则。
+
+**示例 2：限制请求速率**
+```typescript
+{
+  id: "rule-456",
+  routeId: "route-456",
+  contentType: "default",
+  targetServiceId: "service-789",
+  frequencyLimit: 10,     // 60秒内最多10次请求
+  frequencyWindow: 60,     // 时间窗口为60秒
+  sortOrder: 100
+}
+```
+效果：在 60 秒内，该规则最多处理 10 个请求，超过后自动切换到其他同类型规则。
+
+### 数据结构
+
+```typescript
+// frequencyLimitTracker 存储结构
+{
+  "rule-id-1": {
+    count: 5,        // 当前时间窗口内的请求数
+    windowStart: 1708684800000  // 时间窗口开始时间戳
+  },
+  "rule-id-2": {
+    count: 10,
+    windowStart: 1708684800000
+  }
+}
+```
+
+### 与请求次数超量的区别
+
+| 特性 | 请求次数超量 | 请求频率限制 |
+|------|-------------|-------------|
+| 统计方式 | 累计请求次数 | 时间窗口内请求数（或并发数） |
+| 重置方式 | 手动/按时间间隔 | frequencyWindow=0 持续累积；>0 按时间窗口重置 |
+| 用途 | 限制总用量 | 限制并发（frequencyWindow=0）或请求速率（frequencyWindow>0） |
+| 作用时机 | 达到上限后规则失效 | 达到限制后切换到其他规则 |
+
+### 错误处理
+
+- **频率限制超出**: 跳过该规则，尝试其他同类型规则
+- **无其他规则**: 继续使用当前规则（原行为不变）
+- **跟踪数据过期**: 自动清理，不影响正常功能
+
+### 性能考虑
+
+- **内存**: 使用 Map 存储跟踪数据，键为规则 ID
+- **清理**: 定期（1%概率）清理过期的跟踪数据
+- **并发**: 支持多规则并发请求，每个规则独立计数
+
+### 注意事项
+
+1. **仅在有多规则时生效**: 频率限制仅在同一内容类型存在多个规则时生效
+2. **无其他规则时行为不变**: 如果没有其他同类型规则，即使达到频率限制也会继续使用
+3. **时间窗口**: 建议设置合理的时间窗口（如 60 秒）和次数限制（如 10 次）
+4. **与请求次数超量配合**: 可以同时设置请求次数超量和频率限制，两者互不影响
+
+### 相关文件
+
+| 文件 | 修改内容 |
+|------|---------|
+| `types/index.ts` | 修改：Rule 接口添加 `frequencyLimit` 和 `frequencyWindow` |
+| `server/proxy-server.ts` | 修改：添加频率限制跟踪和检查逻辑 |
+| `ui/pages/RoutesPage.tsx` | 修改：前端频率限制配置界面 |
+
