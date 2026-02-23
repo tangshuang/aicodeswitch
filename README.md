@@ -30,6 +30,10 @@ AI Code Switch 是帮助你在本地管理 AI 编程工具接入大模型的工�
 * 自定义API Key，支持B/S架构，让aicodeswitch成为在线服务，提供给团队使用
 * 数据完全本地，自主可控
 
+## 桌面客户端
+
+[进入下载](https://github.com/tangshuang/aicodeswitch/releases)
+
 ## 命令行工具
 
 ### 安装
