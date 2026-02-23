@@ -40,6 +40,7 @@ const QUICK_INSTALL_MCP_DEFINITIONS = [
     command: 'npx',
     args: ['-y', '@z_ai/mcp-server'],
     env: { Z_AI_MODE: 'ZHIPU' },
+    apiKeyIn: 'headers' as const,
   },
   {
     id: 'glm-web-search',
@@ -47,6 +48,7 @@ const QUICK_INSTALL_MCP_DEFINITIONS = [
     description: '提供网络搜索能力，实时获取最新信息',
     type: 'http' as const,
     url: 'https://open.bigmodel.cn/api/mcp/web_search_prime/mcp',
+    apiKeyIn: 'headers' as const,
   },
   {
     id: 'glm-web-reader',
@@ -54,6 +56,7 @@ const QUICK_INSTALL_MCP_DEFINITIONS = [
     description: '提供网页内容读取和解析能力',
     type: 'http' as const,
     url: 'https://open.bigmodel.cn/api/mcp/web_reader/mcp',
+    apiKeyIn: 'headers' as const,
   },
   {
     id: 'glm-zread',
@@ -61,6 +64,18 @@ const QUICK_INSTALL_MCP_DEFINITIONS = [
     description: '提供开源仓库代码搜索和阅读能力',
     type: 'http' as const,
     url: 'https://open.bigmodel.cn/api/mcp/zread/mcp',
+    apiKeyIn: 'headers' as const,
+  },
+  {
+    id: 'minimax-coding-plan',
+    name: 'MiniMax Coding Plan',
+    description: '提供网络搜索和图片理解能力',
+    type: 'stdio' as const,
+    command: 'uvx',
+    args: ['-y', 'minimax-coding-plan-mcp'],
+    env: { MINIMAX_API_HOST: 'https://api.minimaxi.com' },
+    apiKeyIn: 'env' as const,
+    apiKeyEnvName: 'MINIMAX_API_KEY',
   },
 ];
 
@@ -302,6 +317,30 @@ function MCPPage() {
         installingMCPName: def.name,
       }));
 
+      // 根据 apiKeyIn 配置决定 API Key 放在 env 还是 headers 中
+      const apiKeyEnvName = def.apiKeyEnvName || 'Z_AI_API_KEY';
+      const isApiKeyInEnv = def.apiKeyIn === 'env';
+
+      const envEntries: [string, string][] = [];
+      if (def.env) {
+        Object.entries(def.env).forEach(([key, value]) => {
+          if (value !== undefined) {
+            envEntries.push([key, value]);
+          }
+        });
+      }
+      if (isApiKeyInEnv) {
+        envEntries.push([apiKeyEnvName, quickInstall.apiKey.trim()]);
+      }
+      const env: Record<string, string> | undefined = envEntries.length > 0
+        ? Object.fromEntries(envEntries)
+        : undefined;
+
+      const isApiKeyInHeaders = def.apiKeyIn === 'headers';
+      const headers = isApiKeyInHeaders
+        ? { Authorization: `Bearer ${quickInstall.apiKey.trim()}` }
+        : undefined;
+
       const mcpData = {
         name: def.name,
         description: def.description,
@@ -309,8 +348,8 @@ function MCPPage() {
         command: def.command,
         args: def.args,
         url: def.url,
-        env: def.env ? { ...def.env, Z_AI_API_KEY: quickInstall.apiKey.trim() } : undefined,
-        headers: { Authorization: `Bearer ${quickInstall.apiKey.trim()}` },
+        env,
+        headers,
         targets: ['claude-code', 'codex'] as TargetType[],
       };
 

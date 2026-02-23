@@ -532,6 +532,29 @@ export default function RoutesPage() {
     }
   };
 
+  // 提升规则优先级（sortOrder + 1）
+  const handleIncreasePriority = async (id: string) => {
+    try {
+      // 找到对应的规则
+      const rule = rules.find(r => r.id === id);
+      if (!rule) return;
+
+      // 计算新的优先级（当前优先级 + 1）
+      const newSortOrder = (rule.sortOrder || 0) + 1;
+
+      // 调用 API 更新
+      await api.updateRule(id, { sortOrder: newSortOrder });
+
+      // 重新加载规则列表
+      if (selectedRoute) {
+        loadRules(selectedRoute.id);
+      }
+      toast.success('优先级已提升');
+    } catch (error: any) {
+      toast.error('操作失败: ' + error.message);
+    }
+  };
+
   const handleToggleAgentTeams = async (newValue: boolean) => {
     if (!selectedRoute) return;
 
@@ -893,7 +916,18 @@ export default function RoutesPage() {
                       const contentTypeLabel = CONTENT_TYPE_OPTIONS.find(opt => opt.value === rule.contentType)?.label;
                       return (
                         <tr key={rule.id}>
-                          <td className="col-priority">{rule.sortOrder || 0}</td>
+                          <td className="col-priority">
+                            <div className='col-priority-box'>
+                              <span>{rule.sortOrder || 0}</span>
+                              <button
+                                className="priority-arrow-btn"
+                                onClick={() => handleIncreasePriority(rule.id)}
+                                title="提升优先级"
+                              >
+                                ↑
+                              </button>
+                            </div>
+                          </td>
                           <td>
                             <div style={{ fontSize: '12px', whiteSpace: 'nowrap' }}>
                               {/* 为非默认类型添加图标 */}
@@ -1082,11 +1116,13 @@ export default function RoutesPage() {
                             })()}
                           </td>
                           <td>
+                            {/* 当 tokenLimit 和 requestCountLimit 都不限制时，不显示用量情况 */}
+                            {(rule.tokenLimit || rule.requestCountLimit) ? (
                             <div style={{ fontSize: '13px' }}>
                               {/* Token限制 */}
+                              {rule.tokenLimit && (
                               <div style={{ whiteSpace: 'nowrap' }}>
                                 <span style={{ fontWeight: 'bold', fontSize: '12px' }}>Tokens:</span>
-                                {rule.tokenLimit ? (
                                   <>
                                     {/* 使用 WebSocket 实时数据 */}
                                     <span style={{
@@ -1104,14 +1140,12 @@ export default function RoutesPage() {
                                       ) : null;
                                     })()}
                                   </>
-                                ) : (
-                                  <span style={{ color: '#999' }}>不限制</span>
-                                )}
                               </div>
+                              )}
                               {/* 请求次数限制 */}
-                              <div style={{ marginTop: '6px' }}>
+                              {rule.requestCountLimit && (
+                              <div style={{ marginTop: rule.tokenLimit ? '6px' : 0 }}>
                                 <span style={{ fontWeight: 'bold', fontSize: '12px' }}>次数:</span>
-                                {rule.requestCountLimit ? (
                                   <>
                                     {/* 使用 WebSocket 实时数据 */}
                                     <span style={{
@@ -1120,7 +1154,7 @@ export default function RoutesPage() {
                                         return currentRequestsUsed && rule.requestCountLimit && currentRequestsUsed >= rule.requestCountLimit ? 'red' : 'inherit';
                                       })()
                                     }}>
-                                      {(ruleStatuses[rule.id]?.totalRequestsUsed ?? rule.totalRequestsUsed) || 0}/{rule.requestCountLimit}
+                                      {(ruleStatuses[rule.id]?.totalRequestsUsed ?? rule.totalTokensUsed) || 0}/{rule.requestCountLimit}
                                     </span>
                                     {(() => {
                                       const currentRequestsUsed = ruleStatuses[rule.id]?.totalRequestsUsed ?? rule.totalRequestsUsed;
@@ -1129,11 +1163,12 @@ export default function RoutesPage() {
                                       ) : null;
                                     })()}
                                   </>
-                                ) : (
-                                  <span style={{ color: '#999' }}>不限制</span>
-                                )}
                               </div>
+                              )}
                             </div>
+                            ) : (
+                              <span style={{ color: '#999', fontSize: '12px' }}>不限制</span>
+                            )}
                           </td>
                           <td>
                             <div className="action-buttons" style={{ justifyContent: 'flex-end' }}>
