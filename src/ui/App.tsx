@@ -20,6 +20,7 @@ import type { ToolInstallationStatus } from '../types';
 import './styles/App.css';
 import logoImage from './assets/logo.png';
 import { useUpgradeNotes } from './hooks/docs';
+import { RulesStatusProvider } from './hooks/useRulesStatus';
 import upgradMd from '../../UPGRADE.md?raw';
 
 function AppContent() {
@@ -662,8 +663,10 @@ function App() {
   return (
     <Router>
       <ConfirmProvider>
-        <AppContent />
-        <ToastContainer />
+        <RulesStatusProvider>
+          <AppContent />
+          <ToastContainer />
+        </RulesStatusProvider>
       </ConfirmProvider>
     </Router>
   );

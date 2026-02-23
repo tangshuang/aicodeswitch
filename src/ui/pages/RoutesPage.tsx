@@ -15,6 +15,16 @@ const CONTENT_TYPE_OPTIONS = [
   { value: 'model-mapping', label: '模型顶替', icon: '🔄' },
 ];
 
+// 类型排序权重（数值越小越靠前）
+const CONTENT_TYPE_ORDER: Record<string, number> = {
+  'default': 0,
+  'background': 1,
+  'thinking': 2,
+  'long-context': 3,
+  'image-understanding': 4,
+  'model-mapping': 5,
+};
+
 // 类型到图标的映射
 const CONTENT_TYPE_ICONS: Record<string, string> = {
   'background': '🧱',
@@ -555,6 +565,29 @@ export default function RoutesPage() {
     }
   };
 
+  // 降低规则优先级（sortOrder - 1）
+  const handleDecreasePriority = async (id: string) => {
+    try {
+      // 找到对应的规则
+      const rule = rules.find(r => r.id === id);
+      if (!rule) return;
+
+      // 计算新的优先级（当前优先级 - 1），最小为 0
+      const newSortOrder = Math.max(0, (rule.sortOrder || 0) - 1);
+
+      // 调用 API 更新
+      await api.updateRule(id, { sortOrder: newSortOrder });
+
+      // 重新加载规则列表
+      if (selectedRoute) {
+        loadRules(selectedRoute.id);
+      }
+      toast.success('优先级已降低');
+    } catch (error: any) {
+      toast.error('操作失败: ' + error.message);
+    }
+  };
+
   const handleToggleAgentTeams = async (newValue: boolean) => {
     if (!selectedRoute) return;
 
@@ -910,7 +943,19 @@ export default function RoutesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {rules.map((rule) => {
+                    {/* 排序规则：先按 sortOrder 倒序，再按 contentType 分类排序 */}
+                    {[...rules].sort((a, b) => {
+                      // 首先按 sortOrder 倒序
+                      const sortOrderA = a.sortOrder || 0;
+                      const sortOrderB = b.sortOrder || 0;
+                      if (sortOrderA !== sortOrderB) {
+                        return sortOrderB - sortOrderA;
+                      }
+                      // sortOrder 相同时，按 contentType 分类排序
+                      const orderA = CONTENT_TYPE_ORDER[a.contentType] ?? 999;
+                      const orderB = CONTENT_TYPE_ORDER[b.contentType] ?? 999;
+                      return orderA - orderB;
+                    }).map((rule) => {
                       const service = allServices.find(s => s.id === rule.targetServiceId);
                       const vendor = vendors.find(v => v.id === service?.vendorId);
                       const contentTypeLabel = CONTENT_TYPE_OPTIONS.find(opt => opt.value === rule.contentType)?.label;
@@ -919,6 +964,13 @@ export default function RoutesPage() {
                           <td className="col-priority">
                             <div className='col-priority-box'>
                               <span>{rule.sortOrder || 0}</span>
+                              <button
+                                className="priority-arrow-btn"
+                                onClick={() => handleDecreasePriority(rule.id)}
+                                title="降低优先级"
+                              >
+                                ↓
+                              </button>
                               <button
                                 className="priority-arrow-btn"
                                 onClick={() => handleIncreasePriority(rule.id)}

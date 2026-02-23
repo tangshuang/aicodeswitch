@@ -365,7 +365,7 @@ table th {
 .col-priority-box {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
 }
 /* 优先级箭头按钮 */
 .priority-arrow-btn {
@@ -375,7 +375,6 @@ table th {
   width: 20px;
   height: 20px;
   padding: 0;
-  margin-left: 4px;
   background-color: var(--bg-card);
   border: 1px solid var(--border-primary);
   border-radius: 4px;
