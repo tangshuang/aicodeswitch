@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 3.5.1 (2026-02-24)
+
+#### Fixes
+* 优化智能故障切换：当上游 API 返回 4xx/5xx 时，同一请求内立即切换到下一个可用服务，不再等待下次请求
+* 故障兜底时错误日志新增转发提示（如“已自动转发给 xx 服务继续处理”），便于用户确认已自动接管
+
 ### 3.5.0 (2026-02-21)
 
 #### Features
