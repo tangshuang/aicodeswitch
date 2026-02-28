@@ -44,6 +44,18 @@ type ContentTypeDetector = {
 
 const SUPPORTED_TARGETS = ['claude-code', 'codex'];
 
+type ProxyRequestOptions = {
+  failoverEnabled?: boolean;
+  forwardedToServiceName?: string;
+};
+
+type FailoverProxyError = Error & {
+  isFailoverCandidate?: boolean;
+  response?: {
+    status: number;
+  };
+};
+
 export class ProxyServer {
   private app: express.Application;
   private dbManager: FileSystemDatabaseManager;
@@ -110,7 +122,8 @@ export class ProxyServer {
         // 尝试每个规则,直到成功或全部失败
         let lastError: Error | null = null;
 
-        for (const rule of allRules) {
+        for (let index = 0; index < allRules.length; index++) {
+          const rule = allRules[index];
           const service = this.getServiceById(rule.targetServiceId);
           if (!service) continue;
 
@@ -127,8 +140,12 @@ export class ProxyServer {
           }
 
           try {
+            const nextServiceName = await this.findNextAvailableServiceName(allRules, index + 1, route.id);
             // 尝试代理请求
-            await this.proxyRequest(req, res, route, rule, service);
+            await this.proxyRequest(req, res, route, rule, service, {
+              failoverEnabled: true,
+              forwardedToServiceName: nextServiceName,
+            });
             return; // 成功,直接返回
           } catch (error: any) {
             console.error(`Service ${service.name} failed:`, error.message);
@@ -327,7 +344,8 @@ export class ProxyServer {
         // 尝试每个规则,直到成功或全部失败
         let lastError: Error | null = null;
 
-        for (const rule of allRules) {
+        for (let index = 0; index < allRules.length; index++) {
+          const rule = allRules[index];
           const service = this.getServiceById(rule.targetServiceId);
           if (!service) continue;
 
@@ -344,8 +362,12 @@ export class ProxyServer {
           }
 
           try {
+            const nextServiceName = await this.findNextAvailableServiceName(allRules, index + 1, route.id);
             // 尝试代理请求
-            await this.proxyRequest(req, res, route, rule, service);
+            await this.proxyRequest(req, res, route, rule, service, {
+              failoverEnabled: true,
+              forwardedToServiceName: nextServiceName,
+            });
             return; // 成功,直接返回
           } catch (error: any) {
             console.error(`Service ${service.name} failed:`, error.message);
@@ -516,6 +538,42 @@ export class ProxyServer {
   private findRouteByTargetType(targetType: 'claude-code' | 'codex'): Route | undefined {
     const activeRoutes = this.getActiveRoutes();
     return activeRoutes.find(route => route.targetType === targetType && route.isActive);
+  }
+
+  private async findNextAvailableServiceName(allRules: Rule[], startIndex: number, routeId: string): Promise<string | undefined> {
+    for (let index = startIndex; index < allRules.length; index++) {
+      const rule = allRules[index];
+      const service = this.getServiceById(rule.targetServiceId);
+      if (!service) continue;
+
+      const isBlacklisted = await this.dbManager.isServiceBlacklisted(
+        service.id,
+        routeId,
+        rule.contentType
+      );
+      if (isBlacklisted) continue;
+
+      return service.name;
+    }
+
+    return undefined;
+  }
+
+  private buildFailoverHint(forwardedToServiceName?: string): string {
+    if (!forwardedToServiceName) {
+      return '';
+    }
+    return `；已自动转发给 ${forwardedToServiceName} 服务继续处理`;
+  }
+
+  private createFailoverError(message: string, statusCode: number, originalError?: any): FailoverProxyError {
+    const failoverError = new Error(message) as FailoverProxyError;
+    failoverError.isFailoverCandidate = true;
+    failoverError.response = { status: statusCode };
+    if (originalError?.stack) {
+      failoverError.stack = originalError.stack;
+    }
+    return failoverError;
   }
 
   /**
@@ -1717,11 +1775,20 @@ export class ProxyServer {
     return originalPath;
   }
 
-  private async proxyRequest(req: Request, res: Response, route: Route, rule: Rule, service: APIService) {
+  private async proxyRequest(
+    req: Request,
+    res: Response,
+    route: Route,
+    rule: Rule,
+    service: APIService,
+    options?: ProxyRequestOptions
+  ) {
     res.locals.skipLog = true;
     const startTime = Date.now();
     const sourceType = (service.sourceType || 'openai-chat') as SourceType;
     const targetType = route.targetType;
+    const failoverEnabled = options?.failoverEnabled === true;
+    const forwardedToServiceName = options?.forwardedToServiceName;
     let requestBody: any = req.body || {};
     let usageForLog: TokenUsage | undefined;
     let logged = false;
@@ -1988,6 +2055,69 @@ export class ProxyServer {
       }
     };
 
+    const handleUpstreamHttpError = async (
+      statusCode: number,
+      responseData: any,
+      responseHeaders: any,
+      contentType: string
+    ) => {
+      usageForLog = this.extractTokenUsage(responseData?.usage);
+      responseBodyForLog = typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
+
+      let errorDetail: string;
+      if (typeof responseData?.error === 'string') {
+        errorDetail = responseData.error;
+      } else if (typeof responseData?.message === 'string') {
+        errorDetail = responseData.message;
+      } else if (responseData?.error) {
+        errorDetail = JSON.stringify(responseData.error);
+      } else {
+        errorDetail = JSON.stringify(responseData);
+      }
+
+      const failoverHint = failoverEnabled ? this.buildFailoverHint(forwardedToServiceName) : '';
+      const upstreamErrorMessage = `Upstream API returned ${statusCode}: ${errorDetail}${failoverHint}`;
+
+      const vendors = this.dbManager.getVendors();
+      const vendor = vendors.find(v => v.id === service.vendorId);
+
+      await this.dbManager.addErrorLog({
+        timestamp: Date.now(),
+        method: req.method,
+        path: req.path,
+        statusCode,
+        errorMessage: upstreamErrorMessage,
+        errorStack: undefined,
+        requestHeaders: this.normalizeHeaders(req.headers),
+        requestBody: req.body ? JSON.stringify(req.body) : undefined,
+        responseHeaders: responseHeadersForLog,
+        responseBody: responseBodyForLog,
+        ruleId: rule.id,
+        targetType,
+        targetServiceId: service.id,
+        targetServiceName: service.name,
+        targetModel: rule.targetModel || req.body?.model,
+        vendorId: service.vendorId,
+        vendorName: vendor?.name,
+        requestModel: req.body?.model,
+        upstreamRequest: upstreamRequestForLog,
+        responseTime: Date.now() - startTime,
+      });
+
+      if (failoverEnabled) {
+        await finalizeLog(statusCode, upstreamErrorMessage);
+        throw this.createFailoverError(upstreamErrorMessage, statusCode);
+      }
+
+      this.copyResponseHeaders(responseHeaders, res);
+      if (contentType.includes('application/json')) {
+        res.status(statusCode).json(responseData);
+      } else {
+        res.status(statusCode).send(responseData);
+      }
+      await finalizeLog(res.statusCode);
+    };
+
     try {
       if (targetType === 'claude-code') {
         if (this.isClaudeSource(sourceType)) {
@@ -2110,6 +2240,19 @@ export class ProxyServer {
       const responseHeaders = response.headers || {};
       const contentType = typeof responseHeaders['content-type'] === 'string' ? responseHeaders['content-type'] : '';
       const isEventStream = streamRequested && contentType.includes('text/event-stream');
+
+      // 先处理 4xx/5xx：在故障切换模式下抛错，由上层继续切换下一服务
+      if (response.status >= 400) {
+        let errorResponseData = response.data;
+        if (streamRequested && response.data && typeof response.data.on === 'function') {
+          const raw = await this.readStreamBody(response.data);
+          errorResponseData = this.safeJsonParse(raw) ?? raw;
+        }
+
+        responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
+        await handleUpstreamHttpError(response.status, errorResponseData, responseHeaders, contentType);
+        return;
+      }
 
       if (isEventStream && response.data) {
         res.status(response.status);
@@ -2615,62 +2758,6 @@ export class ProxyServer {
       // 收集响应头
       responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
 
-      if (response.status >= 400) {
-        usageForLog = this.extractTokenUsage(responseData?.usage);
-        // 记录错误响应体
-        responseBodyForLog = typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
-
-        // 将 4xx/5xx 错误记录到错误日志
-        // 确保 errorDetail 总是字符串类型
-        let errorDetail: string;
-        if (typeof responseData?.error === 'string') {
-          errorDetail = responseData.error;
-        } else if (typeof responseData?.message === 'string') {
-          errorDetail = responseData.message;
-        } else if (responseData?.error) {
-          errorDetail = JSON.stringify(responseData.error);
-        } else {
-          errorDetail = JSON.stringify(responseData);
-        }
-
-        // 获取供应商信息
-        const vendors = this.dbManager.getVendors();
-        const vendor = vendors.find(v => v.id === service.vendorId);
-
-        await this.dbManager.addErrorLog({
-          timestamp: Date.now(),
-          method: req.method,
-          path: req.path,
-          statusCode: response.status,
-          errorMessage: `Upstream API returned ${response.status}: ${errorDetail}`,
-          errorStack: undefined,
-          requestHeaders: this.normalizeHeaders(req.headers),
-          requestBody: req.body ? JSON.stringify(req.body) : undefined,
-          responseHeaders: responseHeadersForLog,
-          responseBody: responseBodyForLog,
-          // 添加请求详情和实际转发信息
-          ruleId: rule.id,
-          targetType,
-          targetServiceId: service.id,
-          targetServiceName: service.name,
-          targetModel: rule.targetModel || req.body?.model,
-          vendorId: service.vendorId,
-          vendorName: vendor?.name,
-          requestModel: req.body?.model,
-          upstreamRequest: upstreamRequestForLog,
-          responseTime: Date.now() - startTime,
-        });
-
-        this.copyResponseHeaders(responseHeaders, res);
-        if (contentType.includes('application/json')) {
-          res.status(response.status).json(responseData);
-        } else {
-          res.status(response.status).send(responseData);
-        }
-        await finalizeLog(res.statusCode);
-        return;
-      }
-
       if (targetType === 'claude-code' && this.isOpenAIChatSource(sourceType)) {
         const converted = transformOpenAIChatResponseToClaude(responseData);
         usageForLog = extractTokenUsageFromOpenAIUsage(responseData?.usage);
@@ -2707,6 +2794,10 @@ export class ProxyServer {
 
       await finalizeLog(res.statusCode);
     } catch (error: any) {
+      if (failoverEnabled && (error as FailoverProxyError)?.isFailoverCandidate) {
+        throw error;
+      }
+
       console.error('Proxy error:', error);
 
       // 检测是否是 timeout 错误
@@ -2714,9 +2805,11 @@ export class ProxyServer {
                         error.message?.toLowerCase().includes('timeout') ||
                         (error.errno && error.errno === 'ETIMEDOUT');
 
-      const errorMessage = isTimeout
+      const baseErrorMessage = isTimeout
         ? 'Request timeout - the upstream API took too long to respond'
         : (error.message || 'Internal server error');
+      const failoverHint = failoverEnabled ? this.buildFailoverHint(forwardedToServiceName) : '';
+      const errorMessage = `${baseErrorMessage}${failoverHint}`;
 
       // 将错误记录到错误日志 - 包含请求详情和实际转发信息
       // 获取供应商信息
@@ -2746,6 +2839,10 @@ export class ProxyServer {
       });
 
       await finalizeLog(isTimeout ? 504 : 500, errorMessage);
+
+      if (failoverEnabled) {
+        throw this.createFailoverError(errorMessage, isTimeout ? 504 : 500, error);
+      }
 
       // 根据请求类型返回适当格式的错误响应
       const streamRequested = this.isStreamRequested(req, req.body || {});
