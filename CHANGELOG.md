@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 3.6.0 (2026-03-01)
+
+#### Features
+* 新增"高智商"请求类型功能
+  - 在路由规则中新增"高智商"（high-iq）请求类型选项
+  - 用户可在提示词中使用 `!!` 前缀（如 `!! 重构A模块`）自动切换到高智能模型
+  - 系统自动检测用户消息中的 `!!` 前缀并应用相应的高智商规则
+  - 实际转发请求时自动移除 `!!` 前缀和多余空格，保持提示词干净
+  - 日志记录中会标记该请求为"高智商"请求类型
+  - 支持字符串和数组类型的消息内容
+
 ### 3.5.2 (2026-03-01)
 
 #### Fixes

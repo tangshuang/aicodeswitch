@@ -1,6 +1,6 @@
 {
   "name": "aicodeswitch",
-  "version": "3.0.6",
+  "version": "3.6.0",
   "description": "A tool to help you manage AI programming tools to access large language models locally. It allows your Claude Code, Codex and other tools to no longer be limited to official models.",
   "author": "tangshuang",
   "license": "GPL-3.0",

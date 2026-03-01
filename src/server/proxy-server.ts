@@ -1148,6 +1148,10 @@ export class ProxyServer {
         match: (_req, body) => this.hasThinkingSignal(body),
       },
       {
+        type: 'high-iq',
+        match: (_req, body) => this.hasHighIqSignal(body),
+      },
+      {
         type: 'long-context',
         match: (_req, body) => this.hasLongContextSignal(body),
       },
@@ -1214,6 +1218,10 @@ export class ProxyServer {
       bg: 'background',
       thinking: 'thinking',
       reasoning: 'thinking',
+      'high-iq': 'high-iq',
+      high_iq: 'high-iq',
+      highiq: 'high-iq',
+      smart: 'high-iq',
       'long-context': 'long-context',
       long_context: 'long-context',
       long: 'long-context',
@@ -1255,6 +1263,72 @@ export class ProxyServer {
       body?.reasoning?.effort ||
       body?.reasoning?.enabled
     );
+  }
+
+  private hasHighIqSignal(body: any): boolean {
+    const messages = body?.messages;
+    if (!Array.isArray(messages)) {
+      return false;
+    }
+
+    for (const message of messages) {
+      if (message?.role !== 'user') continue;
+
+      const content = message?.content;
+      // 处理字符串类型的 content
+      if (typeof content === 'string') {
+        if (content.trim().startsWith('!!')) {
+          return true;
+        }
+      }
+      // 处理数组类型的 content
+      else if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block?.type === 'text' && typeof block.text === 'string') {
+            if (block.text.trim().startsWith('!!')) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
+  private removeHighIqPrefix(body: any): any {
+    if (!body?.messages || !Array.isArray(body.messages)) {
+      return body;
+    }
+
+    // 深拷贝 body 以避免修改原始对象
+    const processedBody = JSON.parse(JSON.stringify(body));
+
+    for (const message of processedBody.messages) {
+      if (message?.role !== 'user') continue;
+
+      const content = message?.content;
+      // 处理字符串类型的 content
+      if (typeof content === 'string') {
+        if (content.trim().startsWith('!!')) {
+          // 移除 !! 前缀并执行 trim
+          message.content = content.replace(/^!!\s*/, '').trim();
+        }
+      }
+      // 处理数组类型的 content
+      else if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block?.type === 'text' && typeof block.text === 'string') {
+            if (block.text.trim().startsWith('!!')) {
+              // 移除 !! 前缀并执行 trim
+              block.text = block.text.replace(/^!!\s*/, '').trim();
+            }
+          }
+        }
+      }
+    }
+
+    return processedBody;
   }
 
   private hasBackgroundSignal(body: any): boolean {
@@ -1951,6 +2025,12 @@ export class ProxyServer {
         // 不返回错误，而是继续使用默认处理逻辑
         useMCPProcessing = false;
       }
+    }
+
+    // 高智商请求处理：移除 !! 前缀
+    if (rule.contentType === 'high-iq' && requestBody.messages) {
+      requestBody = this.removeHighIqPrefix(requestBody);
+      console.log('[HIGH-IQ] Removed !! prefix from user messages');
     }
 
     // 用于收集响应数据的变量

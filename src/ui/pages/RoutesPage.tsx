@@ -10,6 +10,7 @@ const CONTENT_TYPE_OPTIONS = [
   { value: 'default', label: '默认' },
   { value: 'background', label: '后台', icon: '⚙' },
   { value: 'thinking', label: '思考', icon: '💭' },
+  { value: 'high-iq', label: '高智商', icon: '🧠' },
   { value: 'long-context', label: '长上下文', icon: '📄' },
   { value: 'image-understanding', label: '图像理解', icon: '🖼' },
   { value: 'model-mapping', label: '模型顶替', icon: '🔄' },
@@ -20,15 +21,17 @@ const CONTENT_TYPE_ORDER: Record<string, number> = {
   'default': 0,
   'background': 1,
   'thinking': 2,
-  'long-context': 3,
-  'image-understanding': 4,
-  'model-mapping': 5,
+  'high-iq': 3,
+  'long-context': 4,
+  'image-understanding': 5,
+  'model-mapping': 6,
 };
 
 // 类型到图标的映射
 const CONTENT_TYPE_ICONS: Record<string, string> = {
   'background': '🧱',
   'thinking': '💭',
+  'high-iq': '🧠',
   'long-context': '📄',
   'image-understanding': '🖼️',
   'model-mapping': '🔄',
@@ -149,7 +152,9 @@ export default function RoutesPage() {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (isConfiguringRoute) {
         e.preventDefault();
-        e.returnValue = '正在配置路由，刷新页面可能导致配置不完整。';
+        // 现代浏览器会忽略自定义消息，显示标准确认对话框
+        // 为了兼容性，仍然设置 returnValue（但会被浏览器忽略）
+        e.returnValue = '';
       }
     };
 
@@ -1478,6 +1483,47 @@ export default function RoutesPage() {
                     ))}
                   </select>
                 </div>
+
+                {/* 高智商请求类型提示 */}
+                {selectedContentType === 'high-iq' && (
+                  <div style={{
+                    background: 'var(--bg-info-blue)',
+                    padding: '12px',
+                    borderRadius: '6px',
+                    borderLeft: '4px solid var(--border-info-blue)',
+                    marginBottom: '16px'
+                  }}>
+                    <div style={{ fontSize: '13px', fontWeight: 'bold', marginBottom: '6px' }}>
+                      💡 高智商请求使用方法
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.6' }}>
+                      在编程工具中输入提示词时，使用 <code style={{
+                        background: 'var(--bg-code-inline, #f5f5f5)',
+                        padding: '2px 6px',
+                        borderRadius: '3px',
+                        fontFamily: 'monospace',
+                        fontSize: '12px'
+                      }}>!!</code> 前缀即可自动切换到高智商模型。
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', lineHeight: '1.6' }}>
+                      <strong>示例：</strong><br />
+                      • <code style={{
+                        background: 'var(--bg-code-inline, #f5f5f5)',
+                        padding: '2px 6px',
+                        borderRadius: '3px',
+                        fontFamily: 'monospace',
+                        fontSize: '12px'
+                      }}>!! 重构A模块</code><br />
+                      • <code style={{
+                        background: 'var(--bg-code-inline, #f5f5f5)',
+                        padding: '2px 6px',
+                        borderRadius: '3px',
+                        fontFamily: 'monospace',
+                        fontSize: '12px'
+                      }}>!! 这个算法性能太差，帮我优化</code>
+                    </div>
+                  </div>
+                )}
 
                 {/* 新增：被顶替模型字段，仅在选择模型顶替时显示 */}
                 {selectedContentType === 'model-mapping' && (
