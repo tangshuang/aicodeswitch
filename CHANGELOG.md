@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 3.7.0 (2026-03-01)
+
+#### Features
+* 新增"Gemini Chat"数据源类型
+  - 支持用户传入完整的 Gemini API 地址，无需系统自动拼接
+  - 与 Gemini 数据源类型不同，Gemini Chat 要求用户提供完整的 API 端点 URL
+  - 自动使用 Google API Key (x-goog-api-key) 认证方式
+  - 支持请求和响应的自动转换（Claude/OpenAI ↔ Gemini）
+  - 支持流式和非流式响应处理
+
 ### 3.6.0 (2026-03-01)
 
 #### Features

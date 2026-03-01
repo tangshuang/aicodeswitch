@@ -14,6 +14,7 @@ export const SOURCE_TYPE: Record<SourceType, string> = {
   'openai-chat': 'OpenAI Chat',
   'deepseek-reasoning-chat': 'DeepSeek Reasoning Chat',
   'gemini': 'Gemini',
+  'gemini-chat': 'Gemini Chat',
 };
 
 export const SOURCE_TYPE_MESSAGE: Record<SourceType, string> = {
@@ -23,6 +24,7 @@ export const SOURCE_TYPE_MESSAGE: Record<SourceType, string> = {
   'claude-code': '只填写 base 地址，如：https://api.anthropic.com',
   'deepseek-reasoning-chat': '推理类模型，填写完整的接口地址，如：https://api.deepseek.com/v1/chat/completions',
   'gemini': '只填写 base 地址，如：https://generativelanguage.googleapis.com',
+  'gemini-chat': '填写完整的接口地址，如：https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent',
 };
 
 /** 认证方式类型 */

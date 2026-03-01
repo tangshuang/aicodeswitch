@@ -1471,6 +1471,11 @@ export class ProxyServer {
     return sourceType === 'gemini';
   }
 
+  /** 判断是否为 Gemini Chat 类型 */
+  private isGeminiChatSource(sourceType: SourceType) {
+    return sourceType === 'gemini-chat';
+  }
+
   private isChatType(sourceType: SourceType) {
     return sourceType.endsWith('-chat') || sourceType === 'gemini';
   }
@@ -1615,8 +1620,8 @@ export class ProxyServer {
     // TODO: 删除
     const isAuto = authType === 'auto' as any;
 
-    // 使用 x-goog-api-key 认证（适用于 Google Gemini API）
-    if (authType === AuthType.G_API_KEY || (isAuto && this.isGeminiSource(sourceType))) {
+    // 使用 x-goog-api-key 认证（适用于 Google Gemini API 和 Gemini Chat）
+    if (authType === AuthType.G_API_KEY || (isAuto && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType)))) {
       headers['x-goog-api-key'] = service.apiKey;
     }
     // 使用 x-api-key 认证（适用于 claude-chat, claude-code 及某些需要 x-api-key 的 openai-chat 兼容 API）
@@ -2242,7 +2247,7 @@ export class ProxyServer {
           requestBody = this.applyModelOverride(requestBody, rule);
         } else if (this.isOpenAIChatSource(sourceType)) {
           requestBody = transformClaudeRequestToOpenAIChat(requestBody, rule.targetModel);
-        } else if (this.isGeminiSource(sourceType)) {
+        } else if (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType)) {
           requestBody = transformClaudeRequestToGemini(requestBody);
         } else {
           res.status(400).json({ error: 'Unsupported source type for Claude Code.' });
@@ -2254,7 +2259,7 @@ export class ProxyServer {
           requestBody = this.applyModelOverride(requestBody, rule);
         } else if (this.isClaudeSource(sourceType)) {
           requestBody = transformClaudeRequestToOpenAIChat(requestBody, rule.targetModel);
-        } else if (this.isGeminiSource(sourceType)) {
+        } else if (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType)) {
           requestBody = transformOpenAIChatRequestToGemini(requestBody);
         } else {
           res.status(400).json({ error: 'Unsupported source type for Codex.' });
@@ -2285,7 +2290,8 @@ export class ProxyServer {
         // Gemini 类型需要特殊处理：根据模型拼接完整 URL
         const model = requestBody.model || rule.targetModel || 'gemini-pro';
         upstreamUrl = this.buildGeminiUrl(service.apiUrl, model, streamRequested);
-      } else if (this.isChatType(sourceType)) {
+      } else if (this.isChatType(sourceType) || this.isGeminiChatSource(sourceType)) {
+        // Chat 类型（包括 gemini-chat）直接使用用户配置的完整 URL
         upstreamUrl = service.apiUrl;
       } else {
         upstreamUrl = `${service.apiUrl}${mappedPath}`;
@@ -2593,8 +2599,8 @@ export class ProxyServer {
           return;
         }
 
-        // Gemini -> Claude Code 流式转换
-        if (targetType === 'claude-code' && this.isGeminiSource(sourceType)) {
+        // Gemini / Gemini Chat -> Claude Code 流式转换
+        if (targetType === 'claude-code' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
@@ -2697,8 +2703,8 @@ export class ProxyServer {
           return;
         }
 
-        // Gemini -> Codex 流式转换
-        if (targetType === 'codex' && this.isGeminiSource(sourceType)) {
+        // Gemini / Gemini Chat -> Codex 流式转换
+        if (targetType === 'codex' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
@@ -2882,7 +2888,7 @@ export class ProxyServer {
         // 记录转换后的响应体
         responseBodyForLog = JSON.stringify(converted);
         res.status(response.status).json(converted);
-      } else if (targetType === 'claude-code' && this.isGeminiSource(sourceType)) {
+      } else if (targetType === 'claude-code' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
         const converted = transformGeminiResponseToClaude(responseData, rule.targetModel);
         usageForLog = extractTokenUsageFromGeminiUsage(responseData?.usageMetadata);
         responseBodyForLog = JSON.stringify(converted);
@@ -2892,7 +2898,7 @@ export class ProxyServer {
         usageForLog = extractTokenUsageFromClaudeUsage(responseData?.usage);
         responseBodyForLog = JSON.stringify(converted);
         res.status(response.status).json(converted);
-      } else if (targetType === 'codex' && this.isGeminiSource(sourceType)) {
+      } else if (targetType === 'codex' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
         const converted = transformGeminiResponseToOpenAIChat(responseData, rule.targetModel);
         usageForLog = extractTokenUsageFromGeminiUsage(responseData?.usageMetadata);
         responseBodyForLog = JSON.stringify(converted);

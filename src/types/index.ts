@@ -10,7 +10,7 @@ export interface Vendor {
 }
 
 /** 供应商API接口的数据结构标准类型 */
-export type SourceType = 'openai-chat' | 'openai-responses' | 'claude-chat' | 'claude-code' | 'deepseek-reasoning-chat' | 'gemini';
+export type SourceType = 'openai-chat' | 'openai-responses' | 'claude-chat' | 'claude-code' | 'deepseek-reasoning-chat' | 'gemini' | 'gemini-chat';
 /** 路由的目标对象类型，目前，仅支持claude-code和codex */
 export type TargetType = 'claude-code' | 'codex';
 
