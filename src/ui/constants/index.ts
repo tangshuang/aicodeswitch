@@ -8,9 +8,9 @@ export const TARGET_TYPE = {
 
 /** 数据源类型 */
 export const SOURCE_TYPE: Record<SourceType, string> = {
-  'claude-code': 'Claude Code',
+  'claude': 'Claude',
   'claude-chat': 'Claude Chat',
-  'openai-responses': 'OpenAI Responses',
+  'openai': 'OpenAI',
   'openai-chat': 'OpenAI Chat',
   'deepseek-reasoning-chat': 'DeepSeek Reasoning Chat',
   'gemini': 'Gemini',
@@ -19,9 +19,9 @@ export const SOURCE_TYPE: Record<SourceType, string> = {
 
 export const SOURCE_TYPE_MESSAGE: Record<SourceType, string> = {
   'openai-chat': '填写完整的接口地址，如：https://api.openai.com/v1/chat/completions',
-  'openai-responses': '只填写 base 地址(含/v1），如：https://api.openai.com/v1',
+  'openai': '只填写 base 地址(含/v1），如：https://api.openai.com/v1',
   'claude-chat': '填写完整的接口地址，如：https://api.anthropic.com/v1/messages',
-  'claude-code': '只填写 base 地址，如：https://api.anthropic.com',
+  'claude': '只填写 base 地址，如：https://api.anthropic.com',
   'deepseek-reasoning-chat': '推理类模型，填写完整的接口地址，如：https://api.deepseek.com/v1/chat/completions',
   'gemini': '只填写 base 地址，如：https://generativelanguage.googleapis.com',
   'gemini-chat': '填写完整的接口地址，如：https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent',

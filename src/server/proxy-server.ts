@@ -1459,11 +1459,11 @@ export class ProxyServer {
 
   /** 判断是否为 Claude 相关类型（使用 x-api-key 认证） */
   private isClaudeSource(sourceType: SourceType) {
-    return sourceType === 'claude-chat' || sourceType === 'claude-code';
+    return sourceType === 'claude-chat' || sourceType === 'claude';
   }
 
   private isOpenAIChatSource(sourceType: SourceType) {
-    return sourceType === 'openai-chat' || sourceType === 'openai-responses' || sourceType === 'deepseek-reasoning-chat';
+    return sourceType === 'openai-chat' || sourceType === 'openai' || sourceType === 'deepseek-reasoning-chat';
   }
 
   /** 判断是否为 Gemini 类型 */

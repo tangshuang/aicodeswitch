@@ -20,6 +20,7 @@ import type {
   MCPServer,
   TargetType,
 } from '../types';
+import { migrateSourceType, downgradeSourceType, isLegacySourceType, normalizeSourceType } from './type-migration';
 
 interface LogShardIndex {
   filename: string;
@@ -115,6 +116,9 @@ export class FileSystemDatabaseManager {
     // 加载所有数据
     await this.loadAllData();
 
+    // 执行数据源类型迁移（在加载数据之后）
+    await this.migrateSourceTypes();
+
     // 确保默认配置
     await this.ensureDefaultConfig();
   }
@@ -203,6 +207,88 @@ export class FileSystemDatabaseManager {
       }
       console.error('[Database] 迁移 services 时出错:', err);
     }
+  }
+
+  /**
+   * 迁移数据源类型（在初始化时执行）
+   * 处理 vendors.json 中的 services[].sourceType
+   * 将旧类型 ('claude-code', 'openai-responses') 迁移为新类型 ('claude', 'openai')
+   */
+  private async migrateSourceTypes(): Promise<void> {
+    console.log('[TypeMigration] Checking for source type migration...');
+
+    let needsMigration = false;
+
+    // 检查是否需要迁移
+    for (const vendor of this.vendors) {
+      if (vendor.services) {
+        for (const service of vendor.services) {
+          if (service.sourceType && isLegacySourceType(service.sourceType)) {
+            needsMigration = true;
+            break;
+          }
+        }
+      }
+      if (needsMigration) break;
+    }
+
+    if (!needsMigration) {
+      console.log('[TypeMigration] No migration needed');
+      return;
+    }
+
+    console.log('[TypeMigration] Starting source type migration...');
+
+    // 备份当前数据到 ~/.aicodeswitch/backup/YYYY-MM-DD-HH-MM/
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const dateStr = `${year}-${month}-${day}-${hours}-${minutes}`;
+
+    const appDir = path.dirname(this.dataPath); // ~/.aicodeswitch/
+    const backupBaseDir = path.join(appDir, 'backup');
+    const backupDir = path.join(backupBaseDir, dateStr);
+    await fs.mkdir(backupDir, { recursive: true });
+
+    const vendorsBackupPath = path.join(backupDir, 'vendors.json');
+    await fs.writeFile(vendorsBackupPath, JSON.stringify(this.vendors, null, 2));
+    console.log(`[TypeMigration] Backup created: ${vendorsBackupPath}`);
+
+    // 执行迁移
+    let migratedCount = 0;
+    for (const vendor of this.vendors) {
+      if (vendor.services) {
+        for (const service of vendor.services) {
+          if (service.sourceType && isLegacySourceType(service.sourceType)) {
+            const oldType = service.sourceType;
+            service.sourceType = migrateSourceType(service.sourceType);
+            console.log(`[TypeMigration] Migrated service "${service.name}": ${oldType} -> ${service.sourceType}`);
+            migratedCount++;
+          }
+        }
+      }
+    }
+
+    // 保存迁移后的数据
+    await this.saveVendors();
+    console.log(`[TypeMigration] Migration completed. Migrated ${migratedCount} services.`);
+  }
+
+  /**
+   * 迁移导入数据中的类型
+   * 用于导入功能，自动将旧类型转换为新类型
+   */
+  private migrateVendorsOnImport(vendors: Vendor[]): Vendor[] {
+    return vendors.map(vendor => ({
+      ...vendor,
+      services: vendor.services?.map(service => ({
+        ...service,
+        sourceType: service.sourceType ? normalizeSourceType(service.sourceType) : undefined
+      }))
+    }));
   }
 
   private async saveVendors() {
@@ -1844,6 +1930,11 @@ export class FileSystemDatabaseManager {
       const validation = this.validateExportData(importData);
       if (!validation.valid) {
         return { success: false, message: '导入失败', details: `数据验证失败：${validation.error}` };
+      }
+
+      // 自动迁移导入数据中的旧类型
+      if (importData.vendors) {
+        importData.vendors = this.migrateVendorsOnImport(importData.vendors);
       }
 
       // 导入数据（更新 updatedAt）

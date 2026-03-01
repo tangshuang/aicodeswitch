@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 3.8.0 (2026-03-01)
+
+#### Changed
+* **Breaking Change (向下兼容)**: 重命名数据源类型（SourceType）
+  - `'claude-code'` → `'claude'`
+  - `'openai-responses'` → `'openai'`
+  - 命名更简洁，避免与 `TargetType` 中的 `'claude-code'` 混淆
+  - **向下兼容保障**：
+    - 数据库自动迁移：启动时自动迁移旧类型数据，创建备份文件
+    - API 向下兼容：自动接受旧类型请求并转换为新类型
+    - 导入导出：支持新旧两种格式的数据交换
+    - 零感知升级：老用户无需任何手动操作
+
 ### 3.7.0 (2026-03-01)
 
 #### Features

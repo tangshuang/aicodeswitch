@@ -27,6 +27,7 @@ import { checkPortUsable } from './utils';
 import { getToolsInstallationStatus } from './tools-service';
 import { createToolInstallationWSServer } from './websocket-service';
 import { createRulesStatusWSServer } from './rules-status-service';
+import { normalizeSourceType, isLegacySourceType } from './type-migration';
 import {
   saveMetadata,
   loadMetadata,
@@ -90,6 +91,33 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: 'Infinity' }));
 app.use(express.urlencoded({ extended: true, limit: 'Infinity' }));
+
+// 类型转换中间件：自动将旧的数据源类型转换为新类型
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.body && typeof req.body === 'object') {
+    // 转换 sourceType
+    if (req.body.sourceType && typeof req.body.sourceType === 'string') {
+      if (isLegacySourceType(req.body.sourceType)) {
+        console.log(`[API] Converting legacy sourceType: ${req.body.sourceType} -> ${normalizeSourceType(req.body.sourceType)}`);
+        req.body.sourceType = normalizeSourceType(req.body.sourceType);
+      }
+    }
+
+    // 转换数组中的 sourceType（如 vendors 的 services）
+    if (Array.isArray(req.body.services)) {
+      req.body.services = req.body.services.map((service: any) => {
+        if (service.sourceType && isLegacySourceType(service.sourceType)) {
+          return {
+            ...service,
+            sourceType: normalizeSourceType(service.sourceType)
+          };
+        }
+        return service;
+      });
+    }
+  }
+  next();
+});
 
 const asyncHandler =
   (handler: (req: Request, res: Response, next: NextFunction) => Promise<unknown> | unknown) =>
