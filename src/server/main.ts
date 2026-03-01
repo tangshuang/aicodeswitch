@@ -93,7 +93,7 @@ app.use(express.json({ limit: 'Infinity' }));
 app.use(express.urlencoded({ extended: true, limit: 'Infinity' }));
 
 // 类型转换中间件：自动将旧的数据源类型转换为新类型
-app.use((req: Request, res: Response, next: NextFunction) => {
+app.use((req: Request, _res: Response, next: NextFunction) => {
   if (req.body && typeof req.body === 'object') {
     // 转换 sourceType
     if (req.body.sourceType && typeof req.body.sourceType === 'string') {
