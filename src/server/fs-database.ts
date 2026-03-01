@@ -20,7 +20,7 @@ import type {
   MCPServer,
   TargetType,
 } from '../types';
-import { migrateSourceType, downgradeSourceType, isLegacySourceType, normalizeSourceType } from './type-migration';
+import { migrateSourceType, isLegacySourceType, normalizeSourceType } from './type-migration';
 
 interface LogShardIndex {
   filename: string;

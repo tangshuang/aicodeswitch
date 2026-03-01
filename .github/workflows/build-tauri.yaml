@@ -64,18 +64,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            platform: macos
-            arch: aarch64
-            target: aarch64-apple-darwin
-            args: "--target aarch64-apple-darwin"
-            bundle: "dmg app"
-          - os: macos-latest
-            platform: macos
-            arch: x64
-            target: x86_64-apple-darwin
-            args: "--target x86_64-apple-darwin"
-            bundle: "dmg app"
           - os: windows-latest
             platform: windows
             arch: x64
@@ -146,32 +134,8 @@ jobs:
         shell: bash
 
       - name: Build Tauri app
-        env:
-          APPLE_IDENTITY: ""
-          CSC_SKIP_SIGN: true
         run: npx tauri build ${{ matrix.args }} --bundles ${{ matrix.bundle }}
         shell: bash
-
-      - name: Rename macOS artifacts
-        if: matrix.os == 'macos-latest'
-        run: |
-          VERSION="${{ needs.check-release.outputs.version }}"
-          BUNDLE_DIR="tauri/target/${{ matrix.target }}/release/bundle"
-          arch_label=$([ "${{ matrix.arch }}" = "aarch64" ] && echo "AppleSilicon" || echo "Intel")
-          cd "$BUNDLE_DIR"
-          if [ -d "dmg" ]; then
-            for file in dmg/*.dmg; do
-              [ -e "$file" ] || continue
-              mv "$file" "dmg/AI-Code-Switch-${VERSION}-macOS-${arch_label}.dmg"
-            done
-          fi
-          if [ -d "macos" ]; then
-            for app in macos/*.app; do
-              [ -e "$app" ] || continue
-              zip -r "macos/AI-Code-Switch-${VERSION}-macOS-${arch_label}.zip" "$app"
-              rm -rf "$app"
-            done
-          fi
 
       - name: Rename Windows artifacts
         if: matrix.os == 'windows-latest'
@@ -192,15 +156,6 @@ jobs:
             done
           fi
         shell: bash
-
-      - name: Upload artifacts (macOS)
-        if: matrix.os == 'macos-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: tauri-macos-${{ matrix.arch }}
-          path: |
-            tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
-            tauri/target/${{ matrix.target }}/release/bundle/macos/*.zip
 
       - name: Upload artifacts (Windows)
         if: matrix.os == 'windows-latest'
