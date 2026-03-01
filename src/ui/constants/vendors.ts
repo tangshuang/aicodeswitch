@@ -23,7 +23,7 @@ export default {
         services: [
             {
                 name: 'Coding Plan Claude Code',
-                sourceType: 'claude-code',
+                sourceType: 'claude',
                 apiUrl: 'https://api.minimaxi.com/anthropic',
                 models: 'MiniMax-M2.5',
             },
@@ -41,7 +41,7 @@ export default {
         services: [
             {
                 name: 'Coding Plan Claude Code',
-                sourceType: 'claude-code',
+                sourceType: 'claude',
                 apiUrl: 'https://open.bigmodel.cn/api/anthropic',
                 models: 'glm-4.7, glm-4.5-air',
                 modelLimits: {
@@ -57,7 +57,7 @@ export default {
         services: [
             {
                 name: 'Coding Plan Claude Code',
-                sourceType: 'claude-code',
+                sourceType: 'claude',
                 apiUrl: 'https://api.kimi.com/coding',
             }
         ]
@@ -68,25 +68,25 @@ export default {
         services: [
             {
                 name: 'Coding Plan Claude Code',
-                sourceType: 'claude-code',
+                sourceType: 'claude',
                 apiUrl: 'https://ark.cn-beijing.volces.com/api/coding',
                 models: 'ark-code-latest',
             },
             {
                 name: 'Coding Plan Codex',
-                sourceType: 'openai-responses',
+                sourceType: 'openai',
                 apiUrl: 'https://ark.cn-beijing.volces.com/api/coding/v3',
                 models: 'ark-code-latest',
             },
             {
                 name: '付费API兼容Claude Code',
-                sourceType: 'claude-code',
+                sourceType: 'claude',
                 apiUrl: 'https://ark.cn-beijing.volces.com/api/compatible',
                 models: 'doubao-seed-code-preview-251028',
             },
             {
                 name: '付费API兼容Codex',
-                sourceType: 'openai-responses',
+                sourceType: 'openai',
                 apiUrl: 'https://ark.cn-beijing.volces.com/api/v3',
                 models: 'doubao-seed-code-preview-251028',
             },
@@ -98,7 +98,7 @@ export default {
         services: [
             {
                 name: 'Coding Plan Claude Code',
-                sourceType: 'claude-code',
+                sourceType: 'claude',
                 apiUrl: 'https://coding.dashscope.aliyuncs.com/apps/anthropic',
                 models: 'qwen3-max-2026-01-23, qwen3-coder-plus',
             },
@@ -110,7 +110,7 @@ export default {
             },
             {
                 name: '付费API兼容Codex',
-                sourceType: 'openai-responses',
+                sourceType: 'openai',
                 apiUrl: 'https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1',
                 models: 'qwen3-max-2026-01-23, qwen3-coder-plus, kimi-k2.5, glm-4.7, MiniMax-M2.1',
             },
@@ -122,12 +122,12 @@ export default {
         services: [
             {
                 name: 'claudecode',
-                sourceType: 'claude-code',
+                sourceType: 'claude',
                 apiUrl: 'https://api.aicodewith.com',
             },
             {
                 name: 'codex',
-                sourceType: 'openai-responses',
+                sourceType: 'openai',
                 apiUrl: 'https://api.aicodewith.com/chatgpt',
             },
         ],
@@ -138,7 +138,7 @@ export default {
         services: [
             {
                 name: 'GPT',
-                sourceType: 'openai-responses',
+                sourceType: 'openai',
                 apiUrl: 'https://api.openai.com',
             },
         ],
@@ -150,7 +150,7 @@ export default {
         services: [
             {
                 name: 'Claude',
-                sourceType: 'claude-code',
+                sourceType: 'claude',
                 apiUrl: 'https://api.anthropic.com',
             },
         ],
@@ -174,7 +174,7 @@ export default {
         services: [
             {
                 name: 'Claude Code专属接口',
-                sourceType: 'claude-code',
+                sourceType: 'claude',
                 apiUrl: 'https://openrouter.ai/api',
                 models: 'anthropic/claude-opus-4.6, anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5',
             },

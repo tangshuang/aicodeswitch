@@ -267,6 +267,8 @@ aicos version            # Show current version information
   - API requests/responses
   - Configuration
   - Token usage tracking
+  - **SourceType**: API 服务的数据格式类型（'openai-chat', 'openai', 'claude-chat', 'claude', 等）
+  - **TargetType**: 路由目标类型（'claude-code', 'codex'）
 
 #### 9. Tauri Desktop Application - `tauri/`
 - **src/main.rs**: Tauri main process (Rust)

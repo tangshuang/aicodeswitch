@@ -2,6 +2,49 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 3.8.0 (2026-03-01)
+
+#### Changed
+* **Breaking Change (向下兼容)**: 重命名数据源类型（SourceType）
+  - `'claude-code'` → `'claude'`
+  - `'openai-responses'` → `'openai'`
+  - 命名更简洁，避免与 `TargetType` 中的 `'claude-code'` 混淆
+  - **向下兼容保障**：
+    - 数据库自动迁移：启动时自动迁移旧类型数据，创建备份文件
+    - API 向下兼容：自动接受旧类型请求并转换为新类型
+    - 导入导出：支持新旧两种格式的数据交换
+    - 零感知升级：老用户无需任何手动操作
+
+### 3.7.0 (2026-03-01)
+
+#### Features
+* 新增"Gemini Chat"数据源类型
+  - 支持用户传入完整的 Gemini API 地址，无需系统自动拼接
+  - 与 Gemini 数据源类型不同，Gemini Chat 要求用户提供完整的 API 端点 URL
+  - 自动使用 Google API Key (x-goog-api-key) 认证方式
+  - 支持请求和响应的自动转换（Claude/OpenAI ↔ Gemini）
+  - 支持流式和非流式响应处理
+
+### 3.6.0 (2026-03-01)
+
+#### Features
+* 新增"高智商"请求类型功能
+  - 在路由规则中新增"高智商"（high-iq）请求类型选项
+  - 用户可在提示词中使用 `!!` 前缀（如 `!! 重构A模块`）自动切换到高智能模型
+  - 系统自动检测用户消息中的 `!!` 前缀并应用相应的高智商规则
+  - 实际转发请求时自动移除 `!!` 前缀和多余空格，保持提示词干净
+  - 日志记录中会标记该请求为"高智商"请求类型
+  - 支持字符串和数组类型的消息内容
+
+### 3.5.2 (2026-03-01)
+
+#### Fixes
+* 修复故障自动切换机制在特定场景下不生效的问题
+  - 新增 Fallback 机制：当所有服务都在黑名单中时，自动使用最后一个失败的服务重试
+  - 优化黑名单 TTL：从 10 分钟缩短到 2 分钟，使服务能够更快地重新可用
+  - 确保即使只有一个规则配置，也能在服务报错时提供容错能力
+  - 改进日志输出，增加 Fallback 尝试的详细记录
+
 ### 3.5.1 (2026-02-24)
 
 #### Fixes

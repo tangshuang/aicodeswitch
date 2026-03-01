@@ -121,6 +121,8 @@ export class ProxyServer {
 
         // 尝试每个规则,直到成功或全部失败
         let lastError: Error | null = null;
+        let lastFailedRule: Rule | null = null;
+        let lastFailedService: APIService | null = null;
 
         for (let index = 0; index < allRules.length; index++) {
           const rule = allRules[index];
@@ -150,6 +152,8 @@ export class ProxyServer {
           } catch (error: any) {
             console.error(`Service ${service.name} failed:`, error.message);
             lastError = error;
+            lastFailedRule = rule;
+            lastFailedService = service;
 
             // 检测是否是 timeout 错误
             const isTimeout = error.code === 'ECONNABORTED' ||
@@ -195,6 +199,21 @@ export class ProxyServer {
 
         // 所有服务都失败了
         console.error('All services failed');
+
+        // 如果有失败的服务但都在黑名单中，尝试使用最后一个失败的服务（作为 fallback）
+        if (lastFailedRule && lastFailedService) {
+          console.log(`All services in blacklist, attempting fallback to last failed service: ${lastFailedService.name}`);
+          try {
+            await this.proxyRequest(req, res, route, lastFailedRule, lastFailedService, {
+              failoverEnabled: false,  // Fallback 模式不启用故障切换
+              forwardedToServiceName: undefined,
+            });
+            return;
+          } catch (fallbackError: any) {
+            console.error(`Fallback to service ${lastFailedService.name} also failed:`, fallbackError.message);
+            lastError = fallbackError;
+          }
+        }
 
         // 记录日志
         if (this.config?.enableLogging !== false && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
@@ -343,6 +362,8 @@ export class ProxyServer {
 
         // 尝试每个规则,直到成功或全部失败
         let lastError: Error | null = null;
+        let lastFailedRule: Rule | null = null;
+        let lastFailedService: APIService | null = null;
 
         for (let index = 0; index < allRules.length; index++) {
           const rule = allRules[index];
@@ -372,6 +393,8 @@ export class ProxyServer {
           } catch (error: any) {
             console.error(`Service ${service.name} failed:`, error.message);
             lastError = error;
+            lastFailedRule = rule;
+            lastFailedService = service;
 
             // 检测是否是 timeout 错误
             const isTimeout = error.code === 'ECONNABORTED' ||
@@ -417,6 +440,21 @@ export class ProxyServer {
 
         // 所有服务都失败了
         console.error('All services failed');
+
+        // 如果有失败的服务但都在黑名单中，尝试使用最后一个失败的服务（作为 fallback）
+        if (lastFailedRule && lastFailedService) {
+          console.log(`All services in blacklist, attempting fallback to last failed service: ${lastFailedService.name}`);
+          try {
+            await this.proxyRequest(req, res, route, lastFailedRule, lastFailedService, {
+              failoverEnabled: false,  // Fallback 模式不启用故障切换
+              forwardedToServiceName: undefined,
+            });
+            return;
+          } catch (fallbackError: any) {
+            console.error(`Fallback to service ${lastFailedService.name} also failed:`, fallbackError.message);
+            lastError = fallbackError;
+          }
+        }
 
         // 记录日志
         if (this.config?.enableLogging !== false && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
@@ -1110,6 +1148,10 @@ export class ProxyServer {
         match: (_req, body) => this.hasThinkingSignal(body),
       },
       {
+        type: 'high-iq',
+        match: (_req, body) => this.hasHighIqSignal(body),
+      },
+      {
         type: 'long-context',
         match: (_req, body) => this.hasLongContextSignal(body),
       },
@@ -1176,6 +1218,10 @@ export class ProxyServer {
       bg: 'background',
       thinking: 'thinking',
       reasoning: 'thinking',
+      'high-iq': 'high-iq',
+      high_iq: 'high-iq',
+      highiq: 'high-iq',
+      smart: 'high-iq',
       'long-context': 'long-context',
       long_context: 'long-context',
       long: 'long-context',
@@ -1217,6 +1263,72 @@ export class ProxyServer {
       body?.reasoning?.effort ||
       body?.reasoning?.enabled
     );
+  }
+
+  private hasHighIqSignal(body: any): boolean {
+    const messages = body?.messages;
+    if (!Array.isArray(messages)) {
+      return false;
+    }
+
+    for (const message of messages) {
+      if (message?.role !== 'user') continue;
+
+      const content = message?.content;
+      // 处理字符串类型的 content
+      if (typeof content === 'string') {
+        if (content.trim().startsWith('!!')) {
+          return true;
+        }
+      }
+      // 处理数组类型的 content
+      else if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block?.type === 'text' && typeof block.text === 'string') {
+            if (block.text.trim().startsWith('!!')) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
+  private removeHighIqPrefix(body: any): any {
+    if (!body?.messages || !Array.isArray(body.messages)) {
+      return body;
+    }
+
+    // 深拷贝 body 以避免修改原始对象
+    const processedBody = JSON.parse(JSON.stringify(body));
+
+    for (const message of processedBody.messages) {
+      if (message?.role !== 'user') continue;
+
+      const content = message?.content;
+      // 处理字符串类型的 content
+      if (typeof content === 'string') {
+        if (content.trim().startsWith('!!')) {
+          // 移除 !! 前缀并执行 trim
+          message.content = content.replace(/^!!\s*/, '').trim();
+        }
+      }
+      // 处理数组类型的 content
+      else if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block?.type === 'text' && typeof block.text === 'string') {
+            if (block.text.trim().startsWith('!!')) {
+              // 移除 !! 前缀并执行 trim
+              block.text = block.text.replace(/^!!\s*/, '').trim();
+            }
+          }
+        }
+      }
+    }
+
+    return processedBody;
   }
 
   private hasBackgroundSignal(body: any): boolean {
@@ -1347,16 +1459,21 @@ export class ProxyServer {
 
   /** 判断是否为 Claude 相关类型（使用 x-api-key 认证） */
   private isClaudeSource(sourceType: SourceType) {
-    return sourceType === 'claude-chat' || sourceType === 'claude-code';
+    return sourceType === 'claude-chat' || sourceType === 'claude';
   }
 
   private isOpenAIChatSource(sourceType: SourceType) {
-    return sourceType === 'openai-chat' || sourceType === 'openai-responses' || sourceType === 'deepseek-reasoning-chat';
+    return sourceType === 'openai-chat' || sourceType === 'openai' || sourceType === 'deepseek-reasoning-chat';
   }
 
   /** 判断是否为 Gemini 类型 */
   private isGeminiSource(sourceType: SourceType) {
     return sourceType === 'gemini';
+  }
+
+  /** 判断是否为 Gemini Chat 类型 */
+  private isGeminiChatSource(sourceType: SourceType) {
+    return sourceType === 'gemini-chat';
   }
 
   private isChatType(sourceType: SourceType) {
@@ -1503,8 +1620,8 @@ export class ProxyServer {
     // TODO: 删除
     const isAuto = authType === 'auto' as any;
 
-    // 使用 x-goog-api-key 认证（适用于 Google Gemini API）
-    if (authType === AuthType.G_API_KEY || (isAuto && this.isGeminiSource(sourceType))) {
+    // 使用 x-goog-api-key 认证（适用于 Google Gemini API 和 Gemini Chat）
+    if (authType === AuthType.G_API_KEY || (isAuto && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType)))) {
       headers['x-goog-api-key'] = service.apiKey;
     }
     // 使用 x-api-key 认证（适用于 claude-chat, claude-code 及某些需要 x-api-key 的 openai-chat 兼容 API）
@@ -1915,6 +2032,12 @@ export class ProxyServer {
       }
     }
 
+    // 高智商请求处理：移除 !! 前缀
+    if (rule.contentType === 'high-iq' && requestBody.messages) {
+      requestBody = this.removeHighIqPrefix(requestBody);
+      console.log('[HIGH-IQ] Removed !! prefix from user messages');
+    }
+
     // 用于收集响应数据的变量
     let responseHeadersForLog: Record<string, string> | undefined;
     let responseBodyForLog: string | undefined;
@@ -2124,7 +2247,7 @@ export class ProxyServer {
           requestBody = this.applyModelOverride(requestBody, rule);
         } else if (this.isOpenAIChatSource(sourceType)) {
           requestBody = transformClaudeRequestToOpenAIChat(requestBody, rule.targetModel);
-        } else if (this.isGeminiSource(sourceType)) {
+        } else if (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType)) {
           requestBody = transformClaudeRequestToGemini(requestBody);
         } else {
           res.status(400).json({ error: 'Unsupported source type for Claude Code.' });
@@ -2136,7 +2259,7 @@ export class ProxyServer {
           requestBody = this.applyModelOverride(requestBody, rule);
         } else if (this.isClaudeSource(sourceType)) {
           requestBody = transformClaudeRequestToOpenAIChat(requestBody, rule.targetModel);
-        } else if (this.isGeminiSource(sourceType)) {
+        } else if (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType)) {
           requestBody = transformOpenAIChatRequestToGemini(requestBody);
         } else {
           res.status(400).json({ error: 'Unsupported source type for Codex.' });
@@ -2167,7 +2290,8 @@ export class ProxyServer {
         // Gemini 类型需要特殊处理：根据模型拼接完整 URL
         const model = requestBody.model || rule.targetModel || 'gemini-pro';
         upstreamUrl = this.buildGeminiUrl(service.apiUrl, model, streamRequested);
-      } else if (this.isChatType(sourceType)) {
+      } else if (this.isChatType(sourceType) || this.isGeminiChatSource(sourceType)) {
+        // Chat 类型（包括 gemini-chat）直接使用用户配置的完整 URL
         upstreamUrl = service.apiUrl;
       } else {
         upstreamUrl = `${service.apiUrl}${mappedPath}`;
@@ -2475,8 +2599,8 @@ export class ProxyServer {
           return;
         }
 
-        // Gemini -> Claude Code 流式转换
-        if (targetType === 'claude-code' && this.isGeminiSource(sourceType)) {
+        // Gemini / Gemini Chat -> Claude Code 流式转换
+        if (targetType === 'claude-code' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
@@ -2579,8 +2703,8 @@ export class ProxyServer {
           return;
         }
 
-        // Gemini -> Codex 流式转换
-        if (targetType === 'codex' && this.isGeminiSource(sourceType)) {
+        // Gemini / Gemini Chat -> Codex 流式转换
+        if (targetType === 'codex' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
@@ -2764,7 +2888,7 @@ export class ProxyServer {
         // 记录转换后的响应体
         responseBodyForLog = JSON.stringify(converted);
         res.status(response.status).json(converted);
-      } else if (targetType === 'claude-code' && this.isGeminiSource(sourceType)) {
+      } else if (targetType === 'claude-code' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
         const converted = transformGeminiResponseToClaude(responseData, rule.targetModel);
         usageForLog = extractTokenUsageFromGeminiUsage(responseData?.usageMetadata);
         responseBodyForLog = JSON.stringify(converted);
@@ -2774,7 +2898,7 @@ export class ProxyServer {
         usageForLog = extractTokenUsageFromClaudeUsage(responseData?.usage);
         responseBodyForLog = JSON.stringify(converted);
         res.status(response.status).json(converted);
-      } else if (targetType === 'codex' && this.isGeminiSource(sourceType)) {
+      } else if (targetType === 'codex' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
         const converted = transformGeminiResponseToOpenAIChat(responseData, rule.targetModel);
         usageForLog = extractTokenUsageFromGeminiUsage(responseData?.usageMetadata);
         responseBodyForLog = JSON.stringify(converted);

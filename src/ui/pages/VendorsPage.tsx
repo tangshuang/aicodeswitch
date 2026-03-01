@@ -150,7 +150,7 @@ function VendorsPage() {
     setCurrentSourceType(sourceType);
     let newAuthType: AuthType;
 
-    if (sourceType === 'gemini') {
+    if (sourceType === 'gemini' || sourceType === 'gemini-chat') {
       newAuthType = AuthType.G_API_KEY;
     } else if (sourceType === 'claude-chat' || sourceType === 'claude-code') {
       newAuthType = AuthType.API_KEY;
@@ -328,7 +328,7 @@ function VendorsPage() {
     } else {
       // 根据 sourceType 自动推导 authType
       let derivedAuthType: AuthType;
-      if (sourceType === 'gemini') {
+      if (sourceType === 'gemini' || sourceType === 'gemini-chat') {
         derivedAuthType = AuthType.G_API_KEY;
       } else if (sourceType === 'claude-chat' || sourceType === 'claude-code') {
         derivedAuthType = AuthType.API_KEY;
