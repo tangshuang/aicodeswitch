@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 3.5.2 (2026-03-01)
+
+#### Fixes
+* 修复故障自动切换机制在特定场景下不生效的问题
+  - 新增 Fallback 机制：当所有服务都在黑名单中时，自动使用最后一个失败的服务重试
+  - 优化黑名单 TTL：从 10 分钟缩短到 2 分钟，使服务能够更快地重新可用
+  - 确保即使只有一个规则配置，也能在服务报错时提供容错能力
+  - 改进日志输出，增加 Fallback 尝试的详细记录
+
 ### 3.5.1 (2026-02-24)
 
 #### Fixes

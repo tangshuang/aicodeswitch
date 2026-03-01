@@ -1525,7 +1525,7 @@ export class FileSystemDatabaseManager {
 
     if (existing) {
       existing.blacklistedAt = now;
-      existing.expiresAt = now + 10 * 60 * 1000;
+      existing.expiresAt = now + 2 * 60 * 1000; // 2分钟黑名单（从10分钟缩短）
       existing.errorCount++;
       existing.lastError = errorMessage;
       existing.lastStatusCode = statusCode;
@@ -1536,7 +1536,7 @@ export class FileSystemDatabaseManager {
         routeId,
         contentType,
         blacklistedAt: now,
-        expiresAt: now + 10 * 60 * 1000,
+        expiresAt: now + 2 * 60 * 1000, // 2分钟黑名单（从10分钟缩短）
         errorCount: 1,
         lastError: errorMessage,
         lastStatusCode: statusCode,

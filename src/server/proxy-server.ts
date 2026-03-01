@@ -121,6 +121,8 @@ export class ProxyServer {
 
         // 尝试每个规则,直到成功或全部失败
         let lastError: Error | null = null;
+        let lastFailedRule: Rule | null = null;
+        let lastFailedService: APIService | null = null;
 
         for (let index = 0; index < allRules.length; index++) {
           const rule = allRules[index];
@@ -150,6 +152,8 @@ export class ProxyServer {
           } catch (error: any) {
             console.error(`Service ${service.name} failed:`, error.message);
             lastError = error;
+            lastFailedRule = rule;
+            lastFailedService = service;
 
             // 检测是否是 timeout 错误
             const isTimeout = error.code === 'ECONNABORTED' ||
@@ -195,6 +199,21 @@ export class ProxyServer {
 
         // 所有服务都失败了
         console.error('All services failed');
+
+        // 如果有失败的服务但都在黑名单中，尝试使用最后一个失败的服务（作为 fallback）
+        if (lastFailedRule && lastFailedService) {
+          console.log(`All services in blacklist, attempting fallback to last failed service: ${lastFailedService.name}`);
+          try {
+            await this.proxyRequest(req, res, route, lastFailedRule, lastFailedService, {
+              failoverEnabled: false,  // Fallback 模式不启用故障切换
+              forwardedToServiceName: undefined,
+            });
+            return;
+          } catch (fallbackError: any) {
+            console.error(`Fallback to service ${lastFailedService.name} also failed:`, fallbackError.message);
+            lastError = fallbackError;
+          }
+        }
 
         // 记录日志
         if (this.config?.enableLogging !== false && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
@@ -343,6 +362,8 @@ export class ProxyServer {
 
         // 尝试每个规则,直到成功或全部失败
         let lastError: Error | null = null;
+        let lastFailedRule: Rule | null = null;
+        let lastFailedService: APIService | null = null;
 
         for (let index = 0; index < allRules.length; index++) {
           const rule = allRules[index];
@@ -372,6 +393,8 @@ export class ProxyServer {
           } catch (error: any) {
             console.error(`Service ${service.name} failed:`, error.message);
             lastError = error;
+            lastFailedRule = rule;
+            lastFailedService = service;
 
             // 检测是否是 timeout 错误
             const isTimeout = error.code === 'ECONNABORTED' ||
@@ -417,6 +440,21 @@ export class ProxyServer {
 
         // 所有服务都失败了
         console.error('All services failed');
+
+        // 如果有失败的服务但都在黑名单中，尝试使用最后一个失败的服务（作为 fallback）
+        if (lastFailedRule && lastFailedService) {
+          console.log(`All services in blacklist, attempting fallback to last failed service: ${lastFailedService.name}`);
+          try {
+            await this.proxyRequest(req, res, route, lastFailedRule, lastFailedService, {
+              failoverEnabled: false,  // Fallback 模式不启用故障切换
+              forwardedToServiceName: undefined,
+            });
+            return;
+          } catch (fallbackError: any) {
+            console.error(`Fallback to service ${lastFailedService.name} also failed:`, fallbackError.message);
+            lastError = fallbackError;
+          }
+        }
 
         // 记录日志
         if (this.config?.enableLogging !== false && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
