@@ -231,13 +231,25 @@ const upgrade = async () => {
       chalk.yellow.bold('⚠️  Sudo privileges required\n\n') +
       chalk.white('This operation requires ') + chalk.yellow.bold('sudo') + chalk.white(' privileges.\n\n') +
       chalk.white('Please run the following command to upgrade:\n\n') +
-      chalk.cyan.bold('  sudo npm install -g ' + PACKAGE_NAME + '@latest\n\n') +
-      chalk.gray('After upgrading, run ') + chalk.cyan('aicos restart') + chalk.gray(' to restart the server.'),
+      chalk.cyan.bold('  sudo npm install -g ' + PACKAGE_NAME + '@latest'),
       {
         padding: 1,
         margin: 1,
         borderStyle: 'round',
         borderColor: 'yellow'
+      }
+    ));
+    console.log('');
+    console.log(boxen(
+      chalk.red.bold('⚠️  重启服务以使更改生效\n\n') +
+      chalk.white('升级完成后，必须重启服务才能使用新版本！\n\n') +
+      chalk.white('执行命令: ') + chalk.cyan.bold('aicos restart'),
+      {
+        padding: 1,
+        margin: 1,
+        borderStyle: 'round',
+        borderColor: 'red',
+        backgroundColor: 'red'
       }
     ));
     console.log('');
@@ -274,9 +286,21 @@ const upgrade = async () => {
     }
   ));
   console.log('');
-  console.log(chalk.cyan('💡 Tips:\n'));
-  console.log(chalk.white('  • Restart server: ') + chalk.cyan('aicos restart'));
-  console.log(chalk.white('  • Check version: ') + chalk.cyan('aicos version'));
+  console.log(boxen(
+    chalk.red.bold('⚠️  重启服务以使更改生效\n\n') +
+    chalk.white('升级完成后，必须重启服务才能使用新版本！\n\n') +
+    chalk.white('执行命令: ') + chalk.cyan.bold('aicos restart'),
+    {
+      padding: 1,
+      margin: 1,
+      borderStyle: 'round',
+      borderColor: 'red',
+      backgroundColor: 'red'
+    }
+  ));
+  console.log('');
+  console.log(chalk.cyan('💡 其他命令:\n'));
+  console.log(chalk.white('  • 查看版本: ') + chalk.cyan('aicos version'));
   console.log('\n');
 };
 

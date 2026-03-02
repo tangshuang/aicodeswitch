@@ -1497,13 +1497,23 @@ export default function RoutesPage() {
                       💡 高智商请求使用方法
                     </div>
                     <div style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.6' }}>
-                      在编程工具中输入提示词时，使用 <code style={{
-                        background: 'var(--bg-code-inline, #f5f5f5)',
-                        padding: '2px 6px',
-                        borderRadius: '3px',
-                        fontFamily: 'monospace',
-                        fontSize: '12px'
-                      }}>!!</code> 前缀即可自动切换到高智商模型。
+                      在编程工具中输入提示词时：
+                      <ul style={{ marginTop: '8px', paddingLeft: '20px', lineHeight: '1.8' }}>
+                        <li>使用 <code style={{
+                          background: 'var(--bg-code-inline, #f5f5f5)',
+                          padding: '2px 6px',
+                          borderRadius: '3px',
+                          fontFamily: 'monospace',
+                          fontSize: '12px'
+                        }}>!!</code> 开启高智商模式（整个会话持续使用）</li>
+                        <li>使用 <code style={{
+                          background: 'var(--bg-code-inline, #f5f5f5)',
+                          padding: '2px 6px',
+                          borderRadius: '3px',
+                          fontFamily: 'monospace',
+                          fontSize: '12px'
+                        }}>!x</code> 关闭高智商模式</li>
+                      </ul>
                     </div>
                     <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', lineHeight: '1.6' }}>
                       <strong>示例：</strong><br />
@@ -1520,7 +1530,7 @@ export default function RoutesPage() {
                         borderRadius: '3px',
                         fontFamily: 'monospace',
                         fontSize: '12px'
-                      }}>!! 这个算法性能太差，帮我优化</code>
+                      }}>!x 继续正常对话</code>
                     </div>
                   </div>
                 )}
