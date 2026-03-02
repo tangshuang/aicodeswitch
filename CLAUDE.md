@@ -292,6 +292,12 @@ aicos version            # Show current version information
 - **Routes**: Define target type (Claude Code or Codex) and activation status
 - **Rules**: Match requests by content type and route to specific API services
 - **Content Type Detection**:
+  - `high-iq`: High intelligence mode (persistent across conversation)
+    - Use `!!` prefix to enable: "!! 重构A模块"
+    - Use `!x` prefix to disable: "!x 继续正常对话"
+    - Once enabled, the entire conversation uses the high-IQ model
+    - State persists in session until explicitly disabled or rule becomes unavailable
+    - Automatically detects rule availability and gracefully degrades when rule is unavailable
   - `image-understanding`: Requests with image content
     - 支持使用 MCP 工具处理图像理解请求
     - 开启 MCP 后，图片会被提取并保存到临时文件

@@ -307,6 +307,9 @@ export interface Session {
   serviceId?: string;      // 最后使用的服务ID
   serviceName?: string;    // 最后使用的服务名称
   model?: string;          // 最后使用的模型
+  highIqMode?: boolean;    // 是否启用高智商模式
+  highIqRuleId?: string;   // 使用的高智商规则ID
+  highIqEnabledAt?: number;// 启用高智商模式的时间戳
 }
 
 /** 统计数据 */
