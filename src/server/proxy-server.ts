@@ -36,6 +36,7 @@ import {
   constructMCPMessages,
   cleanupTempImages,
 } from './mcp-image-handler';
+import { normalizeSourceType } from './type-migration';
 
 type ContentTypeDetector = {
   type: ContentType;
@@ -96,8 +97,7 @@ export class ProxyServer {
 
         // 高智商命令检测和会话状态管理
         const highIqCommand = this.detectHighIqCommand(req.body);
-        const targetType = route.targetType;
-        const sessionId = this.defaultExtractSessionId(req, targetType);
+        const sessionId = this.defaultExtractSessionId(req, route.targetType);
 
         if (highIqCommand === 'on') {
           // 检查是否有可用的高智商规则
@@ -110,7 +110,7 @@ export class ProxyServer {
               const session = this.dbManager.getSession(sessionId);
               this.dbManager.upsertSession({
                 id: sessionId,
-                targetType,
+                targetType: route.targetType,
                 title: session?.title,
                 firstRequestAt: session?.firstRequestAt || Date.now(),
                 lastRequestAt: Date.now(),
@@ -411,7 +411,7 @@ export class ProxyServer {
               const session = this.dbManager.getSession(sessionId);
               this.dbManager.upsertSession({
                 id: sessionId,
-                targetType,
+                targetType: route.targetType,
                 title: session?.title,
                 firstRequestAt: session?.firstRequestAt || Date.now(),
                 lastRequestAt: Date.now(),
@@ -1568,7 +1568,8 @@ export class ProxyServer {
    * 获取路由的目标类型
    */
   private getRouteTargetType(routeId: string): TargetType | null {
-    const route = this.dbManager.getRoute(routeId);
+    const routes = this.dbManager.getRoutes();
+    const route = routes.find(r => r.id === routeId);
     return route?.targetType || null;
   }
 
@@ -1699,12 +1700,16 @@ export class ProxyServer {
   }
 
   /** 判断是否为 Claude 相关类型（使用 x-api-key 认证） */
-  private isClaudeSource(sourceType: SourceType) {
-    return sourceType === 'claude-chat' || sourceType === 'claude';
+  private isClaudeSource(sourceType: SourceType | string) {
+    // 向下兼容：支持旧类型 'claude-code'
+    const normalized = sourceType === 'claude-code' ? 'claude' : sourceType;
+    return normalized === 'claude-chat' || normalized === 'claude';
   }
 
-  private isOpenAIChatSource(sourceType: SourceType) {
-    return sourceType === 'openai-chat' || sourceType === 'openai' || sourceType === 'deepseek-reasoning-chat';
+  private isOpenAIChatSource(sourceType: SourceType | string) {
+    // 向下兼容：支持旧类型 'openai-responses'
+    const normalized = sourceType === 'openai-responses' ? 'openai' : sourceType;
+    return normalized === 'openai-chat' || normalized === 'openai' || normalized === 'deepseek-reasoning-chat';
   }
 
   /** 判断是否为 Gemini 类型 */
@@ -2143,7 +2148,9 @@ export class ProxyServer {
   ) {
     res.locals.skipLog = true;
     const startTime = Date.now();
-    const sourceType = (service.sourceType || 'openai-chat') as SourceType;
+    const rawSourceType = service.sourceType || 'openai-chat';
+    // 标准化 sourceType，将旧类型转换为新类型（向下兼容）
+    const sourceType = normalizeSourceType(rawSourceType);
     const targetType = route.targetType;
     const failoverEnabled = options?.failoverEnabled === true;
     const forwardedToServiceName = options?.forwardedToServiceName;
