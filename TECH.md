@@ -32,7 +32,7 @@ q	string	✓	AI search query
 |--------|----------|----------|
 | `thinking: { type: "enabled" }` | OpenAI Chat | `thinking: { type: "enabled" }` |
 | `thinking: { type: "enabled" }` | OpenAI Responses | `thinking: { type: "enabled" }, reasoning: { effort: "medium" }` |
-| `thinking: { type: "disabled" }` | OpenAI Responses | `thinking: { type: "disabled" }, reasoning: { effort: "minimal" }` |
+| `thinking: { type: "disabled" }` | OpenAI Responses | `thinking: { type: "disabled" }, reasoning: { effort: "high" }` |
 | `thinking: { type: "auto" }` | OpenAI Responses | `thinking: { type: "auto" }, reasoning: { effort: "low" }` |
 | `reasoning_effort: "high"` | OpenAI Responses | `reasoning: { effort: "high" }` |
 

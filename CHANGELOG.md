@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 3.8.2 (2026-03-03)
+
+#### Features
+* 路由管理页面新增 Codex 配置卡片
+  - 在规则列表下方新增 Codex 专属配置区域
+  - 新增 `Reasoning Effort` 下拉选项（Minimal/Low/Medium/High）
+  - 选择值会保存到路由配置字段 `codexModelReasoningEffort`
+
+#### Fixes
+* Codex 路由激活时按路由配置写入 `model_reasoning_effort`
+  - `write-config/codex` 支持接收并写入自定义 `modelReasoningEffort`
+  - 新增激活态实时更新接口：`POST /api/update-codex-reasoning-effort`
+  - 激活路由后修改 `Reasoning Effort` 会立即覆盖 `~/.codex/config.toml`
+* 调整路由管理页 Codex 配置项布局
+  - `Reasoning Effort` 的 label 与下拉值改为左右排列（同一行）
+
+### 3.8.1 (2026-03-03)
+
+#### Fixes
+* 优化 OpenAI（Responses）数据源的 base URL 兼容逻辑
+  - 当用户填写的 base URL 以 `/v{number}` 结尾时，转发时直接拼接请求路径
+  - 当用户填写的 base URL 不以 `/v{number}` 结尾时，转发时自动补 `/v1`
+  - 更新供应商页 OpenAI 数据源提示文案，明确支持两种写法
+* 修复 Vendors 页面旧类型判断残留导致的 TypeScript 报错
+  - 将 `claude-code` 判断统一替换为新类型 `claude`
+  - 解决 `tsc` 中 “types have no overlap” 的编译错误
+
 ### 3.8.0 (2026-03-01)
 
 #### Changed

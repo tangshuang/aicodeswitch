@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
-import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry, MCPServer, ToolInstallationStatus } from '../../types';
+import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry, MCPServer, ToolInstallationStatus, CodexReasoningEffort } from '../../types';
 import { useFlipAnimation } from '../hooks/useFlipAnimation';
 import { useConfirm } from '../components/Confirm';
 import { toast } from '../components/Toast';
@@ -41,6 +41,22 @@ const TARGET_TYPE_OPTIONS = [
   { value: 'claude-code', label: 'Claude Code' },
   { value: 'codex', label: 'Codex' },
 ];
+
+const CODEX_REASONING_EFFORT_OPTIONS: Array<{ value: CodexReasoningEffort; label: string }> = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+];
+
+const isCodexReasoningEffort = (value: unknown): value is CodexReasoningEffort => {
+  return CODEX_REASONING_EFFORT_OPTIONS.some(option => option.value === value);
+};
+
+const getRouteCodexReasoningEffort = (route: Route): CodexReasoningEffort => {
+  return isCodexReasoningEffort(route.codexModelReasoningEffort)
+    ? route.codexModelReasoningEffort
+    : 'high';
+};
 
 /**
  * 将 Date 对象转换为 datetime-local input 所需的格式
@@ -121,17 +137,9 @@ export default function RoutesPage() {
   // Claude Code 版本检查状态
   const [claudeVersionCheck, setClaudeVersionCheck] = useState<ToolInstallationStatus | null>(null);
 
-  // 配置文件备份状态
-  const [backupStatus, setBackupStatus] = useState<{
-    'claude-code': boolean;
-    'codex': boolean;
-  }>({
-    'claude-code': false,
-    'codex': false
-  });
-
   // 配置操作loading状态
   const [isConfiguringRoute, setIsConfiguringRoute] = useState<string | null>(null);
+  const [isUpdatingCodexReasoning, setIsUpdatingCodexReasoning] = useState(false);
 
   // FLIP动画相关
   const { recordPositions, applyAnimation } = useFlipAnimation();
@@ -257,23 +265,23 @@ export default function RoutesPage() {
     setMCPs(data);
   };
 
-  const checkBackupStatus = async () => {
+  const checkBackupStatus = async (): Promise<{ 'claude-code': boolean; 'codex': boolean }> => {
     try {
       const [claudeBackup, codexBackup] = await Promise.all([
         api.checkClaudeBackup(),
         api.checkCodexBackup()
       ]);
-      setBackupStatus({
+      return {
         'claude-code': claudeBackup.exists,
         'codex': codexBackup.exists
-      });
+      };
     } catch (error) {
       console.error('检查备份状态失败:', error);
       // 失败时假设没有备份，避免误判
-      setBackupStatus({
+      return {
         'claude-code': false,
         'codex': false
-      });
+      };
     }
   };
 
@@ -282,27 +290,37 @@ export default function RoutesPage() {
     if (!route) return;
 
     // 重新检查备份状态，避免使用过期数据
-    await checkBackupStatus();
-    const needsConfigWrite = !backupStatus[route.targetType];
+    const latestBackupStatus = await checkBackupStatus();
+    const needsConfigWrite = !latestBackupStatus[route.targetType];
 
     setIsConfiguringRoute(id);
     let configWritten = false;
 
     try {
       // 步骤1：覆盖配置文件（如果需要）
-      if (needsConfigWrite) {
-        try {
-          const configApi = getConfigApi(route.targetType);
-          // 对于Claude Code路由，传递enableAgentTeams设置
-          if (route.targetType === 'claude-code') {
+      try {
+        if (route.targetType === 'claude-code') {
+          if (needsConfigWrite) {
             await api.writeClaudeConfig(route.enableAgentTeams);
-          } else {
-            await configApi.write();
+            configWritten = true;
           }
-          configWritten = true;
-        } catch (error: any) {
-          throw new Error(`配置文件覆盖失败: ${error.message || '未知错误'}`);
+        } else {
+          const modelReasoningEffort = getRouteCodexReasoningEffort(route);
+          if (needsConfigWrite) {
+            await api.writeCodexConfig(modelReasoningEffort);
+            configWritten = true;
+          } else {
+            // 已激活过配置时，切换路由也要同步该路由的 Reasoning Effort
+            const updated = await api.updateCodexReasoningEffort(modelReasoningEffort);
+            if (!updated) {
+              // 兜底：若当前并非代理态但存在备份，改为重写配置文件
+              await api.writeCodexConfig(modelReasoningEffort);
+              configWritten = true;
+            }
+          }
         }
+      } catch (error: any) {
+        throw new Error(`配置文件覆盖失败: ${error.message || '未知错误'}`);
       }
 
       // 步骤2：激活路由（使用现有的FLIP动画逻辑）
@@ -622,6 +640,33 @@ export default function RoutesPage() {
       await loadRoutes();
     } catch (error: any) {
       toast.error('更新失败: ' + error.message);
+    }
+  };
+
+  const handleUpdateCodexReasoningEffort = async (newValue: CodexReasoningEffort) => {
+    if (!selectedRoute || selectedRoute.targetType !== 'codex') return;
+
+    try {
+      setIsUpdatingCodexReasoning(true);
+
+      if (selectedRoute.isActive) {
+        const result = await api.updateCodexReasoningEffort(newValue);
+        if (!result) {
+          throw new Error('Codex 配置文件未处于代理状态，请先重新激活路由');
+        }
+        await api.updateRoute(selectedRoute.id, { codexModelReasoningEffort: newValue });
+        toast.success('Reasoning Effort 已更新，Codex 配置已立即生效');
+      } else {
+        await api.updateRoute(selectedRoute.id, { codexModelReasoningEffort: newValue });
+        toast.success('Reasoning Effort 设置已保存（将在激活时生效）');
+      }
+
+      setSelectedRoute({ ...selectedRoute, codexModelReasoningEffort: newValue });
+      await loadRoutes();
+    } catch (error: any) {
+      toast.error('更新失败: ' + error.message);
+    } finally {
+      setIsUpdatingCodexReasoning(false);
     }
   };
 
@@ -1327,6 +1372,48 @@ export default function RoutesPage() {
                       : selectedRoute.isActive
                         ? '开启后将在 Claude Code 中启用 Agent Teams 实验性功能，已立即生效。'
                         : '开启后将在激活此路由时启用 Agent Teams 实验性功能。'}
+                  </div>
+                </div>
+              </div>
+            )}
+            {selectedRoute && selectedRoute.targetType === 'codex' && (
+              <div className="card">
+                <div className="toolbar">
+                  <h3>Codex 配置</h3>
+                </div>
+                <div style={{ padding: '20px' }}>
+                  <div
+                    className="form-group"
+                    style={{
+                      marginBottom: '0',
+                      maxWidth: '420px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                    }}
+                  >
+                    <label
+                      htmlFor="codex-reasoning-effort"
+                      style={{ marginBottom: 0, minWidth: '120px', whiteSpace: 'nowrap' }}
+                    >
+                      Reasoning Effort
+                    </label>
+                    <select
+                      id="codex-reasoning-effort"
+                      value={getRouteCodexReasoningEffort(selectedRoute)}
+                      onChange={(e) => handleUpdateCodexReasoningEffort(e.target.value as CodexReasoningEffort)}
+                      disabled={isUpdatingCodexReasoning}
+                      style={{ flex: 1, minWidth: 0 }}
+                    >
+                      {CODEX_REASONING_EFFORT_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+                    {selectedRoute.isActive
+                      ? '修改后会立即覆盖写入 ~/.codex/config.toml 的 model_reasoning_effort。'
+                      : '该设置会在激活此路由时写入 ~/.codex/config.toml。'}
                   </div>
                 </div>
               </div>

@@ -1727,6 +1727,26 @@ export class ProxyServer {
   }
 
   /**
+   * 构建 OpenAI Responses 类型的完整 URL
+   * - baseUrl 以 /v{number} 结尾时，直接拼接请求路径
+   * - baseUrl 不带版本时，自动补 /v1 再拼接请求路径
+   * - 兼容请求路径本身已携带版本前缀（如 /v1/responses）场景
+   */
+  private buildOpenAIResponsesUrl(baseUrl: string, mappedPath: string): string {
+    const trimmedBase = baseUrl.trim().replace(/\/+$/, '');
+    const normalizedPath = mappedPath.startsWith('/') || mappedPath === '' ? mappedPath : `/${mappedPath}`;
+
+    const baseHasVersionSuffix = /\/v\d+$/i.test(trimmedBase);
+    const pathHasVersionPrefix = /^\/v\d+(?:\/|$)/i.test(normalizedPath);
+
+    if (baseHasVersionSuffix || pathHasVersionPrefix) {
+      return `${trimmedBase}${normalizedPath}`;
+    }
+
+    return `${trimmedBase}/v1${normalizedPath}`;
+  }
+
+  /**
    * 构建 Gemini API 的完整 URL
    * 用户只填写 base 地址（如 https://generativelanguage.googleapis.com）
    * 需要根据模型名称拼接成完整的 URL
@@ -2532,6 +2552,9 @@ export class ProxyServer {
         // Gemini 类型需要特殊处理：根据模型拼接完整 URL
         const model = requestBody.model || rule.targetModel || 'gemini-pro';
         upstreamUrl = this.buildGeminiUrl(service.apiUrl, model, streamRequested);
+      } else if (sourceType === 'openai') {
+        // OpenAI Responses 兼容模式：自动处理 baseUrl 是否包含 /v{number}
+        upstreamUrl = this.buildOpenAIResponsesUrl(service.apiUrl, mappedPath);
       } else if (this.isChatType(sourceType) || this.isGeminiChatSource(sourceType)) {
         // Chat 类型（包括 gemini-chat）直接使用用户配置的完整 URL
         upstreamUrl = service.apiUrl;

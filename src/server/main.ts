@@ -19,6 +19,7 @@ import type {
   SkillInstallResponse,
   TargetType,
   MCPInstallRequest,
+  CodexReasoningEffort,
 } from '../types';
 import os from 'os';
 import { isAuthEnabled, verifyAuthCode, generateToken, authMiddleware } from './auth';
@@ -289,10 +290,35 @@ const updateClaudeAgentTeamsConfig = async (enableAgentTeams: boolean): Promise<
   }
 };
 
-const writeCodexConfig = async (dbManager: FileSystemDatabaseManager): Promise<boolean> => {
+const VALID_CODEX_REASONING_EFFORTS: CodexReasoningEffort[] = ['low', 'medium', 'high'];
+const DEFAULT_CODEX_REASONING_EFFORT: CodexReasoningEffort = 'high';
+
+const isCodexReasoningEffort = (value: unknown): value is CodexReasoningEffort => {
+  return typeof value === 'string' && VALID_CODEX_REASONING_EFFORTS.includes(value as CodexReasoningEffort);
+};
+
+const buildCodexConfigToml = (modelReasoningEffort: CodexReasoningEffort): string => {
+  const localPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
+  return `model_provider = "aicodeswitch"
+model = "gpt-5.1-codex"
+model_reasoning_effort = "${modelReasoningEffort}"
+disable_response_storage = true
+
+
+[model_providers.aicodeswitch]
+name = "aicodeswitch"
+base_url = "http://${host}:${localPort}/codex"
+wire_api = "responses"
+requires_openai_auth = true
+`;
+};
+
+const writeCodexConfig = async (
+  dbManager: FileSystemDatabaseManager,
+  modelReasoningEffort: CodexReasoningEffort = DEFAULT_CODEX_REASONING_EFFORT
+): Promise<boolean> => {
   try {
     const homeDir = os.homedir();
-    const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
     const config = dbManager.getConfig();
 
     // Codex config.toml
@@ -329,20 +355,7 @@ const writeCodexConfig = async (dbManager: FileSystemDatabaseManager): Promise<b
       fs.mkdirSync(codexDir, { recursive: true });
     }
 
-    const codexConfig = `model_provider = "aicodeswitch"
-model = "gpt-5.1-codex"
-model_reasoning_effort = "high"
-disable_response_storage = true
-
-
-[model_providers.aicodeswitch]
-name = "aicodeswitch"
-base_url = "http://${host}:${port}/codex"
-wire_api = "responses"
-requires_openai_auth = true
-`;
-
-    fs.writeFileSync(codexConfigPath, codexConfig);
+    fs.writeFileSync(codexConfigPath, buildCodexConfigToml(modelReasoningEffort));
 
     // Codex auth.json
     const codexAuthPath = path.join(codexDir, 'auth.json');
@@ -366,7 +379,7 @@ requires_openai_auth = true
       configType: 'codex',
       timestamp: Date.now(),
       originalHash: originalConfigHash,
-      proxyMarker: `http://${host}:${port}/codex`,
+      proxyMarker: `http://${host}:${process.env.PORT ? parseInt(process.env.PORT, 10) : 4567}/codex`,
       files: [
         {
           originalPath: codexConfigPath,
@@ -384,6 +397,40 @@ requires_openai_auth = true
     return true;
   } catch (error) {
     console.error('Failed to write Codex config files:', error);
+    return false;
+  }
+};
+
+const updateCodexReasoningEffortConfig = async (modelReasoningEffort: CodexReasoningEffort): Promise<boolean> => {
+  try {
+    const homeDir = os.homedir();
+    const codexConfigPath = path.join(homeDir, '.codex/config.toml');
+
+    if (!fs.existsSync(codexConfigPath)) {
+      console.error('Codex config.toml does not exist');
+      return false;
+    }
+
+    const configStatus = checkCodexConfigStatus();
+    if (!configStatus.isOverwritten) {
+      console.error('Codex config is not overwritten by proxy. Please activate a route first.');
+      return false;
+    }
+
+    fs.writeFileSync(codexConfigPath, buildCodexConfigToml(modelReasoningEffort));
+
+    const metadata = loadMetadata('codex');
+    if (metadata && metadata.files[0]) {
+      metadata.files[0].currentHash = createHash('sha256')
+        .update(fs.readFileSync(codexConfigPath, 'utf-8'))
+        .digest('hex');
+      metadata.timestamp = Date.now();
+      saveMetadata(metadata);
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Failed to update Codex reasoning effort config:', error);
     return false;
   }
 };
@@ -1701,8 +1748,12 @@ ${instruction}
 
   app.post(
     '/api/write-config/codex',
-    asyncHandler(async (_req, res) => {
-      const result = await writeCodexConfig(dbManager);
+    asyncHandler(async (req, res) => {
+      const requestedEffort = req.body.modelReasoningEffort;
+      const modelReasoningEffort = isCodexReasoningEffort(requestedEffort)
+        ? requestedEffort
+        : DEFAULT_CODEX_REASONING_EFFORT;
+      const result = await writeCodexConfig(dbManager, modelReasoningEffort);
       res.json(result);
     })
   );
@@ -1713,6 +1764,20 @@ ${instruction}
     asyncHandler(async (req, res) => {
       const { enableAgentTeams } = req.body as { enableAgentTeams: boolean };
       const result = await updateClaudeAgentTeamsConfig(enableAgentTeams);
+      res.json(result);
+    })
+  );
+
+  app.post(
+    '/api/update-codex-reasoning-effort',
+    asyncHandler(async (req, res) => {
+      const requestedEffort = req.body.modelReasoningEffort;
+      if (!isCodexReasoningEffort(requestedEffort)) {
+        res.status(400).json({ error: 'Invalid modelReasoningEffort' });
+        return;
+      }
+
+      const result = await updateCodexReasoningEffortConfig(requestedEffort);
       res.json(result);
     })
   );

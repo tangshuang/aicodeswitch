@@ -521,15 +521,15 @@ export const transformClaudeRequestToOpenAIChat = (body: ClaudeRequest, targetMo
     }
 
     // 为 OpenAI Responses API 添加 reasoning 配置
-    // 映射关系：enabled->medium, disabled->minimal, auto->low
+    // 映射关系：enabled->medium, disabled->low, auto->low
     if (claudeThinking.type) {
       const effortMap: Record<string, string> = {
         'enabled': 'medium',
-        'disabled': 'minimal',
+        'disabled': 'low',
         'auto': 'low'
       };
       (openaiBody as any).reasoning = {
-        effort: (effortMap[claudeThinking.type] || 'medium') as 'minimal' | 'low' | 'medium' | 'high'
+        effort: (effortMap[claudeThinking.type] || 'medium') as 'low' | 'medium' | 'high'
       };
     }
   }
@@ -539,7 +539,7 @@ export const transformClaudeRequestToOpenAIChat = (body: ClaudeRequest, targetMo
     const effort = body.reasoning_effort || (body.reasoning as any)?.effort;
     if (typeof effort === 'string') {
       (openaiBody as any).reasoning = {
-        effort: effort as 'minimal' | 'low' | 'medium' | 'high'
+        effort: effort as 'low' | 'medium' | 'high'
       };
     }
   }
