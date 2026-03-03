@@ -13,6 +13,8 @@ export interface Vendor {
 export type SourceType = 'openai-chat' | 'openai' | 'claude-chat' | 'claude' | 'deepseek-reasoning-chat' | 'gemini' | 'gemini-chat';
 /** 路由的目标对象类型，目前，仅支持claude-code和codex */
 export type TargetType = 'claude-code' | 'codex';
+/** Codex 推理强度配置 */
+export type CodexReasoningEffort = 'low' | 'medium' | 'high';
 
 /** Skills 管理相关类型 */
 export interface InstalledSkill {
@@ -109,6 +111,7 @@ export interface Route {
   targetType: TargetType;
   isActive: boolean;
   enableAgentTeams?: boolean;  // 是否启用Agent Teams功能（仅Claude Code）
+  codexModelReasoningEffort?: CodexReasoningEffort;  // Codex model_reasoning_effort（仅Codex）
   createdAt: number;
   updatedAt: number;
 }

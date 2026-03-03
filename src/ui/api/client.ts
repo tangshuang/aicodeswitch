@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -63,12 +63,13 @@ interface BackendAPI {
   importData: (encryptedData: string, password: string) => Promise<ImportResult>;
 
   writeClaudeConfig: (enableAgentTeams?: boolean) => Promise<boolean>;
-  writeCodexConfig: () => Promise<boolean>;
+  writeCodexConfig: (modelReasoningEffort?: CodexReasoningEffort) => Promise<boolean>;
   restoreClaudeConfig: () => Promise<boolean>;
   restoreCodexConfig: () => Promise<boolean>;
   checkClaudeBackup: () => Promise<{ exists: boolean }>;
   checkCodexBackup: () => Promise<{ exists: boolean }>;
   updateClaudeAgentTeams: (enableAgentTeams: boolean) => Promise<boolean>;
+  updateCodexReasoningEffort: (modelReasoningEffort: CodexReasoningEffort) => Promise<boolean>;
   // 新的详细配置状态 API
   getClaudeConfigStatus: () => Promise<{
     isOverwritten: boolean;
@@ -281,13 +282,22 @@ export const api: BackendAPI = {
       method: 'POST',
       body: JSON.stringify({ enableAgentTeams })
     }),
-  writeCodexConfig: () => requestJson(buildUrl('/api/write-config/codex'), { method: 'POST' }),
+  writeCodexConfig: (modelReasoningEffort?: CodexReasoningEffort) =>
+    requestJson(buildUrl('/api/write-config/codex'), {
+      method: 'POST',
+      body: JSON.stringify({ modelReasoningEffort })
+    }),
   restoreClaudeConfig: () => requestJson(buildUrl('/api/restore-config/claude'), { method: 'POST' }),
   restoreCodexConfig: () => requestJson(buildUrl('/api/restore-config/codex'), { method: 'POST' }),
   updateClaudeAgentTeams: (enableAgentTeams: boolean) =>
     requestJson(buildUrl('/api/update-claude-agent-teams'), {
       method: 'POST',
       body: JSON.stringify({ enableAgentTeams })
+    }),
+  updateCodexReasoningEffort: (modelReasoningEffort: CodexReasoningEffort) =>
+    requestJson(buildUrl('/api/update-codex-reasoning-effort'), {
+      method: 'POST',
+      body: JSON.stringify({ modelReasoningEffort })
     }),
   checkClaudeBackup: () => requestJson(buildUrl('/api/check-backup/claude')),
   checkCodexBackup: () => requestJson(buildUrl('/api/check-backup/codex')),

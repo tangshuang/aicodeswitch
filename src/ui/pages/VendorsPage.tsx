@@ -152,7 +152,7 @@ function VendorsPage() {
 
     if (sourceType === 'gemini' || sourceType === 'gemini-chat') {
       newAuthType = AuthType.G_API_KEY;
-    } else if (sourceType === 'claude-chat' || sourceType === 'claude-code') {
+    } else if (sourceType === 'claude-chat' || sourceType === 'claude') {
       newAuthType = AuthType.API_KEY;
     } else {
       newAuthType = AuthType.AUTH_TOKEN;
@@ -330,7 +330,7 @@ function VendorsPage() {
       let derivedAuthType: AuthType;
       if (sourceType === 'gemini' || sourceType === 'gemini-chat') {
         derivedAuthType = AuthType.G_API_KEY;
-      } else if (sourceType === 'claude-chat' || sourceType === 'claude-code') {
+      } else if (sourceType === 'claude-chat' || sourceType === 'claude') {
         derivedAuthType = AuthType.API_KEY;
       } else {
         derivedAuthType = AuthType.AUTH_TOKEN;
