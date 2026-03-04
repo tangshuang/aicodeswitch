@@ -291,6 +291,14 @@ aicos version            # Show current version information
 ### Routing System
 - **Routes**: Define target type (Claude Code or Codex) and activation status
 - **Rules**: Match requests by content type and route to specific API services
+- **Fallback Mechanism**:
+  - When no route is activated, system automatically falls back to original config files
+  - Claude Code: Reads `~/.claude/settings.json` (prefers backup file if exists)
+  - Codex: Reads `~/.codex/config.toml` and `auth.json` (prefers backup files if exist)
+  - Ensures tools continue working even without active routes
+  - Logs include "使用原始配置" tag when fallback is used
+  - **Dead Loop Prevention**: Automatically detects if original config points to local proxy and rejects to avoid infinite loops
+
 - **Content Type Detection**:
   - `high-iq`: High intelligence mode (persistent across conversation)
     - Use `!!` prefix to enable: "!! 重构A模块"
@@ -364,6 +372,7 @@ aicos version            # Show current version information
     - Request details: request headers, request body, response headers, response body
     - **Upstream Request Information**: URL, headers, body, proxy usage
     - Response time metrics
+    - **Tags**: Array of labels for special request characteristics (e.g., "使用原始配置")
 - **Data Sanitization**:
   - Sensitive authentication fields (api_key, authorization, password, secret, etc.) are automatically masked in the UI
   - Technical fields like `max_tokens`, `input_tokens`, `output_tokens` are NOT masked - they are legitimate API parameters

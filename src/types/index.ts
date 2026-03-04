@@ -170,6 +170,7 @@ export interface RequestLog {
   vendorId?: string;                               // 供应商ID
   vendorName?: string;                             // 供应商名称
   requestModel?: string;                           // 请求模型名（从请求体中读取）
+  tags?: string[];                                 // 标签（如"使用原始配置"）
 
   responseHeaders?: Record<string, string>;        // 响应头
   responseBody?: any;                              // 响应体(非stream)，改为对象类型
@@ -205,6 +206,7 @@ export interface ErrorLog {
   vendorId?: string;                               // 供应商ID
   vendorName?: string;                             // 供应商名称
   requestModel?: string;                           // 请求模型名（从请求体中读取）
+  tags?: string[];                                 // 标签（如"使用原始配置"）
 
   upstreamRequest?: {                              // 实际发送给后端的请求信息
     url: string;                                   // 实际请求的URL路径
