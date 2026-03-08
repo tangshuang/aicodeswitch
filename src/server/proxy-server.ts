@@ -59,6 +59,12 @@ type FailoverProxyError = Error & {
   };
 };
 
+type HighIqInferenceResult = {
+  shouldUseHighIq: boolean;
+  shouldStripPrefix: boolean;
+  decisionSource: 'human' | 'fallback' | 'none';
+};
+
 export class ProxyServer {
   private app: express.Application;
   private dbManager: FileSystemDatabaseManager;
@@ -103,72 +109,15 @@ export class ProxyServer {
           return res.status(404).json({ error: 'No matching route found and no original config available' });
         }
 
-        // 高智商命令检测和会话状态管理
-        const highIqCommand = this.detectHighIqCommand(req.body);
-        const sessionId = this.defaultExtractSessionId(req, route.targetType);
-
-        if (highIqCommand === 'on') {
-          // 检查是否有可用的高智商规则
-          const highIqRule = await this.findHighIqRule(route.id);
-          if (highIqRule) {
-            console.log('[HIGH-IQ] Command detected: ON');
-
-            // 更新会话状态
-            if (sessionId) {
-              const session = this.dbManager.getSession(sessionId);
-              this.dbManager.upsertSession({
-                id: sessionId,
-                targetType: route.targetType,
-                title: session?.title,
-                firstRequestAt: session?.firstRequestAt || Date.now(),
-                lastRequestAt: Date.now(),
-                vendorId: session?.vendorId,
-                vendorName: session?.vendorName,
-                serviceId: session?.serviceId,
-                serviceName: session?.serviceName,
-                model: session?.model,
-                totalTokens: session?.totalTokens || 0,
-                requestCount: (session?.requestCount || 0) + 1,
-                // 新增字段
-                highIqMode: true,
-                highIqRuleId: highIqRule.id,
-                highIqEnabledAt: Date.now()
-              });
-              console.log(`[HIGH-IQ] Session ${sessionId} enabled with rule ${highIqRule.id}`);
-            }
-          } else {
-            console.log('[HIGH-IQ] No available high-iq rule found');
-          }
-        } else if (highIqCommand === 'off') {
-          console.log('[HIGH-IQ] Command detected: OFF');
-
-          // 关闭会话的高智商模式
-          if (sessionId) {
-            const session = this.dbManager.getSession(sessionId);
-            if (session?.highIqMode) {
-              this.dbManager.upsertSession({
-                ...session,
-                highIqMode: false,
-                lastRequestAt: Date.now(),
-                requestCount: (session.requestCount || 0) + 1
-              });
-              console.log(`[HIGH-IQ] Session ${sessionId} disabled`);
-            }
-          }
-        }
-
-        // 移除命令前缀（在发送给上游API之前）
-        if (highIqCommand) {
-          req.body = this.removeHighIqCommand(req.body);
-          console.log(`[HIGH-IQ] Removed command prefix`);
-        }
+        // 高智商请求判定：从消息结构推断是否启用，不再使用 !x 显式关闭语法
+        const forcedContentType = await this.prepareHighIqRouting(req, route, route.targetType);
 
         // 检查是否启用故障切换
         const enableFailover = this.config?.enableFailover !== false; // 默认为 true
 
         if (!enableFailover) {
           // 故障切换已禁用,使用传统的单一规则匹配
-          const rule = await this.findMatchingRule(route.id, req);
+          const rule = await this.findMatchingRule(route.id, req, forcedContentType);
           if (!rule) {
             return res.status(404).json({ error: 'No matching rule found' });
           }
@@ -183,7 +132,7 @@ export class ProxyServer {
         }
 
         // 启用故障切换:获取所有候选规则
-        const allRules = this.getAllMatchingRules(route.id, req);
+        const allRules = this.getAllMatchingRules(route.id, req, forcedContentType);
         if (allRules.length === 0) {
           return res.status(404).json({ error: 'No matching rule found' });
         }
@@ -404,72 +353,15 @@ export class ProxyServer {
           return res.status(404).json({ error: `No active route found for target type: ${targetType}` });
         }
 
-        // 高智商命令检测和会话状态管理
-        const highIqCommand = this.detectHighIqCommand(req.body);
-        const sessionId = this.defaultExtractSessionId(req, targetType);
-
-        if (highIqCommand === 'on') {
-          // 检查是否有可用的高智商规则
-          const highIqRule = await this.findHighIqRule(route.id);
-          if (highIqRule) {
-            console.log('[HIGH-IQ] Command detected: ON');
-
-            // 更新会话状态
-            if (sessionId) {
-              const session = this.dbManager.getSession(sessionId);
-              this.dbManager.upsertSession({
-                id: sessionId,
-                targetType: route.targetType,
-                title: session?.title,
-                firstRequestAt: session?.firstRequestAt || Date.now(),
-                lastRequestAt: Date.now(),
-                vendorId: session?.vendorId,
-                vendorName: session?.vendorName,
-                serviceId: session?.serviceId,
-                serviceName: session?.serviceName,
-                model: session?.model,
-                totalTokens: session?.totalTokens || 0,
-                requestCount: (session?.requestCount || 0) + 1,
-                // 新增字段
-                highIqMode: true,
-                highIqRuleId: highIqRule.id,
-                highIqEnabledAt: Date.now()
-              });
-              console.log(`[HIGH-IQ] Session ${sessionId} enabled with rule ${highIqRule.id}`);
-            }
-          } else {
-            console.log('[HIGH-IQ] No available high-iq rule found');
-          }
-        } else if (highIqCommand === 'off') {
-          console.log('[HIGH-IQ] Command detected: OFF');
-
-          // 关闭会话的高智商模式
-          if (sessionId) {
-            const session = this.dbManager.getSession(sessionId);
-            if (session?.highIqMode) {
-              this.dbManager.upsertSession({
-                ...session,
-                highIqMode: false,
-                lastRequestAt: Date.now(),
-                requestCount: (session.requestCount || 0) + 1
-              });
-              console.log(`[HIGH-IQ] Session ${sessionId} disabled`);
-            }
-          }
-        }
-
-        // 移除命令前缀（在发送给上游API之前）
-        if (highIqCommand) {
-          req.body = this.removeHighIqCommand(req.body);
-          console.log(`[HIGH-IQ] Removed command prefix`);
-        }
+        // 高智商请求判定：从消息结构推断是否启用，不再使用 !x 显式关闭语法
+        const forcedContentType = await this.prepareHighIqRouting(req, route, targetType);
 
         // 检查是否启用故障切换
         const enableFailover = this.config?.enableFailover !== false; // 默认为 true
 
         if (!enableFailover) {
           // 故障切换已禁用,使用传统的单一规则匹配
-          const rule = await this.findMatchingRule(route.id, req);
+          const rule = await this.findMatchingRule(route.id, req, forcedContentType);
           if (!rule) {
             return res.status(404).json({ error: 'No matching rule found' });
           }
@@ -484,7 +376,7 @@ export class ProxyServer {
         }
 
         // 启用故障切换:获取所有候选规则
-        const allRules = this.getAllMatchingRules(route.id, req);
+        const allRules = this.getAllMatchingRules(route.id, req, forcedContentType);
         if (allRules.length === 0) {
           return res.status(404).json({ error: 'No matching rule found' });
         }
@@ -1070,7 +962,7 @@ export class ProxyServer {
     return service;
   }
 
-  private async findMatchingRule(routeId: string, req: Request): Promise<Rule | undefined> {
+  private async findMatchingRule(routeId: string, req: Request, forcedContentType?: ContentType): Promise<Rule | undefined> {
     const rules = this.getRulesByRouteId(routeId);
     if (!rules || rules.length === 0) return undefined;
 
@@ -1080,29 +972,41 @@ export class ProxyServer {
 
     const body = req.body;
     const requestModel = body?.model;
+    const contentType = forcedContentType || this.determineContentType(req);
 
-    // 新增：检查会话是否在高智商模式中
-    const targetType = this.getRouteTargetType(routeId);
-    if (targetType) {
-      const sessionId = this.defaultExtractSessionId(req, targetType);
-      if (sessionId) {
-        const session = this.dbManager.getSession(sessionId);
-        if (session?.highIqMode && session.highIqRuleId) {
-          // 验证规则是否仍然可用
-          const highIqRule = await this.findHighIqRule(routeId);
-          if (highIqRule && highIqRule.id === session.highIqRuleId) {
-            console.log(`[HIGH-IQ] Session ${sessionId} using high-iq rule ${highIqRule.id}`);
-            return highIqRule;
-          }
-          // 规则不可用，自动关闭高智商模式
-          console.log(`[HIGH-IQ] Rule ${session.highIqRuleId} no longer available, auto-disable`);
+    // 高智商规则优先于 model-mapping，确保 !!/推断命中时不会被模型映射覆盖
+    if (contentType === 'high-iq') {
+      const highIqRules = enabledRules.filter(rule => rule.contentType === 'high-iq');
+      for (const rule of highIqRules) {
+        const isBlacklisted = await this.dbManager.isServiceBlacklisted(
+          rule.targetServiceId,
+          routeId,
+          rule.contentType
+        );
+        if (isBlacklisted) {
+          continue;
         }
+
+        this.dbManager.checkAndResetRuleIfNeeded(rule.id);
+        this.dbManager.checkAndResetRequestCountIfNeeded(rule.id);
+
+        if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit * 1000) {
+          continue;
+        }
+        if (rule.requestCountLimit && rule.totalRequestsUsed !== undefined && rule.totalRequestsUsed >= rule.requestCountLimit) {
+          continue;
+        }
+        if (this.isFrequencyLimitExceeded(rule)) {
+          continue;
+        }
+
+        return rule;
       }
     }
 
     // 1. 首先查找 model-mapping 类型的规则，按 sortOrder 降序匹配
     if (requestModel) {
-      const modelMappingRules = rules.filter(rule =>
+      const modelMappingRules = enabledRules.filter(rule =>
         rule.contentType === 'model-mapping' &&
         rule.replacedModel &&
         requestModel.includes(rule.replacedModel)
@@ -1143,8 +1047,7 @@ export class ProxyServer {
     }
 
     // 2. 查找其他内容类型的规则
-    const contentType = this.determineContentType(req);
-    const contentTypeRules = rules.filter(rule => rule.contentType === contentType);
+    const contentTypeRules = enabledRules.filter(rule => rule.contentType === contentType);
 
     // 过滤黑名单和token限制
     for (const rule of contentTypeRules) {
@@ -1180,7 +1083,7 @@ export class ProxyServer {
     }
 
     // 3. 最后返回 default 规则
-    const defaultRules = rules.filter(rule => rule.contentType === 'default');
+    const defaultRules = enabledRules.filter(rule => rule.contentType === 'default');
 
     // 过滤黑名单和token限制
     for (const rule of defaultRules) {
@@ -1218,7 +1121,7 @@ export class ProxyServer {
     return undefined;
   }
 
-  private getAllMatchingRules(routeId: string, req: Request): Rule[] {
+  private getAllMatchingRules(routeId: string, req: Request, forcedContentType?: ContentType): Rule[] {
     const rules = this.getRulesByRouteId(routeId);
     if (!rules || rules.length === 0) return [];
 
@@ -1229,25 +1132,24 @@ export class ProxyServer {
     const body = req.body;
     const requestModel = body?.model;
     const candidates: Rule[] = [];
+    const contentType = forcedContentType || this.determineContentType(req);
+    const prioritizeContentType = contentType === 'high-iq';
 
-    // 1. Model mapping rules
-    if (requestModel) {
-      const modelMappingRules = enabledRules.filter(rule =>
-        rule.contentType === 'model-mapping' &&
-        rule.replacedModel &&
-        requestModel.includes(rule.replacedModel)
-      );
-      candidates.push(...modelMappingRules);
-    }
-
-    // 2. Content type specific rules
-    const contentType = this.determineContentType(req);
+    const modelMappingRules = requestModel
+      ? enabledRules.filter(rule =>
+          rule.contentType === 'model-mapping' &&
+          rule.replacedModel &&
+          requestModel.includes(rule.replacedModel)
+        )
+      : [];
     const contentTypeRules = enabledRules.filter(rule => rule.contentType === contentType);
-    candidates.push(...contentTypeRules);
-
-    // 3. Default rules
     const defaultRules = enabledRules.filter(rule => rule.contentType === 'default');
-    candidates.push(...defaultRules);
+
+    if (prioritizeContentType) {
+      candidates.push(...contentTypeRules, ...modelMappingRules, ...defaultRules);
+    } else {
+      candidates.push(...modelMappingRules, ...contentTypeRules, ...defaultRules);
+    }
 
     // 4. 检查并重置到期的规则
     candidates.forEach(rule => {
@@ -1530,115 +1432,273 @@ export class ProxyServer {
   }
 
   private hasHighIqSignal(body: any): boolean {
-    const messages = body?.messages;
-    if (!Array.isArray(messages)) {
+    return this.inferHighIqRouting(body, false).shouldUseHighIq;
+  }
+
+  private inferHighIqRouting(body: any, previousMode: boolean): HighIqInferenceResult {
+    const messages = this.extractConversationMessages(body);
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      if (message?.role !== 'user') {
+        continue;
+      }
+
+      const signal = this.analyzeUserMessageForHighIq(message);
+      if (!signal.hasHumanText) {
+        continue;
+      }
+
+      if (signal.hasHighIqPrefix) {
+        return {
+          shouldUseHighIq: true,
+          shouldStripPrefix: true,
+          decisionSource: 'human',
+        };
+      }
+
+      return {
+        shouldUseHighIq: false,
+        shouldStripPrefix: false,
+        decisionSource: 'human',
+      };
+    }
+
+    if (previousMode) {
+      return {
+        shouldUseHighIq: true,
+        shouldStripPrefix: false,
+        decisionSource: 'fallback',
+      };
+    }
+
+    return {
+      shouldUseHighIq: false,
+      shouldStripPrefix: false,
+      decisionSource: 'none',
+    };
+  }
+
+  private async prepareHighIqRouting(req: Request, route: Route, targetType: TargetType): Promise<ContentType | undefined> {
+    const sessionId = this.defaultExtractSessionId(req, targetType);
+    const session = sessionId ? this.dbManager.getSession(sessionId) : null;
+    const previousMode = session?.highIqMode === true;
+    const inference = this.inferHighIqRouting(req.body, previousMode);
+
+    if (inference.shouldStripPrefix) {
+      req.body = this.removeHighIqPrefix(req.body);
+      console.log('[HIGH-IQ] Removed "!!" prefix from user message');
+    }
+
+    if (!inference.shouldUseHighIq) {
+      if (sessionId && session?.highIqMode && inference.decisionSource === 'human') {
+        await this.dbManager.updateSession(sessionId, {
+          highIqMode: false,
+          highIqRuleId: undefined,
+          lastRequestAt: Date.now(),
+        });
+        console.log(`[HIGH-IQ] Session ${sessionId} auto-disabled by latest human message`);
+      }
+      return undefined;
+    }
+
+    const highIqRule = await this.findHighIqRule(route.id);
+    if (!highIqRule) {
+      if (sessionId && session?.highIqMode) {
+        await this.dbManager.updateSession(sessionId, {
+          highIqMode: false,
+          highIqRuleId: undefined,
+          lastRequestAt: Date.now(),
+        });
+      }
+      console.log('[HIGH-IQ] Inferred high-iq request but no available high-iq rule found');
+      return undefined;
+    }
+
+    if (sessionId && (!session?.highIqMode || session.highIqRuleId !== highIqRule.id)) {
+      await this.dbManager.updateSession(sessionId, {
+        highIqMode: true,
+        highIqRuleId: highIqRule.id,
+        highIqEnabledAt: session?.highIqEnabledAt || Date.now(),
+        lastRequestAt: Date.now(),
+      });
+      console.log(`[HIGH-IQ] Session ${sessionId} inferred ON with rule ${highIqRule.id}`);
+    }
+
+    return 'high-iq';
+  }
+
+  private extractConversationMessages(body: any): any[] {
+    if (!body || typeof body !== 'object') {
+      return [];
+    }
+    if (Array.isArray(body.messages)) {
+      return body.messages;
+    }
+    if (typeof body.input === 'string') {
+      return [{ role: 'user', content: body.input }];
+    }
+    if (Array.isArray(body.input)) {
+      const normalized: any[] = [];
+      for (const item of body.input) {
+        if (item && typeof item === 'object' && typeof item.role === 'string') {
+          normalized.push(item);
+        } else if (typeof item === 'string') {
+          normalized.push({ role: 'user', content: item });
+        }
+      }
+      return normalized;
+    }
+    if (body.input && typeof body.input === 'object' && typeof body.input.role === 'string') {
+      return [body.input];
+    }
+    return [];
+  }
+
+  private analyzeUserMessageForHighIq(message: any): { hasHumanText: boolean; hasHighIqPrefix: boolean } {
+    let hasHumanText = false;
+    let hasHighIqPrefix = false;
+
+    const scanText = (text: string, treatAsHuman: boolean) => {
+      const trimmed = text.trim();
+      if (!trimmed) {
+        return;
+      }
+      if (treatAsHuman) {
+        hasHumanText = true;
+      }
+      if (treatAsHuman && trimmed.startsWith('!!')) {
+        hasHighIqPrefix = true;
+      }
+    };
+
+    const content = message?.content;
+    if (typeof content === 'string') {
+      scanText(content, true);
+      return { hasHumanText, hasHighIqPrefix };
+    }
+
+    const blocks = Array.isArray(content) ? content : [content];
+    for (const block of blocks) {
+      if (typeof block === 'string') {
+        scanText(block, true);
+        continue;
+      }
+      if (!block || typeof block !== 'object') {
+        continue;
+      }
+
+      const type = typeof block.type === 'string' ? block.type : '';
+      const toolGenerated = type === 'tool_result' || type === 'tool' || Boolean(block.tool_use_id || block.tool_call_id);
+
+      if (typeof block.text === 'string') {
+        scanText(block.text, !toolGenerated);
+      }
+      if (typeof block.content === 'string') {
+        scanText(block.content, !toolGenerated);
+      }
+      if (Array.isArray(block.content)) {
+        for (const nested of block.content) {
+          if (typeof nested === 'string') {
+            scanText(nested, !toolGenerated);
+            continue;
+          }
+          if (nested && typeof nested === 'object') {
+            if (typeof nested.text === 'string') {
+              scanText(nested.text, !toolGenerated);
+            }
+            if (typeof nested.content === 'string') {
+              scanText(nested.content, !toolGenerated);
+            }
+          }
+        }
+      }
+    }
+
+    return { hasHumanText, hasHighIqPrefix };
+  }
+
+  private removeHighIqPrefix(body: any): any {
+    if (!body || typeof body !== 'object') {
+      return body;
+    }
+
+    const processed = JSON.parse(JSON.stringify(body));
+
+    if (typeof processed.input === 'string') {
+      processed.input = processed.input.replace(/^\s*!!\s*/, '');
+      return processed;
+    }
+    if (Array.isArray(processed.input)) {
+      for (let i = processed.input.length - 1; i >= 0; i--) {
+        if (typeof processed.input[i] !== 'string') {
+          continue;
+        }
+        const next = processed.input[i].replace(/^\s*!!\s*/, '');
+        if (next !== processed.input[i]) {
+          processed.input[i] = next;
+          return processed;
+        }
+      }
+    }
+
+    const messages = this.extractConversationMessages(processed);
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      if (message?.role !== 'user') {
+        continue;
+      }
+      if (this.stripHighIqPrefixInMessage(message)) {
+        break;
+      }
+    }
+
+    return processed;
+  }
+
+  private stripHighIqPrefixInMessage(message: any): boolean {
+    const content = message?.content;
+    if (typeof content === 'string') {
+      const next = content.replace(/^\s*!!\s*/, '');
+      if (next !== content) {
+        message.content = next;
+        return true;
+      }
       return false;
     }
 
-    for (const message of messages) {
-      if (message?.role !== 'user') continue;
+    if (!Array.isArray(content)) {
+      return false;
+    }
 
-      const content = message?.content;
-      // 处理字符串类型的 content
-      if (typeof content === 'string') {
-        if (content.trim().startsWith('!!')) {
+    for (const block of content) {
+      if (!block || typeof block !== 'object') {
+        continue;
+      }
+      const type = typeof block.type === 'string' ? block.type : '';
+      const toolGenerated = type === 'tool_result' || type === 'tool' || Boolean(block.tool_use_id || block.tool_call_id);
+      if (toolGenerated) {
+        continue;
+      }
+
+      if (typeof block.text === 'string') {
+        const next = block.text.replace(/^\s*!!\s*/, '');
+        if (next !== block.text) {
+          block.text = next;
           return true;
         }
       }
-      // 处理数组类型的 content
-      else if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block?.type === 'text' && typeof block.text === 'string') {
-            if (block.text.trim().startsWith('!!')) {
-              return true;
-            }
-          }
+
+      if (typeof block.content === 'string') {
+        const next = block.content.replace(/^\s*!!\s*/, '');
+        if (next !== block.content) {
+          block.content = next;
+          return true;
         }
       }
     }
 
     return false;
-  }
-
-  /**
-   * 检测用户消息中的高智商命令
-   * @returns 'on' - 开启命令 (!!), 'off' - 关闭命令 (!x), null - 无命令
-   */
-  private detectHighIqCommand(body: any): 'on' | 'off' | null {
-    const messages = body?.messages;
-    if (!Array.isArray(messages)) {
-      return null;
-    }
-
-    // 只检查最后一条用户消息
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i];
-      if (message?.role !== 'user') continue;
-
-      const content = message?.content;
-      if (typeof content === 'string') {
-        const trimmed = content.trim();
-        if (trimmed.startsWith('!x')) {
-          return 'off';
-        }
-        if (trimmed.startsWith('!!')) {
-          return 'on';
-        }
-      } else if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block?.type === 'text' && typeof block.text === 'string') {
-            const trimmed = block.text.trim();
-            if (trimmed.startsWith('!x')) {
-              return 'off';
-            }
-            if (trimmed.startsWith('!!')) {
-              return 'on';
-            }
-          }
-        }
-      }
-      break; // 只检查最后一条用户消息
-    }
-
-    return null;
-  }
-
-  /**
-   * 移除用户消息中的高智商命令前缀
-   */
-  private removeHighIqCommand(body: any): any {
-    if (!body?.messages) return body;
-
-    const processed = JSON.parse(JSON.stringify(body));
-
-    for (let i = processed.messages.length - 1; i >= 0; i--) {
-      const message = processed.messages[i];
-      if (message?.role !== 'user') continue;
-
-      const content = message?.content;
-      if (typeof content === 'string') {
-        const trimmed = content.trim();
-        if (trimmed.startsWith('!x')) {
-          message.content = trimmed.replace(/^!x\s*/, '').trim();
-        } else if (trimmed.startsWith('!!')) {
-          message.content = trimmed.replace(/^!!\s*/, '').trim();
-        }
-      } else if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block?.type === 'text' && typeof block.text === 'string') {
-            const trimmed = block.text.trim();
-            if (trimmed.startsWith('!x')) {
-              block.text = trimmed.replace(/^!x\s*/, '').trim();
-            } else if (trimmed.startsWith('!!')) {
-              block.text = trimmed.replace(/^!!\s*/, '').trim();
-            }
-          }
-        }
-      }
-      break; // 只处理最后一条用户消息
-    }
-
-    return processed;
   }
 
   /**
@@ -1686,15 +1746,6 @@ export class ProxyServer {
     }
 
     return undefined;
-  }
-
-  /**
-   * 获取路由的目标类型
-   */
-  private getRouteTargetType(routeId: string): TargetType | null {
-    const routes = this.dbManager.getRoutes();
-    const route = routes.find(r => r.id === routeId);
-    return route?.targetType || null;
   }
 
   private hasBackgroundSignal(body: any): boolean {
@@ -2494,6 +2545,7 @@ export class ProxyServer {
         const totalTokens = (usageForLog?.inputTokens || 0) + (usageForLog?.outputTokens || 0) +
                            (usageForLog?.totalTokens || 0);
         const sessionTitle = this.defaultExtractSessionTitle(req, sessionId);
+        const existingSession = this.dbManager.getSession(sessionId);
         this.dbManager.upsertSession({
           id: sessionId,
           targetType,
@@ -2506,6 +2558,11 @@ export class ProxyServer {
           serviceName: service.name,
           model: requestModel || rule.targetModel,
           totalTokens,
+          highIqMode: rule.contentType === 'high-iq' ? true : existingSession?.highIqMode,
+          highIqRuleId: rule.contentType === 'high-iq' ? rule.id : existingSession?.highIqRuleId,
+          highIqEnabledAt: rule.contentType === 'high-iq'
+            ? (existingSession?.highIqEnabledAt || Date.now())
+            : existingSession?.highIqEnabledAt,
         });
       }
 

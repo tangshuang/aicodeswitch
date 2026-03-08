@@ -1751,7 +1751,7 @@ export class FileSystemDatabaseManager {
     if (!rule.routeId || typeof rule.routeId !== 'string') {
       return { valid: false, error: `规则[${index}](${rule.id}) 缺少有效的 routeId 字段` };
     }
-    const validContentTypes = ['default', 'background', 'thinking', 'long-context', 'image-understanding', 'model-mapping'];
+    const validContentTypes = ['default', 'background', 'thinking', 'long-context', 'image-understanding', 'model-mapping', 'high-iq'];
     if (!rule.contentType || !validContentTypes.includes(rule.contentType)) {
       return { valid: false, error: `规则[${index}](${rule.id}) 的 contentType 无效` };
     }
@@ -2281,6 +2281,9 @@ export class FileSystemDatabaseManager {
       serviceId?: string;
       serviceName?: string;
       model?: string;
+      highIqMode?: boolean;
+      highIqRuleId?: string;
+      highIqEnabledAt?: number;
     }
   ): Promise<boolean> {
     const session = this.sessions.find(s => s.id === sessionId);
@@ -2376,11 +2379,14 @@ export class FileSystemDatabaseManager {
       existing.lastRequestAt = now;
       existing.requestCount++;
       existing.totalTokens += session.totalTokens || 0;
-      existing.vendorId = session.vendorId;
-      existing.vendorName = session.vendorName;
-      existing.serviceId = session.serviceId;
-      existing.serviceName = session.serviceName;
-      existing.model = session.model;
+      if (session.vendorId !== undefined) existing.vendorId = session.vendorId;
+      if (session.vendorName !== undefined) existing.vendorName = session.vendorName;
+      if (session.serviceId !== undefined) existing.serviceId = session.serviceId;
+      if (session.serviceName !== undefined) existing.serviceName = session.serviceName;
+      if (session.model !== undefined) existing.model = session.model;
+      if (session.highIqMode !== undefined) existing.highIqMode = session.highIqMode;
+      if (Object.prototype.hasOwnProperty.call(session, 'highIqRuleId')) existing.highIqRuleId = session.highIqRuleId;
+      if (Object.prototype.hasOwnProperty.call(session, 'highIqEnabledAt')) existing.highIqEnabledAt = session.highIqEnabledAt;
     } else {
       // 创建新 session
       this.sessions.push({
@@ -2396,6 +2402,9 @@ export class FileSystemDatabaseManager {
         serviceId: session.serviceId,
         serviceName: session.serviceName,
         model: session.model,
+        highIqMode: session.highIqMode,
+        highIqRuleId: session.highIqRuleId,
+        highIqEnabledAt: session.highIqEnabledAt,
       });
     }
 

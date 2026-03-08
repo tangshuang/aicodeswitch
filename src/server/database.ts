@@ -368,7 +368,7 @@ export class DatabaseManager {
       CREATE TABLE IF NOT EXISTS rules (
         id TEXT PRIMARY KEY,
         route_id TEXT NOT NULL,
-        content_type TEXT NOT NULL CHECK(content_type IN ('default', 'background', 'thinking', 'long-context', 'image-understanding', 'model-mapping')),
+        content_type TEXT NOT NULL CHECK(content_type IN ('default', 'background', 'thinking', 'long-context', 'image-understanding', 'model-mapping', 'high-iq')),
         target_service_id TEXT NOT NULL,
         target_model TEXT,
         replaced_model TEXT,

@@ -12,6 +12,14 @@ All notable changes to this project will be documented in this file. See [standa
     - `"skipDangerousModePermissionPrompt": true`
   - 支持路由激活状态下的实时更新和未激活状态下的配置保存
 
+#### Fixes
+* 修复高智商规则命中链路与优先级
+  - 修复 `!!` 前缀在故障切换分支下不生效的问题（高智商规则可正确命中）
+  - 高智商请求优先于 model-mapping 匹配，避免被模型映射规则抢占
+  - 移除 `!x` 关闭语法，改为按“最近真实用户输入”自动推断高智商模式，自动忽略 tool_result 类 user 消息
+  - 修复 session 高智商状态字段的持久化（`highIqMode/highIqRuleId/highIqEnabledAt`）
+  - 修复文件数据库规则校验遗漏 `high-iq` 类型的问题
+
 ### 3.9.0 (2026-03-04)
 
 #### Features
