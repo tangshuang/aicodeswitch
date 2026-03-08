@@ -291,6 +291,18 @@ aicos version            # Show current version information
 ### Routing System
 - **Routes**: Define target type (Claude Code or Codex) and activation status
 - **Rules**: Match requests by content type and route to specific API services
+- **Route Configuration Options**:
+  - **Agent Teams (Claude Code only)**: Enables experimental Agent Teams feature
+    - Sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"` environment variable
+    - Requires Claude Code version ≥ 2.1.32
+    - Can be toggled on/off for both active and inactive routes
+  - **Bypass Permissions Support (Claude Code only)**: Enables support for bypassPermissions mode
+    - Sets `permissions.defaultMode` to `"bypassPermissions"` in `~/.claude/settings.json`
+    - Sets `skipDangerousModePermissionPrompt` to `true` in `~/.claude/settings.json`
+    - Can be toggled on/off for both active and inactive routes
+  - **Reasoning Effort (Codex only)**: Controls the reasoning effort level
+    - Options: `low`, `medium`, `high` (default: `high`)
+    - Sets `model_reasoning_effort` in `~/.codex/config.toml`
 - **Fallback Mechanism**:
   - When no route is activated, system automatically falls back to original config files
   - Claude Code: Reads `~/.claude/settings.json` (prefers backup file if exists)

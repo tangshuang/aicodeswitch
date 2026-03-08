@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-03-08
+
+#### Features
+* 路由管理新增 bypassPermissions 支持配置项（仅 Claude Code）
+  - 新增"开启对 bypassPermissions 的支持"开关
+  - 开启后会在 `~/.claude/settings.json` 中写入：
+    - `"permissions": { "defaultMode": "bypassPermissions" }`
+    - `"skipDangerousModePermissionPrompt": true`
+  - 支持路由激活状态下的实时更新和未激活状态下的配置保存
+
 ### 3.9.0 (2026-03-04)
 
 #### Features

@@ -111,6 +111,7 @@ export interface Route {
   targetType: TargetType;
   isActive: boolean;
   enableAgentTeams?: boolean;  // 是否启用Agent Teams功能（仅Claude Code）
+  enableBypassPermissionsSupport?: boolean;  // 是否开启对bypassPermissions的支持（仅Claude Code）
   codexModelReasoningEffort?: CodexReasoningEffort;  // Codex model_reasoning_effort（仅Codex）
   createdAt: number;
   updatedAt: number;

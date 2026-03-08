@@ -301,7 +301,7 @@ export default function RoutesPage() {
       try {
         if (route.targetType === 'claude-code') {
           if (needsConfigWrite) {
-            await api.writeClaudeConfig(route.enableAgentTeams);
+            await api.writeClaudeConfig(route.enableAgentTeams, route.enableBypassPermissionsSupport);
             configWritten = true;
           }
         } else {
@@ -637,6 +637,28 @@ export default function RoutesPage() {
       }
       // 立即更新 selectedRoute 状态，避免 UI 延迟
       setSelectedRoute({ ...selectedRoute, enableAgentTeams: newValue });
+      await loadRoutes();
+    } catch (error: any) {
+      toast.error('更新失败: ' + error.message);
+    }
+  };
+
+  const handleToggleBypassPermissionsSupport = async (newValue: boolean) => {
+    if (!selectedRoute) return;
+
+    try {
+      if (selectedRoute.isActive) {
+        // 路由激活时：同时更新配置文件和路由数据库
+        await api.updateClaudeBypassPermissionsSupport(newValue);
+        await api.updateRoute(selectedRoute.id, { enableBypassPermissionsSupport: newValue });
+        toast.success(newValue ? '对bypassPermissions的支持已开启' : '对bypassPermissions的支持已关闭');
+      } else {
+        // 路由未激活时：只更新路由数据库
+        await api.updateRoute(selectedRoute.id, { enableBypassPermissionsSupport: newValue });
+        toast.success(newValue ? '对bypassPermissions的支持设置已保存（将在激活时生效）' : '对bypassPermissions的支持设置已取消');
+      }
+      // 立即更新 selectedRoute 状态，避免 UI 延迟
+      setSelectedRoute({ ...selectedRoute, enableBypassPermissionsSupport: newValue });
       await loadRoutes();
     } catch (error: any) {
       toast.error('更新失败: ' + error.message);
@@ -1350,28 +1372,50 @@ export default function RoutesPage() {
                       Agent Teams 功能需要 Claude Code 版本 ≥ 2.1.32。请升级 Claude Code 后再使用此功能。
                     </div>
                   )}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <input
-                      type="checkbox"
-                      id="agent-teams-toggle"
-                      checked={selectedRoute.enableAgentTeams || false}
-                      onChange={(e) => handleToggleAgentTeams(e.target.checked)}
-                      disabled={!isAgentTeamsSupported()}
-                      style={{ cursor: isAgentTeamsSupported() ? 'pointer' : 'not-allowed', width: '16px', height: '16px' }}
-                    />
-                    <label
-                      htmlFor="agent-teams-toggle"
-                      style={{ cursor: isAgentTeamsSupported() ? 'pointer' : 'not-allowed', fontSize: '14px', userSelect: 'none', color: isAgentTeamsSupported() ? 'inherit' : 'var(--text-muted)' }}
-                    >
-                      开启 Agent Teams 功能
-                    </label>
+                  <div style={{ marginBottom: '20px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <input
+                        type="checkbox"
+                        id="agent-teams-toggle"
+                        checked={selectedRoute.enableAgentTeams || false}
+                        onChange={(e) => handleToggleAgentTeams(e.target.checked)}
+                        disabled={!isAgentTeamsSupported()}
+                        style={{ cursor: isAgentTeamsSupported() ? 'pointer' : 'not-allowed', width: '16px', height: '16px' }}
+                      />
+                      <label
+                        htmlFor="agent-teams-toggle"
+                        style={{ cursor: isAgentTeamsSupported() ? 'pointer' : 'not-allowed', fontSize: '14px', userSelect: 'none', color: isAgentTeamsSupported() ? 'inherit' : 'var(--text-muted)' }}
+                      >
+                        开启 Agent Teams 功能
+                      </label>
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+                      {!isAgentTeamsSupported()
+                        ? 'Agent Teams 功能需要 Claude Code 版本 ≥ 2.1.32。请升级 Claude Code 后再使用此功能。'
+                        : selectedRoute.isActive
+                          ? '开启后将启用 Agent Teams 实验性功能，可在重启claude code后立即生效。'
+                          : '开启后将在激活此路由时启用 Agent Teams 实验性功能。'}
+                    </div>
                   </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
-                    {!isAgentTeamsSupported()
-                      ? 'Agent Teams 功能需要 Claude Code 版本 ≥ 2.1.32。请升级 Claude Code 后再使用此功能。'
-                      : selectedRoute.isActive
-                        ? '开启后将在 Claude Code 中启用 Agent Teams 实验性功能，已立即生效。'
-                        : '开启后将在激活此路由时启用 Agent Teams 实验性功能。'}
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <input
+                        type="checkbox"
+                        id="bypass-permissions-support-toggle"
+                        checked={selectedRoute.enableBypassPermissionsSupport || false}
+                        onChange={(e) => handleToggleBypassPermissionsSupport(e.target.checked)}
+                        style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                      />
+                      <label
+                        htmlFor="bypass-permissions-support-toggle"
+                        style={{ cursor: 'pointer', fontSize: '14px', userSelect: 'none' }}
+                      >
+                        开启对 bypassPermissions 的支持
+                      </label>
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+                      开启后默认编辑跳过危险模式权限提示，你可以切换到其他模式{selectedRoute.isActive ? '。开启后立即写入配置文件，可在重启claude code后立即生效。' : '。开启后将在激活此路由时写入配置文件。'}
+                    </div>
                   </div>
                 </div>
               </div>

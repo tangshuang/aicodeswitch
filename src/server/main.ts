@@ -129,7 +129,7 @@ const asyncHandler =
     });
   };
 
-const writeClaudeConfig = async (dbManager: FileSystemDatabaseManager, enableAgentTeams?: boolean): Promise<boolean> => {
+const writeClaudeConfig = async (dbManager: FileSystemDatabaseManager, enableAgentTeams?: boolean, enableBypassPermissionsSupport?: boolean): Promise<boolean> => {
   try {
     const homeDir = os.homedir();
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
@@ -183,9 +183,17 @@ const writeClaudeConfig = async (dbManager: FileSystemDatabaseManager, enableAge
       claudeSettingsEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
     }
 
-    const claudeSettings = {
+    const claudeSettings: Record<string, any> = {
       env: claudeSettingsEnv
     };
+
+    // 如果开启对bypassPermissions的支持，添加对应的配置项
+    if (enableBypassPermissionsSupport) {
+      claudeSettings.permissions = {
+        defaultMode: "bypassPermissions"
+      };
+      claudeSettings.skipDangerousModePermissionPrompt = true;
+    }
 
     fs.writeFileSync(claudeSettingsPath, JSON.stringify(claudeSettings, null, 2));
 
@@ -286,6 +294,63 @@ const updateClaudeAgentTeamsConfig = async (enableAgentTeams: boolean): Promise<
     return true;
   } catch (error) {
     console.error('Failed to update Claude Agent Teams config:', error);
+    return false;
+  }
+};
+
+/**
+ * 更新Claude Code配置中的bypassPermissions支持设置
+ * 此函数假设配置文件已经被代理覆盖，直接修改配置而不重新备份
+ */
+const updateClaudeBypassPermissionsSupportConfig = async (enableBypassPermissionsSupport: boolean): Promise<boolean> => {
+  try {
+    const homeDir = os.homedir();
+    const claudeSettingsPath = path.join(homeDir, '.claude/settings.json');
+
+    // 检查配置文件是否存在
+    if (!fs.existsSync(claudeSettingsPath)) {
+      console.error('Claude settings.json does not exist');
+      return false;
+    }
+
+    // 读取当前配置
+    const currentContent = fs.readFileSync(claudeSettingsPath, 'utf-8');
+    const currentConfig = JSON.parse(currentContent);
+
+    // 检查是否是代理配置
+    const configStatus = checkClaudeConfigStatus();
+    if (!configStatus.isOverwritten) {
+      console.error('Claude config is not overwritten by proxy. Please activate a route first.');
+      return false;
+    }
+
+    // 更新或删除bypassPermissions支持配置项
+    if (enableBypassPermissionsSupport) {
+      currentConfig.permissions = {
+        defaultMode: "bypassPermissions"
+      };
+      currentConfig.skipDangerousModePermissionPrompt = true;
+    } else {
+      delete currentConfig.permissions;
+      delete currentConfig.skipDangerousModePermissionPrompt;
+    }
+
+    // 写入更新后的配置
+    fs.writeFileSync(claudeSettingsPath, JSON.stringify(currentConfig, null, 2));
+
+    // 更新元数据中的当前配置hash
+    const metadata = loadMetadata('claude');
+    if (metadata && metadata.files[0]) {
+      metadata.files[0].currentHash = createHash('sha256')
+        .update(fs.readFileSync(claudeSettingsPath, 'utf-8'))
+        .digest('hex');
+      metadata.timestamp = Date.now();
+      saveMetadata(metadata);
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Failed to update Claude bypassPermissions support config:', error);
     return false;
   }
 };
@@ -1741,7 +1806,8 @@ ${instruction}
     '/api/write-config/claude',
     asyncHandler(async (req, res) => {
       const enableAgentTeams = req.body.enableAgentTeams as boolean | undefined;
-      const result = await writeClaudeConfig(dbManager, enableAgentTeams);
+      const enableBypassPermissionsSupport = req.body.enableBypassPermissionsSupport as boolean | undefined;
+      const result = await writeClaudeConfig(dbManager, enableAgentTeams, enableBypassPermissionsSupport);
       res.json(result);
     })
   );
@@ -1764,6 +1830,16 @@ ${instruction}
     asyncHandler(async (req, res) => {
       const { enableAgentTeams } = req.body as { enableAgentTeams: boolean };
       const result = await updateClaudeAgentTeamsConfig(enableAgentTeams);
+      res.json(result);
+    })
+  );
+
+  // 更新Claude Code配置中的bypassPermissions支持设置（当路由已激活时）
+  app.post(
+    '/api/update-claude-bypass-permissions-support',
+    asyncHandler(async (req, res) => {
+      const { enableBypassPermissionsSupport } = req.body as { enableBypassPermissionsSupport: boolean };
+      const result = await updateClaudeBypassPermissionsSupportConfig(enableBypassPermissionsSupport);
       res.json(result);
     })
   );

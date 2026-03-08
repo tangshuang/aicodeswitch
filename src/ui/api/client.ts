@@ -62,13 +62,14 @@ interface BackendAPI {
   previewImportData: (encryptedData: string, password: string) => Promise<ImportPreview>;
   importData: (encryptedData: string, password: string) => Promise<ImportResult>;
 
-  writeClaudeConfig: (enableAgentTeams?: boolean) => Promise<boolean>;
+  writeClaudeConfig: (enableAgentTeams?: boolean, enableBypassPermissionsSupport?: boolean) => Promise<boolean>;
   writeCodexConfig: (modelReasoningEffort?: CodexReasoningEffort) => Promise<boolean>;
   restoreClaudeConfig: () => Promise<boolean>;
   restoreCodexConfig: () => Promise<boolean>;
   checkClaudeBackup: () => Promise<{ exists: boolean }>;
   checkCodexBackup: () => Promise<{ exists: boolean }>;
   updateClaudeAgentTeams: (enableAgentTeams: boolean) => Promise<boolean>;
+  updateClaudeBypassPermissionsSupport: (enableBypassPermissionsSupport: boolean) => Promise<boolean>;
   updateCodexReasoningEffort: (modelReasoningEffort: CodexReasoningEffort) => Promise<boolean>;
   // 新的详细配置状态 API
   getClaudeConfigStatus: () => Promise<{
@@ -277,10 +278,10 @@ export const api: BackendAPI = {
       body: JSON.stringify({ encryptedData, password }),
     }),
 
-  writeClaudeConfig: (enableAgentTeams?: boolean) =>
+  writeClaudeConfig: (enableAgentTeams?: boolean, enableBypassPermissionsSupport?: boolean) =>
     requestJson(buildUrl('/api/write-config/claude'), {
       method: 'POST',
-      body: JSON.stringify({ enableAgentTeams })
+      body: JSON.stringify({ enableAgentTeams, enableBypassPermissionsSupport })
     }),
   writeCodexConfig: (modelReasoningEffort?: CodexReasoningEffort) =>
     requestJson(buildUrl('/api/write-config/codex'), {
@@ -293,6 +294,11 @@ export const api: BackendAPI = {
     requestJson(buildUrl('/api/update-claude-agent-teams'), {
       method: 'POST',
       body: JSON.stringify({ enableAgentTeams })
+    }),
+  updateClaudeBypassPermissionsSupport: (enableBypassPermissionsSupport: boolean) =>
+    requestJson(buildUrl('/api/update-claude-bypass-permissions-support'), {
+      method: 'POST',
+      body: JSON.stringify({ enableBypassPermissionsSupport })
     }),
   updateCodexReasoningEffort: (modelReasoningEffort: CodexReasoningEffort) =>
     requestJson(buildUrl('/api/update-codex-reasoning-effort'), {
