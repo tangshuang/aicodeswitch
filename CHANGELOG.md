@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-03-08
+
+#### Features
+* 路由管理新增 bypassPermissions 支持配置项（仅 Claude Code）
+  - 新增"开启对 bypassPermissions 的支持"开关
+  - 开启后会在 `~/.claude/settings.json` 中写入：
+    - `"permissions": { "defaultMode": "bypassPermissions" }`
+    - `"skipDangerousModePermissionPrompt": true`
+  - 支持路由激活状态下的实时更新和未激活状态下的配置保存
+
+### 3.9.0 (2026-03-04)
+
+#### Features
+* 新增原始配置 fallback 机制
+  - 当系统中没有激活的路由时，自动使用编程工具的原始配置文件
+  - Claude Code: 读取 `~/.claude/settings.json`（优先使用备份文件）
+  - Codex: 读取 `~/.codex/config.toml` 和 `auth.json`（优先使用备份文件）
+  - 系统更友好，不会因为没有激活路由而直接报错退出
+  - 新增死循环防护：自动检测原始配置是否指向本地代理，避免无限循环
+
+* 日志系统新增 tags 字段
+  - 在请求日志和错误日志中添加 tags 数组字段
+  - 使用原始配置转发请求时，日志会标记"使用原始配置"
+  - 前端日志详情页面支持展示 tags 标签（蓝色徽章样式）
+
 ### 3.8.2 (2026-03-03)
 
 #### Features

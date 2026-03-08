@@ -37,6 +37,7 @@ import {
   cleanupTempImages,
 } from './mcp-image-handler';
 import { normalizeSourceType } from './type-migration';
+import { readOriginalConfig } from './original-config-reader';
 
 type ContentTypeDetector = {
   type: ContentType;
@@ -48,6 +49,7 @@ const SUPPORTED_TARGETS = ['claude-code', 'codex'];
 type ProxyRequestOptions = {
   failoverEnabled?: boolean;
   forwardedToServiceName?: string;
+  useOriginalConfig?: boolean;  // 是否使用原始配置（fallback 模式）
 };
 
 type FailoverProxyError = Error & {
@@ -92,7 +94,13 @@ export class ProxyServer {
       try {
         const route = this.findMatchingRoute(req);
         if (!route) {
-          return res.status(404).json({ error: 'No matching route found' });
+          // 没有找到激活的路由，尝试使用原始配置
+          const fallbackResult = await this.handleFallbackToOriginalConfig(req, res);
+          if (fallbackResult) {
+            return; // 成功使用原始配置处理请求
+          }
+          // 如果原始配置也不可用，返回错误
+          return res.status(404).json({ error: 'No matching route found and no original config available' });
         }
 
         // 高智商命令检测和会话状态管理
@@ -692,6 +700,122 @@ export class ProxyServer {
     // 返回匹配目标类型且处于活跃状态的路由
     const activeRoutes = this.getActiveRoutes();
     return activeRoutes.find(route => route.targetType === targetType && route.isActive);
+  }
+
+  /**
+   * 当没有激活的路由时，fallback 到原始配置
+   * @returns true 表示成功处理，false 表示无法处理
+   */
+  private async handleFallbackToOriginalConfig(req: Request, res: Response): Promise<boolean> {
+    // 确定目标类型
+    let targetType: TargetType | undefined;
+    if (req.path.startsWith('/claude-code/')) {
+      targetType = 'claude-code';
+    } else if (req.path.startsWith('/codex/')) {
+      targetType = 'codex';
+    }
+
+    if (!targetType) {
+      return false;
+    }
+
+    // 读取原始配置
+    const originalConfig = readOriginalConfig(targetType);
+    if (!originalConfig) {
+      console.log(`[FALLBACK] No original config available for ${targetType}`);
+      return false;
+    }
+
+    // 检查原始配置的 API URL 是否指向本系统（避免死循环）
+    if (this.isLocalProxyUrl(originalConfig.apiUrl, targetType)) {
+      console.error(`[FALLBACK] Original config points to local proxy, rejecting to avoid loop: ${originalConfig.apiUrl}`);
+      return false;
+    }
+
+    console.log(`[FALLBACK] Using original config for ${targetType}: ${originalConfig.apiUrl}`);
+
+    try {
+      // 创建临时的路由对象（用于传递给 proxyRequest）
+      const tempRoute: Route = {
+        id: 'fallback-route',
+        name: 'Fallback to Original Config',
+        targetType: targetType,
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      // 创建临时的规则对象
+      const tempRule: Rule = {
+        id: 'fallback-rule',
+        routeId: 'fallback-route',
+        contentType: 'default',
+        targetServiceId: 'fallback-service',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      // 创建临时的服务对象
+      const tempService: APIService = {
+        id: 'fallback-service',
+        name: 'Original Config',
+        apiUrl: originalConfig.apiUrl,
+        apiKey: originalConfig.apiKey,
+        authType: originalConfig.authType,
+        sourceType: originalConfig.sourceType || (targetType === 'claude-code' ? 'claude' : 'openai'),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      // 调用 proxyRequest 处理请求，并标记使用原始配置
+      await this.proxyRequest(req, res, tempRoute, tempRule, tempService, {
+        useOriginalConfig: true,
+      });
+
+      return true;
+    } catch (error: any) {
+      console.error('[FALLBACK] Failed to use original config:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 检查 API URL 是否指向本系统的代理服务
+   * 用于避免 fallback 时的死循环
+   */
+  private isLocalProxyUrl(apiUrl: string, targetType: TargetType): boolean {
+    try {
+      const url = new URL(apiUrl);
+
+      // 检查是否是 localhost 或 127.0.0.1
+      const isLocalhost = url.hostname === 'localhost' ||
+                          url.hostname === '127.0.0.1' ||
+                          url.hostname === '::1' ||
+                          url.hostname === '0.0.0.0';
+
+      if (!isLocalhost) {
+        return false;
+      }
+
+      // 检查端口是否是本系统的端口（默认 4567）
+      const serverPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
+      const urlPort = url.port ? parseInt(url.port, 10) : (url.protocol === 'https:' ? 443 : 80);
+      const isSamePort = urlPort === serverPort;
+
+      if (!isSamePort) {
+        return false;
+      }
+
+      // 检查路径是否包含本系统的代理路径
+      const proxyPath = `/${targetType}`;
+      const hasProxyPath = url.pathname.startsWith(proxyPath) ||
+                           url.pathname === proxyPath;
+
+      return hasProxyPath;
+    } catch (error) {
+      // URL 解析失败，认为不是本地代理 URL
+      return false;
+    }
   }
 
   private findRouteByTargetType(targetType: 'claude-code' | 'codex'): Route | undefined {
@@ -2174,6 +2298,7 @@ export class ProxyServer {
     const targetType = route.targetType;
     const failoverEnabled = options?.failoverEnabled === true;
     const forwardedToServiceName = options?.forwardedToServiceName;
+    const useOriginalConfig = options?.useOriginalConfig === true;
     let requestBody: any = req.body || {};
     let usageForLog: TokenUsage | undefined;
     let logged = false;
@@ -2355,6 +2480,7 @@ export class ProxyServer {
         vendorId: service.vendorId,
         vendorName: vendor?.name,
         requestModel,
+        tags: useOriginalConfig ? ['使用原始配置'] : undefined,
         responseHeaders: responseHeadersForLog,
         responseBody: responseBodyForLog,
         streamChunks: streamChunksForLog,

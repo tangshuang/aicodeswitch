@@ -291,6 +291,26 @@ aicos version            # Show current version information
 ### Routing System
 - **Routes**: Define target type (Claude Code or Codex) and activation status
 - **Rules**: Match requests by content type and route to specific API services
+- **Route Configuration Options**:
+  - **Agent Teams (Claude Code only)**: Enables experimental Agent Teams feature
+    - Sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"` environment variable
+    - Requires Claude Code version ≥ 2.1.32
+    - Can be toggled on/off for both active and inactive routes
+  - **Bypass Permissions Support (Claude Code only)**: Enables support for bypassPermissions mode
+    - Sets `permissions.defaultMode` to `"bypassPermissions"` in `~/.claude/settings.json`
+    - Sets `skipDangerousModePermissionPrompt` to `true` in `~/.claude/settings.json`
+    - Can be toggled on/off for both active and inactive routes
+  - **Reasoning Effort (Codex only)**: Controls the reasoning effort level
+    - Options: `low`, `medium`, `high` (default: `high`)
+    - Sets `model_reasoning_effort` in `~/.codex/config.toml`
+- **Fallback Mechanism**:
+  - When no route is activated, system automatically falls back to original config files
+  - Claude Code: Reads `~/.claude/settings.json` (prefers backup file if exists)
+  - Codex: Reads `~/.codex/config.toml` and `auth.json` (prefers backup files if exist)
+  - Ensures tools continue working even without active routes
+  - Logs include "使用原始配置" tag when fallback is used
+  - **Dead Loop Prevention**: Automatically detects if original config points to local proxy and rejects to avoid infinite loops
+
 - **Content Type Detection**:
   - `high-iq`: High intelligence mode (persistent across conversation)
     - Use `!!` prefix to enable: "!! 重构A模块"
@@ -364,6 +384,7 @@ aicos version            # Show current version information
     - Request details: request headers, request body, response headers, response body
     - **Upstream Request Information**: URL, headers, body, proxy usage
     - Response time metrics
+    - **Tags**: Array of labels for special request characteristics (e.g., "使用原始配置")
 - **Data Sanitization**:
   - Sensitive authentication fields (api_key, authorization, password, secret, etc.) are automatically masked in the UI
   - Technical fields like `max_tokens`, `input_tokens`, `output_tokens` are NOT masked - they are legitimate API parameters

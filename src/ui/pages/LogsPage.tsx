@@ -1107,6 +1107,28 @@ function LogsPage() {
                   <input type="text" value={TARGET_TYPE[selectedRequestLog.targetType] || '-'} readOnly />
                 </div>
               )}
+              {selectedRequestLog.tags && selectedRequestLog.tags.length > 0 && (
+                <div className="form-group">
+                  <label>标签</label>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
+                    {selectedRequestLog.tags.map((tag, index) => (
+                      <span
+                        key={index}
+                        style={{
+                          padding: '4px 12px',
+                          backgroundColor: '#3498db',
+                          color: 'white',
+                          borderRadius: '12px',
+                          fontSize: '13px',
+                          fontWeight: '500'
+                        }}
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
               {selectedRequestLog.requestModel && (
                 <div className="form-group">
                   <label>请求模型</label>
@@ -1301,6 +1323,28 @@ function LogsPage() {
                 <div className="form-group">
                   <label>客户端类型</label>
                   <input type="text" value={TARGET_TYPE[selectedErrorLog.targetType] || '-'} readOnly />
+                </div>
+              )}
+              {selectedErrorLog.tags && selectedErrorLog.tags.length > 0 && (
+                <div className="form-group">
+                  <label>标签</label>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
+                    {selectedErrorLog.tags.map((tag, index) => (
+                      <span
+                        key={index}
+                        style={{
+                          padding: '4px 12px',
+                          backgroundColor: '#3498db',
+                          color: 'white',
+                          borderRadius: '12px',
+                          fontSize: '13px',
+                          fontWeight: '500'
+                        }}
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
               {selectedErrorLog.requestModel && (
