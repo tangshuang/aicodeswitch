@@ -75,12 +75,13 @@ function StatisticsPage() {
   }
 
   const contentTypeLabels: Record<string, string> = {
-    'default': '默认请求',
     'image-understanding': '图像理解',
-    'thinking': '思考模式',
+    'high-iq': '高智商',
     'long-context': '长上下文',
+    'thinking': '思考模式',
     'background': '后台任务',
-    'model-mapping': '模型映射',
+    'model-mapping': '模型顶替',
+    'default': '默认请求',
   };
 
   // 计算每日编程时长（基于 tokens 估算）

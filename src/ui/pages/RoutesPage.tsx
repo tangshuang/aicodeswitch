@@ -7,24 +7,24 @@ import { toast } from '../components/Toast';
 import { useRulesStatus } from '../hooks/useRulesStatus';
 
 const CONTENT_TYPE_OPTIONS = [
-  { value: 'default', label: '默认' },
-  { value: 'background', label: '后台', icon: '⚙' },
-  { value: 'thinking', label: '思考', icon: '💭' },
+  { value: 'image-understanding', label: '图像理解', icon: '🖼' },
   { value: 'high-iq', label: '高智商', icon: '🧠' },
   { value: 'long-context', label: '长上下文', icon: '📄' },
-  { value: 'image-understanding', label: '图像理解', icon: '🖼' },
+  { value: 'thinking', label: '思考', icon: '💭' },
+  { value: 'background', label: '后台', icon: '⚙' },
   { value: 'model-mapping', label: '模型顶替', icon: '🔄' },
+  { value: 'default', label: '默认' },
 ];
 
 // 类型排序权重（数值越小越靠前）
 const CONTENT_TYPE_ORDER: Record<string, number> = {
-  'default': 0,
-  'background': 1,
-  'thinking': 2,
-  'high-iq': 3,
-  'long-context': 4,
-  'image-understanding': 5,
+  'image-understanding': 1,
+  'high-iq': 2,
+  'long-context': 3,
+  'thinking': 4,
+  'background': 5,
   'model-mapping': 6,
+  'default': 7,
 };
 
 // 类型到图标的映射

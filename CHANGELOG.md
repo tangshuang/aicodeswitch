@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file. See [standa
 
 ### 2026-03-08
 
+#### Improvements
+* 调整请求类型优先级顺序为：图像理解 → 高智商 → 长上下文 → 思考 → 后台 → 模型顶替 → 默认
+  - 后端：调整 `getContentTypeDetectors()` 检测器顺序，high-iq 提升到 thinking 之前
+  - 后端：调整 `findMatchingRule()` 规则匹配顺序，model-mapping 优先级降低到其他内容类型之后
+  - 前端：调整 `CONTENT_TYPE_OPTIONS` 和 `CONTENT_TYPE_ORDER` 与后端优��级一致
+  - 统计页面：补充缺失的 `high-iq` 标签，统一命名（"模型映射" → "模型顶替"）
+
+### 2026-03-08
+
 #### Features
 * 长上下文规则支持基于 session 累积 tokens 的动态匹配
   - 当当前对话（session）的累积 tokens 超过阈值时，自动切换到长上下文规则

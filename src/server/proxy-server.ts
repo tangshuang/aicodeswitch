@@ -1005,7 +1005,43 @@ export class ProxyServer {
       }
     }
 
-    // 1. 首先查找 model-mapping 类型的规则，按 sortOrder 降序匹配
+    // 1. 查找其他内容类型的规则
+    const contentTypeRules = enabledRules.filter(rule => rule.contentType === contentType);
+
+    // 过滤黑名单和token限制
+    for (const rule of contentTypeRules) {
+      const isBlacklisted = await this.dbManager.isServiceBlacklisted(
+        rule.targetServiceId,
+        routeId,
+        contentType
+      );
+      if (isBlacklisted) {
+        continue;
+      }
+
+      // 检查并重置到期的规则
+      this.dbManager.checkAndResetRuleIfNeeded(rule.id);
+      this.dbManager.checkAndResetRequestCountIfNeeded(rule.id);
+
+      // 检查token限制（tokenLimit单位是k，需要乘以1000转换为实际token数）
+      if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit * 1000) {
+        continue; // 跳过超限规则
+      }
+
+      // 检查请求次数限制
+      if (rule.requestCountLimit && rule.totalRequestsUsed !== undefined && rule.totalRequestsUsed >= rule.requestCountLimit) {
+        continue; // 跳过超限规则
+      }
+
+      // 检查频率限制
+      if (this.isFrequencyLimitExceeded(rule)) {
+        continue; // 跳过达到频率限制的规则
+      }
+
+      return rule;
+    }
+
+    // 2. 然后查找 model-mapping 类型的规则
     if (requestModel) {
       const modelMappingRules = enabledRules.filter(rule =>
         rule.contentType === 'model-mapping' &&
@@ -1045,42 +1081,6 @@ export class ProxyServer {
 
         return rule;
       }
-    }
-
-    // 2. 查找其他内容类型的规则
-    const contentTypeRules = enabledRules.filter(rule => rule.contentType === contentType);
-
-    // 过滤黑名单和token限制
-    for (const rule of contentTypeRules) {
-      const isBlacklisted = await this.dbManager.isServiceBlacklisted(
-        rule.targetServiceId,
-        routeId,
-        contentType
-      );
-      if (isBlacklisted) {
-        continue;
-      }
-
-      // 检查并重置到期的规则
-      this.dbManager.checkAndResetRuleIfNeeded(rule.id);
-      this.dbManager.checkAndResetRequestCountIfNeeded(rule.id);
-
-      // 检查token限制（tokenLimit单位是k，需要乘以1000转换为实际token数）
-      if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit * 1000) {
-        continue; // 跳过超限规则
-      }
-
-      // 检查请求次数限制
-      if (rule.requestCountLimit && rule.totalRequestsUsed !== undefined && rule.totalRequestsUsed >= rule.requestCountLimit) {
-        continue; // 跳过超限规则
-      }
-
-      // 检查频率限制
-      if (this.isFrequencyLimitExceeded(rule)) {
-        continue; // 跳过达到频率限制的规则
-      }
-
-      return rule;
     }
 
     // 3. 最后返回 default 规则
@@ -1315,16 +1315,16 @@ export class ProxyServer {
         match: (_req, body) => this.containsImageContent(body.messages) || this.containsImageContent(body.input),
       },
       {
-        type: 'thinking',
-        match: (_req, body) => this.hasThinkingSignal(body),
-      },
-      {
         type: 'high-iq',
         match: (_req, body) => this.hasHighIqSignal(body),
       },
       {
         type: 'long-context',
         match: (_req, body, sessionId, routeId) => this.hasLongContextSignal(body, sessionId, routeId),
+      },
+      {
+        type: 'thinking',
+        match: (_req, body) => this.hasThinkingSignal(body),
       },
       {
         type: 'background',
