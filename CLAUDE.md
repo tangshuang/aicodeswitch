@@ -324,7 +324,14 @@ aicos version            # Show current version information
     - 请求消息中的图片引用会被替换为本地文件路径
     - MCP 工具会自动识别并处理本地图片
   - `thinking`: Requests with reasoning/thinking signals
-  - `long-context`: Requests with large context (≥12000 chars or ≥8000 max tokens)
+  - `long-context`: Requests with large context
+    - 触发条件（满足任一）：
+      1. Session 累积 tokens 超过阈值（默认 1M tokens，可配置）
+      2. 请求体显式标记：`long_context: true` 或 `longContext: true`
+      3. `max_tokens` ≥ 8000
+      4. 请求内容长度 ≥ 12000 字符
+    - 新增 `sessionTokenThreshold` 字段（单位：k），用于配置 session 累积 tokens 阈值
+    - 当 session 累积 tokens 超过阈值后，该 session 的所有新请求都会走长上下文规则
   - `background`: Background/priority requests, including `/count_tokens` endpoint requests and token counting requests with `{"role": "user", "content": "count"}`
   - `default`: All other requests
 
