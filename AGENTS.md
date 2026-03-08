@@ -133,6 +133,7 @@ aicos stop            # 停止服务
 - 2026-03-03: 修复前端 Vendors 页面中旧数据源类型 `claude-code` 的类型判断残留，统一为 `claude`，消除 TypeScript 类型检查报错。
 - 2026-03-03: 路由管理新增 Codex 配置区域，支持设置 `model_reasoning_effort`（Reasoning Effort 下拉）；路由激活时按配置写入 Codex 配置文件，激活后修改可立即覆盖 `~/.codex/config.toml`。
 - 2026-03-03: 调整 Codex 配置区 Reasoning Effort 表单布局为 label/value 左右排列，避免上下排布。
+- 2026-03-08: 高智商规则改为自动推断模式：移除 `!x` 关闭语法，按“最近真实用户输入 + 工具消息过滤”判断是否命中 `high-iq`，并修复高智商规则优先级与会话状态持久化问题。
 
 ---
 
