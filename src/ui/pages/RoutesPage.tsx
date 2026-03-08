@@ -129,6 +129,7 @@ export default function RoutesPage() {
   }>>({});
   const [useMCP, setUseMCP] = useState<boolean>(false);
   const [selectedMCPId, setSelectedMCPId] = useState<string>('');
+  const [selectedSessionTokenThreshold, setSelectedSessionTokenThreshold] = useState<number | undefined>(1000); // 默认1M (1000k)
 
   // 超量配置展开状态
   const [showTokenLimit, setShowTokenLimit] = useState(false);
@@ -495,6 +496,7 @@ export default function RoutesPage() {
       frequencyWindow: selectedFrequencyWindow,
       useMCP: selectedContentType === 'image-understanding' ? useMCP : false,
       mcpId: (selectedContentType === 'image-understanding' && useMCP) ? selectedMCPId : undefined,
+      sessionTokenThreshold: selectedContentType === 'long-context' ? selectedSessionTokenThreshold : undefined,
     };
 
     if (editingRule) {
@@ -766,6 +768,9 @@ export default function RoutesPage() {
         // 如果规则有配置超量限制，则展开对应的字段
         setShowTokenLimit(!!rule.tokenLimit);
         setShowRequestLimit(!!rule.requestCountLimit);
+
+        // 加载sessionTokenThreshold（仅long-context规则）
+        setSelectedSessionTokenThreshold(rule.sessionTokenThreshold ?? 1000);
       }, 0);
     } else if (rule.useMCP) {
       // 如果使用MCP，清空供应商相关字段
@@ -777,6 +782,10 @@ export default function RoutesPage() {
       setSelectedTimeout(rule.timeout ? rule.timeout / 1000 : undefined);
       setShowTokenLimit(false);
       setShowRequestLimit(false);
+      setSelectedSessionTokenThreshold(rule.sessionTokenThreshold ?? 1000);
+    } else {
+      // 默认情况
+      setSelectedSessionTokenThreshold(rule.sessionTokenThreshold ?? 1000);
     }
     setShowRuleModal(true);
   };
@@ -889,6 +898,7 @@ export default function RoutesPage() {
     setShowRequestLimit(false);
     setUseMCP(false);
     setSelectedMCPId('');
+    setSelectedSessionTokenThreshold(1000);
     setShowRuleModal(true);
   };
 
@@ -1670,6 +1680,23 @@ export default function RoutesPage() {
                       onChange={(e) => setSelectedReplacedModel(e.target.value)}
                       placeholder="例如：gpt-4"
                     />
+                  </div>
+                )}
+
+                {/* 长上下文类型显示session tokens阈值配置 */}
+                {selectedContentType === 'long-context' && (
+                  <div className="form-group">
+                    <label>Session累积Tokens阈值 (单位: k) <small>默认1000k (1M tokens)</small></label>
+                    <input
+                      type="number"
+                      value={selectedSessionTokenThreshold ?? 1000}
+                      onChange={(e) => setSelectedSessionTokenThreshold(Number(e.target.value))}
+                      placeholder="1000"
+                      min="1"
+                    />
+                    <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
+                      当前对话（session）的累积tokens数量超过 {selectedSessionTokenThreshold ?? 1000}k 时，该对话的新请求将走此规则
+                    </small>
                   </div>
                 )}
 

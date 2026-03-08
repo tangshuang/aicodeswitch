@@ -142,6 +142,7 @@ export interface Rule {
   isDisabled?: boolean;          // 是否临时屏蔽该规则
   useMCP?: boolean;              // 是否使用MCP（仅适用于图像理解）
   mcpId?: string;                // MCP工具ID（仅当useMCP为true时）
+  sessionTokenThreshold?: number;// 长上下文规则的session累积tokens阈值（单位：k，默认1000k=1M）
   createdAt: number;
   updatedAt: number;
 }

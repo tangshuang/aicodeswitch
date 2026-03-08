@@ -41,7 +41,7 @@ import { readOriginalConfig } from './original-config-reader';
 
 type ContentTypeDetector = {
   type: ContentType;
-  match: (req: Request, body: any) => boolean;
+  match: (req: Request, body: any, sessionId?: string | null, routeId?: string) => boolean;
 };
 
 const SUPPORTED_TARGETS = ['claude-code', 'codex'];
@@ -972,7 +972,8 @@ export class ProxyServer {
 
     const body = req.body;
     const requestModel = body?.model;
-    const contentType = forcedContentType || this.determineContentType(req);
+    const route = this.dbManager.getRoutes().find(r => r.id === routeId);
+    const contentType = forcedContentType || this.determineContentType(req, route?.targetType || 'claude-code', routeId);
 
     // 高智商规则优先于 model-mapping，确保 !!/推断命中时不会被模型映射覆盖
     if (contentType === 'high-iq') {
@@ -1132,7 +1133,8 @@ export class ProxyServer {
     const body = req.body;
     const requestModel = body?.model;
     const candidates: Rule[] = [];
-    const contentType = forcedContentType || this.determineContentType(req);
+    const route = this.dbManager.getRoutes().find(r => r.id === routeId);
+    const contentType = forcedContentType || this.determineContentType(req, route?.targetType || 'claude-code', routeId);
     const prioritizeContentType = contentType === 'high-iq';
 
     const modelMappingRules = requestModel
@@ -1280,7 +1282,7 @@ export class ProxyServer {
     }
   }
 
-  private determineContentType(req: Request): ContentType {
+  private determineContentType(req: Request, targetType: TargetType, routeId?: string): ContentType {
     const body = req.body;
     if (!body) return 'default';
 
@@ -1294,8 +1296,11 @@ export class ProxyServer {
       return explicitType;
     }
 
+    // 获取sessionId用于session级别的检测（如long-context）
+    const sessionId = this.defaultExtractSessionId(req, targetType);
+
     for (const detector of this.getContentTypeDetectors()) {
-      if (detector.match(req, body)) {
+      if (detector.match(req, body, sessionId, routeId)) {
         return detector.type;
       }
     }
@@ -1319,7 +1324,7 @@ export class ProxyServer {
       },
       {
         type: 'long-context',
-        match: (_req, body) => this.hasLongContextSignal(body),
+        match: (_req, body, sessionId, routeId) => this.hasLongContextSignal(body, sessionId, routeId),
       },
       {
         type: 'background',
@@ -1774,7 +1779,7 @@ export class ProxyServer {
     return candidates.some((value) => value === true || value === 'background');
   }
 
-  private hasLongContextSignal(body: any): boolean {
+  private hasLongContextSignal(body: any, sessionId?: string | null, routeId?: string): boolean {
     const explicit = [
       body?.long_context,
       body?.longContext,
@@ -1783,6 +1788,25 @@ export class ProxyServer {
     ];
     if (explicit.some((value) => value === true)) {
       return true;
+    }
+
+    // 检查session累积tokens
+    if (sessionId && routeId) {
+      const session = this.dbManager.getSession(sessionId);
+      if (session && session.totalTokens > 0) {
+        // 查找该route下的long-context规则，获取阈值配置
+        const rules = this.getRulesByRouteId(routeId);
+        const longContextRule = rules?.find(rule => rule.contentType === 'long-context' && !rule.isDisabled);
+
+        // 默认阈值为1M tokens (1000k)
+        const defaultThreshold = 1000; // 单位：k
+        const threshold = longContextRule?.sessionTokenThreshold ?? defaultThreshold;
+
+        // 如果session累积tokens超过阈值，则认为是long-context
+        if (session.totalTokens >= threshold * 1000) {
+          return true;
+        }
+      }
     }
 
     const maxTokens = this.extractNumericField(body, [
@@ -2542,8 +2566,9 @@ export class ProxyServer {
       // Session 索引逻辑
       const sessionId = this.defaultExtractSessionId(req, targetType);
       if (sessionId) {
-        const totalTokens = (usageForLog?.inputTokens || 0) + (usageForLog?.outputTokens || 0) +
-                           (usageForLog?.totalTokens || 0);
+        // 正确计算当前请求的tokens：优先使用totalTokens，否则使用input+output
+        const totalTokens = usageForLog?.totalTokens ||
+                           ((usageForLog?.inputTokens || 0) + (usageForLog?.outputTokens || 0));
         const sessionTitle = this.defaultExtractSessionTitle(req, sessionId);
         const existingSession = this.dbManager.getSession(sessionId);
         this.dbManager.upsertSession({
@@ -2568,7 +2593,8 @@ export class ProxyServer {
 
       // 更新规则的token使用量（只在成功请求时更新）
       if (usageForLog && statusCode < 400) {
-        const totalTokens = (usageForLog.inputTokens || 0) + (usageForLog.outputTokens || 0);
+        const totalTokens = usageForLog.totalTokens ||
+                          ((usageForLog.inputTokens || 0) + (usageForLog.outputTokens || 0));
         if (totalTokens > 0) {
           this.dbManager.incrementRuleTokenUsage(rule.id, totalTokens);
 

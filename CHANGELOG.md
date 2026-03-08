@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file. See [standa
 ### 2026-03-08
 
 #### Features
+* 长上下文规则支持基于 session 累积 tokens 的动态匹配
+  - 当当前对话（session）的累积 tokens 超过阈值时，自动切换到长上下文规则
+  - 新增 `sessionTokenThreshold` 字段配置（单位：k，默认 1000k = 1M tokens）
+  - 前端显示配置提示：session 累积 tokens 超过阈值后，新请求会走该规则
+  - 支持自定义阈值，默认为 1M tokens
+  - 后端自动检测 session 累积 tokens 并匹配规则
+
+### 2026-03-08
+
+#### Features
 * 路由管理新增 bypassPermissions 支持配置项（仅 Claude Code）
   - 新增"开启对 bypassPermissions 的支持"开关
   - 开启后会在 `~/.claude/settings.json` 中写入：
