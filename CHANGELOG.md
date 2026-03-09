@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-03-09
+
+#### Fixes
+* 调整 OpenAI（Responses）数据源 URL 规则为固定拼接
+  - 后端移除 base URL `/v{number}` 兼容分支，统一按 `{baseUrl}/v1/*` 转发
+  - OpenAI 类型服务新增 `/v1` 结尾校验，要求填写不含 `/v1` 的 base URL
+  - 前端 Vendors 页面新增校验与提示文案，阻止保存以 `/v1` 结尾的 OpenAI base URL
+* 新增 OpenAI base URL 自动迁移
+  - 启动时自动扫描 `vendors.json`，仅对 `sourceType=openai` 且 `apiUrl` 末尾为 `/v1` 的服务进行迁移
+  - 迁移规则为移除末尾 `/v1` 并回写数据库
+  - 导入数据时同步执行同样归一化，避免导入旧配置后再次触发问题
+
 ### 2026-03-08
 
 #### Improvements
