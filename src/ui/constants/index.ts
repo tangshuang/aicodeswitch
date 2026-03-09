@@ -19,7 +19,7 @@ export const SOURCE_TYPE: Record<SourceType, string> = {
 
 export const SOURCE_TYPE_MESSAGE: Record<SourceType, string> = {
   'openai-chat': '填写完整的接口地址，如：https://api.openai.com/v1/chat/completions',
-  'openai': '填写 base 地址即可（可含或不含/v1），如：https://api.openai.com 或 https://api.openai.com/v1',
+  'openai': '只填写不含 /v1 的 base 地址，如：https://api.openai.com；系统会自动拼接 /v1/responses',
   'claude-chat': '填写完整的接口地址，如：https://api.anthropic.com/v1/messages',
   'claude': '只填写 base 地址，如：https://api.anthropic.com',
   'deepseek-reasoning-chat': '推理类模型，填写完整的接口地址，如：https://api.deepseek.com/v1/chat/completions',

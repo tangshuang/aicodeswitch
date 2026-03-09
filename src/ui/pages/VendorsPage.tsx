@@ -389,6 +389,13 @@ function VendorsPage() {
     }
 
     const formData = new FormData(e.currentTarget);
+    const sourceType = formData.get('sourceType') as SourceType;
+    const apiUrl = (formData.get('apiUrl') as string).trim();
+
+    if (sourceType === 'openai' && /\/v1\/?$/i.test(apiUrl)) {
+      toast.warning('OpenAI 数据源只需填写 base URL（不含 /v1），例如：https://api.openai.com');
+      return;
+    }
 
     // 过滤掉值为空的 modelLimits
     const finalModelLimits: Record<string, number> = {};
@@ -401,9 +408,9 @@ function VendorsPage() {
     const service = {
       vendorId: selectedVendor!.id,
       name: formData.get('name') as string,
-      apiUrl: formData.get('apiUrl') as string,
+      apiUrl,
       apiKey: formData.get('apiKey') as string,
-      sourceType: formData.get('sourceType') as SourceType,
+      sourceType,
       authType: formData.get('authType') as AuthType || undefined,
       supportedModels: finalModels.length > 0 ? finalModels : undefined,
       modelLimits: Object.keys(finalModelLimits).length > 0 ? finalModelLimits : undefined,

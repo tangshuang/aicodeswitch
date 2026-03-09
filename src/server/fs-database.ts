@@ -118,6 +118,8 @@ export class FileSystemDatabaseManager {
 
     // 执行数据源类型迁移（在加载数据之后）
     await this.migrateSourceTypes();
+    // OpenAI base URL 迁移：将末尾 /v1 自动移除
+    await this.migrateOpenAIBaseUrls();
 
     // 确保默认配置
     await this.ensureDefaultConfig();
@@ -278,16 +280,63 @@ export class FileSystemDatabaseManager {
   }
 
   /**
+   * 迁移 OpenAI base URL（在初始化时执行）
+   * 仅处理 sourceType=openai 且 apiUrl 末尾为 /v1 的服务
+   */
+  private async migrateOpenAIBaseUrls(): Promise<void> {
+    console.log('[OpenAIBaseUrlMigration] Checking for OpenAI base URL migration...');
+
+    let migratedCount = 0;
+    for (const vendor of this.vendors) {
+      if (!vendor.services) continue;
+
+      for (const service of vendor.services) {
+        if (service.sourceType !== 'openai' || typeof service.apiUrl !== 'string') {
+          continue;
+        }
+
+        const trimmedUrl = service.apiUrl.trim();
+        if (!/\/v1\/?$/i.test(trimmedUrl)) {
+          continue;
+        }
+
+        const migratedUrl = trimmedUrl.replace(/\/v1\/?$/i, '');
+        if (migratedUrl && migratedUrl !== service.apiUrl) {
+          console.log(`[OpenAIBaseUrlMigration] Migrated service "${service.name}": ${service.apiUrl} -> ${migratedUrl}`);
+          service.apiUrl = migratedUrl;
+          migratedCount++;
+        }
+      }
+    }
+
+    if (migratedCount === 0) {
+      console.log('[OpenAIBaseUrlMigration] No migration needed');
+      return;
+    }
+
+    await this.saveVendors();
+    console.log(`[OpenAIBaseUrlMigration] Migration completed. Migrated ${migratedCount} services.`);
+  }
+
+  /**
    * 迁移导入数据中的类型
    * 用于导入功能，自动将旧类型转换为新类型
    */
   private migrateVendorsOnImport(vendors: Vendor[]): Vendor[] {
     return vendors.map(vendor => ({
       ...vendor,
-      services: vendor.services?.map(service => ({
-        ...service,
-        sourceType: service.sourceType ? normalizeSourceType(service.sourceType) : undefined
-      }))
+      services: vendor.services?.map(service => {
+        const normalizedSourceType = service.sourceType ? normalizeSourceType(service.sourceType) : undefined;
+        const normalizedApiUrl = normalizedSourceType === 'openai' && typeof service.apiUrl === 'string'
+          ? service.apiUrl.trim().replace(/\/v1\/?$/i, '')
+          : service.apiUrl;
+
+        return {
+          ...service,
+          sourceType: normalizedSourceType,
+          apiUrl: normalizedApiUrl
+        };
+      })
     }));
   }
 

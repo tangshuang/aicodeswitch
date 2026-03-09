@@ -123,7 +123,7 @@ aicos stop            # 停止服务
 ## 变更记录
 
 每次代码变更后:
-1. 更新 AGENTS.md 保持文档同步
+1. 更新 AGENTS.md, CLAUDE.md 保持文档同步
 2. 在 `CHANGELOG.md` 中以简单概述记录变更
 
 - 2026-02-11: 调整 UI 弹层层级与日志页弹层叠放逻辑，修复侧栏遮挡问题。
@@ -134,6 +134,8 @@ aicos stop            # 停止服务
 - 2026-03-03: 路由管理新增 Codex 配置区域，支持设置 `model_reasoning_effort`（Reasoning Effort 下拉）；路由激活时按配置写入 Codex 配置文件，激活后修改可立即覆盖 `~/.codex/config.toml`。
 - 2026-03-03: 调整 Codex 配置区 Reasoning Effort 表单布局为 label/value 左右排列，避免上下排布。
 - 2026-03-08: 高智商规则改为自动推断模式：移除 `!x` 关闭语法，按“最近真实用户输入 + 工具消息过滤”判断是否命中 `high-iq`，并修复高智商规则优先级与会话状态持久化问题。
+- 2026-03-09: OpenAI（Responses）数据源调整为固定拼接 `/v1/responses` 转发；供应商 OpenAI base URL 规范为不包含 `/v1`，并补充前后端保存校验与提示文案。
+- 2026-03-09: 新增 OpenAI base URL 启动迁移：仅对 `sourceType=openai` 且地址末尾为 `/v1` 的服务自动去尾并回写 `vendors.json`，导入数据时同步归一化。
 
 ---
 

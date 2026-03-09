@@ -111,7 +111,7 @@ export default {
             {
                 name: '付费API兼容Codex',
                 sourceType: 'openai',
-                apiUrl: 'https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1',
+                apiUrl: 'https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode',
                 models: 'qwen3-max-2026-01-23, qwen3-coder-plus, kimi-k2.5, glm-4.7, MiniMax-M2.1',
             },
         ]
