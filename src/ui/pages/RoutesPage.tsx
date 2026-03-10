@@ -312,8 +312,8 @@ export default function RoutesPage() {
             configWritten = true;
           } else {
             // 已激活过配置时，切换路由也要同步该路由的 Reasoning Effort
-            const updated = await api.updateCodexReasoningEffort(modelReasoningEffort);
-            if (!updated) {
+            const updatedEffort = await api.updateCodexReasoningEffort(modelReasoningEffort);
+            if (!updatedEffort) {
               // 兜底：若当前并非代理态但存在备份，改为重写配置文件
               await api.writeCodexConfig(modelReasoningEffort);
               configWritten = true;

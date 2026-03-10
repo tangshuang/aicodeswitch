@@ -1170,7 +1170,7 @@ function LogsPage() {
               {selectedRequestLog.body && (
                 <div className="form-group">
                   <label>请求体</label>
-                  <JSONViewer data={selectedRequestLog.body} />
+                  <JSONViewer data={selectedRequestLog.body} collapsed />
                 </div>
               )}
               {selectedRequestLog.upstreamRequest && (
@@ -1400,13 +1400,13 @@ function LogsPage() {
               {selectedErrorLog.requestHeaders && (
                 <div className="form-group">
                   <label>请求头</label>
-                  <JSONViewer data={selectedErrorLog.requestHeaders} />
+                  <JSONViewer data={selectedErrorLog.requestHeaders} collapsed />
                 </div>
               )}
               {selectedErrorLog.requestBody && (
                 <div className="form-group">
                   <label>请求体</label>
-                  <JSONViewer data={selectedErrorLog.requestBody} />
+                  <JSONViewer data={selectedErrorLog.requestBody} collapsed />
                 </div>
               )}
               {selectedErrorLog.upstreamRequest && (

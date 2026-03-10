@@ -175,7 +175,7 @@ interface Message {
   tool_calls?: ToolCall[];                  // assistant消息中的工具调用
 }
 
-type ContentBlock = 
+type ContentBlock =
   | TextContent
   | ImageContent
   | ToolCallContent
@@ -1544,11 +1544,11 @@ async function requestWithRetry(
     } catch (error: any) {
       const status = error.status;
       const isRetryable = status === 429 || status >= 500;
-      
+
       if (!isRetryable || attempt === maxRetries) {
         throw error;
       }
-      
+
       // 指数退避：第一次等待1秒，第二次2秒，第三次4秒
       const delay = Math.pow(2, attempt - 1) * 1000;
       await new Promise(resolve => setTimeout(resolve, delay));
@@ -1671,7 +1671,7 @@ function estimateCost(
     'gpt-4o-mini': { input: 0.00015, output: 0.0006 },
     'gpt-3.5-turbo': { input: 0.0005, output: 0.0015 }
   };
-  
+
   const price = prices[model];
   return (
     (inputTokens * price.input + outputTokens * price.output) / 1000000
@@ -1741,20 +1741,20 @@ function: {
 // ✅ 处理连续调用
 for (let turn = 0; turn < maxTurns; turn++) {
   const response = await makeRequest();
-  
+
   if (response.finish_reason !== 'tool_calls') break;
-  
+
   // 执行所有函数调用
   const toolResults = await Promise.all(
     response.tool_calls.map(call => executeTool(call))
   );
-  
+
   // 添加结果到消息历史继续对话
   messages.push({
     role: 'assistant',
     content: response.content
   });
-  
+
   messages.push({
     role: 'user',
     content: toolResults.map(r => ({
@@ -1836,7 +1836,7 @@ async function smartRequest(requestFn) {
     } catch (error) {
       if (error.status === 429) {
         // 从响应头读取重试时间
-        const retryAfter = 
+        const retryAfter =
           error.headers?.['retry-after'] || '60';
         await throttledRequest(parseInt(retryAfter) * 1000);
       } else {

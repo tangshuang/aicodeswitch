@@ -13,6 +13,8 @@ export interface Vendor {
 export type SourceType = 'openai-chat' | 'openai' | 'claude-chat' | 'claude' | 'deepseek-reasoning-chat' | 'gemini' | 'gemini-chat';
 /** 路由的目标对象类型，目前，仅支持claude-code和codex */
 export type ToolType = 'claude-code' | 'codex';
+/** TargetType 是 ToolType 的别名，用于向后兼容 */
+export type TargetType = ToolType;
 /** Codex 推理强度配置 */
 export type CodexReasoningEffort = 'low' | 'medium' | 'high';
 

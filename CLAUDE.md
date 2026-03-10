@@ -184,6 +184,8 @@ aicos version            # Show current version information
 - **Claude Messages API** ↔ **OpenAI Responses API**
 - **Claude Messages API** ↔ **Gemini GenerateContent API**
 - **OpenAI Chat Completions API** ↔ **Gemini GenerateContent API**
+- **OpenAI Chat Completions API** ↔ **OpenAI Responses API**
+- **OpenAI Responses API** ↔ **Gemini GenerateContent API**
 - **DeepSeek Chat** ↔ 其他格式（支持 developer 角色映射）
 
 **支持的转换内容**：
@@ -717,3 +719,5 @@ npm 发布成功后，自动触发 Tauri 应用构建：
 * 如果你需要创建文档，必须将文档放在 documents 目录下
 * 如果你需要创建测试脚本，必须将脚本文件放在 scripts 目录下
 * currentDate: Today's date is 2026-02-20.
+
+**注意，codex已经不再支持 `wire_api = "chat"` 的设置了，因此，由codex发起的请求，一定是和 Responses API 的请求数据一致。**

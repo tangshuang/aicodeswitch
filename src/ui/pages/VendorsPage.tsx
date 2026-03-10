@@ -392,11 +392,6 @@ function VendorsPage() {
     const sourceType = formData.get('sourceType') as SourceType;
     const apiUrl = (formData.get('apiUrl') as string).trim();
 
-    if (sourceType === 'openai' && /\/v1\/?$/i.test(apiUrl)) {
-      toast.warning('OpenAI 数据源只需填写 base URL（不含 /v1），例如：https://api.openai.com');
-      return;
-    }
-
     // 过滤掉值为空的 modelLimits
     const finalModelLimits: Record<string, number> = {};
     Object.entries(modelLimits).forEach(([model, limit]) => {

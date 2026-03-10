@@ -14,19 +14,26 @@ import {
 import { SSEEventCollectorTransform } from './transformers/chunk-collector';
 import { rulesStatusBroadcaster } from './rules-status-service';
 import {
-  extractTokenUsageFromClaudeUsage,
-  extractTokenUsageFromOpenAIUsage,
-  transformClaudeRequestToOpenAIChat,
-  transformClaudeResponseToOpenAIChat,
-  transformOpenAIChatResponseToClaude,
-} from './transformers/claude-openai';
-import {
-  transformClaudeRequestToGemini,
-  transformGeminiResponseToClaude,
-  transformOpenAIChatRequestToGemini,
-  transformGeminiResponseToOpenAIChat,
+  // 请求转换函数，将工具发起的请求，转化为API服务接口需要的请求数据结构
+  transformRequestFromClaudeToGemini,
+  transformRequestFromClaudeToChatCompletions,
+  transformRequestFromClaudeToResponses,
+  transformRequestFromResponsesToChatCompletions,
+  transformRequestFromResponsesToGemini,
+  transformRequestFromResponsesToClaude,
+  // 响应转换函数，将API服务接口吐出的数据，转化为工具需要的数据结构
+  transformResponseFromChatCompletionsToClaude,
+  transformResponseFromGeminiToClaude,
+  transformResponseFromResponsesToClaude,
+  transformResponseFromClaudeToResponses,
+  transformResponseFromChatCompletionsToResponses,
+  transformResponseFromGeminiToResponses,
+  // 辅助函数
+  applyModelOverride,
   extractTokenUsageFromGeminiUsage,
-} from './transformers/gemini';
+  extractTokenUsageFromOpenAIUsage,
+  extractTokenUsageFromClaudeUsage,
+} from './transformers/transformers';
 import type { AppConfig, Rule, APIService, Route, SourceType, ToolType, TokenUsage, ContentType, RequestLog } from '../types';
 import { AuthType } from '../types';
 import {
@@ -1904,9 +1911,19 @@ export class ProxyServer {
     return sourceType === 'claude' || sourceType === 'claude-code';
   }
 
+  /** 判断是否为 Claude Chat 类型 */
+  private isClaudeChatSource(sourceType: SourceType | string) {
+    return sourceType === 'claude-chat';
+  }
+
   private isOpenAISource(sourceType: SourceType | string) {
     // 向下兼容：支持旧类型 'openai-responses'
     return sourceType === 'openai' || sourceType === 'openai-responses';
+  }
+
+  /** 判断是否为 OpenAI Chat 类型 */
+  private isOpenAIChatSource(sourceType: SourceType | string) {
+    return sourceType === 'openai-chat' || sourceType === 'deepseek-reasoning-chat';
   }
 
   /** 判断是否为 OpenAI 类型（包括 OpenAI Chat 和 OpenAI Responses） */
@@ -2009,16 +2026,6 @@ export class ProxyServer {
     }
 
     return result;
-  }
-
-  private applyModelOverride(body: any, rule: Rule) {
-    // 如果 targetModel 为空或不存在,保留原始 model(透传)
-    if (!rule.targetModel) return body;
-
-    if (body && typeof body === 'object') {
-      return { ...body, model: rule.targetModel };
-    }
-    return body;
   }
 
   private isStreamRequested(req: Request, body: any) {
@@ -2177,17 +2184,6 @@ export class ProxyServer {
     }
   }
 
-  private extractTokenUsage(usage: any): TokenUsage | undefined {
-    if (!usage) return undefined;
-    if (typeof usage.prompt_tokens === 'number' || typeof usage.completion_tokens === 'number') {
-      return extractTokenUsageFromOpenAIUsage(usage);
-    }
-    if (typeof usage.input_tokens === 'number' || typeof usage.output_tokens === 'number') {
-      return extractTokenUsageFromClaudeUsage(usage);
-    }
-    return undefined;
-  }
-
   /**
    * 从请求中提取 session ID（默认方法）
    * Claude Code: metadata.user_id
@@ -2325,6 +2321,147 @@ export class ProxyServer {
 
     // 透传路径
     return `${apiUrl}${originalPath}`;
+  }
+
+  /**
+   * 转换请求数据到目标API的请求数据
+   * 统一处理所有格式转换和模型覆盖
+   * @param tool 源工具类型
+   * @param source 数据源类型
+   * @param payloadData 工具往上提交的原始请求数据
+   * @param targetModel 目标模型名称（可选）
+   * @returns 转换后往服务商API接口的数据
+   */
+  private transformRequestToUpstream(tool: ToolType, source: SourceType, payloadData: any, targetModel: string): any {
+    // Claude Code 发起的请求
+    if (tool === 'claude-code') {
+      // claudecode向claude发送的请求，无需转换，但需要应用模型覆盖
+      if (this.isClaudeSource(source) || this.isClaudeChatSource(source)) {
+        return applyModelOverride(payloadData);
+      }
+
+      // claudecode发送给gemini
+      if (this.isGeminiChatSource(source) || this.isGeminiSource(source)) {
+        return transformRequestFromClaudeToGemini(payloadData, targetModel);
+      }
+
+      // claudecode发送给openai chat completion接口
+      if (this.isOpenAIChatSource(source)) {
+        return transformRequestFromClaudeToChatCompletions(payloadData, targetModel);
+      }
+
+      // claudecode发送给openai responses接口
+      if (this.isOpenAISource(source)) {
+        return transformRequestFromClaudeToResponses(payloadData, targetModel);
+      }
+    }
+
+    // Codex 发起的请求（仅支持 Responses API 格式）
+    if (tool === 'codex') {
+      // Codex 发送给 OpenAI Responses
+      if (this.isOpenAISource(source)) {
+        return applyModelOverride(payloadData);
+      }
+
+      // Codex 发送给 OpenAI Chat
+      if (this.isOpenAIChatSource(source)) {
+        // 将 responses 格式转换为 chat completions 格式
+        return transformRequestFromResponsesToChatCompletions(payloadData, targetModel);
+      }
+
+      // Codex 发送给 Gemini
+      if (this.isGeminiChatSource(source) || this.isGeminiSource(source)) {
+        return transformRequestFromResponsesToGemini(payloadData, targetModel);
+      }
+
+      // Codex 发送给 Claude
+      if (this.isClaudeSource(source) || this.isClaudeChatSource(source)) {
+        return transformRequestFromResponsesToClaude(payloadData, targetModel);
+      }
+    }
+
+    // 默认: 直接返回原始数据（如果需要，应用模型覆盖）
+    return applyModelOverride(payloadData);
+  }
+
+  /**
+   * 将来自API接口的响应数据，转换为工具需要的数据结构
+   * @param tool
+   * @param source
+   * @param responseData
+   */
+  private transformResponseToTool(tool: ToolType, source: SourceType, responseData: any): any {
+    if (tool === 'claude-code') {
+      if (this.isClaudeSource(source) || this.isClaudeChatSource(source)) {
+        return responseData;
+      }
+      if (this.isOpenAIChatSource(source)) {
+        return transformResponseFromChatCompletionsToClaude(responseData);
+      }
+      if (this.isOpenAISource(source)) {
+        return transformResponseFromResponsesToClaude(responseData);
+      }
+      if (this.isGeminiSource(source) || this.isGeminiChatSource(source)) {
+        return transformResponseFromGeminiToClaude(responseData);
+      }
+    }
+
+    if (tool === 'codex') {
+      // Codex 仅支持 Responses API 格式
+      // Codex 接收来自 OpenAI Responses 的响应
+      if (this.isOpenAISource(source)) {
+        return responseData;
+      }
+
+      // Codex 接收来自 OpenAI Chat 的响应（转换为 Responses 格式）
+      if (this.isOpenAIChatSource(source)) {
+        return transformResponseFromChatCompletionsToResponses(responseData);
+      }
+
+      // Codex 接收来自 Claude 的响应（转换为 Responses 格式）
+      if (this.isClaudeSource(source) || this.isClaudeChatSource(source)) {
+        return transformResponseFromClaudeToResponses(responseData);
+      }
+
+      // Codex 接收来自 Gemini 的响应（转换为 Responses 格式）
+      if (this.isGeminiSource(source) || this.isGeminiChatSource(source)) {
+        return transformResponseFromGeminiToResponses(responseData);
+      }
+    }
+  }
+
+  private extractTokenUsageFromResponse(responseData: any, sourceType: SourceType) {
+    if (!responseData) return undefined;
+
+    // Gemini 使用 usageMetadata 字段
+    if (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType)) {
+      return extractTokenUsageFromGeminiUsage(responseData?.usageMetadata);
+    }
+
+    // OpenAI 使用 usage 字段
+    if (this.isOpenAIChatSource(sourceType) || this.isOpenAISource(sourceType)) {
+        return extractTokenUsageFromOpenAIUsage(responseData.usage);
+    }
+
+    // Claude 使用 input_tokens 和 output_tokens
+    if (this.isClaudeSource(sourceType) || this.isClaudeChatSource(sourceType)) {
+      return extractTokenUsageFromClaudeUsage(responseData.usage);
+    }
+
+    const usage = responseData.usage;
+    if (!usage) return undefined;
+
+    // OpenAI 使用 prompt_tokens 和 completion_tokens
+    if (typeof usage.prompt_tokens === 'number' || typeof usage.completion_tokens === 'number') {
+      return extractTokenUsageFromOpenAIUsage(usage);
+    }
+
+    // Claude 使用 input_tokens 和 output_tokens
+    if (typeof usage.input_tokens === 'number' || typeof usage.output_tokens === 'number') {
+      return extractTokenUsageFromClaudeUsage(usage);
+    }
+
+    return undefined;
   }
 
   private async proxyRequest(
@@ -2625,7 +2762,7 @@ export class ProxyServer {
       responseHeaders: any,
       contentType: string
     ) => {
-      usageForLog = this.extractTokenUsage(responseData?.usage);
+      usageForLog = this.extractTokenUsageFromResponse(responseData, sourceType);
       responseBodyForLog = typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
 
       let errorDetail: string;
@@ -2683,31 +2820,8 @@ export class ProxyServer {
     };
 
     try {
-      if (targetType === 'claude-code') {
-        if (this.isClaudeSource(sourceType)) {
-          requestBody = this.applyModelOverride(requestBody, rule);
-        } else if (this.isOpenAIType(sourceType)) {
-          requestBody = transformClaudeRequestToOpenAIChat(requestBody, rule.targetModel);
-        } else if (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType)) {
-          requestBody = transformClaudeRequestToGemini(requestBody);
-        } else {
-          res.status(400).json({ error: 'Unsupported source type for Claude Code.' });
-          await finalizeLog(400, 'Unsupported source type for Claude Code');
-          return;
-        }
-      } else if (targetType === 'codex') {
-        if (this.isOpenAIType(sourceType)) {
-          requestBody = this.applyModelOverride(requestBody, rule);
-        } else if (this.isClaudeSource(sourceType)) {
-          requestBody = transformClaudeRequestToOpenAIChat(requestBody, rule.targetModel);
-        } else if (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType)) {
-          requestBody = transformOpenAIChatRequestToGemini(requestBody);
-        } else {
-          res.status(400).json({ error: 'Unsupported source type for Codex.' });
-          await finalizeLog(400, 'Unsupported source type for Codex');
-          return;
-        }
-      }
+      // 使用统一的请求转换方法
+      requestBody = this.transformRequestToUpstream(targetType, sourceType, requestBody, rule.targetModel as string);
 
       // 应用 max_output_tokens 限制
       requestBody = this.applyMaxOutputTokensLimit(requestBody, service);
@@ -2840,7 +2954,7 @@ export class ProxyServer {
               // 尝试从event collector中提取usage
               const extractedUsage = eventCollector.extractUsage();
               if (extractedUsage) {
-                usageForLog = this.extractTokenUsage(extractedUsage);
+                usageForLog = this.extractTokenUsageFromResponse(extractedUsage, sourceType);
               }
             }
             // 收集stream chunks（每个chunk是一个完整的SSE事件）
@@ -2951,7 +3065,7 @@ export class ProxyServer {
               // 尝试从event collector中提取usage
               const extractedUsage = eventCollector.extractUsage();
               if (extractedUsage) {
-                usageForLog = this.extractTokenUsage(extractedUsage);
+                usageForLog = this.extractTokenUsageFromResponse(extractedUsage, sourceType);
               }
             }
             streamChunksForLog = eventCollector.getChunks();
@@ -3060,7 +3174,7 @@ export class ProxyServer {
             } else {
               const extractedUsage = eventCollector.extractUsage();
               if (extractedUsage) {
-                usageForLog = this.extractTokenUsage(extractedUsage);
+                usageForLog = this.extractTokenUsageFromResponse(extractedUsage, sourceType);
               }
             }
             streamChunksForLog = eventCollector.getChunks();
@@ -3164,7 +3278,7 @@ export class ProxyServer {
             } else {
               const extractedUsage = eventCollector.extractUsage();
               if (extractedUsage) {
-                usageForLog = this.extractTokenUsage(extractedUsage);
+                usageForLog = this.extractTokenUsageFromResponse(extractedUsage, sourceType);
               }
             }
             streamChunksForLog = eventCollector.getChunks();
@@ -3256,7 +3370,7 @@ export class ProxyServer {
           // 尝试从event collector中提取usage信息
           const extractedUsage = eventCollector.extractUsage();
           if (extractedUsage) {
-            usageForLog = this.extractTokenUsage(extractedUsage);
+            usageForLog = this.extractTokenUsageFromResponse(extractedUsage, sourceType);
           }
           console.log('[Proxy] Default stream request finished, collected chunks:', streamChunksForLog?.length || 0);
           console.log('[Proxy] Response body length:', responseBodyForLog?.length || 0);
@@ -3319,33 +3433,20 @@ export class ProxyServer {
       // 收集响应头
       responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
 
-      if (targetType === 'claude-code' && this.isOpenAIType(sourceType)) {
-        const converted = transformOpenAIChatResponseToClaude(responseData);
-        usageForLog = extractTokenUsageFromOpenAIUsage(responseData?.usage);
-        // 记录转换后的响应体
-        responseBodyForLog = JSON.stringify(converted);
-        res.status(response.status).json(converted);
-      } else if (targetType === 'claude-code' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
-        const converted = transformGeminiResponseToClaude(responseData, rule.targetModel);
-        usageForLog = extractTokenUsageFromGeminiUsage(responseData?.usageMetadata);
-        responseBodyForLog = JSON.stringify(converted);
-        res.status(response.status).json(converted);
-      } else if (targetType === 'codex' && this.isClaudeSource(sourceType)) {
-        const converted = transformClaudeResponseToOpenAIChat(responseData);
-        usageForLog = extractTokenUsageFromClaudeUsage(responseData?.usage);
-        responseBodyForLog = JSON.stringify(converted);
-        res.status(response.status).json(converted);
-      } else if (targetType === 'codex' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
-        const converted = transformGeminiResponseToOpenAIChat(responseData, rule.targetModel);
-        usageForLog = extractTokenUsageFromGeminiUsage(responseData?.usageMetadata);
+      // 使用统一的响应转换方法
+      const converted = this.transformResponseToTool(targetType, sourceType, responseData);
+
+      // 提取 token usage（从原始响应数据中提取）
+      usageForLog = this.extractTokenUsageFromResponse(responseData, sourceType);
+
+      if (converted && converted !== responseData) {
+        // 如果进行了转换，记录转换后的响应体
         responseBodyForLog = JSON.stringify(converted);
         res.status(response.status).json(converted);
       } else {
-        usageForLog = this.extractTokenUsage(responseData?.usage);
-        // 记录原始响应体
+        // 没有转换，使用原始数据
         responseBodyForLog = typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
         console.log('[Proxy] Non-stream response logged, body length:', responseBodyForLog?.length || 0);
-        this.copyResponseHeaders(responseHeaders, res);
         if (contentType.includes('application/json')) {
           res.status(response.status).json(responseData);
         } else {
@@ -3353,6 +3454,7 @@ export class ProxyServer {
         }
       }
 
+      this.copyResponseHeaders(responseHeaders, res);
       await finalizeLog(res.statusCode);
     } catch (error: any) {
       if (failoverEnabled && (error as FailoverProxyError)?.isFailoverCandidate) {

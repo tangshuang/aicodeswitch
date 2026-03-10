@@ -407,7 +407,7 @@ disable_response_storage = true
 name = "aicodeswitch"
 base_url = "http://${host}:${localPort}/codex"
 wire_api = "responses"
-requires_openai_auth = true
+requires_openai_auth = false
 `;
 };
 
@@ -1912,7 +1912,7 @@ ${instruction}
   );
 
   app.post(
-    '/api/update-codex-reasoning-effort',
+    '/api/update-codex-reasonings-effort',
     asyncHandler(async (req, res) => {
       const requestedEffort = req.body.modelReasoningEffort;
       if (!isCodexReasoningEffort(requestedEffort)) {

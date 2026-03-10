@@ -4,7 +4,72 @@ All notable changes to this project will be documented in this file. See [standa
 
 ### 2026-03-10
 
+#### Fixes
+* 修复 `proxy-server.ts` 中响应转换函数的导入和调用错误
+  - 添加缺失的导入：`transformResponseFromClaudeToResponses`
+  - 修正 Claude Code 接收 OpenAI Responses 响应时的函数调用：`transformResponseFromClaudeToResponses` → `transformResponseFromResponsesToClaude`
+
 #### Refactoring
+* 清理 `src/server/transformers/claude-openai.ts` 中未被使用的函数
+  - 保留被 `streaming.ts` 使用的函数：`convertOpenAIUsageToClaude`、`mapStopReason`
+  - 删除 15 个未被使用的导出函数及其依赖的内部辅助函数
+  - 减少代码体积约 1000+ 行，提升代码可维护性
+
+#### Features
+* 新增三个 Claude Code 请求转换函数
+  - `transformRequestFromClaudeToGemini`：Claude → Gemini
+  - `transformRequestFromClaudeToResponses`：Claude → Responses
+  - `transformRequestFromClaudeToChatCompletions`：Claude → Chat Completions
+  - 支持文本和图像内容转换、工具调用转换、生成参数转换
+* 新增三个 Chat Completions 转换函数
+  - `transformRequestFromChatCompletionsToResponses`：Chat Completions → Responses
+  - `transformRequestFromChatCompletionsToClaude`：Chat Completions → Claude
+  - `transformRequestFromChatCompletionsToGemini`：Chat Completions → Gemini
+  - 支持文本和图像内容转换、工具调用转换、生成参数转换
+* 新增 `transformRequestFromResponsesToGemini` 转换函数
+  - 将 Codex 发起的 Responses API 请求转换为 Gemini API 格式
+  - 支持系统提示词（instructions → systemInstruction）
+  - 支持消息转换（input → contents）
+  - 支持文本和图像内容转换
+  - 支持 tools 和 tool_choice 转换
+  - 支持生成参数转换
+* 新增九个响应转换函数
+  - `transformResponseFromChatCompletionsToResponses`：Chat Completions → Responses
+  - `transformResponseFromClaudeToResponses`：Claude → Responses
+  - `transformResponseFromGeminiToResponses`：Gemini → Responses
+  - `transformResponseFromResponsesToChatCompletions`：Responses → Chat Completions
+  - `transformResponseFromClaudeToChatCompletions`：Chat Completions → Claude
+  - `transformResponseFromGeminiToChatCompletions`：Gemini → Chat Completions
+  - `transformResponseFromChatCompletionsToClaude`：Chat Completions → Claude
+  - `transformResponseFromResponsesToClaude`：Responses → Claude
+  - `transformResponseFromGeminiToClaude`：Gemini → Claude
+
+#### Fixes
+* 修复 `transformRequestFromResponsesToChatCompletions` 函数的多个问题
+  - 添加输入验证，处理 `input` 为非数组的情况
+  - 修复空系统消息问题，仅当有实际内容时才添加系统/developer 消息
+  - 新增图像内容类型转换支持：`input_image` → `image_url`
+  - 修复模型参数处理，当 `targetModel` 为 `undefined` 时使用原始 `model` 字段
+  - 支持字符串格式的 `content` 处理
+  - 根据 `shouldUseDeveloperRole` 函数选择正确的角色（`system` 或 `developer`）
+  - 转换 `max_output_tokens` → `max_tokens`
+  - 保留 `reasoning` 参数
+  - 新增 `transformResponseContentItem` 辅助函数统一处理 content item 转换
+
+#### Refactoring
+* 创建统一的请求转换器导出文件 `request-transformers.ts`
+  - 提供语义化的转换函数名称，明确表示转换方向
+  - 例如：`transformRequestFromClaudeToChatCompletions`、`transformResponseFromGeminiToClaude`
+  - 统一管理所有转换函数的导入和导出
+* 更新 Gemini 转换函数以支持 `targetModel` 参数
+  - `transformClaudeRequestToGemini` 和 `transformOpenAIChatRequestToGemini` 新增可选参数
+  - 保持与其他转换函数的接口一致性
+* 更新 Chat Completions ↔ Responses 转换函数
+  - `transformChatCompletionsToResponses` 和 `transformResponsesToChatCompletions` 支持 `targetModel` 参数
+  - 转换时正确应用目标模型名称
+* 重构 proxy-server.ts 的转换函数导入
+  - 统一从 `request-transformers.ts` 导入所有转换函数
+  - 更新所有响应转换函数调用以使用新的语义化名称
 * 重构 URL 构建逻辑，使用 `mapRequestPathToUpstreamUrl` 方法统一处理
   - 删除冗余方法：`buildOpenAIResponsesUrl`、`buildGeminiUrl`、`mapRequestPath`
   - 删除未使用方法：`isClaudeChatSource`、`isOpenAIChatSource`

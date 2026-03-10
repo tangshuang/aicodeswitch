@@ -37,7 +37,7 @@ aicodeswitch/
 | 任务 | 位置 | 说明 |
 |------|------|------|
 | 核心代理逻辑 | `src/server/proxy-server.ts` | 请求路由、匹配规则、转发 |
-| API 格式转换 | `src/server/transformers/` | Claude ↔ OpenAI 数据格式互转 |
+| API 格式转换 | `src/server/transformers/` | Claude ↔ OpenAI ↔ Gemini 数据格式互转 |
 | 数据库层 | `src/server/fs-database.ts` | JSON 文件存储 CRUD |
 | UI 页面 | `src/ui/pages/` | 供应商管理、路由配置、日志等 |
 | CLI 命令 | `bin/*.js` | start/stop/ui/upgrade/restore 等 |
@@ -141,11 +141,56 @@ aicos stop            # 停止服务
   - 新增 `isOpenAIType` 方法统一处理 OpenAI Chat 和 OpenAI Responses 类型
   - 修复 `mapRequestPath` 中 Codex → OpenAI Responses 的路径映射错误
   - 统一所有请求体转换、响应转换、流式响应转换使用 `isOpenAIType` 方法处理 OpenAI 类型
-- 2026-03-10: 重构 URL 构建逻辑：
-  - 使用 `mapRequestPathToUpstreamUrl` 方法统一处理上游 URL 构建
-  - 删除冗余方法：`buildOpenAIResponsesUrl`、`buildGeminiUrl`、`mapRequestPath`
-  - 删除未使用方法：`isClaudeChatSource`、`isOpenAIChatSource`
-  - 简化代码结构，提高可维护性
+- 2026-03-10: 修复 OpenAI（Responses)请求类型 URL 拼接问题：
+  - 修复 `isOpenAIChatSource` 方法错误地将 `openai` 类型归类为 OpenAI Chat 的问题
+  - 新增 `isOpenAIType` 方法统一处理 OpenAI Chat 和 OpenAI Responses 类型
+  - 修复 `mapRequestPath` 中 Codex → OpenAI Responses 的路径映射错误
+  - 统一所有请求体转换、响应转换、流式响应转换使用 `isOpenAIType` 方法处理 OpenAI 类型
+- 2026-03-10: 新增 Codex → OpenAI Chat 转换器
+  - 支持 Codex 请求格式转换为 OpenAI Chat Completions 格式
+  - 在 Codex 请求 OpenAI Chat / DeepSeek Reasoning Chat 时自动转换请求格式
+  - 保留 Codex 特有的工具定义和字段
+- 2026-03-10: 新增 Responses → Gemini 转换器
+  - 支持 Codex Responses API 请求格式转换为 Gemini API 格式
+  - 转换系统提示词（instructions → systemInstruction）
+  - 转换消息内容（input → contents，支持文本和图像）
+  - 转换工具定义（tools → functionDeclarations）
+  - 转换生成参数（temperature、top_p、max_output_tokens、stop）
+- 2026-03-10: 新增 Chat Completions 转换器
+  - `transformRequestFromChatCompletionsToResponses`：Chat Completions → Responses
+    - messages → input，system/developer → instructions
+    - content items: text → input_text，image_url → input_image
+  - `transformRequestFromChatCompletionsToClaude`：Chat Completions → Claude
+    - messages → messages，system → system
+    - tool_calls → tool_use，image_url → image
+  - `transformRequestFromChatCompletionsToGemini`：Chat Completions → Gemini
+    - messages → contents，system → systemInstruction
+    - tool_calls → functionCall，image_url → inlineData
+- 2026-03-10: 新增 Claude Code 请求转换器
+  - `transformRequestFromClaudeToGemini`：Claude → Gemini
+  - `transformRequestFromClaudeToResponses`：Claude → Responses
+  - `transformRequestFromClaudeToChatCompletions`：Claude → Chat Completions
+- 2026-03-10: 新增九个响应转换函数
+  - `transformResponseFromChatCompletionsToResponses`：Chat Completions → Responses
+  - `transformResponseFromClaudeToResponses`：Claude → Responses
+  - `transformResponseFromGeminiToResponses`：Gemini → Responses
+  - `transformResponseFromResponsesToChatCompletions`：Responses → Chat Completions
+  - `transformResponseFromClaudeToChatCompletions`：Claude → Chat Completions
+  - `transformResponseFromGeminiToChatCompletions`：Gemini → Chat Completions
+  - `transformResponseFromChatCompletionsToClaude`：Chat Completions → Claude
+  - `transformResponseFromResponsesToClaude`：Responses → Claude
+  - `transformResponseFromGeminiToClaude`：Gemini → Claude
+  - `transformRequestFromClaudeToGemini`：Claude → Gemini
+    - messages → contents，system → systemInstruction
+    - tool_use → functionCall，tool_result → functionResponse
+    - image → inlineData，thinking → thinkingConfig
+  - `transformRequestFromClaudeToResponses`：Claude → Responses
+    - messages → input，system → instructions
+    - tool_use → function_call，image → input_image
+  - `transformRequestFromClaudeToChatCompletions`：Claude → Chat Completions
+    - messages → messages，system → system
+    - tool_use → tool_calls，image → image_url
+    - tool_result → tool 消息，thinking → reasoning
 
 ---
 
