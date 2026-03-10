@@ -16,7 +16,7 @@ export type ToolType = 'claude-code' | 'codex';
 /** TargetType 是 ToolType 的别名，用于向后兼容 */
 export type TargetType = ToolType;
 /** Codex 推理强度配置 */
-export type CodexReasoningEffort = 'low' | 'medium' | 'high';
+export type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 
 /** Skills 管理相关类型 */
 export interface InstalledSkill {
@@ -185,6 +185,7 @@ export interface RequestLog {
     headers?: Record<string, string>;              // 实际发送的请求头
     body?: any;                                    // 实际发送的请求体，改为对象类型
   };
+  downstreamResponseBody?: any;                      // 实际转发的响应体（经过转换后发送给客户端的响应体）
 }
 
 export interface ErrorLog {
@@ -441,4 +442,29 @@ export interface MCPEnableRequest {
   mcpId: string;
   target: ToolType;
   enabled: boolean;
+}
+
+// ============================================================================
+// 配置合并相关类型
+// ============================================================================
+
+/** 字段路径表示（用于定义管理字段） */
+export type FieldPath = (string | number)[];
+
+/** 管理字段路径定义 */
+export interface ManagedFieldPath {
+  path: FieldPath;
+  isSection?: boolean;  // 是否是整个对象/section
+  optional?: boolean;   // 字段是否可选
+}
+
+/** 增强的配置文件状态 */
+export interface ConfigFileState {
+  filePath: string;
+  exists: boolean;
+  backupExists: boolean;
+  currentHash?: string;
+  backupHash?: string;
+  hasUnmanagedChanges?: boolean;
+  managedFieldsChanged?: boolean;
 }

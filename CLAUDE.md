@@ -303,7 +303,7 @@ aicos version            # Show current version information
     - Sets `skipDangerousModePermissionPrompt` to `true` in `~/.claude/settings.json`
     - Can be toggled on/off for both active and inactive routes
   - **Reasoning Effort (Codex only)**: Controls the reasoning effort level
-    - Options: `low`, `medium`, `high` (default: `high`)
+    - Options: `low`, `medium`, `high`, `xhigh` (default: `high`)
     - Sets `model_reasoning_effort` in `~/.codex/config.toml`
 - **Fallback Mechanism**:
   - When no route is activated, system automatically falls back to original config files
@@ -351,6 +351,55 @@ aicos version            # Show current version information
 - Writes/ restores Codex config files (`~/.codex/config.toml`, `~/.codex/auth.json`)
 - Exports/ imports encrypted configuration data
 
+#### 智能配置合并
+
+系统使用智能合并策略来处理配置文件，确保在激活和停用路由时，不会丢失编程工具运行时写入的内容。
+
+**核心思路**：
+- 定义**管理字段**（由我们控制的配置）和**保留字段**（工具运行时写入的配置）
+- **写入配置时**：保留当前配置中的非管理字段，写入我们的管理字段
+- **恢复配置时**：使用备份配置作为基础，合并当前配置中的非管理字段
+
+**管理字段定义**：
+
+Claude Code `settings.json`:
+- `env.ANTHROPIC_AUTH_TOKEN`
+- `env.ANTHROPIC_BASE_URL`
+- `env.API_TIMEOUT_MS`
+- `env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`
+- `env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` (可选)
+- `permissions.defaultMode` (可选)
+- `skipDangerousModePermissionPrompt` (可选)
+
+Claude Code `.claude.json`:
+- `hasCompletedOnboarding`
+- `mcpServers` (可选)
+
+Codex `config.toml`:
+- `model_provider`
+- `model`
+- `model_reasoning_effort`
+- `disable_response_storage`
+- `preferred_auth_method`
+- `requires_openai_auth`
+- `enableRouteSelection`
+- `[model_providers.aicodeswitch]` 整个 section
+
+Codex `auth.json`:
+- `OPENAI_API_KEY`
+
+**保留字段**：
+- 所有其他字段（如 Claude Code 的 `projects`、Codex 的 `[projects...]` 等）
+
+**实现细节**：
+- 原子性写入：先写临时文件，再重命名，确保写入失败时不会损坏原文件
+- 使用 `@iarna/toml` 库处理 Codex 的 TOML 格式配置
+- JSON 配置使用深度合并算法
+
+**相关模块**：
+- `src/server/config-managed-fields.ts` - 管理字段定义
+- `src/server/config-merge.ts` - 合并逻辑实现
+
 #### Data Import/Export
 - **Export**: Exports all configuration data (vendors, services, routes, rules, config) as AES-encrypted JSON
   - Export data format version: `3.0.0`
@@ -391,7 +440,10 @@ aicos version            # Show current version information
     - Routing context: ruleId (used rule), targetServiceId/Name (API service), targetModel (actual model)
     - Vendor context: vendorId/Name (service provider)
     - Request details: request headers, request body, response headers, response body
-    - **Upstream Request Information**: URL, headers, body, proxy usage
+    - **Upstream Request Information**: URL, headers, body, proxy usage (actual request sent to upstream API)
+    - **Upstream Response Body**: Actual response body sent to the client after transformation
+      - For stream responses: Stores the SSE chunks array (actual format sent to client, after transformation)
+      - For non-stream responses: Stores the JSON response body
     - Response time metrics
     - **Tags**: Array of labels for special request characteristics (e.g., "使用原始配置")
 - **Data Sanitization**:
@@ -705,6 +757,15 @@ npm 发布成功后，自动触发 Tauri 应用构建：
 ### 工作流文件
 - `.github/workflows/publish-to-npm.yaml` - NPM 发布
 - `.github/workflows/build-tauri.yaml` - Tauri 构建和发布
+
+## 最近变更
+
+- 2026-03-11: 修复 Codex + `openai-chat` 流式场景下的转换与连接稳定性
+  - 修复 SSE 事件收集器对象模式透传问题，确保转换器收到完整事件
+  - 流式序列化时自动补齐 `data.type`（当存在 `event` 且 `data.type` 缺失）
+  - 客户端断开时主动中止上游请求并跳过故障切换/黑名单，避免 `Cannot pipe to a closed or destroyed stream`
+  - 统一 `codex/claude-code` 到 OpenAI/Claude/Gemini 的 SSE 转发实现，避免历史特殊分支的行为漂移
+  - 全面审计 `streaming.ts` 的 11 个 Transform 类并修复协议对齐问题（事件来源兼容、usage 映射、函数调用 done、finish reason 映射）
 
 ## Development
 

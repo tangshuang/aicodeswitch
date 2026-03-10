@@ -96,7 +96,7 @@ export class SSEEventCollectorTransform extends Transform {
     }
 
     try {
-      // 如果是对象（来自 SSEParserTransform），先转换为字符串格式进行处理
+      // 如果是对象（来自 SSEParserTransform 或上游转换器），先转换为字符串格式进行处理
       if (typeof chunk === 'object' && chunk !== null) {
         const sseEvent = chunk as { event?: string; id?: string; data?: any };
         const lines: string[] = [];
@@ -119,7 +119,7 @@ export class SSEEventCollectorTransform extends Transform {
           }
           this.flushEvent();
         }
-        // 将原始对象传递给下一个stream
+        // 对象模式下保持原样透传，避免影响后续转换器读取 event/data 字段
         this.push(chunk);
       } else {
         // Buffer/string 模式
@@ -143,6 +143,7 @@ export class SSEEventCollectorTransform extends Transform {
       }
       // 刷新最后一个事件
       this.flushEvent();
+      // 不调用 this.end()，让 Node.js 自动管理流的生命周期
       callback();
     } catch (error) {
       console.error('[SSEEventCollectorTransform] Error in _flush:', error);

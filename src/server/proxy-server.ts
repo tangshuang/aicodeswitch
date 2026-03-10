@@ -1,13 +1,19 @@
 import express, { Request, Response, NextFunction } from 'express';
 import axios, { AxiosRequestConfig } from 'axios';
 import { pipeline } from 'stream';
+import type { Transform } from 'stream';
 import crypto from 'crypto';
 import type { FileSystemDatabaseManager } from './fs-database';
 import {
   ClaudeToOpenAIChatEventTransform,
   OpenAIToClaudeEventTransform,
+  ChatCompletionsToResponsesEventTransform,
   GeminiToClaudeEventTransform,
   GeminiToOpenAIChatEventTransform,
+  ClaudeToResponsesEventTransform,
+  GeminiToResponsesEventTransform,
+  ChatCompletionsToClaudeEventTransform,
+  ResponsesToClaudeEventTransform,
   SSEParserTransform,
   SSESerializerTransform,
 } from './transformers/streaming';
@@ -756,6 +762,31 @@ export class ProxyServer {
       failoverError.stack = originalError.stack;
     }
     return failoverError;
+  }
+
+  private isDownstreamClosed(res: Response): boolean {
+    return res.destroyed || res.writableEnded || !res.writable;
+  }
+
+  private isClientDisconnectError(error: any, res?: Response): boolean {
+    const code = error?.code;
+    if (code === 'CLIENT_DISCONNECTED' || code === 'ERR_CANCELED') {
+      return true;
+    }
+    if (code === 'ERR_STREAM_UNABLE_TO_PIPE' || code === 'ERR_STREAM_DESTROYED') {
+      return true;
+    }
+    if (code === 'ECONNRESET' || code === 'EPIPE') {
+      return true;
+    }
+    const message = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
+    if (message.includes('socket hang up') || message.includes('client disconnected')) {
+      return true;
+    }
+    if (res && this.isDownstreamClosed(res)) {
+      return message.includes('stream') || message.includes('pipe');
+    }
+    return false;
   }
 
   /**
@@ -2430,6 +2461,104 @@ export class ProxyServer {
     }
   }
 
+  /**
+   * 获取流式响应转换器
+   * @param targetType 目标工具类型
+   * @param sourceType 数据源类型
+   * @param model 模型名称
+   * @returns 转换器实例和相关信息
+   */
+  private transformSSEToTool(targetType: ToolType, sourceType: SourceType, model?: string): {
+    converter: Transform | null;
+    extractUsage?: (usage: any) => any;
+  } {
+    // Claude Code 接收流式响应
+    if (targetType === 'claude-code') {
+      // Claude Code 接收来自 OpenAI Chat 的响应
+      if (this.isOpenAIChatSource(sourceType)) {
+        console.log('[Proxy] Using OpenAI Chat -> Claude API stream converter');
+        return {
+          converter: new ChatCompletionsToClaudeEventTransform({ model }),
+          extractUsage: (usage) => ({
+            input_tokens: usage?.input_tokens || 0,
+            output_tokens: usage?.output_tokens || 0,
+            cache_read_input_tokens: usage?.cache_read_input_tokens || 0,
+          }),
+        };
+      }
+
+      // Claude Code 接收来自 OpenAI Responses 的响应
+      if (this.isOpenAISource(sourceType)) {
+        console.log('[Proxy] Using Responses API -> Claude API stream converter');
+        return {
+          converter: new ResponsesToClaudeEventTransform({ model }),
+          extractUsage: (usage) => ({
+            input_tokens: usage?.input_tokens || 0,
+            output_tokens: usage?.output_tokens || 0,
+            cache_read_input_tokens: usage?.cache_read_input_tokens || 0,
+          }),
+        };
+      }
+
+      // Claude Code 接收来自 Gemini 的响应
+      if (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType)) {
+        return {
+          converter: new GeminiToClaudeEventTransform({ model }),
+          extractUsage: (usage) => ({
+            input_tokens: usage?.input_tokens || 0,
+            output_tokens: usage?.output_tokens || 0,
+            cache_read_input_tokens: usage?.cache_read_input_tokens || 0,
+          }),
+        };
+      }
+    }
+
+    // Codex 接收流式响应
+    if (targetType === 'codex') {
+      // Codex 接收来自 Claude 的响应
+      if (this.isClaudeSource(sourceType) || this.isClaudeChatSource(sourceType)) {
+        console.log('[Proxy] Using Claude -> Responses API stream converter');
+        return {
+          converter: new ClaudeToResponsesEventTransform({ model }),
+          extractUsage: (usage) => ({
+            input_tokens: usage?.input_tokens || 0,
+            output_tokens: usage?.output_tokens || 0,
+            total_tokens: (usage?.input_tokens || 0) + (usage?.output_tokens || 0),
+          }),
+        };
+      }
+
+      // Codex 接收来自 OpenAI Chat 的响应
+      if (this.isOpenAIChatSource(sourceType)) {
+        console.log('[Proxy] Using OpenAI Chat -> Responses API stream converter');
+        return {
+          converter: new ChatCompletionsToResponsesEventTransform({ model }),
+          extractUsage: (usage) => ({
+            input_tokens: usage?.input_tokens || 0,
+            output_tokens: usage?.output_tokens || 0,
+            total_tokens: (usage?.input_tokens || 0) + (usage?.output_tokens || 0),
+          }),
+        };
+      }
+
+      // Codex 接收来自 Gemini 的响应
+      if (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType)) {
+        console.log('[Proxy] Using Gemini -> Responses API stream converter');
+        return {
+          converter: new GeminiToResponsesEventTransform({ model }),
+          extractUsage: (usage) => ({
+            input_tokens: usage?.input_tokens || 0,
+            output_tokens: usage?.output_tokens || 0,
+            total_tokens: (usage?.input_tokens || 0) + (usage?.output_tokens || 0),
+          }),
+        };
+      }
+    }
+
+    // 默认：返回空转换器（不需要转换）
+    return { converter: null };
+  }
+
   private extractTokenUsageFromResponse(responseData: any, sourceType: SourceType) {
     if (!responseData) return undefined;
 
@@ -2668,6 +2797,7 @@ export class ProxyServer {
         streamChunks: streamChunksForLog,
 
         upstreamRequest: upstreamRequestForLog,
+        downstreamResponseBody: streamChunksForLog || responseBodyForLog,
       });
 
       // Session 索引逻辑
@@ -2819,6 +2949,23 @@ export class ProxyServer {
       await finalizeLog(res.statusCode);
     };
 
+    const upstreamAbortController = new AbortController();
+    const abortUpstreamRequest = (reason: string) => {
+      if (!upstreamAbortController.signal.aborted) {
+        const abortError = new Error(`Client disconnected: ${reason}`) as Error & { code?: string };
+        abortError.code = 'CLIENT_DISCONNECTED';
+        upstreamAbortController.abort(abortError);
+      }
+    };
+    const onRequestAborted = () => abortUpstreamRequest('request aborted');
+    const onResponseClosed = () => {
+      if (!res.writableEnded) {
+        abortUpstreamRequest('response stream closed');
+      }
+    };
+    req.once('aborted', onRequestAborted);
+    res.once('close', onResponseClosed);
+
     try {
       // 使用统一的请求转换方法
       requestBody = this.transformRequestToUpstream(targetType, sourceType, requestBody, rule.targetModel as string);
@@ -2855,6 +3002,7 @@ export class ProxyServer {
         timeout: rule.timeout || 3000000, // 默认300秒
         validateStatus: () => true,
         responseType: streamRequested ? 'stream' : 'json',
+        signal: upstreamAbortController.signal,
       };
 
       if (Object.keys(req.query).length > 0) {
@@ -2916,6 +3064,14 @@ export class ProxyServer {
       const contentType = typeof responseHeaders['content-type'] === 'string' ? responseHeaders['content-type'] : '';
       const isEventStream = streamRequested && contentType.includes('text/event-stream');
 
+      const ensureResponseWritable = () => {
+        if (this.isDownstreamClosed(res)) {
+          const disconnectError = new Error('Client disconnected before stream pipeline setup') as Error & { code?: string };
+          disconnectError.code = 'CLIENT_DISCONNECTED';
+          throw disconnectError;
+        }
+      };
+
       // 先处理 4xx/5xx：在故障切换模式下抛错，由上层继续切换下一服务
       if (response.status >= 400) {
         let errorResponseData = response.data;
@@ -2931,8 +3087,10 @@ export class ProxyServer {
 
       if (isEventStream && response.data) {
         res.status(response.status);
+        // 统一走默认流式链路（transformSSEToTool + 统一断连保护），避免历史分支行为不一致
+        const useLegacySpecialSSEBranches = false;
 
-        if (targetType === 'claude-code' && this.isOpenAIType(sourceType)) {
+        if (useLegacySpecialSSEBranches && targetType === 'claude-code' && this.isOpenAIType(sourceType)) {
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
@@ -3044,7 +3202,7 @@ export class ProxyServer {
           return;
         }
 
-        if (targetType === 'codex' && this.isClaudeSource(sourceType)) {
+        if (useLegacySpecialSSEBranches && targetType === 'codex' && this.isClaudeSource(sourceType)) {
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
@@ -3151,7 +3309,7 @@ export class ProxyServer {
         }
 
         // Gemini / Gemini Chat -> Claude Code 流式转换
-        if (targetType === 'claude-code' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
+        if (useLegacySpecialSSEBranches && targetType === 'claude-code' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
@@ -3255,7 +3413,7 @@ export class ProxyServer {
         }
 
         // Gemini / Gemini Chat -> Codex 流式转换
-        if (targetType === 'codex' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
+        if (useLegacySpecialSSEBranches && targetType === 'codex' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
@@ -3360,6 +3518,9 @@ export class ProxyServer {
         const serializer = new SSESerializerTransform();
         responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
 
+        // 使用 transformSSEToTool 方法选择转换器
+        const { converter, extractUsage } = this.transformSSEToTool(targetType, sourceType, requestBody?.model);
+
         this.copyResponseHeaders(responseHeaders, res);
 
         // 监听事件收集器的完成事件，确保所有chunks都被收集
@@ -3367,11 +3528,23 @@ export class ProxyServer {
           streamChunksForLog = eventCollector.getChunks();
           // 将所有 chunks 合并成完整的响应体用于日志记录
           responseBodyForLog = streamChunksForLog.join('\n');
-          // 尝试从event collector中提取usage信息
-          const extractedUsage = eventCollector.extractUsage();
-          if (extractedUsage) {
+
+          // 尝试从event collector或converter中提取usage信息
+          let extractedUsage = eventCollector.extractUsage();
+          if (converter && typeof (converter as any).getUsage === 'function') {
+            const converterUsage = (converter as any).getUsage();
+            if (converterUsage) {
+              extractedUsage = converterUsage || extractedUsage;
+            }
+          }
+
+          // 如果有自定义的 extractUsage 函数，使用它
+          if (extractUsage && extractedUsage) {
+            usageForLog = extractUsage(extractedUsage);
+          } else if (extractedUsage) {
             usageForLog = this.extractTokenUsageFromResponse(extractedUsage, sourceType);
           }
+
           console.log('[Proxy] Default stream request finished, collected chunks:', streamChunksForLog?.length || 0);
           console.log('[Proxy] Response body length:', responseBodyForLog?.length || 0);
           void finalizeLog(res.statusCode);
@@ -3397,30 +3570,70 @@ export class ProxyServer {
           console.error('[Proxy] Response stream error:', err);
         });
 
-        pipeline(response.data, parser, eventCollector, serializer, res, async (error) => {
-          if (error) {
-            console.error('[Proxy] Pipeline error (default stream):', error);
+        // 构建 pipeline，根据是否需要转换选择不同的处理链
+        if (converter) {
+          ensureResponseWritable();
+          pipeline(response.data, parser, eventCollector, converter, serializer, res, async (error) => {
+            if (error) {
+              if (this.isClientDisconnectError(error, res)) {
+                console.warn('[Proxy] Default stream pipeline closed because client disconnected');
+                await finalizeLog(499, 'Client disconnected');
+                return;
+              }
+              console.error('[Proxy] Pipeline error (default stream with converter):', error);
 
-            // 记录到错误日志
-            try {
-              await this.dbManager.addErrorLog({
-                timestamp: Date.now(),
-                method: req.method,
-                path: req.path,
-                statusCode: 500,
-                errorMessage: error.message || 'Stream processing error',
-                errorStack: error.stack,
-                requestHeaders: this.normalizeHeaders(req.headers),
-                requestBody: req.body ? JSON.stringify(req.body) : undefined,
-                upstreamRequest: upstreamRequestForLog,
-              });
-            } catch (logError) {
-              console.error('[Proxy] Failed to log error:', logError);
+              // 记录到错误日志
+              try {
+                await this.dbManager.addErrorLog({
+                  timestamp: Date.now(),
+                  method: req.method,
+                  path: req.path,
+                  statusCode: 500,
+                  errorMessage: error.message || 'Stream processing error',
+                  errorStack: error.stack,
+                  requestHeaders: this.normalizeHeaders(req.headers),
+                  requestBody: req.body ? JSON.stringify(req.body) : undefined,
+                  upstreamRequest: upstreamRequestForLog,
+                });
+              } catch (logError) {
+                console.error('[Proxy] Failed to log error:', logError);
+              }
+
+              await finalizeLog(500, error.message);
             }
+          });
+        } else {
+          ensureResponseWritable();
+          pipeline(response.data, parser, eventCollector, serializer, res, async (error) => {
+            if (error) {
+              if (this.isClientDisconnectError(error, res)) {
+                console.warn('[Proxy] Default stream pipeline closed because client disconnected');
+                await finalizeLog(499, 'Client disconnected');
+                return;
+              }
+              console.error('[Proxy] Pipeline error (default stream):', error);
 
-            await finalizeLog(500, error.message);
-          }
-        });
+              // 记录到错误日志
+              try {
+                await this.dbManager.addErrorLog({
+                  timestamp: Date.now(),
+                  method: req.method,
+                  path: req.path,
+                  statusCode: 500,
+                  errorMessage: error.message || 'Stream processing error',
+                  errorStack: error.stack,
+                  requestHeaders: this.normalizeHeaders(req.headers),
+                  requestBody: req.body ? JSON.stringify(req.body) : undefined,
+                  upstreamRequest: upstreamRequestForLog,
+                });
+              } catch (logError) {
+                console.error('[Proxy] Failed to log error:', logError);
+              }
+
+              await finalizeLog(500, error.message);
+            }
+          });
+        }
         return;
       }
 
@@ -3457,6 +3670,12 @@ export class ProxyServer {
       this.copyResponseHeaders(responseHeaders, res);
       await finalizeLog(res.statusCode);
     } catch (error: any) {
+      if (this.isClientDisconnectError(error, res)) {
+        console.warn('[Proxy] Client disconnected, skipping failover and blacklist');
+        await finalizeLog(499, 'Client disconnected');
+        return;
+      }
+
       if (failoverEnabled && (error as FailoverProxyError)?.isFailoverCandidate) {
         throw error;
       }
@@ -3539,6 +3758,9 @@ export class ProxyServer {
         // 对于 Codex，返回 JSON 格式的错误响应
         res.status(500).json({ error: errorMessage });
       }
+    } finally {
+      req.off('aborted', onRequestAborted);
+      res.off('close', onResponseClosed);
     }
   }
 

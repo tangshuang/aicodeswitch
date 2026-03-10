@@ -2,7 +2,98 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-### 2026-03-10
+### 2026-03-11 (继续)
+
+#### Features
+* 实现配置文件智能合并方案
+  - 新增管理字段定义（`src/server/config-managed-fields.ts`），区分管理字段和保留字段
+  - 新增配置合并模块（`src/server/config-merge.ts`），支持 JSON 和 TOML 格式的智能合并
+  - 重构配置写入函数（`writeClaudeConfig`, `writeCodexConfig`），使用智能合并保留工具运行时写入的内容
+  - 重构配置恢复函数（`restoreClaudeConfig`, `restoreCodexConfig`），使用智能合并恢复原始配置
+  - 使用原子性写入确保配置文件不会损坏
+  - 使用 `@iarna/toml` 库处理 Codex 的 TOML 格式配置
+
+#### Fixes
+* 修复 Claude Code 激活/停用路由时 `projects` 丢失的问题
+* 修复 Codex 激活/停用路由时 `[projects...]` 丢失的问题
+
+### 2026-03-11
+
+#### Fixes
+* 修复 Codex 使用 `openai-chat` 数据源时流式转换丢事件问题
+  - 修复 `SSEEventCollectorTransform` 在对象模式下错误透传空对象的问题，改为原样透传事件
+  - 解决下游转换器拿不到 OpenAI Chat chunk，导致无法稳定产出 Responses 事件的问题
+* 增强 Responses SSE 兼容性
+  - `SSESerializerTransform` 在存在 `event` 且 `data.type` 缺失时自动补齐 `type`
+  - 避免客户端仅按 `data.type` 解析时漏判 `response.completed`
+* 修复客户端断开后的错误处理
+  - `proxyRequest` 增加请求中止控制（`AbortController`）与 `req/res` 断开监听
+  - 在进入 `pipeline` 前检查 `res` 可写状态，避免 `ERR_STREAM_UNABLE_TO_PIPE`
+  - 客户端断开时记录为 499 并跳过故障切换/黑名单，避免误判服务故障
+* 统一所有主流 SSE 转发路径到同一套稳定链路
+  - 关闭历史特殊流式分支，统一使用 `transformSSEToTool + 默认 pipeline`
+  - 覆盖 `codex -> openai-chat/claude/gemini` 与 `claude-code -> openai-chat/openai/gemini` 场景
+  - 避免历史分支转换器不一致（如 Claude/Gemini 误转 OpenAI Chat）导致的兼容问题
+* 全面审计并修复 `streaming.ts` 各 Transform 的协议对齐问题
+  - `SSEParserTransform` 改为保留 `data:` 原始内容，仅移除可选单个前导空格，避免 `trim()` 破坏增量 JSON
+  - `convertOpenAIUsageToClaude` 同时兼容 Chat（`prompt/completion_tokens`）和 Responses（`input/output_tokens`）usage 结构
+  - `ChatCompletionsToResponsesEventTransform` 修复完成事件重复与 finish_reason 处理时机，补齐 `response.in_progress` 与 `function_call_arguments.done`
+  - `ClaudeToResponsesEventTransform` 修复工具调用索引关联逻辑，补齐 `function_call_arguments.done`，并按 stop reason 透传不完整原因
+  - `GeminiToResponsesEventTransform` 统一输出函数调用 delta/done 事件并保留 `item_id/call_id` 兼容字段，完善不完整原因映射
+  - `ResponsesToClaudeEventTransform` 新增对标准 Responses 事件（`data.type`）兼容，支持 `output_item.added` 与 `function_call_arguments.delta/done`
+  - `OpenAIToClaudeEventTransform` 增强 Responses 事件识别与函数调用处理，补齐 `response.failed/incomplete` 的 stop reason 映射
+  - `GeminiToClaudeEventTransform` 修复工具调用索引冲突（多候选场景），改用全局递增索引
+  - `GeminiToOpenAIChatEventTransform` 修复图像 chunk 映射为非法 `delta.content` 数组的问题，改为兼容文本占位输出
+
+### 2026-03-10 (继续)
+
+#### Fixes
+* 修复 `ChatCompletionsToResponsesEventTransform` 流式转换器重复发送结束事件的问题
+  - 在 `_flush` 方法中添加对 `this.finalized` 的检查，避免重复发送 `response.completed` 事件
+  - 修复 "Cannot pipe to a closed or destroyed stream" 错误
+* 移除 `streaming.ts` 中不需要的导出
+  - 移除 `SSEEvent` 类型导出（改为文件内部使用）
+  - 移除 `rewriteStream` 函数导出（未使用）
+  - 移除 `convertOpenAIUsageToClaude` 和 `mapOpenAIToClaudeStopReason` 函数导出（改为文件内部使用）
+  - 移除 `ResponsesToClaudeEventTransform` 中的类型错误
+  - 修正 `toolCalls` 和 `toolCallIndexToBlockIndex` 的类型定义，确保类型匹配
+  - 修复 `findToolBlockIndexByCallId` 方法中的类型不匹配问题
+* 重构流式转换逻辑到 `transformSSEToTool` 方法
+  - 创建 `transformSSEToTool` 方法，统一流式转换器的选择逻辑
+  - 简化 `proxy-server.ts` 中的默认流式处理代码
+  - 改进 usage 提取逻辑，使用自定义的 `extractUsage` 函数
+
+#### Features
+* Codex model_reasoning_effort 新增 xhigh（Extra high）选项
+  - 类型定义更新为 `low | medium | high | xhigh`
+  - 前端 UI 新增 Extra high 选项
+  - 后端验证支持 xhigh 值
+
+### 2026-03-10 (继续)
+
+#### Features
+* 新增四个 SSE 流式事件转换器
+  - `ClaudeToResponsesEventTransform`：Claude Events → Responses API Events
+  - `GeminiToResponsesEventTransform`：Gemini Events → Responses API Events
+  - `ChatCompletionsToClaudeEventTransform`：OpenAI Chat Events → Claude Events
+  - `ResponsesToClaudeEventTransform`：Responses API Events → Claude Events
+* 在 `proxy-server.ts` 中集成新转换器
+  - 支持 Claude → Codex 流式转换
+  - 支持 Gemini → Codex 流式转换
+  - 支持 OpenAI Chat → Claude Code 流式转换
+  - 支持 OpenAI Responses → Claude Code 流式转换
+* 流式转换支持更多 API 格式组合，增强代理兼容性
+
+#### Features
+* 日志系统升级：新增"实际转发的响应体"字段
+* 日志系统升级：新增"实际转发的响应体"字段
+  - 在 `RequestLog` 接口中添加 `downstreamResponseBody` 字段
+  - 记录 aicodeswitch 在收到上游 API 响应并转换后发送给客户端的响应体
+  - 对于流式响应，存储转换后的 SSE chunks 数组（实际发送给客户端的格式）
+  - 对于非流式响应，存储 JSON 格式的响应体
+  - 日志详情窗口中正确显示实际转发的响应体内容
+  - 修复了错误的转换器导入：`OpenAIChatToResponsesEventTransform` → `ChatCompletionsToResponsesEventTransform`
+  - 移除不再需要的 `assembleConvertedResponseBody` 函数
 
 #### Fixes
 * 修复 `proxy-server.ts` 中响应转换函数的导入和调用错误

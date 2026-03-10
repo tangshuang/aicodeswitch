@@ -191,6 +191,29 @@ aicos stop            # 停止服务
     - messages → messages，system → system
     - tool_use → tool_calls，image → image_url
     - tool_result → tool 消息，thinking → reasoning
+- 2026-03-10: 日志系统升级：新增"实际转发的响应体"字段
+  - 在 `RequestLog` 接口中添加 `downstreamResponseBody` 字段
+  - 记录 aicodeswitch 在收到上游 API 响应并转换后发送给客户端的响应体
+  - 对于流式响应，存储转换后的 SSE chunks 数组（实际发送给客户端的格式）
+  - 对于非流式响应，存储 JSON 格式的响应体
+  - 日志详情窗口中正确显示实际转发的响应体内容
+- 2026-03-11: 修复 Codex 使用 `openai-chat` 数据源时的流式稳定性问题
+  - 修复 `SSEEventCollectorTransform` 对象模式透传错误，避免向下游转换器传递空事件
+  - `SSESerializerTransform` 在 `event` 存在且 `data.type` 缺失时自动补齐 `type` 字段，提升 Responses SSE 兼容性
+  - `proxyRequest` 新增客户端断开检测与上游请求中止逻辑，避免 `Cannot pipe to a closed or destroyed stream` 误判为服务故障
+  - 统一 `codex/claude-code` 的 OpenAI/Claude/Gemini 流式转发链路，关闭历史特殊分支并统一走 `transformSSEToTool`
+  - 修复历史特殊分支中转换器不一致问题（Claude/Gemini -> Codex 误用 OpenAI Chat 转换器）
+  - 全面校验并修复 `src/server/transformers/streaming.ts` 各 Transform 的协议对齐问题（Chat/Responses/Claude/Gemini）
+  - Responses 相关转换器统一支持 `event` 与 `data.type` 两种事件来源，补齐函数调用 done 事件与不完整原因映射
+- 2026-03-11: 实现配置文件智能合并方案
+  - 新增管理字段定义（`src/server/config-managed-fields.ts`），区分管理字段和保留字段
+  - 新增配置合并模块（`src/server/config-merge.ts`），支持 JSON 和 TOML 格式的智能合并
+  - 重构配置写入函数（`writeClaudeConfig`, `writeCodexConfig`），使用智能合并保留工具运行时写入的内容
+  - 重构配置恢复函数（`restoreClaudeConfig`, `restoreCodexConfig`），使用智能合并恢复原始配置
+  - 使用原子性写入确保配置文件不会损坏
+  - 使用 `@iarna/toml` 库处理 Codex 的 TOML 格式配置
+  - 修复 Claude Code 激活/停用路由时 `projects` 丢失的问题
+  - 修复 Codex 激活/停用路由时 `[projects...]` 丢失的问题
 
 ---
 

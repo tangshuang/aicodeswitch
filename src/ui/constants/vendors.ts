@@ -22,16 +22,16 @@ export default {
         description: '国内优秀的大模型 https://platform.minimaxi.com/subscribe/coding-plan?code=G6xKj7L4YN&source=link',
         services: [
             {
-                name: 'Coding Plan Claude Code',
+                name: 'Coding Plan | Claude 标准接口',
                 sourceType: 'claude',
                 apiUrl: 'https://api.minimaxi.com/anthropic',
                 models: 'MiniMax-M2.5',
             },
             {
-                name: 'Coding Plan Codex',
+                name: 'Chat Completions 标准接口（支持Coding Plan的API Key）',
                 sourceType: 'openai-chat',
                 apiUrl: 'https://api.minimaxi.com/v1/chat/completions',
-                models: 'codex-MiniMax-M2.1, codex-MiniMax-M2.5',
+                models: 'MiniMax-M2.5',
             }
         ]
     },
@@ -40,7 +40,7 @@ export default {
         description: '国内优秀的大模型 https://www.bigmodel.cn/glm-coding?ic=5AH7ATEZSC',
         services: [
             {
-                name: 'Coding Plan Claude Code',
+                name: 'Coding Plan | Claude 标准接口',
                 sourceType: 'claude',
                 apiUrl: 'https://open.bigmodel.cn/api/anthropic',
                 models: 'glm-5, glm-4.7, glm-4.5-air',
@@ -51,7 +51,7 @@ export default {
                 },
             },
             {
-                name: 'Coding Plan Codex',
+                name: 'Coding Plan | Chat Completions 标准接口',
                 sourceType: 'openai-chat',
                 apiUrl: 'https://open.bigmodel.cn/api/coding/paas/v4/chat/completions',
                 models: 'glm-5, glm-4.7, glm-4.5-air',
@@ -68,12 +68,12 @@ export default {
         description: '国内优秀大模型 https://www.kimi.ai/',
         services: [
             {
-                name: 'Coding Plan Claude Code',
+                name: 'Coding Plan | Claude 标准接口',
                 sourceType: 'claude',
                 apiUrl: 'https://api.kimi.com/coding',
             },
             {
-                name: 'Coding Plan Codex',
+                name: 'Coding Plan | Chat Completions 标准接口',
                 sourceType: 'openai-chat',
                 apiUrl: 'https://api.kimi.com/coding/v1/chat/completions',
                 models: 'kimi-for-coding',
@@ -88,25 +88,25 @@ export default {
         description: '字节旗下大模型平台。Coding Plan一次性支持GLM、Kimi-K2、Deepseek多个国产模型 https://volcengine.com/L/RcHlm6yxj0w/  邀请码：Y58X463P',
         services: [
             {
-                name: 'Coding Plan Claude Code',
+                name: 'Coding Plan | Claude 标准接口',
                 sourceType: 'claude',
                 apiUrl: 'https://ark.cn-beijing.volces.com/api/coding',
                 models: 'ark-code-latest',
             },
             {
-                name: 'Coding Plan Codex',
+                name: 'Coding Plan | Chat Completions 标准接口',
                 sourceType: 'openai',
                 apiUrl: 'https://ark.cn-beijing.volces.com/api/coding/v3',
                 models: 'ark-code-latest',
             },
             {
-                name: '付费API兼容Claude Code',
+                name: 'Claude 标准接口（付费API）',
                 sourceType: 'claude',
                 apiUrl: 'https://ark.cn-beijing.volces.com/api/compatible',
                 models: 'doubao-seed-code-preview-251028',
             },
             {
-                name: '付费API兼容Codex',
+                name: 'Chat Completions 标准接口（付费API）',
                 sourceType: 'openai',
                 apiUrl: 'https://ark.cn-beijing.volces.com/api/v3',
                 models: 'doubao-seed-code-preview-251028',
@@ -118,19 +118,19 @@ export default {
         description: '国内优秀大模型 https://help.aliyun.com/zh/model-studio/coding-plan',
         services: [
             {
-                name: 'Coding Plan Claude Code',
+                name: 'Coding Plan | Claude 标准接口',
                 sourceType: 'claude',
                 apiUrl: 'https://coding.dashscope.aliyuncs.com/apps/anthropic',
                 models: 'qwen3-max-2026-01-23, qwen3-coder-plus',
             },
             {
-                name: 'Coding Plan Codex',
+                name: 'Coding Plan | Chat Completions 标准接口',
                 sourceType: 'openai-chat',
                 apiUrl: 'https://coding.dashscope.aliyuncs.com/v1/chat/completions',
                 models: 'qwen3-max-2026-01-23, qwen3-coder-plus',
             },
             {
-                name: '付费API兼容Codex',
+                name: 'Chat Completions 标准接口（付费API）',
                 sourceType: 'openai',
                 apiUrl: 'https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode',
                 models: 'qwen3-max-2026-01-23, qwen3-coder-plus, kimi-k2.5, glm-4.7, MiniMax-M2.1',
@@ -158,7 +158,7 @@ export default {
         description: 'OpenAI 官方 API https://platform.openai.com',
         services: [
             {
-                name: 'GPT',
+                name: 'GPT官方接口',
                 sourceType: 'openai',
                 apiUrl: 'https://api.openai.com',
             },
@@ -170,7 +170,7 @@ export default {
         description: 'Anthropic 官方 API https://www.anthropic.com',
         services: [
             {
-                name: 'Claude',
+                name: 'Claude官方接口',
                 sourceType: 'claude',
                 apiUrl: 'https://api.anthropic.com',
             },
@@ -179,7 +179,7 @@ export default {
     },
     google: {
         name: 'Google AI',
-        description: 'Google AI 官方 API',
+        description: 'Gemini官方接口',
         services: [
             {
                 name: 'Gemini',
@@ -197,10 +197,10 @@ export default {
                 name: 'Claude Code专属接口',
                 sourceType: 'claude',
                 apiUrl: 'https://openrouter.ai/api',
-                models: 'anthropic/claude-opus-4.6, anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5',
+                models: 'anthropic/claude-opus-4.6, anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.6, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5',
             },
             {
-                name: '通用接口',
+                name: 'Chat Completions 标准接口',
                 sourceType: 'openai-chat',
                 apiUrl: 'https://openrouter.ai/api/v1/chat/completions',
                 models: 'anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5, openai/gpt-5.2-codex, openai/gpt-5.2-chat, openai/gpt-5.2-pro, openai/gpt-5.2, openai/gpt-5.1-codex-max, google/gemini-3-flash-preview, google/gemini-3-pro-preview',

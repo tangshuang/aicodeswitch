@@ -46,6 +46,7 @@ const CODEX_REASONING_EFFORT_OPTIONS: Array<{ value: CodexReasoningEffort; label
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
+  { value: 'xhigh', label: 'Extra high' },
 ];
 
 const isCodexReasoningEffort = (value: unknown): value is CodexReasoningEffort => {

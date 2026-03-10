@@ -94,7 +94,7 @@ export const extractTokenUsageFromClaudeUsage = (usage: any) => {
  * 将 codex 发起的对 Responses API 的请求转换为对 Gemini API 的请求的数据格式
  */
 export function transformRequestFromResponsesToGemini(body: any, _targetModel?: string): any {
-  const { model, instructions, input, max_output_tokens, max_tokens, temperature, top_p, stop, tools, tool_choice, parallel_tool_calls, reasoning, ...others } = body;
+  const { instructions, input, max_output_tokens, max_tokens, temperature, top_p, stop, tools, tool_choice, reasoning } = body;
 
   const geminiRequest: any = {
     contents: [],
@@ -271,7 +271,7 @@ export function transformRequestFromResponsesToGemini(body: any, _targetModel?: 
  * 将 codex 发起的对 Responses API 的请求转换为对 Claude API 的请求的数据格式
  */
 export function transformRequestFromResponsesToClaude(body: any, targetModel?: string): any {
-  const { model, instructions, input, max_output_tokens, max_tokens, temperature, top_p, stop, tools, tool_choice, parallel_tool_calls, reasoning, ...others } = body;
+  const { model, instructions, input, max_output_tokens, max_tokens, temperature, top_p, stop, tools, tool_choice } = body;
 
   const messages: any[] = [];
 

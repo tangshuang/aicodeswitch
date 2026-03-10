@@ -1175,7 +1175,7 @@ function LogsPage() {
               )}
               {selectedRequestLog.upstreamRequest && (
                 <div className="form-group">
-                  <label>实际转发信息</label>
+                  <label>实际转发的请求信息</label>
                   <JSONViewer data={selectedRequestLog.upstreamRequest} />
                 </div>
               )}
@@ -1283,6 +1283,12 @@ function LogsPage() {
                 <div className="form-group">
                   <label>错误信息</label>
                   <textarea rows={4} value={selectedRequestLog.error} readOnly style={{ color: 'red' }} />
+                </div>
+              )}
+              {selectedRequestLog.downstreamResponseBody && (
+                <div className="form-group">
+                  <label>实际转发的响应体</label>
+                  <JSONViewer data={selectedRequestLog.downstreamResponseBody} collapsed />
                 </div>
               )}
             </div>
@@ -1411,7 +1417,7 @@ function LogsPage() {
               )}
               {selectedErrorLog.upstreamRequest && (
                 <div className="form-group">
-                  <label>实际转发信息</label>
+                  <label>实际转发的请求信息</label>
                   <JSONViewer data={selectedErrorLog.upstreamRequest} />
                 </div>
               )}

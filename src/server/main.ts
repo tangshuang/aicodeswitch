@@ -38,6 +38,19 @@ import {
   cleanupInvalidMetadata,
   type ConfigMetadata
 } from './config-metadata';
+import {
+  mergeJsonConfig,
+  parseToml,
+  stringifyToml,
+  mergeTomlConfig,
+  atomicWriteFile
+} from './config-merge';
+import {
+  CLAUDE_SETTINGS_MANAGED_FIELDS,
+  CLAUDE_JSON_MANAGED_FIELDS,
+  CODEX_CONFIG_MANAGED_FIELDS,
+  CODEX_AUTH_MANAGED_FIELDS
+} from './config-managed-fields';
 import { SKILLSMP_API_KEY } from './config';
 
 const appDir = path.join(os.homedir(), '.aicodeswitch');
@@ -202,7 +215,17 @@ const writeClaudeConfig = async (dbManager: FileSystemDatabaseManager, enableAge
       fs.mkdirSync(claudeDir, { recursive: true });
     }
 
-    // 构建环境变量配置
+    // 读取当前配置（如果存在），保留工具运行时写入的内容
+    let currentSettings: Record<string, any> = {};
+    if (fs.existsSync(claudeSettingsPath)) {
+      try {
+        currentSettings = JSON.parse(fs.readFileSync(claudeSettingsPath, 'utf-8'));
+      } catch (error) {
+        console.warn('Failed to parse current settings.json, using empty object:', error);
+      }
+    }
+
+    // 构建代理配置
     const claudeSettingsEnv: Record<string, any> = {
       ANTHROPIC_AUTH_TOKEN: config.apiKey || "api_key",
       ANTHROPIC_API_KEY: "",
@@ -216,27 +239,39 @@ const writeClaudeConfig = async (dbManager: FileSystemDatabaseManager, enableAge
       claudeSettingsEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
     }
 
-    const claudeSettings: Record<string, any> = {
+    const proxySettings: Record<string, any> = {
       env: claudeSettingsEnv
     };
 
     // 如果开启对bypassPermissions的支持，添加对应的配置项
     if (enableBypassPermissionsSupport) {
-      claudeSettings.permissions = {
+      proxySettings.permissions = {
         defaultMode: "bypassPermissions"
       };
-      claudeSettings.skipDangerousModePermissionPrompt = true;
+      proxySettings.skipDangerousModePermissionPrompt = true;
     }
 
-    fs.writeFileSync(claudeSettingsPath, JSON.stringify(claudeSettings, null, 2));
+    // 使用智能合并：将代理配置的管理字段写入，保留当前配置的非管理字段
+    const mergedSettings = mergeJsonConfig(
+      proxySettings,
+      currentSettings,
+      CLAUDE_SETTINGS_MANAGED_FIELDS
+    );
+
+    // 原子性写入合并后的配置
+    atomicWriteFile(claudeSettingsPath, JSON.stringify(mergedSettings, null, 2));
 
     // Claude Code .claude.json
     const claudeJsonPath = path.join(homeDir, '.claude.json');
 
-    // 先读取原文件内容（如果存在）
-    let claudeJson: any = {};
+    // 读取当前配置（如果存在），保留工具运行时写入的内容
+    let currentClaudeJson: Record<string, any> = {};
     if (fs.existsSync(claudeJsonPath)) {
-      claudeJson = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8'));
+      try {
+        currentClaudeJson = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf-8'));
+      } catch (error) {
+        console.warn('Failed to parse current .claude.json, using empty object:', error);
+      }
     }
 
     // 然后处理备份
@@ -246,9 +281,20 @@ const writeClaudeConfig = async (dbManager: FileSystemDatabaseManager, enableAge
       }
     }
 
-    claudeJson.hasCompletedOnboarding = true;
+    // 构建代理配置
+    const proxyClaudeJson: Record<string, any> = {
+      hasCompletedOnboarding: true
+    };
 
-    fs.writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2));
+    // 使用智能合并
+    const mergedClaudeJson = mergeJsonConfig(
+      proxyClaudeJson,
+      currentClaudeJson,
+      CLAUDE_JSON_MANAGED_FIELDS
+    );
+
+    // 原子性写入合并后的配置
+    atomicWriteFile(claudeJsonPath, JSON.stringify(mergedClaudeJson, null, 2));
 
     // 保存元数据
     const currentSettingsHash = createHash('sha256').update(fs.readFileSync(claudeSettingsPath, 'utf-8')).digest('hex');
@@ -388,7 +434,7 @@ const updateClaudeBypassPermissionsSupportConfig = async (enableBypassPermission
   }
 };
 
-const VALID_CODEX_REASONING_EFFORTS: CodexReasoningEffort[] = ['low', 'medium', 'high'];
+const VALID_CODEX_REASONING_EFFORTS: CodexReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
 const DEFAULT_CODEX_REASONING_EFFORT: CodexReasoningEffort = 'high';
 
 const isCodexReasoningEffort = (value: unknown): value is CodexReasoningEffort => {
@@ -398,16 +444,17 @@ const isCodexReasoningEffort = (value: unknown): value is CodexReasoningEffort =
 const buildCodexConfigToml = (modelReasoningEffort: CodexReasoningEffort): string => {
   const localPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
   return `model_provider = "aicodeswitch"
-model = "gpt-5.1-codex"
+model = "gpt-5.3-codex"
 model_reasoning_effort = "${modelReasoningEffort}"
 disable_response_storage = true
-
+preferred_auth_method = "apikey"
+requires_openai_auth = true
+enableRouteSelection = true
 
 [model_providers.aicodeswitch]
 name = "aicodeswitch"
 base_url = "http://${host}:${localPort}/codex"
 wire_api = "responses"
-requires_openai_auth = false
 `;
 };
 
@@ -453,10 +500,56 @@ const writeCodexConfig = async (
       fs.mkdirSync(codexDir, { recursive: true });
     }
 
-    fs.writeFileSync(codexConfigPath, buildCodexConfigToml(modelReasoningEffort));
+    // 读取当前配置（如果存在），保留工具运行时写入的内容
+    let currentConfig: Record<string, any> = {};
+    if (fs.existsSync(codexConfigPath)) {
+      try {
+        currentConfig = parseToml(fs.readFileSync(codexConfigPath, 'utf-8'));
+      } catch (error) {
+        console.warn('Failed to parse current config.toml, using empty object:', error);
+      }
+    }
+
+    // 构建代理配置
+    const proxyConfig: Record<string, any> = {
+      model_provider: "aicodeswitch",
+      model: "gpt-5.3-codex",
+      model_reasoning_effort: modelReasoningEffort,
+      disable_response_storage: true,
+      preferred_auth_method: "apikey",
+      requires_openai_auth: true,
+      enableRouteSelection: true,
+      model_providers: {
+        aicodeswitch: {
+          name: "aicodeswitch",
+          base_url: `http://${host}:${process.env.PORT ? parseInt(process.env.PORT, 10) : 4567}/codex`,
+          wire_api: "responses"
+        }
+      }
+    };
+
+    // 使用智能合并
+    const mergedConfig = mergeTomlConfig(
+      proxyConfig,
+      currentConfig,
+      CODEX_CONFIG_MANAGED_FIELDS
+    );
+
+    // 原子性写入合并后的配置
+    atomicWriteFile(codexConfigPath, stringifyToml(mergedConfig));
 
     // Codex auth.json
     const codexAuthPath = path.join(codexDir, 'auth.json');
+
+    // 读取当前配置（如果存在），保留工具运行时写入的内容
+    let currentAuth: Record<string, any> = {};
+    if (fs.existsSync(codexAuthPath)) {
+      try {
+        currentAuth = JSON.parse(fs.readFileSync(codexAuthPath, 'utf-8'));
+      } catch (error) {
+        console.warn('Failed to parse current auth.json, using empty object:', error);
+      }
+    }
 
     // 同样处理 auth.json 的备份
     if (!fs.existsSync(codexAuthBakPath)) {
@@ -465,11 +558,20 @@ const writeCodexConfig = async (
       }
     }
 
-    const codexAuth = {
+    // 构建代理配置
+    const proxyAuth: Record<string, any> = {
       OPENAI_API_KEY: config.apiKey || "api_key"
     };
 
-    fs.writeFileSync(codexAuthPath, JSON.stringify(codexAuth, null, 2));
+    // 使用智能合并
+    const mergedAuth = mergeJsonConfig(
+      proxyAuth,
+      currentAuth,
+      CODEX_AUTH_MANAGED_FIELDS
+    );
+
+    // 原子性写入合并后的配置
+    atomicWriteFile(codexAuthPath, JSON.stringify(mergedAuth, null, 2));
 
     // 保存元数据
     const currentConfigHash = createHash('sha256').update(fs.readFileSync(codexConfigPath, 'utf-8')).digest('hex');
@@ -543,10 +645,33 @@ const restoreClaudeConfig = async (): Promise<boolean> => {
     const claudeSettingsBakPath = path.join(claudeDir, 'settings.json.aicodeswitch_backup');
 
     if (fs.existsSync(claudeSettingsBakPath)) {
+      // 读取备份配置
+      const backupSettings: Record<string, any> = JSON.parse(
+        fs.readFileSync(claudeSettingsBakPath, 'utf-8')
+      );
+
+      // 读取当前配置（可能包含工具运行时写入的新内容）
+      let currentSettings: Record<string, any> = {};
       if (fs.existsSync(claudeSettingsPath)) {
-        fs.unlinkSync(claudeSettingsPath);
+        try {
+          currentSettings = JSON.parse(fs.readFileSync(claudeSettingsPath, 'utf-8'));
+        } catch (error) {
+          console.warn('Failed to parse current settings.json during restore, using empty object:', error);
+        }
       }
-      fs.renameSync(claudeSettingsBakPath, claudeSettingsPath);
+
+      // 生成合并后的配置（备份作为基础，合并当前的非管理字段）
+      const mergedSettings = mergeJsonConfig(
+        backupSettings,
+        currentSettings,
+        CLAUDE_SETTINGS_MANAGED_FIELDS
+      );
+
+      // 原子性写入合并后的配置
+      atomicWriteFile(claudeSettingsPath, JSON.stringify(mergedSettings, null, 2));
+
+      // 删除备份文件
+      fs.unlinkSync(claudeSettingsBakPath);
     }
 
     // Restore Claude Code .claude.json
@@ -554,10 +679,33 @@ const restoreClaudeConfig = async (): Promise<boolean> => {
     const claudeJsonBakPath = path.join(homeDir, '.claude.json.aicodeswitch_backup');
 
     if (fs.existsSync(claudeJsonBakPath)) {
+      // 读取备份配置
+      const backupClaudeJson: Record<string, any> = JSON.parse(
+        fs.readFileSync(claudeJsonBakPath, 'utf-8')
+      );
+
+      // 读取当前配置（可能包含工具运行时写入的新内容）
+      let currentClaudeJson: Record<string, any> = {};
       if (fs.existsSync(claudeJsonPath)) {
-        fs.unlinkSync(claudeJsonPath);
+        try {
+          currentClaudeJson = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf-8'));
+        } catch (error) {
+          console.warn('Failed to parse current .claude.json during restore, using empty object:', error);
+        }
       }
-      fs.renameSync(claudeJsonBakPath, claudeJsonPath);
+
+      // 生成合并后的配置
+      const mergedClaudeJson = mergeJsonConfig(
+        backupClaudeJson,
+        currentClaudeJson,
+        CLAUDE_JSON_MANAGED_FIELDS
+      );
+
+      // 原子性写入合并后的配置
+      atomicWriteFile(claudeJsonPath, JSON.stringify(mergedClaudeJson, null, 2));
+
+      // 删除备份文件
+      fs.unlinkSync(claudeJsonBakPath);
     }
 
     // 删除元数据
@@ -580,10 +728,33 @@ const restoreCodexConfig = async (): Promise<boolean> => {
     const codexConfigBakPath = path.join(codexDir, 'config.toml.aicodeswitch_backup');
 
     if (fs.existsSync(codexConfigBakPath)) {
+      // 读取备份配置
+      const backupConfig: Record<string, any> = parseToml(
+        fs.readFileSync(codexConfigBakPath, 'utf-8')
+      );
+
+      // 读取当前配置（可能包含工具运行时写入的新内容）
+      let currentConfig: Record<string, any> = {};
       if (fs.existsSync(codexConfigPath)) {
-        fs.unlinkSync(codexConfigPath);
+        try {
+          currentConfig = parseToml(fs.readFileSync(codexConfigPath, 'utf-8'));
+        } catch (error) {
+          console.warn('Failed to parse current config.toml during restore, using empty object:', error);
+        }
       }
-      fs.renameSync(codexConfigBakPath, codexConfigPath);
+
+      // 生成合并后的配置（备份作为基础，合并当前的非管理字段）
+      const mergedConfig = mergeTomlConfig(
+        backupConfig,
+        currentConfig,
+        CODEX_CONFIG_MANAGED_FIELDS
+      );
+
+      // 原子性写入合并后的配置
+      atomicWriteFile(codexConfigPath, stringifyToml(mergedConfig));
+
+      // 删除备份文件
+      fs.unlinkSync(codexConfigBakPath);
     }
 
     // Restore Codex auth.json
@@ -591,10 +762,33 @@ const restoreCodexConfig = async (): Promise<boolean> => {
     const codexAuthBakPath = path.join(codexDir, 'auth.json.aicodeswitch_backup');
 
     if (fs.existsSync(codexAuthBakPath)) {
+      // 读取备份配置
+      const backupAuth: Record<string, any> = JSON.parse(
+        fs.readFileSync(codexAuthBakPath, 'utf-8')
+      );
+
+      // 读取当前配置（可能包含工具运行时写入的新内容）
+      let currentAuth: Record<string, any> = {};
       if (fs.existsSync(codexAuthPath)) {
-        fs.unlinkSync(codexAuthPath);
+        try {
+          currentAuth = JSON.parse(fs.readFileSync(codexAuthPath, 'utf-8'));
+        } catch (error) {
+          console.warn('Failed to parse current auth.json during restore, using empty object:', error);
+        }
       }
-      fs.renameSync(codexAuthBakPath, codexAuthPath);
+
+      // 生成合并后的配置
+      const mergedAuth = mergeJsonConfig(
+        backupAuth,
+        currentAuth,
+        CODEX_AUTH_MANAGED_FIELDS
+      );
+
+      // 原子性写入合并后的配置
+      atomicWriteFile(codexAuthPath, JSON.stringify(mergedAuth, null, 2));
+
+      // 删除备份文件
+      fs.unlinkSync(codexAuthBakPath);
     }
 
     // 删除元数据
@@ -1912,7 +2106,7 @@ ${instruction}
   );
 
   app.post(
-    '/api/update-codex-reasonings-effort',
+    '/api/update-codex-reasoning-effort',
     asyncHandler(async (req, res) => {
       const requestedEffort = req.body.modelReasoningEffort;
       if (!isCodexReasoningEffort(requestedEffort)) {
