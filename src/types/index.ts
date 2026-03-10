@@ -12,7 +12,7 @@ export interface Vendor {
 /** 供应商API接口的数据结构标准类型 */
 export type SourceType = 'openai-chat' | 'openai' | 'claude-chat' | 'claude' | 'deepseek-reasoning-chat' | 'gemini' | 'gemini-chat';
 /** 路由的目标对象类型，目前，仅支持claude-code和codex */
-export type TargetType = 'claude-code' | 'codex';
+export type ToolType = 'claude-code' | 'codex';
 /** Codex 推理强度配置 */
 export type CodexReasoningEffort = 'low' | 'medium' | 'high';
 
@@ -21,8 +21,8 @@ export interface InstalledSkill {
   id: string;
   name: string;
   description?: string;
-  targets: TargetType[];
-  enabledTargets: TargetType[];
+  targets: ToolType[];
+  enabledTargets: ToolType[];
   githubUrl?: string;
   skillPath?: string;
   installedAt: number;
@@ -39,7 +39,7 @@ export interface SkillCatalogItem {
 
 export interface SkillInstallRequest {
   skillId: string;
-  targetType: TargetType;
+  targetType: ToolType;
   name?: string;
   description?: string;
   tags?: string[];
@@ -108,7 +108,7 @@ export interface Route {
   id: string;
   name: string;
   description?: string;
-  targetType: TargetType;
+  targetType: ToolType;
   isActive: boolean;
   enableAgentTeams?: boolean;  // 是否启用Agent Teams功能（仅Claude Code）
   enableBypassPermissionsSupport?: boolean;  // 是否开启对bypassPermissions的支持（仅Claude Code）
@@ -165,7 +165,7 @@ export interface RequestLog {
   // 新增字段 - 用于日志筛选和详情展示
   contentType?: ContentType;                       // 请求类型（规则内容类型）
   ruleId?: string;                                 // 使用的规则ID
-  targetType?: TargetType;                         // 客户端类型
+  targetType?: ToolType;                         // 客户端类型
   targetServiceId?: string;                        // API服务ID
   targetServiceName?: string;                      // API服务名
   targetModel?: string;                            // 模型名
@@ -201,7 +201,7 @@ export interface ErrorLog {
 
   // 请求日志中的详细信息字段
   ruleId?: string;                                 // 使用的规则ID
-  targetType?: TargetType;                         // 客户端类型
+  targetType?: ToolType;                         // 客户端类型
   targetServiceId?: string;                        // API服务ID
   targetServiceName?: string;                      // API服务名
   targetModel?: string;                            // 模型名
@@ -303,7 +303,7 @@ export interface LoginResponse {
 /** Session 会话信息 */
 export interface Session {
   id: string;              // session ID (对于Claude Code是metadata.user_id，对于Codex是headers.session_id)
-  targetType: TargetType;  // 客户端类型 (claude-code 或 codex)
+  targetType: ToolType;  // 客户端类型 (claude-code 或 codex)
   title?: string;          // 会话标题（从第一条消息内容提取）
   firstRequestAt: number;  // 第一次请求时间
   lastRequestAt: number;   // 最后一次请求时间
@@ -336,7 +336,7 @@ export interface Statistics {
     totalCodingTime: number; // 编程时长(分钟)
   };
   byTargetType: {
-    targetType: TargetType;
+    targetType: ToolType;
     totalRequests: number;
     totalTokens: number;
     avgResponseTime: number;
@@ -416,7 +416,7 @@ export interface MCPServer {
   url?: string;
   headers?: Record<string, string>;
   env?: Record<string, string>;
-  targets?: TargetType[];
+  targets?: ToolType[];
   createdAt: number;
   updatedAt: number;
 }
@@ -431,12 +431,12 @@ export interface MCPInstallRequest {
   url?: string;
   headers?: Record<string, string>;
   env?: Record<string, string>;
-  targets?: TargetType[];
+  targets?: ToolType[];
 }
 
 /** MCP 工具启用/禁用请求 */
 export interface MCPEnableRequest {
   mcpId: string;
-  target: TargetType;
+  target: ToolType;
   enabled: boolean;
 }

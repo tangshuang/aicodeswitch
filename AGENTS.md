@@ -133,9 +133,19 @@ aicos stop            # 停止服务
 - 2026-03-03: 修复前端 Vendors 页面中旧数据源类型 `claude-code` 的类型判断残留，统一为 `claude`，消除 TypeScript 类型检查报错。
 - 2026-03-03: 路由管理新增 Codex 配置区域，支持设置 `model_reasoning_effort`（Reasoning Effort 下拉）；路由激活时按配置写入 Codex 配置文件，激活后修改可立即覆盖 `~/.codex/config.toml`。
 - 2026-03-03: 调整 Codex 配置区 Reasoning Effort 表单布局为 label/value 左右排列，避免上下排布。
-- 2026-03-08: 高智商规则改为自动推断模式：移除 `!x` 关闭语法，按“最近真实用户输入 + 工具消息过滤”判断是否命中 `high-iq`，并修复高智商规则优先级与会话状态持久化问题。
+- 2026-03-08: 高智商规则改为自动推断模式：移除 `!x` 关闭语法，按”最近真���用户输入 + 工具消息过滤”判断是否命中 `high-iq`，并修复高智商规则优先级与会话状态持久化问题。
 - 2026-03-09: OpenAI（Responses）数据源调整为固定拼接 `/v1/responses` 转发；供应商 OpenAI base URL 规范为不包含 `/v1`，并补充前后端保存校验与提示文案。
 - 2026-03-09: 新增 OpenAI base URL 启动迁移：仅对 `sourceType=openai` 且地址末尾为 `/v1` 的服务自动去尾并回写 `vendors.json`，导入数据时同步归一化。
+- 2026-03-10: 修复 OpenAI（Responses）请求类型 URL 拼接问题：
+  - 修复 `isOpenAIChatSource` 方法错误地将 `openai` 类型归类为 OpenAI Chat 的问题
+  - 新增 `isOpenAIType` 方法统一处理 OpenAI Chat 和 OpenAI Responses 类型
+  - 修复 `mapRequestPath` 中 Codex → OpenAI Responses 的路径映射错误
+  - 统一所有请求体转换、响应转换、流式响应转换使用 `isOpenAIType` 方法处理 OpenAI 类型
+- 2026-03-10: 重构 URL 构建逻辑：
+  - 使用 `mapRequestPathToUpstreamUrl` 方法统一处理上游 URL 构建
+  - 删除冗余方法：`buildOpenAIResponsesUrl`、`buildGeminiUrl`、`mapRequestPath`
+  - 删除未使用方法：`isClaudeChatSource`、`isOpenAIChatSource`
+  - 简化代码结构，提高可维护性
 
 ---
 

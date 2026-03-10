@@ -30,7 +30,7 @@ export default {
             {
                 name: 'Coding Plan Codex',
                 sourceType: 'openai-chat',
-                apiUrl: 'https://api.minimaxi.com/v1',
+                apiUrl: 'https://api.minimaxi.com/v1/chat/completions',
                 models: 'codex-MiniMax-M2.1, codex-MiniMax-M2.5',
             }
         ]
@@ -43,8 +43,20 @@ export default {
                 name: 'Coding Plan Claude Code',
                 sourceType: 'claude',
                 apiUrl: 'https://open.bigmodel.cn/api/anthropic',
-                models: 'glm-4.7, glm-4.5-air',
+                models: 'glm-5, glm-4.7, glm-4.5-air',
                 modelLimits: {
+                    'glm-5': 131072,
+                    'glm-4.7': 131072,
+                    'glm-4.5-air': 98304
+                },
+            },
+            {
+                name: 'Coding Plan Codex',
+                sourceType: 'openai-chat',
+                apiUrl: 'https://open.bigmodel.cn/api/coding/paas/v4/chat/completions',
+                models: 'glm-5, glm-4.7, glm-4.5-air',
+                modelLimits: {
+                    'glm-5': 131072,
                     'glm-4.7': 131072,
                     'glm-4.5-air': 98304
                 },
@@ -59,7 +71,16 @@ export default {
                 name: 'Coding Plan Claude Code',
                 sourceType: 'claude',
                 apiUrl: 'https://api.kimi.com/coding',
-            }
+            },
+            {
+                name: 'Coding Plan Codex',
+                sourceType: 'openai-chat',
+                apiUrl: 'https://api.kimi.com/coding/v1/chat/completions',
+                models: 'kimi-for-coding',
+                modelLimits: {
+                    'kimi-for-coding': 32768
+                }
+            },
         ]
     },
     doubao: {
@@ -105,7 +126,7 @@ export default {
             {
                 name: 'Coding Plan Codex',
                 sourceType: 'openai-chat',
-                apiUrl: 'https://coding.dashscope.aliyuncs.com/v1',
+                apiUrl: 'https://coding.dashscope.aliyuncs.com/v1/chat/completions',
                 models: 'qwen3-max-2026-01-23, qwen3-coder-plus',
             },
             {

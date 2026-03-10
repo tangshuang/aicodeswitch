@@ -27,7 +27,7 @@ import {
   transformGeminiResponseToOpenAIChat,
   extractTokenUsageFromGeminiUsage,
 } from './transformers/gemini';
-import type { AppConfig, Rule, APIService, Route, SourceType, TargetType, TokenUsage, ContentType, RequestLog } from '../types';
+import type { AppConfig, Rule, APIService, Route, SourceType, ToolType, TokenUsage, ContentType, RequestLog } from '../types';
 import { AuthType } from '../types';
 import {
   isRuleUsingMCP,
@@ -246,7 +246,7 @@ export class ProxyServer {
         }
 
         // 确定目标类型
-        const targetType: TargetType = req.path.startsWith('/claude-code/') ? 'claude-code' : 'codex';
+        const targetType: ToolType = req.path.startsWith('/claude-code/') ? 'claude-code' : 'codex';
 
         // 记录错误日志 - 包含请求详情
         await this.dbManager.addErrorLog({
@@ -294,7 +294,7 @@ export class ProxyServer {
           });
         }
         // Add error log - 包含请求详情
-        const targetType: TargetType = req.path.startsWith('/claude-code/') ? 'claude-code' : 'codex';
+        const targetType: ToolType = req.path.startsWith('/claude-code/') ? 'claude-code' : 'codex';
         await this.dbManager.addErrorLog({
           timestamp: Date.now(),
           method: req.method,
@@ -578,7 +578,7 @@ export class ProxyServer {
 
   private findMatchingRoute(req: Request): Route | undefined {
     // 根据请求路径确定目标类型
-    let targetType: TargetType | undefined;
+    let targetType: ToolType | undefined;
     if (req.path.startsWith('/claude-code/')) {
       targetType = 'claude-code';
     } else if (req.path.startsWith('/codex/')) {
@@ -600,7 +600,7 @@ export class ProxyServer {
    */
   private async handleFallbackToOriginalConfig(req: Request, res: Response): Promise<boolean> {
     // 确定目标类型
-    let targetType: TargetType | undefined;
+    let targetType: ToolType | undefined;
     if (req.path.startsWith('/claude-code/')) {
       targetType = 'claude-code';
     } else if (req.path.startsWith('/codex/')) {
@@ -675,7 +675,7 @@ export class ProxyServer {
    * 检查 API URL 是否指向本系统的代理服务
    * 用于避免 fallback 时的死循环
    */
-  private isLocalProxyUrl(apiUrl: string, targetType: TargetType): boolean {
+  private isLocalProxyUrl(apiUrl: string, targetType: ToolType): boolean {
     try {
       const url = new URL(apiUrl);
 
@@ -1282,7 +1282,7 @@ export class ProxyServer {
     }
   }
 
-  private determineContentType(req: Request, targetType: TargetType, routeId?: string): ContentType {
+  private determineContentType(req: Request, targetType: ToolType, routeId?: string): ContentType {
     const body = req.body;
     if (!body) return 'default';
 
@@ -1483,7 +1483,7 @@ export class ProxyServer {
     };
   }
 
-  private async prepareHighIqRouting(req: Request, route: Route, targetType: TargetType): Promise<ContentType | undefined> {
+  private async prepareHighIqRouting(req: Request, route: Route, targetType: ToolType): Promise<ContentType | undefined> {
     const sessionId = this.defaultExtractSessionId(req, targetType);
     const session = sessionId ? this.dbManager.getSession(sessionId) : null;
     const previousMode = session?.highIqMode === true;
@@ -1901,14 +1901,17 @@ export class ProxyServer {
   /** 判断是否为 Claude 相关类型（使用 x-api-key 认证） */
   private isClaudeSource(sourceType: SourceType | string) {
     // 向下兼容：支持旧类型 'claude-code'
-    const normalized = sourceType === 'claude-code' ? 'claude' : sourceType;
-    return normalized === 'claude-chat' || normalized === 'claude';
+    return sourceType === 'claude' || sourceType === 'claude-code';
   }
 
-  private isOpenAIChatSource(sourceType: SourceType | string) {
+  private isOpenAISource(sourceType: SourceType | string) {
     // 向下兼容：支持旧类型 'openai-responses'
-    const normalized = sourceType === 'openai-responses' ? 'openai' : sourceType;
-    return normalized === 'openai-chat' || normalized === 'openai' || normalized === 'deepseek-reasoning-chat';
+    return sourceType === 'openai' || sourceType === 'openai-responses';
+  }
+
+  /** 判断是否为 OpenAI 类型（包括 OpenAI Chat 和 OpenAI Responses） */
+  private isOpenAIType(sourceType: SourceType | string) {
+    return sourceType === 'openai' || sourceType === 'openai-chat' || sourceType === 'openai-responses' || sourceType === 'deepseek-reasoning-chat';
   }
 
   /** 判断是否为 Gemini 类型 */
@@ -1922,35 +1925,7 @@ export class ProxyServer {
   }
 
   private isChatType(sourceType: SourceType) {
-    return sourceType.endsWith('-chat') || sourceType === 'gemini';
-  }
-
-  /**
-   * 构建 OpenAI Responses 类型的完整 URL
-   * - 用户填写不含 /v1 的 baseUrl
-   * - 服务端固定拼接 /v1 + 请求路径
-   */
-  private buildOpenAIResponsesUrl(baseUrl: string, mappedPath: string): string {
-    const trimmedBase = baseUrl.trim().replace(/\/+$/, '');
-    const normalizedPath = mappedPath.startsWith('/') || mappedPath === '' ? mappedPath : `/${mappedPath}`;
-    const pathWithoutVersionPrefix = normalizedPath.replace(/^\/v\d+(?=\/|$)/i, '');
-    const normalizedResponsesPath = pathWithoutVersionPrefix || '/responses';
-    return `${trimmedBase}/v1${normalizedResponsesPath}`;
-  }
-
-  /**
-   * 构建 Gemini API 的完整 URL
-   * 用户只填写 base 地址（如 https://generativelanguage.googleapis.com）
-   * 需要根据模型名称拼接成完整的 URL
-   */
-  private buildGeminiUrl(baseUrl: string, model: string, streamRequested: boolean): string {
-    // 移除末尾的斜杠
-    const base = baseUrl.replace(/\/$/, '');
-    // 移除模型名称中可能包含的 models/ 前缀
-    const modelName = model.replace(/^models\//, '');
-    // 根据是否流式选择 endpoint
-    const endpoint = streamRequested ? 'streamGenerateContent' : 'generateContent';
-    return `${base}/v1beta/models/${modelName}:${endpoint}`;
+    return sourceType.endsWith('-chat');
   }
 
   /**
@@ -2218,7 +2193,7 @@ export class ProxyServer {
    * Claude Code: metadata.user_id
    * Codex: headers.session_id
    */
-  private defaultExtractSessionId(request: Request, type: TargetType): string | null {
+  private defaultExtractSessionId(request: Request, type: ToolType): string | null {
     if (type === 'claude-code') {
       // Claude Code 使用 metadata.user_id
       return request.body?.metadata?.user_id || null;
@@ -2315,39 +2290,41 @@ export class ProxyServer {
   }
 
   /**
-   * 根据源工具类型和目标API类型,映射请求路径
-   * @param sourceTool 源工具类型 (claude-code 或 codex)
-   * @param targetSourceType 目标API的数据格式类型
-   * @param originalPath 原始请求路径(已去除工具前缀)
-   * @returns 映射后的目标路径
+   * 将请求路径映射到目标API的URL
+   * @param tool 工具类型
+   * @param source API的数据源类型
+   * @param originalPath 工具发送的请求路径，注意，不带origin部分
+   * @param apiUrl route所选API服务的API地址字段值
+   * @param modelName route中选择的模型名称
+   * @param isStream 是否请求流式响应
    */
-  private mapRequestPath(sourceTool: TargetType, targetSourceType: SourceType, originalPath: string): string {
-    // Claude Code 发起的请求
-    if (sourceTool === 'claude-code') {
-      // Claude Code 默认使用 Claude API 格式
-      if (this.isClaudeSource(targetSourceType)) {
-        // Claude → Claude: 直接透传路径
-        return originalPath;
-      } else if (this.isOpenAIChatSource(targetSourceType)) {
-        // Claude → OpenAI Chat: /v1/messages → /v1/chat/completions
-        return originalPath.replace(/\/v1\/messages\b/, '/v1/chat/completions');
-      }
+  private mapRequestPathToUpstreamUrl(tool: ToolType, source: SourceType, originalPath: string, apiUrl: string, modelName: string, isStream: boolean) {
+    const geminiEndpoint = isStream ? 'streamGenerateContent' : 'generateContent';
+    if (this.isGeminiChatSource(source)) {
+      return apiUrl.replace('{modelName}', modelName).replace('{endPoint}', geminiEndpoint);
     }
 
-    // Codex 发起的请求
-    if (sourceTool === 'codex') {
-      // Codex 默认使用 OpenAI Chat API 格式
-      if (this.isOpenAIChatSource(targetSourceType)) {
-        // OpenAI Chat → OpenAI Chat: 直接透传路径
-        return originalPath;
-      } else if (this.isClaudeSource(targetSourceType)) {
-        // OpenAI Chat → Claude: /v1/chat/completions → /v1/messages
-        return originalPath.replace(/\/v1\/chat\/completions\b/, '/v1/messages');
-      }
+    if (this.isChatType(source)) {
+      return apiUrl;
     }
 
-    // 默认:直接返回原始路径
-    return originalPath;
+    // 对于 gemini 类型接口，使用 gemini-chat 接口来处理
+    if (this.isGeminiSource(source)) {
+      return `${apiUrl}/v1beta/models/${modelName}:${geminiEndpoint}`;
+    }
+
+    // claude code 请求 openai 类型接口，直接使用 openai-chat 接口来处理
+    if (tool === 'claude-code' && this.isOpenAISource(source)) {
+      return `${apiUrl}/v1/chat/completions`;
+    }
+
+    // codex 请求 claude 类型接口，直接使用 claude-chat 接口来处理
+    if (tool === 'codex' && this.isClaudeSource(source)) {
+      return `${apiUrl}/v1/messages`;
+    }
+
+    // 透传路径
+    return `${apiUrl}${originalPath}`;
   }
 
   private async proxyRequest(
@@ -2709,7 +2686,7 @@ export class ProxyServer {
       if (targetType === 'claude-code') {
         if (this.isClaudeSource(sourceType)) {
           requestBody = this.applyModelOverride(requestBody, rule);
-        } else if (this.isOpenAIChatSource(sourceType)) {
+        } else if (this.isOpenAIType(sourceType)) {
           requestBody = transformClaudeRequestToOpenAIChat(requestBody, rule.targetModel);
         } else if (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType)) {
           requestBody = transformClaudeRequestToGemini(requestBody);
@@ -2719,7 +2696,7 @@ export class ProxyServer {
           return;
         }
       } else if (targetType === 'codex') {
-        if (this.isOpenAIChatSource(sourceType)) {
+        if (this.isOpenAIType(sourceType)) {
           requestBody = this.applyModelOverride(requestBody, rule);
         } else if (this.isClaudeSource(sourceType)) {
           requestBody = transformClaudeRequestToOpenAIChat(requestBody, rule.targetModel);
@@ -2738,37 +2715,24 @@ export class ProxyServer {
       const streamRequested = this.isStreamRequested(req, requestBody);
 
       // Build the full URL by appending the request path to the service API URL
-      let pathToAppend = req.path;
+      let pathToRequest = req.path;
       if (route.targetType === 'claude-code' && req.path.startsWith('/claude-code')) {
-        pathToAppend = req.path.slice('/claude-code'.length);
+        pathToRequest = req.path.slice('/claude-code'.length);
       } else if (route.targetType === 'codex' && req.path.startsWith('/codex')) {
-        pathToAppend = req.path.slice('/codex'.length);
+        pathToRequest = req.path.slice('/codex'.length);
       }
 
-      // 根据源工具类型和目标API类型,映射请求路径
-      const mappedPath = this.mapRequestPath(route.targetType, sourceType, pathToAppend);
-
-      // 构建上游 URL
-      let upstreamUrl: string;
-      if (this.isGeminiSource(sourceType)) {
-        // Gemini 类型需要特殊处理：根据模型拼接完整 URL
-        const model = requestBody.model || rule.targetModel || 'gemini-pro';
-        upstreamUrl = this.buildGeminiUrl(service.apiUrl, model, streamRequested);
-      } else if (sourceType === 'openai') {
-        if (/\/v1\/?$/i.test(service.apiUrl.trim())) {
-          const error = 'OpenAI 数据源请填写不包含 /v1 的 base URL，例如：https://api.openai.com';
-          res.status(400).json({ error });
-          await finalizeLog(400, error);
-          return;
-        }
-        // OpenAI Responses：固定拼接为 {baseUrl}/v1/*
-        upstreamUrl = this.buildOpenAIResponsesUrl(service.apiUrl, mappedPath);
-      } else if (this.isChatType(sourceType) || this.isGeminiChatSource(sourceType)) {
-        // Chat 类型（包括 gemini-chat）直接使用用户配置的完整 URL
-        upstreamUrl = service.apiUrl;
-      } else {
-        upstreamUrl = `${service.apiUrl}${mappedPath}`;
-      }
+      // 使用 mapRequestPathToUpstreamUrl 统一构建上游 URL
+      const model = rule.targetModel || requestBody.model;
+      const apiUrl = service.apiUrl;
+      const upstreamUrl = this.mapRequestPathToUpstreamUrl(
+        route.targetType,
+        sourceType,
+        pathToRequest,
+        apiUrl,
+        model,
+        streamRequested
+      );
 
       const config: AxiosRequestConfig = {
         method: req.method as any,
@@ -2854,7 +2818,7 @@ export class ProxyServer {
       if (isEventStream && response.data) {
         res.status(response.status);
 
-        if (targetType === 'claude-code' && this.isOpenAIChatSource(sourceType)) {
+        if (targetType === 'claude-code' && this.isOpenAIType(sourceType)) {
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
@@ -3355,7 +3319,7 @@ export class ProxyServer {
       // 收集响应头
       responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
 
-      if (targetType === 'claude-code' && this.isOpenAIChatSource(sourceType)) {
+      if (targetType === 'claude-code' && this.isOpenAIType(sourceType)) {
         const converted = transformOpenAIChatResponseToClaude(responseData);
         usageForLog = extractTokenUsageFromOpenAIUsage(responseData?.usage);
         // 记录转换后的响应体
