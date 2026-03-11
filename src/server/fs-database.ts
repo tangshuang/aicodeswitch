@@ -135,9 +135,6 @@ export class FileSystemDatabaseManager {
 
     // 执行数据源类型迁移（在加载数据之后）
     await this.migrateSourceTypes();
-    // OpenAI base URL 迁移：将末尾 /v1 自动移除
-    await this.migrateOpenAIBaseUrls();
-
     // 路由级工具配置迁移到全局配置（兼容旧版本）
     await this.migrateRouteToolSettingsToGlobalConfig();
 
@@ -161,15 +158,52 @@ export class FileSystemDatabaseManager {
   }
 
   private async loadVendors() {
+    let needSave = false;
     try {
       const data = await fs.readFile(this.vendorsFile, 'utf-8');
-      this.vendors = JSON.parse(data);
+      const parsed = JSON.parse(data);
+      this.vendors = Array.isArray(parsed) ? parsed.map((vendor: Vendor) => {
+        const normalizedServices = Array.isArray(vendor.services)
+          ? vendor.services.map((service: APIService) => {
+            const normalizedService: APIService = {
+              ...service,
+              apiKey: typeof service.apiKey === 'string' ? service.apiKey : '',
+              inheritVendorApiKey: service.inheritVendorApiKey === true,
+            };
+            if (
+              normalizedService.apiKey !== service.apiKey ||
+              normalizedService.inheritVendorApiKey !== service.inheritVendorApiKey
+            ) {
+              needSave = true;
+            }
+            return normalizedService;
+          })
+          : [];
+
+        const normalizedVendor: Vendor = {
+          ...vendor,
+          apiKey: typeof vendor.apiKey === 'string' ? vendor.apiKey : '',
+          services: normalizedServices,
+        };
+
+        if (
+          normalizedVendor.apiKey !== vendor.apiKey ||
+          !Array.isArray(vendor.services)
+        ) {
+          needSave = true;
+        }
+
+        return normalizedVendor;
+      }) : [];
     } catch {
       this.vendors = [];
     }
 
     // 兼容性检查：如果存在旧的 services.json，自动迁移
     await this.migrateServicesIfNeeded();
+    if (needSave) {
+      await this.saveVendors();
+    }
   }
 
   /**
@@ -300,45 +334,6 @@ export class FileSystemDatabaseManager {
   }
 
   /**
-   * 迁移 OpenAI base URL（在初始化时执行）
-   * 仅处理 sourceType=openai 且 apiUrl 末尾为 /v1 的服务
-   */
-  private async migrateOpenAIBaseUrls(): Promise<void> {
-    console.log('[OpenAIBaseUrlMigration] Checking for OpenAI base URL migration...');
-
-    let migratedCount = 0;
-    for (const vendor of this.vendors) {
-      if (!vendor.services) continue;
-
-      for (const service of vendor.services) {
-        if (service.sourceType !== 'openai' || typeof service.apiUrl !== 'string') {
-          continue;
-        }
-
-        const trimmedUrl = service.apiUrl.trim();
-        if (!/\/v1\/?$/i.test(trimmedUrl)) {
-          continue;
-        }
-
-        const migratedUrl = trimmedUrl.replace(/\/v1\/?$/i, '');
-        if (migratedUrl && migratedUrl !== service.apiUrl) {
-          console.log(`[OpenAIBaseUrlMigration] Migrated service "${service.name}": ${service.apiUrl} -> ${migratedUrl}`);
-          service.apiUrl = migratedUrl;
-          migratedCount++;
-        }
-      }
-    }
-
-    if (migratedCount === 0) {
-      console.log('[OpenAIBaseUrlMigration] No migration needed');
-      return;
-    }
-
-    await this.saveVendors();
-    console.log(`[OpenAIBaseUrlMigration] Migration completed. Migrated ${migratedCount} services.`);
-  }
-
-  /**
    * 迁移导入数据中的类型
    * 用于导入功能，自动将旧类型转换为新类型
    */
@@ -346,15 +341,9 @@ export class FileSystemDatabaseManager {
     return vendors.map(vendor => ({
       ...vendor,
       services: vendor.services?.map(service => {
-        const normalizedSourceType = service.sourceType ? normalizeSourceType(service.sourceType) : undefined;
-        const normalizedApiUrl = normalizedSourceType === 'openai' && typeof service.apiUrl === 'string'
-          ? service.apiUrl.trim().replace(/\/v1\/?$/i, '')
-          : service.apiUrl;
-
         return {
           ...service,
-          sourceType: normalizedSourceType,
-          apiUrl: normalizedApiUrl
+          sourceType: service.sourceType ? normalizeSourceType(service.sourceType) : undefined
         };
       })
     }));
@@ -892,6 +881,7 @@ export class FileSystemDatabaseManager {
     const now = Date.now();
     const newVendor: Vendor = {
       ...vendor,
+      apiKey: typeof vendor.apiKey === 'string' ? vendor.apiKey : '',
       id,
       services: vendor.services || [],  // 确保 services 字段存在
       createdAt: now,
@@ -912,7 +902,11 @@ export class FileSystemDatabaseManager {
       ...this.vendors[index],
       ...vendor,
       id,
-      services: vendor.services !== undefined ? vendor.services : this.vendors[index].services,
+      apiKey: typeof vendor.apiKey === 'string'
+        ? vendor.apiKey
+        : (this.vendors[index].apiKey || ''),
+      // 供应商服务应通过 create/update/deleteAPIService 单独维护，避免编辑供应商时误覆盖
+      services: this.vendors[index].services,
       updatedAt: now,
     };
     await this.saveVendors();
@@ -923,13 +917,15 @@ export class FileSystemDatabaseManager {
     const index = this.vendors.findIndex(v => v.id === id);
     if (index === -1) return false;
 
-    // 检查是否有服务被规则使用
+    // 级联删除：删除该供应商下服务关联的所有规则
     const vendor = this.vendors[index];
     const serviceIds = (vendor.services || []).map(s => s.id);
-    const rulesUsingServices = this.rules.filter(r => serviceIds.includes(r.targetServiceId));
-
-    if (rulesUsingServices.length > 0) {
-      throw new Error(`无法删除供应商：有 ${rulesUsingServices.length} 个路由规则正在使用该供应商的服务`);
+    if (serviceIds.length > 0) {
+      const beforeCount = this.rules.length;
+      this.rules = this.rules.filter(r => !serviceIds.includes(r.targetServiceId));
+      if (this.rules.length !== beforeCount) {
+        await this.saveRules();
+      }
     }
 
     this.vendors.splice(index, 1);
@@ -1007,6 +1003,8 @@ export class FileSystemDatabaseManager {
     const now = Date.now();
     const newService: APIService = {
       ...serviceData,
+      apiKey: typeof serviceData.apiKey === 'string' ? serviceData.apiKey : '',
+      inheritVendorApiKey: serviceData.inheritVendorApiKey === true,
       id,
       createdAt: now,
       updatedAt: now
@@ -1043,6 +1041,10 @@ export class FileSystemDatabaseManager {
       ...vendor.services![index],
       ...service,
       id,
+      apiKey: typeof service.apiKey === 'string' ? service.apiKey : (vendor.services![index].apiKey || ''),
+      inheritVendorApiKey: service.inheritVendorApiKey !== undefined
+        ? service.inheritVendorApiKey === true
+        : vendor.services![index].inheritVendorApiKey === true,
       updatedAt: now,
     };
 
@@ -1065,10 +1067,11 @@ export class FileSystemDatabaseManager {
     const index = vendor.services!.findIndex(s => s.id === id);
     if (index === -1) return false;
 
-    // 检查是否有规则正在使用此服务
-    const rulesUsingService = this.rules.filter(r => r.targetServiceId === id);
-    if (rulesUsingService.length > 0) {
-      throw new Error(`无法删除服务：有 ${rulesUsingService.length} 个路由规则正在使用此服务`);
+    // 级联删除：删除使用该服务的所有规则
+    const beforeCount = this.rules.length;
+    this.rules = this.rules.filter(r => r.targetServiceId !== id);
+    if (this.rules.length !== beforeCount) {
+      await this.saveRules();
     }
 
     vendor.services!.splice(index, 1);
@@ -1724,6 +1727,51 @@ export class FileSystemDatabaseManager {
     return false;
   }
 
+  /**
+   * 获取状态码为 499 的请求日志
+   * @param limit 返回数量限制
+   * @param offset 偏移量
+   * @returns 匹配的请求日志列表
+   */
+  async getClientClosedLogs(limit: number = 100, offset: number = 0): Promise<RequestLog[]> {
+    const allMatches: RequestLog[] = [];
+    const sortedShards = [...this.logShardsIndex].sort((a, b) => b.endTime - a.endTime);
+
+    // 递序遍历所有分片， collect 499 logs
+    for (const shard of sortedShards) {
+      const shardLogs = await this.loadLogShard(shard.filename);
+      for (const log of shardLogs) {
+        if (log.statusCode === 499) {
+          allMatches.push(log);
+        }
+      }
+    }
+
+    // 按时间倒序排列并分页
+    return allMatches
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(offset, offset + limit);
+  }
+
+  /**
+   * 获取状态码为 499 的请求日志数量
+   * @returns 匹配的请求数量
+   */
+  async getClientClosedLogsCount(): Promise<number> {
+    let count = 0;
+    for (const shard of this.logShardsIndex) {
+      const shardLogs = await this.loadLogShard(shard.filename);
+      for (const log of shardLogs) {
+        if (log.statusCode === 499) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }
+
+  // Service blacklist operations
+
   // Service blacklist operations
   private getFailoverRecoveryMs(): number {
     const seconds = normalizeFailoverRecoverySeconds(this.config?.failoverRecoverySeconds);
@@ -1855,6 +1903,9 @@ export class FileSystemDatabaseManager {
     if (!vendor.name || typeof vendor.name !== 'string') {
       return { valid: false, error: `供应商[${index}](${vendor.id}) 缺少有效的 name 字段` };
     }
+    if (vendor.apiKey !== undefined && typeof vendor.apiKey !== 'string') {
+      return { valid: false, error: `供应商[${index}](${vendor.id}) 的 apiKey 必须是字符串` };
+    }
     if (!Array.isArray(vendor.services)) {
       return { valid: false, error: `供应商[${index}](${vendor.id}) 的 services 不是数组` };
     }
@@ -1873,7 +1924,12 @@ export class FileSystemDatabaseManager {
         return { valid: false, error: `供应商[${index}](${vendor.id}) 的服务[${i}] 缺少有效的 apiUrl 字段` };
       }
       if (!service.apiKey || typeof service.apiKey !== 'string') {
-        return { valid: false, error: `供应商[${index}](${vendor.id}) 的服务[${i}] 缺少有效的 apiKey 字段` };
+        if (service.inheritVendorApiKey !== true) {
+          return { valid: false, error: `供应商[${index}](${vendor.id}) 的服务[${i}] 缺少有效的 apiKey 字段` };
+        }
+      }
+      if (service.inheritVendorApiKey !== undefined && typeof service.inheritVendorApiKey !== 'boolean') {
+        return { valid: false, error: `供应商[${index}](${vendor.id}) 的服务[${i}] inheritVendorApiKey 必须是布尔值` };
       }
     }
     return { valid: true };

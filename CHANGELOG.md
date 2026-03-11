@@ -4,6 +4,73 @@ All notable changes to this project will be documented in this file. See [standa
 
 ### 2026-03-11 (继续)
 
+#### Fixes
+* 修复 Claude Code → Gemini 流式响应 Token 使用统计显示 undefined
+  - 统一默认流式链路的 `extractUsage` 函数返回 camelCase 字段名（`inputTokens`, `outputTokens`）
+  - 修复 `transformSSEToTool` 中所有转换器的 usage 字段映射，确保与日志数据库格式一致
+
+### 2026-03-11 (继续)
+
+#### Features
+* 优化规则列表实时状态展示
+  - 增加规则 `error` 状态类型，用于标识请求失败
+  - 后端在请求完成时（无论成功或失败）立即发送 WebSocket 状态更新
+  - 缩短后端超时时间（30秒 → 10秒）和前端过期检查间隔（10秒 → 5秒）
+  - 缩短前端过期时间（60秒 → 15秒），使状态更新更实时
+  - 在请求失败时立即显示错误状态，提升用户体验
+
+### 2026-03-11 (继续)
+
+#### Fixes
+* 优化激活路由无可用规则时的 fallback 行为
+  - 当存在激活路由但匹配不到任何可用规则时（含 failover 关闭/开启两种模式），不再直接返回 `No matching rule found`
+  - 改为优先 fallback 到备份原始配置（`*.aicodeswitch_backup`）继续转发请求
+  - 当候选规则均不可用（如全部黑名单或服务缺失）且尚未实际发起上游请求时，也会触发同样 fallback 逻辑
+* 修复 `isRequestOpenAIModels` 函数空值检查缺失导致的代理崩溃
+  - 当 `model` 参数为 `undefined` 或非字符串时，函数会抛出 `Cannot read properties of undefined (reading 'toLowerCase')` 错误
+  - 添加类型检查，确保 `model` 存在且为字符串后才调用 `toLowerCase()`
+* 修复 Claude 在无激活路由 fallback 场景下默认模型映射缺失
+  - fallback 读取 `settings.json.aicodeswitch_backup` 中的 `ANTHROPIC_DEFAULT_HAIKU_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL`、`ANTHROPIC_DEFAULT_OPUS_MODEL`
+  - 按请求模型名关键段 `haiku/sonnet/opus` 自动映射并改写上游 `model`（如 `claude-sonnet-4-5-20250929` 命中 Sonnet 默认模型）
+* 调整日志列表页展示信息
+  - 移除请求日志列表顶部“显示 X / Y 条”文案，避免重复信息占位
+* 优化日志详情弹窗中的流式事件展示
+  - 将 "Stream Chunks" 改为 "实际输出效果" 并移至 "实际转发的响应体" 下方
+  - 改为基于 `downstreamResponseBody` 解析 SSE 事件，简化解析逻辑
+  - 正确处理 Responses API (Codex) 格式：支持 `response.reasoning_text.delta` 和 `response.content_part.done`
+  - 正确处理 Claude API (ClaudeCode) 格式：支持 `content_block_delta` 中的 `thinking_delta` 和 `text_delta`
+  - 只需支持两种标准格式，无需处理各种供应商原始数据
+
+#### Features
+* 日志列表中流式响应标识
+  - 在请求日志列表中，为流式响应的日志条目添加黄色小点标识
+  - 位置在"详情"按钮右上角，便于快速识别流式和非流式响应
+* 修复 Codex → `deepseek-reasoning-chat` 流式响应协议不兼容问题
+* 修复“实际转发的响应体”日志字段格式
+  - 默认流式链路新增下游文本收集器，改为记录真实发送给客户端的 SSE 文本
+  - `downstreamResponseBody` 在流式/非流式场景统一以字符串落库，不再写入 JSON 数组结构
+* 修复日志字段语义回归：`responseBody` 与 `downstreamResponseBody` 混淆
+  - 流式场景恢复 `responseBody/streamChunks` 记录上游供应商原始 SSE 返回
+  - `downstreamResponseBody` 保持记录实际转发给客户端的内容
+  - 非流式转换场景中，`responseBody` 改回记录上游原始响应，`downstreamResponseBody` 记录转换后响应
+* 移除 OpenAI 数据源 base URL 的 `/v1` 限制
+  - 删除前后端针对 OpenAI `apiUrl` 的 `/v1` 保存校验
+* **错误日志展示 499 状态码日志**
+  - 添加 API 端点 `/api/logs/client-disconnected` 获取状态码为 499 的请求日志
+  - 错误日志页面现在同时展示状态码为 499 的请求日志
+  - 在错误日志列表中，499 日志的 `errorMessage` 显示为 "Client disconnected"
+  - 添加后端方法 `requestLogToErrorLog` 将请求日志转换为错误日志格式
+  - 删除启动迁移与导入时对 OpenAI `apiUrl` 的 `/v1` 自动去尾归一化
+  - Vendors 页面提示改为允许任意格式地址
+* 优化 NPM 发布 workflow，避免不必要的版本号递增
+  - 发布前先检查当前版本是否已被 npm 注册，若未发布则直接使用当前版本
+  - 仅在当前版本已存在时才执行 `standard-version` bump 版本
+  - 减少版本号浪费，提升发布流程灵活性
+* 修复无激活路由时 fallback 误用当前配置导致的鉴权异常
+  - fallback 改为实时仅读取 `*.aicodeswitch_backup`（Claude/Codex）
+  - Codex fallback 依据备份中的 provider/wire_api 推断 `sourceType` 与 `authType`，避免 OpenAI 类上游被错误使用 `x-api-key`
+  - 保留并增强自指向检测：当上游地址指向 aicodeswitch 自身时，跳过 fallback 并返回明确错误，避免回环
+
 #### Features
 * 实现配置文件智能合并方案
   - 新增管理字段定义（`src/server/config-managed-fields.ts`），区分管理字段和保留字段
@@ -62,6 +129,13 @@ All notable changes to this project will be documented in this file. See [standa
   - 路由未命中、规则未命中、服务未配置、鉴权失败等早退场景也会写入请求日志
   - 请求日志 `tags` 统一记录中转状态：`通过中转` / `未通过中转`；fallback 原始配置额外记录 `使用原始配置`
   - 统计维持按日志 `usage` 聚合 token（通过 `addLog -> updateStatistics` 链路）
+* 修复 fallback 路径请求体空值导致的代理崩溃
+  - `applyModelOverride` 在未指定 `targetModel` 时改为返回原始请求体，不再返回 `undefined`
+  - `proxyRequest` 对转换结果增加空值兜底，并将 `requestBody.model` 读取改为可选链
+* 优化 Claude Code 到非 Claude 源的流式与 count_tokens 行为
+  - `claude-code -> gemini/gemini-chat/openai-chat/openai/deepseek-reasoning-chat` 在未显式 `stream=false` 时默认按 Streaming（SSE）处理
+  - 对 `/v1/messages/count_tokens` 请求改为服务端本地计算并直接返回 `{ "input_tokens": N }`，不再转发到上游服务
+  - 请求日志新增标签 `系统计算Token直返`，用于标识“系统内计算后直接返回”的 count_tokens 请求
 
 #### Docs
 * 完善 `CLAUDE.md` 的“智能配置合并”文档
@@ -245,6 +319,51 @@ All notable changes to this project will be documented in this file. See [standa
   - Codex → OpenAI Responses：路径从 `/v1/chat/completions` 正确映射为 `/v1/responses`
   - 修复请求体转换、响应转换、流式响应转换中缺少对 OpenAI Responses 的处理
   - 所有使用 OpenAI 转换函数的地方现在统一使用 `isOpenAIType` 方法
+
+### 2026-03-11
+
+#### Improvements
+* 新增供应商 API Key 继承配置
+  - Vendors 页面新增供应商级 API 密钥字段，新增/编辑/一键配置均保存到供应商 `apiKey`
+  - API 服务新增“使用供应商全局配置的API密钥”开关，开启后隐藏服务级 API 密钥输入框（仅隐藏不删除）
+  - 后端转发鉴权在 `inheritVendorApiKey=true` 时改为读取供应商 `apiKey`，忽略服务自身 `apiKey`
+* 调整供应商 API Key 继承默认行为
+  - API 服务新增/保存后重置时，“使用供应商全局配置的API密钥”默认选中
+  - 一键配置生成的 API 服务保持 `inheritVendorApiKey=true`，并继续使用供应商层 API Key
+* 修复编辑供应商后 API 服务更新 404
+  - 前端编辑供应商不再提交 `services`，避免误清空服务列表
+  - 后端 `updateVendor` 保留既有 `services`，服务仅通过 API 服务接口维护
+* 删除供应商/服务支持级联删除规则并增加二次确认
+  - 删除 API 服务时，自动删除所有关联路由规则
+  - 删除供应商时，自动删除其服务关联的全部路由规则
+  - Vendors 页面删除 API 服务与删除供应商均新增二次确认弹窗，显示将删除的规则数量
+
+### 2026-03-11
+
+#### Fixes
+* 修复代理成功响应后的二次写响应问题
+  - 修正 `proxyRequest` 非流式分支的响应头写入顺序，避免先 `res.json/res.send` 后再 `setHeader`
+  - 为代理入口和 `proxyRequest` 错误分支补充 `headersSent/writableEnded` 保护，避免日志或 fallback 再次写回客户端触发 `ERR_HTTP_HEADERS_SENT`
+* 修复 Claude Code → Gemini 函数参数 Schema 不兼容导致的 400
+  - 新增 Gemini 函数声明参数清洗逻辑，过滤 `$schema`、`additionalProperties`、`exclusiveMinimum`、`propertyNames`、`const` 等不兼容字段
+  - `transformRequestFromClaudeToGemini` 与 `transformRequestFromResponsesToGemini` 统一使用清洗后的 `parameters`，避免 Gemini 返回 `Invalid JSON payload received`
+* 修复 Claude Code → Gemini thinking 参数冲突导致的 400
+  - Gemini `thinkingConfig` 改为互斥写入：存在 `budget_tokens` 时仅写 `thinkingBudget`，不再同时写 `thinkingLevel`
+  - 同步修复 `transformRequestFromClaudeToGemini` 与 `transformRequestFromResponsesToGemini` 两条链路，避免 `You can only set only one of thinking budget and thinking level`
+
+### 2026-03-11
+
+#### Improvements
+* 调整路由规则列表排序
+  - UI 规则列表改为先按类型顺序排序，再按同类型内优先级排序
+  - 类型顺序统一为：图像理解 → 高智商 → 长上下文 → 思考 → 后台 → 模型顶替 → 默认
+
+### 2026-03-11
+
+#### Fixes
+* 修复规则中供应商模型覆盖未生效
+  - 修复 `transformRequestToUpstream` 中 `applyModelOverride` 未传入 `targetModel` 的分支
+  - 规则配置 `targetModel` 后，实际转发请求体 `model` 现在会正确覆盖工具原始模型
 
 ### 2026-03-09
 

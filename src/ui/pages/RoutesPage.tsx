@@ -73,7 +73,7 @@ function formatDateTimeLocal(date: Date): string {
 
 export default function RoutesPage() {
   const { confirm } = useConfirm();
-  const { ruleStatuses } = useRulesStatus();
+  const { ruleStatuses, clearRuleStatus } = useRulesStatus();
   const [routes, setRoutes] = useState<Route[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -670,13 +670,24 @@ export default function RoutesPage() {
     const blacklistStatus = blacklistStatuses[rule.id];
     const issues: string[] = [];
 
-    // 0. 首先检查是否正在使用（从 WebSocket 状态）
+    // 0. 首先检查实时状态（从 WebSocket 状态）
     const wsStatus = ruleStatuses[rule.id];
+
+    // 检查是否正在使用
     if (wsStatus?.status === 'in_use') {
       return {
         status: 'in_use',
         label: '使用中',
         reason: '正在处理请求'
+      };
+    }
+
+    // 检查是否有错误
+    if (wsStatus?.status === 'error') {
+      return {
+        status: 'error',
+        label: '请求失败',
+        reason: wsStatus.errorMessage || '请求处理失败'
       };
     }
 
@@ -792,7 +803,7 @@ export default function RoutesPage() {
               <button className="btn btn-primary" onClick={() => setShowRouteModal(true)}>新建</button>
             </div>
             {routes.length === 0 ? (
-              <div className="empty-state"><p>暂无路由</p></div>
+              <div className="empty-state"><p>暂无路由规则</p></div>
             ) : (
               <div style={{ marginTop: '10px' }}>
                 {routes.map((route) => (
@@ -894,7 +905,7 @@ export default function RoutesPage() {
               {!selectedRoute ? (
                 <div className="empty-state"><p>请先选择一个路由</p></div>
               ) : rules.length === 0 ? (
-                <div className="empty-state"><p>暂无路由</p></div>
+                <div className="empty-state"><p>暂无路由规则</p></div>
               ) : (
                 <table className="rules-table">
                   <thead>
@@ -908,18 +919,17 @@ export default function RoutesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {/* 排序规则：先按 sortOrder 倒序，再按 contentType 分类排序 */}
+                    {/* 排序规则：先按类型顺序，再按同类型内的 sortOrder 倒序 */}
                     {[...rules].sort((a, b) => {
-                      // 首先按 sortOrder 倒序
-                      const sortOrderA = a.sortOrder || 0;
-                      const sortOrderB = b.sortOrder || 0;
-                      if (sortOrderA !== sortOrderB) {
-                        return sortOrderB - sortOrderA;
-                      }
-                      // sortOrder 相同时，按 contentType 分类排序
                       const orderA = CONTENT_TYPE_ORDER[a.contentType] ?? 999;
                       const orderB = CONTENT_TYPE_ORDER[b.contentType] ?? 999;
-                      return orderA - orderB;
+                      if (orderA !== orderB) {
+                        return orderA - orderB;
+                      }
+
+                      const sortOrderA = a.sortOrder || 0;
+                      const sortOrderB = b.sortOrder || 0;
+                      return sortOrderB - sortOrderA;
                     }).map((rule) => {
                       const service = allServices.find(s => s.id === rule.targetServiceId);
                       const vendor = vendors.find(v => v.id === service?.vendorId);
@@ -1124,6 +1134,21 @@ export default function RoutesPage() {
                                       className="btn btn-info"
                                       style={{ padding: '2px 8px', fontSize: '11px' }}
                                       onClick={() => handleClearBlacklist(rule.id)}
+                                    >
+                                      恢复
+                                    </button>
+                                  )}
+                                  {ruleStatuses[rule.id]?.status === 'error' && (
+                                    <button
+                                      className="btn btn-info"
+                                      style={{ padding: '2px 8px', fontSize: '11px' }}
+                                      onClick={async () => {
+                                        try {
+                                          await clearRuleStatus(rule.id);
+                                        } catch (error) {
+                                          toast.error('恢复状态失败');
+                                        }
+                                      }}
                                     >
                                       恢复
                                     </button>

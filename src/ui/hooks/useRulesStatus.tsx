@@ -1,22 +1,25 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { api } from '../api/client';
 
 // 类型定义
 interface RuleStatusMessage {
   type: 'rule_status';
   data: {
     ruleId: string;
-    status: 'in_use' | 'idle';
+    status: 'in_use' | 'idle' | 'error';
     totalTokensUsed?: number;
     totalRequestsUsed?: number;
+    errorMessage?: string;
     timestamp: number;
   };
 }
 
 export interface RuleStatusState {
   [ruleId: string]: {
-    status: 'in_use' | 'idle';
+    status: 'in_use' | 'idle' | 'error';
     totalTokensUsed?: number;
     totalRequestsUsed?: number;
+    errorMessage?: string;
     lastUpdate: number;
   };
 }
@@ -25,6 +28,7 @@ interface RulesStatusContextValue {
   connectionStatus: 'connecting' | 'connected' | 'disconnected';
   ruleStatuses: RuleStatusState;
   getRuleStatus: (ruleId: string) => RuleStatusState[string] | undefined;
+  clearRuleStatus: (ruleId: string) => Promise<void>;
   isConnected: boolean;
 }
 
@@ -48,13 +52,30 @@ const notifyRuleSubscribers = () => {
   globalSubscribers.forEach((callback) => callback(globalRuleStatuses));
 };
 
-// 清理过期状态（超过1分钟未更新的 in_use 转为 idle）
+// 清除指定规则的状态
+const clearRuleStatus = async (ruleId: string) => {
+  try {
+    // 调用后端 API，后端会广播 idle 状态给所有客户端
+    await api.clearRuleStatus(ruleId);
+    // 同时清除本地状态以确保即时响应
+    if (globalRuleStatuses[ruleId]) {
+      const { [ruleId]: _, ...rest } = globalRuleStatuses;
+      globalRuleStatuses = rest;
+      notifyRuleSubscribers();
+    }
+  } catch (error) {
+    console.error('[RulesStatus] 清除规则状态失败:', error);
+    throw error;
+  }
+};
+
+// 清理过期状态（超过15秒未更新的 in_use 转为 idle）
 const cleanupExpiredStatuses = () => {
   const now = Date.now();
   let hasChanges = false;
 
   Object.keys(globalRuleStatuses).forEach((ruleId) => {
-    if (now - globalRuleStatuses[ruleId].lastUpdate > 60000) {
+    if (now - globalRuleStatuses[ruleId].lastUpdate > 15000) {
       if (globalRuleStatuses[ruleId].status === 'in_use') {
         globalRuleStatuses[ruleId] = {
           ...globalRuleStatuses[ruleId],
@@ -109,7 +130,7 @@ const connect = () => {
         const message = JSON.parse(event.data) as RuleStatusMessage;
 
         if (message.type === 'rule_status') {
-          const { ruleId, status, totalTokensUsed, totalRequestsUsed, timestamp } = message.data;
+          const { ruleId, status, totalTokensUsed, totalRequestsUsed, errorMessage, timestamp } = message.data;
 
           globalRuleStatuses = {
             ...globalRuleStatuses,
@@ -117,6 +138,7 @@ const connect = () => {
               status,
               totalTokensUsed,
               totalRequestsUsed,
+              errorMessage,
               lastUpdate: timestamp,
             },
           };
@@ -202,7 +224,7 @@ const stopHeartbeat = () => {
 const initializeGlobalConnection = () => {
   // 启动清理定时器
   if (!cleanupInterval) {
-    cleanupInterval = setInterval(cleanupExpiredStatuses, 10000); // 每10秒检查一次
+    cleanupInterval = setInterval(cleanupExpiredStatuses, 5000); // 每5秒检查一次
   }
 
   // 连接 WebSocket
@@ -264,6 +286,7 @@ export function RulesStatusProvider({ children }: RulesStatusProviderProps) {
     connectionStatus,
     ruleStatuses,
     getRuleStatus,
+    clearRuleStatus,
     isConnected: connectionStatus === 'connected',
   };
 
@@ -284,6 +307,7 @@ export function useRulesStatus() {
       connectionStatus: 'disconnected' as const,
       ruleStatuses: {} as RuleStatusState,
       getRuleStatus: (_ruleId: string) => undefined,
+      clearRuleStatus: async (_ruleId: string) => {},
       isConnected: false,
     };
   }

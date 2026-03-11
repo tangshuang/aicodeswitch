@@ -11,6 +11,20 @@ export interface SSEEvent {
 }
 
 /**
+ * 检测是否是客户端断开相关的错误（这些错误是正常的，不应记录为错误）
+ */
+function isClientDisconnectError(error: any): boolean {
+  const code = error?.code;
+  const message = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
+  return (
+    code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+    code === 'ERR_STREAM_UNABLE_TO_PIPE' ||
+    code === 'ERR_STREAM_DESTROYED' ||
+    message.includes('premature close')
+  );
+}
+
+/**
  * ChunkCollectorTransform - 收集stream chunks用于日志记录
  * 这个Transform会记录所有经过它的数据块,同时将数据原封不动地传递给下一个stream
  */
@@ -22,7 +36,11 @@ export class ChunkCollectorTransform extends Transform {
     super({ writableObjectMode: true, readableObjectMode: true });
 
     this.on('error', (err) => {
-      console.error('[ChunkCollectorTransform] Stream error:', err);
+      if (isClientDisconnectError(err)) {
+        console.warn('[ChunkCollectorTransform] Stream closed (client disconnected)');
+      } else {
+        console.error('[ChunkCollectorTransform] Stream error:', err);
+      }
       this.errorEmitted = true;
     });
   }
@@ -84,7 +102,11 @@ export class SSEEventCollectorTransform extends Transform {
     super({ writableObjectMode: true, readableObjectMode: true });
 
     this.on('error', (err) => {
-      console.error('[SSEEventCollectorTransform] Stream error:', err);
+      if (isClientDisconnectError(err)) {
+        console.warn('[SSEEventCollectorTransform] Stream closed (client disconnected)');
+      } else {
+        console.error('[SSEEventCollectorTransform] Stream error:', err);
+      }
       this.errorEmitted = true;
     });
   }

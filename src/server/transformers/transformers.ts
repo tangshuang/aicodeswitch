@@ -34,16 +34,243 @@ export const shouldUseDeveloperRoleAsSystemRole = (model: string): boolean => {
   return false;
 }
 
+export const isRequestOpenAIModels = (model: string) => {
+  if (!model || typeof model !== 'string') {
+    return false;
+  }
+  const gptModelNames = 'gpt-,o1,o2,o3'.split(',');
+  return gptModelNames.some(item => model.toLowerCase().startsWith(item));
+};
+
 /**
  * 对模型属性进行覆盖
  * @param data
- * @param model
+ * @param realModelName 真正提交到API接口的模型名称
  * @returns
  */
-export const applyModelOverride = (data: any, model?: string) => {
-  if (model && data && typeof data === 'object') {
-    return { ...data, model };
+export const applyModelOverride = (data: any, realModelName?: string) => {
+  if (!data || typeof data !== 'object') {
+    return data;
   }
+
+  if (!realModelName) {
+    return data;
+  }
+
+  return { ...data, model: realModelName };
+};
+
+/**
+ * 对工具属性进行覆盖
+ * @param tools
+ * @param realModelName 提交到API的真实模型名称
+ */
+export const applyToolsOverride = (tools: any[], realModelName: string) => {
+  if (!tools) {
+    return;
+  }
+  if (isRequestOpenAIModels(realModelName)) {
+    return tools;
+  }
+  return tools.map((tool) => {
+    const { type, parameters, format, description, ...others } = tool;
+    if (type === 'custom') {
+      return {
+        ...others,
+        type: 'function',
+        description: `${description}${format ? '\n\nFormat: ' + JSON.stringify(format) : ''}`,
+        parameters: parameters || {},
+      };
+    }
+    return tool;
+  }).filter(item => item.type === 'function');
+};
+
+/**
+ * 对 payload 进行简单处理
+ * @param data
+ * @param realModelName 提交到API的真实模型名称
+ * @returns
+ */
+export const applyPayloadOverride = (data: any, realModelName: string) => {
+  if (isRequestOpenAIModels(realModelName)) {
+    return data;
+  }
+
+  const overrided = applyModelOverride(data, realModelName);
+
+  return overrided;
+
+  // const tools = applyToolsOverride(data.tools, realModelName);
+
+  // if (overrided.text) {
+  //   delete overrided.text.verbosity;
+  // }
+
+  // delete overrided.prompt_cache_key;
+  // delete overrided.include;
+
+  // return {
+  //   ...overrided,
+  //   tools,
+  // };
+}
+
+const GEMINI_ALLOWED_SCHEMA_KEYS = new Set([
+  'type',
+  'format',
+  'description',
+  'nullable',
+  'enum',
+  'properties',
+  'required',
+  'items',
+  'minimum',
+  'maximum',
+  'minLength',
+  'maxLength',
+  'pattern',
+  'minItems',
+  'maxItems',
+]);
+
+/**
+ * Gemini FunctionDeclaration.parameters 仅支持 OpenAPI 子集。
+ * 这里将通用 JSON Schema 清洗为 Gemini 可接受的结构，避免 400 Unknown name 错误。
+ */
+export const sanitizeSchemaForGeminiFunctionDeclaration = (schema: any): any => {
+  const sanitize = (value: any): any => {
+    if (!value || typeof value !== 'object') {
+      return undefined;
+    }
+
+    if (Array.isArray(value)) {
+      return value.map((item) => sanitize(item)).filter((item) => item !== undefined);
+    }
+
+    const result: any = {};
+    const sourceType = value.type;
+
+    // JSON Schema type 允许数组（如 ["object", "null"]），Gemini 仅接受字符串
+    if (Array.isArray(sourceType)) {
+      const nonNullType = sourceType.find((t) => typeof t === 'string' && t !== 'null');
+      if (typeof nonNullType === 'string') {
+        result.type = nonNullType;
+      }
+      if (sourceType.includes('null')) {
+        result.nullable = true;
+      }
+    } else if (typeof sourceType === 'string') {
+      result.type = sourceType;
+    }
+
+    // const 在 Gemini schema 中不被接受，降级为单值 enum
+    if (value.const !== undefined) {
+      result.enum = [value.const];
+    }
+
+    for (const key of Object.keys(value)) {
+      if (!GEMINI_ALLOWED_SCHEMA_KEYS.has(key)) {
+        continue;
+      }
+
+      // type 已在上方做过标准化（string / nullable）
+      if (key === 'type') {
+        continue;
+      }
+
+      if (key === 'properties' && value.properties && typeof value.properties === 'object' && !Array.isArray(value.properties)) {
+        const cleanedProperties: Record<string, any> = {};
+        for (const [propKey, propValue] of Object.entries(value.properties)) {
+          const cleanedProperty = sanitize(propValue);
+          if (cleanedProperty !== undefined) {
+            cleanedProperties[propKey] = cleanedProperty;
+          }
+        }
+        result.properties = cleanedProperties;
+        continue;
+      }
+
+      if (key === 'items') {
+        const cleanedItems = sanitize(value.items);
+        if (cleanedItems !== undefined) {
+          result.items = cleanedItems;
+        }
+        continue;
+      }
+
+      result[key] = value[key];
+    }
+
+    if (!result.type) {
+      if (result.properties) {
+        result.type = 'object';
+      } else if (result.items) {
+        result.type = 'array';
+      }
+    }
+
+    return Object.keys(result).length > 0 ? result : undefined;
+  };
+
+  return sanitize(schema) || { type: 'object', properties: {} };
+};
+
+const isValidThinkingBudget = (value: any): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0;
+
+const createGeminiThinkingConfigFromClaudeThinking = (thinking: any): any | undefined => {
+  if (!thinking || typeof thinking !== 'object') {
+    return undefined;
+  }
+
+  const hasBudget = isValidThinkingBudget(thinking.budget_tokens);
+  const thinkingConfig: any = {};
+
+  if (thinking.type === 'enabled') {
+    thinkingConfig.includeThoughts = true;
+    if (hasBudget) {
+      thinkingConfig.thinkingBudget = thinking.budget_tokens;
+    } else {
+      thinkingConfig.thinkingLevel = 'HIGH';
+    }
+  } else if (thinking.type === 'auto') {
+    thinkingConfig.includeThoughts = true;
+    if (hasBudget) {
+      thinkingConfig.thinkingBudget = thinking.budget_tokens;
+    } else {
+      thinkingConfig.thinkingLevel = 'LOW';
+    }
+  } else if (thinking.type === 'disabled') {
+    thinkingConfig.includeThoughts = false;
+  }
+
+  return Object.keys(thinkingConfig).length > 0 ? thinkingConfig : undefined;
+};
+
+const createGeminiThinkingConfigFromResponsesReasoning = (reasoning: any): any | undefined => {
+  if (!reasoning || typeof reasoning !== 'object') {
+    return undefined;
+  }
+
+  const hasBudget = isValidThinkingBudget(reasoning.budget_tokens);
+  const thinkingConfig: any = {};
+
+  if (reasoning.type === 'enabled' || reasoning.type === 'auto') {
+    thinkingConfig.includeThoughts = true;
+    if (hasBudget) {
+      thinkingConfig.thinkingBudget = reasoning.budget_tokens;
+    } else if (reasoning.effort === 'low') {
+      thinkingConfig.thinkingLevel = 'LOW';
+    } else if (reasoning.effort === 'medium') {
+      thinkingConfig.thinkingLevel = 'MEDIUM';
+    } else if (reasoning.effort === 'high') {
+      thinkingConfig.thinkingLevel = 'HIGH';
+    }
+  } else if (reasoning.type === 'disabled') {
+    thinkingConfig.includeThoughts = false;
+  }
+
+  return Object.keys(thinkingConfig).length > 0 ? thinkingConfig : undefined;
 };
 
 /**
@@ -197,24 +424,8 @@ export function transformRequestFromResponsesToGemini(body: any, _targetModel?: 
 
   // 处理 reasoning -> thinkingConfig
   if (reasoning) {
-    const thinkingConfig: any = {};
-    if (reasoning.type === 'enabled' || reasoning.type === 'auto') {
-      thinkingConfig.includeThoughts = true;
-      // 根据 effort 映射 thinkingLevel
-      if (reasoning.effort === 'low') {
-        thinkingConfig.thinkingLevel = 'LOW';
-      } else if (reasoning.effort === 'medium') {
-        thinkingConfig.thinkingLevel = 'MEDIUM';
-      } else if (reasoning.effort === 'high') {
-        thinkingConfig.thinkingLevel = 'HIGH';
-      }
-    } else if (reasoning.type === 'disabled') {
-      thinkingConfig.includeThoughts = false;
-    }
-    if (reasoning.budget_tokens) {
-      thinkingConfig.thinkingBudget = reasoning.budget_tokens;
-    }
-    if (Object.keys(thinkingConfig).length > 0) {
+    const thinkingConfig = createGeminiThinkingConfigFromResponsesReasoning(reasoning);
+    if (thinkingConfig) {
       generationConfig.thinkingConfig = thinkingConfig;
     }
   }
@@ -231,7 +442,7 @@ export function transformRequestFromResponsesToGemini(body: any, _targetModel?: 
         functionDeclarations.push({
           name: tool.function.name,
           description: tool.function.description || '',
-          parameters: tool.function.parameters || { type: 'object', properties: {}, required: [] },
+          parameters: sanitizeSchemaForGeminiFunctionDeclaration(tool.function.parameters || { type: 'object', properties: {}, required: [] }),
         });
       }
     }
@@ -792,20 +1003,8 @@ export function transformRequestFromClaudeToGemini(body: any, _model: string): a
 
   // 转换 thinking → thinkingConfig
   if (thinking) {
-    const thinkingConfig: any = {};
-    if (thinking.type === 'enabled') {
-      thinkingConfig.includeThoughts = true;
-      thinkingConfig.thinkingLevel = 'HIGH';
-    } else if (thinking.type === 'disabled') {
-      thinkingConfig.includeThoughts = false;
-    } else if (thinking.type === 'auto') {
-      thinkingConfig.includeThoughts = true;
-      thinkingConfig.thinkingLevel = 'LOW';
-    }
-    if (thinking.budget_tokens) {
-      thinkingConfig.thinkingBudget = thinking.budget_tokens;
-    }
-    if (Object.keys(thinkingConfig).length > 0) {
+    const thinkingConfig = createGeminiThinkingConfigFromClaudeThinking(thinking);
+    if (thinkingConfig) {
       generationConfig.thinkingConfig = thinkingConfig;
     }
   }
@@ -824,7 +1023,7 @@ export function transformRequestFromClaudeToGemini(body: any, _model: string): a
         functionDeclarations.push({
           name: tool.name,
           description: tool.description || '',
-          parameters: tool.input_schema || { type: 'object', properties: {}, required: [] }
+          parameters: sanitizeSchemaForGeminiFunctionDeclaration(tool.input_schema || { type: 'object', properties: {}, required: [] })
         });
       }
     }

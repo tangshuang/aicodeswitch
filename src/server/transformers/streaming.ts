@@ -2,12 +2,26 @@ import { Transform } from 'stream';
 import * as crypto from 'crypto';
 
 /**
- * SSEEvent - 表示一个完整的SSE事件
+ * SSEEvent - 表��一个完整的SSE事件
  */
 export interface SSEEvent {
   event?: string;
   id?: string;
   data?: any;
+}
+
+/**
+ * 检测是否是客户端断开相关的错误（这些错误是正常的，不应记录为错误）
+ */
+function isClientDisconnectError(error: any): boolean {
+  const code = error?.code;
+  const message = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
+  return (
+    code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+    code === 'ERR_STREAM_UNABLE_TO_PIPE' ||
+    code === 'ERR_STREAM_DESTROYED' ||
+    message.includes('premature close')
+  );
 }
 
 /**
@@ -55,7 +69,11 @@ export class SSEParserTransform extends Transform {
     super({ readableObjectMode: true });
     // 捕获流中的未处理错误，防止进程崩溃
     this.on('error', (err) => {
-      console.error('[SSEParserTransform] Stream error:', err);
+      if (isClientDisconnectError(err)) {
+        console.warn('[SSEParserTransform] Stream closed (client disconnected)');
+      } else {
+        console.error('[SSEParserTransform] Stream error:', err);
+      }
       this.errorEmitted = true;
     });
   }
@@ -152,7 +170,11 @@ export class SSESerializerTransform extends Transform {
     });
 
     this.on('error', (err) => {
-      console.error('[SSESerializerTransform] Stream error:', err);
+      if (isClientDisconnectError(err)) {
+        console.warn('[SSESerializerTransform] Stream closed (client disconnected)');
+      } else {
+        console.error('[SSESerializerTransform] Stream error:', err);
+      }
       this.errorEmitted = true;
     });
   }
@@ -231,7 +253,11 @@ export class OpenAIToClaudeEventTransform extends Transform {
     void options;
 
     this.on('error', (err) => {
-      console.error('[OpenAIToClaudeEventTransform] Stream error:', err);
+      if (isClientDisconnectError(err)) {
+        console.warn('[OpenAIToClaudeEventTransform] Stream closed (client disconnected)');
+      } else {
+        console.error('[OpenAIToClaudeEventTransform] Stream error:', err);
+      }
       this.errorEmitted = true;
     });
   }
@@ -720,7 +746,11 @@ export class ClaudeToOpenAIChatEventTransform extends Transform {
     void options;
 
     this.on('error', (err) => {
-      console.error('[ClaudeToOpenAIChatEventTransform] Stream error:', err);
+      if (isClientDisconnectError(err)) {
+        console.warn('[ClaudeToOpenAIChatEventTransform] Stream closed (client disconnected)');
+      } else {
+        console.error('[ClaudeToOpenAIChatEventTransform] Stream error:', err);
+      }
       this.errorEmitted = true;
     });
   }
@@ -910,7 +940,11 @@ export class GeminiToOpenAIChatEventTransform extends Transform {
     this.model = options?.model ?? null;
 
     this.on('error', (err) => {
-      console.error('[GeminiToOpenAIChatEventTransform] Stream error:', err);
+      if (isClientDisconnectError(err)) {
+        console.warn('[GeminiToOpenAIChatEventTransform] Stream closed (client disconnected)');
+      } else {
+        console.error('[GeminiToOpenAIChatEventTransform] Stream error:', err);
+      }
       this.errorEmitted = true;
     });
   }
@@ -1081,15 +1115,34 @@ export class GeminiToOpenAIChatEventTransform extends Transform {
  * 当源是 openai-chat，目标是 codex 时使用
  */
 export class ChatCompletionsToResponsesEventTransform extends Transform {
-  private messageId: string | null = null;
+  private responseId: string | null = null;
   private model: string | null = null;
-  private responseCreated = false;
-  private textIndex = 0;
-  private toolCalls = new Map<number, { id: string; name: string; arguments: string }>();
-  private toolCallIndexToContentIndex = new Map<number, number>();
-  private stopReason: string = 'completed';
-  private incompleteReason: string = 'max_tokens';
+  private responseCreatedAt = Math.floor(Date.now() / 1000);
+  private responseStarted = false;
+  private sequenceNumber = 0;
+  private responseStatus: 'completed' | 'incomplete' = 'completed';
+  private incompleteReason: 'max_tokens' | 'content_filter' = 'max_tokens';
   private usage: { input_tokens: number; output_tokens: number; total_tokens: number } | null = null;
+  private messageItemId: string | null = null;
+  private messageOutputAdded = false;
+  private nextMessageContentIndex = 0;
+  private textContentIndex: number | null = null;
+  private reasoningContentIndex: number | null = null;
+  private refusalContentIndex: number | null = null;
+  private textPartAdded = false;
+  private reasoningPartAdded = false;
+  private refusalPartAdded = false;
+  private textOutput = '';
+  private reasoningOutput = '';
+  private refusalOutput = '';
+  private nextOutputIndex = 1;
+  private toolCalls = new Map<number, {
+    itemId: string;
+    name: string;
+    arguments: string;
+    outputIndex: number;
+    done: boolean;
+  }>();
   private finalized = false;
   private errorEmitted = false;
 
@@ -1098,7 +1151,11 @@ export class ChatCompletionsToResponsesEventTransform extends Transform {
     this.model = options?.model ?? null;
 
     this.on('error', (err) => {
-      console.error('[OpenAIChatToResponsesEventTransform] Stream error:', err);
+      if (isClientDisconnectError(err)) {
+        console.warn('[OpenAIChatToResponsesEventTransform] Stream closed (client disconnected)');
+      } else {
+        console.error('[OpenAIChatToResponsesEventTransform] Stream error:', err);
+      }
       this.errorEmitted = true;
     });
   }
@@ -1132,11 +1189,14 @@ export class ChatCompletionsToResponsesEventTransform extends Transform {
       }
 
       // 处理 OpenAI Chat Completions 事件
-      if (chunk.id && !this.messageId) {
-        this.messageId = chunk.id;
+      if (chunk.id && !this.responseId) {
+        this.responseId = chunk.id;
       }
       if (chunk.model && !this.model) {
         this.model = chunk.model;
+      }
+      if (typeof chunk.created === 'number') {
+        this.responseCreatedAt = chunk.created;
       }
 
       // 处理 usage
@@ -1164,7 +1224,6 @@ export class ChatCompletionsToResponsesEventTransform extends Transform {
 
   _flush(callback: (error?: Error | null) => void) {
     try {
-      // 检查是否已经 finalized（避免重复发送结束事件）
       if (this.finalized) {
         callback();
         return;
@@ -1178,126 +1237,375 @@ export class ChatCompletionsToResponsesEventTransform extends Transform {
     }
   }
 
-  private pushEvent(eventType: string, data: any) {
-    this.push({ event: eventType, data });
+  private getResponseId() {
+    if (!this.responseId) {
+      this.responseId = `response_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    }
+    return this.responseId;
   }
 
-  private sendResponseCreated() {
-    if (this.responseCreated) return;
-    const id = this.messageId || `response_${Date.now()}`;
-    this.pushEvent('response.created', { id });
-    this.pushEvent('response.in_progress', { id });
-    this.responseCreated = true;
+  private pushEvent(eventType: string, data: Record<string, any>) {
+    this.push({
+      event: eventType,
+      data: {
+        type: eventType,
+        sequence_number: this.sequenceNumber++,
+        ...data,
+      }
+    });
+  }
+
+  private buildMessageOutputItem(status: 'in_progress' | 'completed' | 'incomplete') {
+    const content: any[] = [];
+    if (this.textOutput) {
+      content.push({ type: 'output_text', text: this.textOutput });
+    }
+    if (this.refusalOutput) {
+      content.push({ type: 'refusal', refusal: this.refusalOutput });
+    }
+    if (content.length === 0) {
+      content.push({ type: 'output_text', text: '' });
+    }
+
+    return {
+      id: this.messageItemId || `msg_${this.getResponseId()}`,
+      type: 'message',
+      role: 'assistant',
+      status,
+      content,
+    };
+  }
+
+  private buildFinalResponse(status: 'completed' | 'incomplete') {
+    const output: any[] = [];
+    if (this.messageOutputAdded) {
+      output.push(this.buildMessageOutputItem(status === 'completed' ? 'completed' : 'incomplete'));
+    }
+    for (const call of this.toolCalls.values()) {
+      output.push({
+        id: call.itemId,
+        type: 'function_call',
+        call_id: call.itemId,
+        name: call.name,
+        arguments: call.arguments || '{}',
+        status: 'completed',
+      });
+    }
+
+    const response: Record<string, any> = {
+      id: this.getResponseId(),
+      object: 'response',
+      created_at: this.responseCreatedAt,
+      model: this.model || 'unknown',
+      status,
+      output,
+    };
+
+    if (this.usage) {
+      response.usage = {
+        input_tokens: this.usage.input_tokens,
+        output_tokens: this.usage.output_tokens,
+        total_tokens: this.usage.total_tokens,
+      };
+    }
+
+    if (status === 'incomplete') {
+      response.incomplete_details = { reason: this.incompleteReason };
+    }
+
+    return response;
+  }
+
+  private ensureResponseStarted() {
+    if (this.responseStarted) return;
+    const response = {
+      id: this.getResponseId(),
+      object: 'response',
+      created_at: this.responseCreatedAt,
+      model: this.model || 'unknown',
+      status: 'in_progress',
+      output: [],
+    };
+    this.pushEvent('response.created', { response });
+    this.pushEvent('response.in_progress', { response });
+    this.responseStarted = true;
+  }
+
+  private ensureMessageOutputItem() {
+    if (this.messageOutputAdded) return;
+    this.ensureResponseStarted();
+    this.messageItemId = this.messageItemId || `msg_${this.getResponseId()}`;
+    this.pushEvent('response.output_item.added', {
+      output_index: 0,
+      item: this.buildMessageOutputItem('in_progress'),
+    });
+    this.messageOutputAdded = true;
+  }
+
+  private assignMessageContentIndex() {
+    const index = this.nextMessageContentIndex;
+    this.nextMessageContentIndex += 1;
+    return index;
+  }
+
+  private ensureTextPart() {
+    this.ensureMessageOutputItem();
+    if (this.textContentIndex === null) {
+      this.textContentIndex = this.assignMessageContentIndex();
+    }
+    if (!this.textPartAdded && this.messageItemId) {
+      this.pushEvent('response.content_part.added', {
+        output_index: 0,
+        item_id: this.messageItemId,
+        content_index: this.textContentIndex,
+        part: { type: 'output_text', text: '' },
+      });
+      this.textPartAdded = true;
+    }
+  }
+
+  private ensureReasoningPart() {
+    this.ensureMessageOutputItem();
+    if (this.reasoningContentIndex === null) {
+      this.reasoningContentIndex = this.assignMessageContentIndex();
+    }
+    if (!this.reasoningPartAdded && this.messageItemId) {
+      this.pushEvent('response.content_part.added', {
+        output_index: 0,
+        item_id: this.messageItemId,
+        content_index: this.reasoningContentIndex,
+        part: { type: 'reasoning_text', text: '' },
+      });
+      this.reasoningPartAdded = true;
+    }
+  }
+
+  private ensureRefusalPart() {
+    this.ensureMessageOutputItem();
+    if (this.refusalContentIndex === null) {
+      this.refusalContentIndex = this.assignMessageContentIndex();
+    }
+    if (!this.refusalPartAdded && this.messageItemId) {
+      this.pushEvent('response.content_part.added', {
+        output_index: 0,
+        item_id: this.messageItemId,
+        content_index: this.refusalContentIndex,
+        part: { type: 'refusal', refusal: '' },
+      });
+      this.refusalPartAdded = true;
+    }
+  }
+
+  private ensureToolCall(toolIndex: number, toolCallId: string, toolName: string) {
+    const existing = this.toolCalls.get(toolIndex);
+    if (existing) {
+      return existing;
+    }
+
+    this.ensureResponseStarted();
+    const outputIndex = this.nextOutputIndex;
+    this.nextOutputIndex += 1;
+    const state = {
+      itemId: toolCallId,
+      name: toolName,
+      arguments: '',
+      outputIndex,
+      done: false,
+    };
+    this.toolCalls.set(toolIndex, state);
+    this.pushEvent('response.output_item.added', {
+      output_index: outputIndex,
+      item: {
+        id: state.itemId,
+        type: 'function_call',
+        call_id: state.itemId,
+        name: state.name,
+        arguments: '',
+        status: 'in_progress',
+      },
+    });
+    return state;
+  }
+
+  private mapFinishReasonToStatus(finishReason: string) {
+    if (finishReason === 'length' || finishReason === 'max_tokens') {
+      this.responseStatus = 'incomplete';
+      this.incompleteReason = 'max_tokens';
+      return;
+    }
+    if (finishReason === 'content_filter') {
+      this.responseStatus = 'incomplete';
+      this.incompleteReason = 'content_filter';
+      return;
+    }
+    this.responseStatus = 'completed';
   }
 
   private handleChoice(choice: any) {
-    // 处理 finish_reason 映射（放在最前面）
-    // OpenAI: "stop" | "length" | "tool_calls" | "content_filter"
-    // Responses: status = "completed" | "incomplete"
     if (typeof choice?.finish_reason === 'string') {
-      if (choice.finish_reason === 'length' || choice.finish_reason === 'max_tokens') {
-        this.stopReason = 'incomplete';
-        this.incompleteReason = 'max_tokens';
-      } else if (choice.finish_reason === 'content_filter') {
-        this.stopReason = 'incomplete';
-        this.incompleteReason = 'content_filter';
-      } else {
-        this.stopReason = 'completed';
-      }
-      // 发送 completion 事件并返回
-      this.finalize();
-      return;
+      this.mapFinishReasonToStatus(choice.finish_reason);
     }
 
     const delta = choice.delta;
     if (!delta) return;
 
-    // 处理文本内容
-    if (typeof delta.content === 'string') {
-      this.sendResponseCreated();
-      this.pushEvent('response.output_text.delta', { delta: delta.content });
+    // 处理文本内容（忽略空字符串，避免 DeepSeek reasoning 阶段生成无意义空增量）
+    if (typeof delta.content === 'string' && delta.content.length > 0) {
+      this.ensureTextPart();
+      this.textOutput += delta.content;
+      this.pushEvent('response.output_text.delta', {
+        item_id: this.messageItemId,
+        output_index: 0,
+        content_index: this.textContentIndex,
+        delta: delta.content,
+      });
     }
 
-    // 处理 thinking 内容
-    if (typeof delta.reasoning?.content === 'string') {
-      this.sendResponseCreated();
-      this.pushEvent('response.reasoning_text.delta', { delta: delta.reasoning.content });
+    // 处理 reasoning 内容（兼容 OpenAI 标准和 DeepSeek 的 reasoning_content 字段）
+    const reasoningDelta =
+      (typeof delta.reasoning?.content === 'string' && delta.reasoning.content.length > 0)
+        ? delta.reasoning.content
+        : (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0)
+          ? delta.reasoning_content
+          : null;
+    if (reasoningDelta) {
+      this.ensureReasoningPart();
+      this.reasoningOutput += reasoningDelta;
+      this.pushEvent('response.reasoning_text.delta', {
+        item_id: this.messageItemId,
+        output_index: 0,
+        content_index: this.reasoningContentIndex,
+        delta: reasoningDelta,
+      });
     }
 
     // 处理工具调用
     if (Array.isArray(delta.tool_calls)) {
-      for (let i = 0; i < delta.tool_calls.length; i++) {
+      for (let i = 0; i < delta.tool_calls.length; i += 1) {
         const toolCall = delta.tool_calls[i];
         const toolIndex = typeof toolCall?.index === 'number' ? toolCall.index : i;
         const toolName = toolCall?.function?.name;
 
-        // 发送工具调用开始
-        if (toolCall?.id && toolName) {
-          this.sendResponseCreated();
-
-          if (toolCall.function) {
-            // 发送 function_call.start
-            this.pushEvent('response.function_call.start', {
-              call_id: toolCall.id,
-              item_id: toolCall.id,
-              name: toolName,
-              arguments: '{}',
-            });
-
-            // 存储 tool call
-            this.toolCalls.set(toolIndex, {
-              id: toolCall.id,
-              name: toolName,
-              arguments: '',
-            });
-            this.toolCallIndexToContentIndex.set(toolIndex, this.textIndex);
-          }
+        if (!toolCall?.id || !toolName) {
+          continue;
         }
 
-        // 发送工具参数增量
-        if (toolCall?.function?.arguments) {
-          this.sendResponseCreated();
-
-          const stored = this.toolCalls.get(toolIndex);
-          if (stored) {
-            stored.arguments += toolCall.function.arguments;
-          }
-
+        const stored = this.ensureToolCall(toolIndex, toolCall.id, toolName);
+        const argsDelta = toolCall?.function?.arguments;
+        if (typeof argsDelta === 'string' && argsDelta.length > 0) {
+          stored.arguments += argsDelta;
           this.pushEvent('response.function_call_arguments.delta', {
-            call_id: stored?.id || '',
-            item_id: stored?.id || '',
-            delta: toolCall.function.arguments,
+            item_id: stored.itemId,
+            output_index: stored.outputIndex,
+            delta: argsDelta,
           });
         }
       }
     }
 
     // 处理 refusal（拒绝内容）
-    if (typeof delta.refusal === 'string') {
-      this.sendResponseCreated();
-      this.pushEvent('response.refusal.delta', { delta: delta.refusal });
+    if (typeof delta.refusal === 'string' && delta.refusal.length > 0) {
+      this.ensureRefusalPart();
+      this.refusalOutput += delta.refusal;
+      this.pushEvent('response.refusal.delta', {
+        item_id: this.messageItemId,
+        output_index: 0,
+        content_index: this.refusalContentIndex,
+        delta: delta.refusal,
+      });
     }
   }
 
   private finalize() {
     if (this.finalized) return;
-    this.sendResponseCreated();
 
-    for (const [, call] of this.toolCalls) {
+    // 如果没有任何输出，也需要确保有一个空的 message 输出项
+    if (!this.messageOutputAdded && this.toolCalls.size === 0) {
+      this.ensureMessageOutputItem();
+      this.ensureTextPart();
+    }
+
+    if (this.messageItemId) {
+      if (this.textPartAdded && this.textContentIndex !== null) {
+        this.pushEvent('response.output_text.done', {
+          item_id: this.messageItemId,
+          output_index: 0,
+          content_index: this.textContentIndex,
+          text: this.textOutput,
+        });
+        this.pushEvent('response.content_part.done', {
+          item_id: this.messageItemId,
+          output_index: 0,
+          content_index: this.textContentIndex,
+          part: { type: 'output_text', text: this.textOutput },
+        });
+      }
+      if (this.reasoningPartAdded && this.reasoningContentIndex !== null) {
+        this.pushEvent('response.reasoning_text.done', {
+          item_id: this.messageItemId,
+          output_index: 0,
+          content_index: this.reasoningContentIndex,
+          text: this.reasoningOutput,
+        });
+        this.pushEvent('response.content_part.done', {
+          item_id: this.messageItemId,
+          output_index: 0,
+          content_index: this.reasoningContentIndex,
+          part: { type: 'reasoning_text', text: this.reasoningOutput },
+        });
+      }
+      if (this.refusalPartAdded && this.refusalContentIndex !== null) {
+        this.pushEvent('response.refusal.done', {
+          item_id: this.messageItemId,
+          output_index: 0,
+          content_index: this.refusalContentIndex,
+          refusal: this.refusalOutput,
+        });
+        this.pushEvent('response.content_part.done', {
+          item_id: this.messageItemId,
+          output_index: 0,
+          content_index: this.refusalContentIndex,
+          part: { type: 'refusal', refusal: this.refusalOutput },
+        });
+      }
+    }
+
+    for (const call of this.toolCalls.values()) {
+      if (call.done) continue;
       this.pushEvent('response.function_call_arguments.done', {
-        call_id: call.id,
-        item_id: call.id,
+        item_id: call.itemId,
+        output_index: call.outputIndex,
         name: call.name,
         arguments: call.arguments || '{}',
       });
+      this.pushEvent('response.output_item.done', {
+        output_index: call.outputIndex,
+        item: {
+          id: call.itemId,
+          type: 'function_call',
+          call_id: call.itemId,
+          name: call.name,
+          arguments: call.arguments || '{}',
+          status: 'completed',
+        },
+      });
+      call.done = true;
     }
 
-    // 发送 response.completed 或 response.incomplete
-    this.pushEvent(this.stopReason === 'incomplete' ? 'response.incomplete' : 'response.completed', {
-      incomplete_details: this.stopReason === 'incomplete' ? { reason: this.incompleteReason } : undefined,
+    if (this.messageOutputAdded) {
+      this.pushEvent('response.output_item.done', {
+        output_index: 0,
+        item: this.buildMessageOutputItem(this.responseStatus === 'completed' ? 'completed' : 'incomplete'),
+      });
+    }
+
+    const finalResponse = this.buildFinalResponse(this.responseStatus);
+    this.pushEvent(this.responseStatus === 'incomplete' ? 'response.incomplete' : 'response.completed', {
+      response: finalResponse,
+      incomplete_details: this.responseStatus === 'incomplete' ? { reason: this.incompleteReason } : undefined,
     });
 
-    // 发送 usage（如果有）
+    // 额外发送 usage 事件，兼容已有 usage 提取逻辑
     if (this.usage) {
       this.pushEvent('response.usage', {
         input_tokens: this.usage.input_tokens,
@@ -1334,7 +1642,11 @@ export class ClaudeToResponsesEventTransform extends Transform {
     this.model = options?.model ?? null;
 
     this.on('error', (err) => {
-      console.error('[ClaudeToResponsesEventTransform] Stream error:', err);
+      if (isClientDisconnectError(err)) {
+        console.warn('[ClaudeToResponsesEventTransform] Stream closed (client disconnected)');
+      } else {
+        console.error('[ClaudeToResponsesEventTransform] Stream error:', err);
+      }
       this.errorEmitted = true;
     });
   }
@@ -1621,7 +1933,11 @@ export class GeminiToResponsesEventTransform extends Transform {
     void options;
 
     this.on('error', (err) => {
-      console.error('[GeminiToResponsesEventTransform] Stream error:', err);
+      if (isClientDisconnectError(err)) {
+        console.warn('[GeminiToResponsesEventTransform] Stream closed (client disconnected)');
+      } else {
+        console.error('[GeminiToResponsesEventTransform] Stream error:', err);
+      }
       this.errorEmitted = true;
     });
   }
@@ -1823,7 +2139,11 @@ export class ChatCompletionsToClaudeEventTransform extends Transform {
     this.model = options?.model ?? null;
 
     this.on('error', (err) => {
-      console.error('[ChatCompletionsToClaudeEventTransform] Stream error:', err);
+      if (isClientDisconnectError(err)) {
+        console.warn('[ChatCompletionsToClaudeEventTransform] Stream closed (client disconnected)');
+      } else {
+        console.error('[ChatCompletionsToClaudeEventTransform] Stream error:', err);
+      }
       this.errorEmitted = true;
     });
   }
@@ -2124,7 +2444,11 @@ export class ResponsesToClaudeEventTransform extends Transform {
     this.model = options?.model ?? null;
 
     this.on('error', (err) => {
-      console.error('[ResponsesToClaudeEventTransform] Stream error:', err);
+      if (isClientDisconnectError(err)) {
+        console.warn('[ResponsesToClaudeEventTransform] Stream closed (client disconnected)');
+      } else {
+        console.error('[ResponsesToClaudeEventTransform] Stream error:', err);
+      }
       this.errorEmitted = true;
     });
   }
@@ -2461,7 +2785,11 @@ export class GeminiToClaudeEventTransform extends Transform {
     this.model = options?.model ?? null;
 
     this.on('error', (err) => {
-      console.error('[GeminiToClaudeEventTransform] Stream error:', err);
+      if (isClientDisconnectError(err)) {
+        console.warn('[GeminiToClaudeEventTransform] Stream closed (client disconnected)');
+      } else {
+        console.error('[GeminiToClaudeEventTransform] Stream error:', err);
+      }
       this.errorEmitted = true;
     });
   }

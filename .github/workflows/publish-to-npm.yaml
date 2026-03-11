@@ -23,8 +23,14 @@ jobs:
       - run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-      - run: npm run release
-      - run: npx can-npm-publish
+      - run: |
+          # 先检查当前版本是否可以发布
+          if npx can-npm-publish --verbose; then
+            echo "✓ Current version can be published directly"
+          else
+            echo "✗ Current version already exists, bumping version..."
+            npm run release
+          fi
       - run: npm publish --provenance
         env:
           NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}

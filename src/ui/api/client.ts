@@ -34,6 +34,7 @@ interface BackendAPI {
   resetRuleRequests: (id: string) => Promise<boolean>;
   clearRuleBlacklist: (id: string) => Promise<boolean>;
   toggleRuleDisable: (id: string) => Promise<{ success: boolean; isDisabled: boolean }>;
+  clearRuleStatus: (id: string) => Promise<boolean>;
   getRulesBlacklistStatus: (routeId: string) => Promise<Array<{
     ruleId: string;
     isBlacklisted: boolean;
@@ -237,6 +238,7 @@ export const api: BackendAPI = {
   resetRuleRequests: (id) => requestJson(buildUrl(`/api/rules/${id}/reset-requests`), { method: 'PUT' }),
   clearRuleBlacklist: (id) => requestJson(buildUrl(`/api/rules/${id}/clear-blacklist`), { method: 'PUT' }),
   toggleRuleDisable: (id) => requestJson(buildUrl(`/api/rules/${id}/toggle-disable`), { method: 'PUT' }),
+  clearRuleStatus: (id) => requestJson(buildUrl(`/api/rules/${id}/clear-status`), { method: 'POST' }),
   getRulesBlacklistStatus: (routeId) => requestJson(buildUrl(`/api/rules/${routeId}/blacklist-status`)),
 
   getLogs: (limit, offset) => requestJson(buildUrl('/api/logs', { limit, offset })),

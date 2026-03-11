@@ -17,7 +17,7 @@ import {
   SSEParserTransform,
   SSESerializerTransform,
 } from './transformers/streaming';
-import { SSEEventCollectorTransform } from './transformers/chunk-collector';
+import { ChunkCollectorTransform, SSEEventCollectorTransform } from './transformers/chunk-collector';
 import { rulesStatusBroadcaster } from './rules-status-service';
 import {
   // 请求转换函数，将工具发起的请求，转化为API服务接口需要的请求数据结构
@@ -35,7 +35,7 @@ import {
   transformResponseFromChatCompletionsToResponses,
   transformResponseFromGeminiToResponses,
   // 辅助函数
-  applyModelOverride,
+  applyPayloadOverride,
   extractTokenUsageFromGeminiUsage,
   extractTokenUsageFromOpenAIUsage,
   extractTokenUsageFromClaudeUsage,
@@ -172,7 +172,7 @@ export class ProxyServer {
         const route = this.findMatchingRoute(req);
         if (!route) {
           // 没有找到激活的路由，尝试使用原始配置
-          const fallbackResult = await this.handleFallbackToOriginalConfig(req, res);
+          const fallbackResult = await this.handleFallbackToOriginalConfig(req, res, requestStartAt);
           if (fallbackResult) {
             return; // 成功使用原始配置处理请求
           }
@@ -199,6 +199,12 @@ export class ProxyServer {
           // 故障切换已禁用,使用传统的单一规则匹配
           const rule = await this.findMatchingRule(route.id, req, forcedContentType);
           if (!rule) {
+            // 有激活路由但无可用规则时，回退到原始配置
+            const fallbackResult = await this.handleFallbackToOriginalConfig(req, res, requestStartAt);
+            if (fallbackResult) {
+              return;
+            }
+
             await this.logToolRequest(req, {
               statusCode: 404,
               responseTime: Date.now() - requestStartAt,
@@ -229,6 +235,12 @@ export class ProxyServer {
         // 启用故障切换:获取所有候选规则
         const allRules = this.getAllMatchingRules(route.id, req, forcedContentType);
         if (allRules.length === 0) {
+          // 有激活路由但无可用规则时，回退到原始配置
+          const fallbackResult = await this.handleFallbackToOriginalConfig(req, res, requestStartAt);
+          if (fallbackResult) {
+            return;
+          }
+
           await this.logToolRequest(req, {
             statusCode: 404,
             responseTime: Date.now() - requestStartAt,
@@ -318,6 +330,14 @@ export class ProxyServer {
           }
         }
 
+        // 所有候选规则都不可用（如黑名单或服务缺失）时，尝试回退到原始配置
+        if (!hasRelayAttempt && !lastFailedRule && !lastFailedService) {
+          const fallbackResult = await this.handleFallbackToOriginalConfig(req, res, requestStartAt);
+          if (fallbackResult) {
+            return;
+          }
+        }
+
         // 所有服务都失败了
         console.error('All services failed');
 
@@ -366,6 +386,9 @@ export class ProxyServer {
 
         // 根据路径判断目标类型并返回适当的错误格式
         const isClaudeCode = req.path.startsWith('/claude-code/');
+        if (this.isResponseCommitted(res)) {
+          return;
+        }
         if (isClaudeCode) {
           const claudeError = {
             type: 'error',
@@ -409,6 +432,9 @@ export class ProxyServer {
 
         // 根据路径判断目标类型并返回适当的错误格式
         const isClaudeCode = req.path.startsWith('/claude-code/');
+        if (this.isResponseCommitted(res)) {
+          return;
+        }
         if (isClaudeCode) {
           const claudeError = {
             type: 'error',
@@ -477,6 +503,12 @@ export class ProxyServer {
           // 故障切换已禁用,使用传统的单一规则匹配
           const rule = await this.findMatchingRule(route.id, req, forcedContentType);
           if (!rule) {
+            // 有激活路由但无可用规则时，回退到原始配置
+            const fallbackResult = await this.handleFallbackToOriginalConfig(req, res, requestStartAt);
+            if (fallbackResult) {
+              return;
+            }
+
             await this.logToolRequest(req, {
               statusCode: 404,
               responseTime: Date.now() - requestStartAt,
@@ -507,6 +539,12 @@ export class ProxyServer {
         // 启用故障切换:获取所有候选规则
         const allRules = this.getAllMatchingRules(route.id, req, forcedContentType);
         if (allRules.length === 0) {
+          // 有激活路由但无可用规则时，回退到原始配置
+          const fallbackResult = await this.handleFallbackToOriginalConfig(req, res, requestStartAt);
+          if (fallbackResult) {
+            return;
+          }
+
           await this.logToolRequest(req, {
             statusCode: 404,
             responseTime: Date.now() - requestStartAt,
@@ -596,6 +634,14 @@ export class ProxyServer {
           }
         }
 
+        // 所有候选规则都不可用（如黑名单或服务缺失）时，尝试回退到原始配置
+        if (!hasRelayAttempt && !lastFailedRule && !lastFailedService) {
+          const fallbackResult = await this.handleFallbackToOriginalConfig(req, res, requestStartAt);
+          if (fallbackResult) {
+            return;
+          }
+        }
+
         // 所有服务都失败了
         console.error('All services failed');
 
@@ -641,6 +687,9 @@ export class ProxyServer {
 
         // 根据路径判断目标类型并返回适当的错误格式
         const isClaudeCode = req.path.startsWith('/claude-code/');
+        if (this.isResponseCommitted(res)) {
+          return;
+        }
         if (isClaudeCode) {
           const claudeError = {
             type: 'error',
@@ -680,6 +729,9 @@ export class ProxyServer {
           requestModel: req.body?.model,
           responseTime: 0,
         });
+        if (this.isResponseCommitted(res)) {
+          return;
+        }
         res.status(500).json({ error: error.message });
       }
     };
@@ -729,7 +781,7 @@ export class ProxyServer {
    * 当没有激活的路由时，fallback 到原始配置
    * @returns true 表示成功处理，false 表示无法处理
    */
-  private async handleFallbackToOriginalConfig(req: Request, res: Response): Promise<boolean> {
+  private async handleFallbackToOriginalConfig(req: Request, res: Response, requestStartAt?: number): Promise<boolean> {
     // 确定目标类型
     let targetType: ToolType | undefined;
     if (req.path.startsWith('/claude-code/')) {
@@ -750,14 +802,29 @@ export class ProxyServer {
     }
 
     // 检查原始配置的 API URL 是否指向本系统（避免死循环）
-    if (this.isLocalProxyUrl(originalConfig.apiUrl, targetType)) {
-      console.error(`[FALLBACK] Original config points to local proxy, rejecting to avoid loop: ${originalConfig.apiUrl}`);
-      return false;
+    if (this.isLocalProxyUrl(originalConfig.apiUrl)) {
+      const errorMessage = `Fallback skipped: original upstream points to AI Code Switch itself (${originalConfig.apiUrl})`;
+      console.error(`[FALLBACK] ${errorMessage}`);
+      await this.logToolRequest(req, {
+        statusCode: 502,
+        responseTime: requestStartAt ? Date.now() - requestStartAt : undefined,
+        targetType,
+        error: errorMessage,
+        tags: this.buildRelayTags(false),
+      });
+      res.status(502).json({
+        error: errorMessage,
+      });
+      return true;
     }
 
     console.log(`[FALLBACK] Using original config for ${targetType}: ${originalConfig.apiUrl}`);
 
     try {
+      const fallbackTargetModel = targetType === 'claude-code'
+        ? this.resolveClaudeFallbackTargetModel(req.body?.model, originalConfig)
+        : undefined;
+
       // 创建临时的路由对象（用于传递给 proxyRequest）
       const tempRoute: Route = {
         id: 'fallback-route',
@@ -774,6 +841,7 @@ export class ProxyServer {
         routeId: 'fallback-route',
         contentType: 'default',
         targetServiceId: 'fallback-service',
+        targetModel: fallbackTargetModel,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -806,15 +874,17 @@ export class ProxyServer {
    * 检查 API URL 是否指向本系统的代理服务
    * 用于避免 fallback 时的死循环
    */
-  private isLocalProxyUrl(apiUrl: string, targetType: ToolType): boolean {
+  private isLocalProxyUrl(apiUrl: string): boolean {
     try {
       const url = new URL(apiUrl);
+      const configuredHost = (process.env.HOST || '').trim();
+      const localHosts = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
+      if (configuredHost) {
+        localHosts.add(configuredHost);
+      }
 
-      // 检查是否是 localhost 或 127.0.0.1
-      const isLocalhost = url.hostname === 'localhost' ||
-                          url.hostname === '127.0.0.1' ||
-                          url.hostname === '::1' ||
-                          url.hostname === '0.0.0.0';
+      // 检查是否是本机地址
+      const isLocalhost = localHosts.has(url.hostname);
 
       if (!isLocalhost) {
         return false;
@@ -828,17 +898,46 @@ export class ProxyServer {
       if (!isSamePort) {
         return false;
       }
-
-      // 检查路径是否包含本系统的代理路径
-      const proxyPath = `/${targetType}`;
-      const hasProxyPath = url.pathname.startsWith(proxyPath) ||
-                           url.pathname === proxyPath;
-
-      return hasProxyPath;
+      return true;
     } catch (error) {
       // URL 解析失败，认为不是本地代理 URL
       return false;
     }
+  }
+
+  private resolveClaudeFallbackTargetModel(requestModel: unknown, originalConfig: ReturnType<typeof readOriginalConfig>): string | undefined {
+    if (typeof requestModel !== 'string') {
+      return undefined;
+    }
+    const normalized = requestModel.trim().toLowerCase();
+    if (!normalized) {
+      return undefined;
+    }
+    const defaults = originalConfig?.claudeDefaultModels;
+    if (!defaults) {
+      return undefined;
+    }
+
+    const matchSegment = (segment: 'haiku' | 'sonnet' | 'opus') => {
+      return normalized === segment
+        || normalized.startsWith(`claude-${segment}-`)
+        || normalized.includes(`-${segment}-`)
+        || normalized.endsWith(`-${segment}`)
+        || normalized.includes(`_${segment}_`)
+        || normalized.endsWith(`_${segment}`);
+    };
+
+    if (matchSegment('haiku') && defaults.haiku) {
+      return defaults.haiku;
+    }
+    if (matchSegment('sonnet') && defaults.sonnet) {
+      return defaults.sonnet;
+    }
+    if (matchSegment('opus') && defaults.opus) {
+      return defaults.opus;
+    }
+
+    return undefined;
   }
 
   private findRouteByTargetType(targetType: 'claude-code' | 'codex'): Route | undefined {
@@ -886,19 +985,23 @@ export class ProxyServer {
     return res.destroyed || res.writableEnded || !res.writable;
   }
 
+  private isResponseCommitted(res: Response): boolean {
+    return res.headersSent || this.isDownstreamClosed(res);
+  }
+
   private isClientDisconnectError(error: any, res?: Response): boolean {
     const code = error?.code;
     if (code === 'CLIENT_DISCONNECTED' || code === 'ERR_CANCELED') {
       return true;
     }
-    if (code === 'ERR_STREAM_UNABLE_TO_PIPE' || code === 'ERR_STREAM_DESTROYED') {
+    if (code === 'ERR_STREAM_UNABLE_TO_PIPE' || code === 'ERR_STREAM_DESTROYED' || code === 'ERR_STREAM_PREMATURE_CLOSE') {
       return true;
     }
     if (code === 'ECONNRESET' || code === 'EPIPE') {
       return true;
     }
     const message = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
-    if (message.includes('socket hang up') || message.includes('client disconnected')) {
+    if (message.includes('socket hang up') || message.includes('client disconnected') || message.includes('premature close')) {
       return true;
     }
     if (res && this.isDownstreamClosed(res)) {
@@ -2054,6 +2157,160 @@ export class ProxyServer {
     return length;
   }
 
+  private isCountTokensPath(path?: string): boolean {
+    if (!path) {
+      return false;
+    }
+    const normalizedPath = path.split('?')[0];
+    return /\/v1\/messages\/count_tokens\/?$/.test(normalizedPath);
+  }
+
+  private isClaudeCodeBridgeSource(sourceType: SourceType): boolean {
+    return this.isGeminiSource(sourceType)
+      || this.isGeminiChatSource(sourceType)
+      || this.isOpenAISource(sourceType)
+      || this.isOpenAIChatSource(sourceType);
+  }
+
+  private shouldDefaultStreamingForClaudeBridge(req: Request, targetType: ToolType, sourceType: SourceType, body: any): boolean {
+    if (targetType !== 'claude-code') {
+      return false;
+    }
+    if (!this.isClaudeCodeBridgeSource(sourceType)) {
+      return false;
+    }
+    if (this.isCountTokensPath(req.path) || this.isCountTokensPath(req.originalUrl)) {
+      return false;
+    }
+    if (body?.stream === false) {
+      return false;
+    }
+    return true;
+  }
+
+  private shouldHandleCountTokensLocally(req: Request, targetType: ToolType, sourceType: SourceType): boolean {
+    if (targetType !== 'claude-code') {
+      return false;
+    }
+    if (!this.isClaudeCodeBridgeSource(sourceType)) {
+      return false;
+    }
+    return this.isCountTokensPath(req.path) || this.isCountTokensPath(req.originalUrl);
+  }
+
+  private estimateTokensFromText(text: string): number {
+    if (!text) {
+      return 0;
+    }
+    const compactText = text.replace(/\s+/g, '');
+    if (!compactText) {
+      return 0;
+    }
+    const cjkCount = (compactText.match(/[\u3400-\u9FFF\uF900-\uFAFF]/g) || []).length;
+    const nonCjkCount = Math.max(compactText.length - cjkCount, 0);
+    return cjkCount + Math.ceil(nonCjkCount / 4);
+  }
+
+  private countImageBlocks(payload: any): number {
+    if (!payload) {
+      return 0;
+    }
+    let count = 0;
+    const scanContent = (content: any) => {
+      if (!content) return;
+      if (Array.isArray(content)) {
+        for (const part of content) {
+          scanContent(part);
+        }
+        return;
+      }
+      if (typeof content !== 'object') {
+        return;
+      }
+      const partType = typeof (content as any).type === 'string' ? (content as any).type : '';
+      const isImageBlock = partType === 'image'
+        || partType === 'image_url'
+        || partType === 'input_image'
+        || Boolean((content as any).image_url)
+        || (content as any).source?.type === 'base64';
+      if (isImageBlock) {
+        count++;
+      }
+      if ((content as any).content) {
+        scanContent((content as any).content);
+      }
+    };
+
+    scanContent(payload?.messages);
+    scanContent(payload?.input);
+    return count;
+  }
+
+  private estimateClaudeCountTokens(body: any): number {
+    let baseTokens = 0;
+    const addText = (value?: string | null) => {
+      if (typeof value === 'string') {
+        baseTokens += this.estimateTokensFromText(value);
+      }
+    };
+    const addContent = (content: any) => {
+      if (typeof content === 'string' || content === null) {
+        addText(content);
+        return;
+      }
+      if (Array.isArray(content)) {
+        for (const part of content) {
+          if (typeof part === 'string') {
+            addText(part);
+            continue;
+          }
+          if (part && typeof part === 'object') {
+            if (typeof part.text === 'string') {
+              addText(part.text);
+            }
+            if (typeof part.content === 'string') {
+              addText(part.content);
+            }
+          }
+        }
+      }
+    };
+
+    if (Array.isArray(body?.messages)) {
+      for (const message of body.messages) {
+        addContent(message?.content);
+      }
+    }
+
+    if (body?.input) {
+      if (typeof body.input === 'string') {
+        addText(body.input);
+      } else if (Array.isArray(body.input)) {
+        for (const message of body.input) {
+          if (typeof message === 'string') {
+            addText(message);
+          } else if (message && typeof message === 'object') {
+            addContent(message.content ?? message);
+          }
+        }
+      } else if (body.input && typeof body.input === 'object') {
+        addContent(body.input.content ?? body.input);
+      }
+    }
+
+    addContent(body?.system);
+    addText(body?.instructions);
+    addText(body?.prompt);
+
+    const imageBlocks = this.countImageBlocks(body);
+    const imageTokens = imageBlocks * 85;
+    const toolTokens = Array.isArray(body?.tools)
+      ? Math.ceil(JSON.stringify(body.tools).length / 4)
+      : 0;
+    const overheadTokens = 8;
+    return Math.max(1, baseTokens + imageTokens + toolTokens + overheadTokens);
+  }
+
   /** 判断是否为 Claude 相关类型（使用 x-api-key 认证） */
   private isClaudeSource(sourceType: SourceType | string) {
     // 向下兼容：支持旧类型 'claude-code'
@@ -2177,9 +2434,18 @@ export class ProxyServer {
     return result;
   }
 
-  private isStreamRequested(req: Request, body: any) {
+  private isStreamRequested(req: Request, body: any, targetType?: ToolType, sourceType?: SourceType) {
     const accept = typeof req.headers.accept === 'string' ? req.headers.accept : '';
-    return body?.stream === true || accept.includes('text/event-stream');
+    if (body?.stream === true || accept.includes('text/event-stream')) {
+      return true;
+    }
+    if (body?.stream === false) {
+      return false;
+    }
+    if (targetType && sourceType && this.shouldDefaultStreamingForClaudeBridge(req, targetType, sourceType, body)) {
+      return true;
+    }
+    return false;
   }
 
   private buildUpstreamHeaders(
@@ -2189,6 +2455,7 @@ export class ProxyServer {
     streamRequested: boolean,
     requestBody?: any
   ) {
+    const effectiveApiKey = this.resolveEffectiveApiKey(service);
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(req.headers)) {
       // 排除原始认证头，防止与代理设置的认证头冲突
@@ -2211,11 +2478,11 @@ export class ProxyServer {
 
     // 使用 x-goog-api-key 认证（适用于 Google Gemini API 和 Gemini Chat）
     if (authType === AuthType.G_API_KEY || (isAuto && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType)))) {
-      headers['x-goog-api-key'] = service.apiKey;
+      headers['x-goog-api-key'] = effectiveApiKey;
     }
     // 使用 x-api-key 认证（适用于 claude-chat, claude-code 及某些需要 x-api-key 的 openai-chat 兼容 API）
     else if (authType === AuthType.API_KEY || (isAuto && this.isClaudeSource(sourceType))) {
-      headers['x-api-key'] = service.apiKey;
+      headers['x-api-key'] = effectiveApiKey;
       if (this.isClaudeSource(sourceType) || authType === AuthType.API_KEY) {
         // 仅在明确配置或 Claude 源时添加 anthropic-version
         headers['anthropic-version'] = headers['anthropic-version'] || '2023-06-01';
@@ -2223,7 +2490,7 @@ export class ProxyServer {
     }
     // 使用 Authorization 认证（适用于 openai-chat, openai-responses, deepseek-reasoning-chat 等）
     else {
-      headers.authorization = `Bearer ${service.apiKey}`;
+      headers.authorization = `Bearer ${effectiveApiKey}`;
     }
 
     if (streamRequested && !headers.accept) {
@@ -2247,6 +2514,20 @@ export class ProxyServer {
     }
 
     return headers;
+  }
+
+  private resolveEffectiveApiKey(service: APIService): string {
+    if (service.inheritVendorApiKey !== true) {
+      return service.apiKey;
+    }
+
+    const vendor = this.dbManager.getVendorByServiceId(service.id);
+    if (!vendor) {
+      console.warn(`[Proxy] Service ${service.id} is set to inherit vendor API key, but vendor is missing`);
+      return '';
+    }
+
+    return vendor.apiKey || '';
   }
 
   private copyResponseHeaders(responseHeaders: Record<string, any>, res: Response) {
@@ -2445,17 +2726,35 @@ export class ProxyServer {
    */
   private mapRequestPathToUpstreamUrl(tool: ToolType, source: SourceType, originalPath: string, apiUrl: string, modelName: string, isStream: boolean) {
     const geminiEndpoint = isStream ? 'streamGenerateContent' : 'generateContent';
+    const buildGeminiUrl = (url: string) => {
+      if (url.includes('streamGenerateContent')) {
+        const [pathname, search] = url.split('?');
+        if (search?.includes('alt=sse')) {
+          return url;
+        }
+        if (search) {
+          return `${pathname}?${search}&alt=sse`;
+        }
+        return `${pathname}?alt=sse`;
+      }
+      return url;
+    };
+
+    // gemini-chat类型
     if (this.isGeminiChatSource(source)) {
-      return apiUrl.replace('{modelName}', modelName).replace('{endPoint}', geminiEndpoint);
+      const url = apiUrl.replace('{modelName}', modelName).replace('{endPoint}', geminiEndpoint);
+      return buildGeminiUrl(url);
     }
 
+    // 聊天类型
     if (this.isChatType(source)) {
       return apiUrl;
     }
 
-    // 对于 gemini 类型接口，使用 gemini-chat 接口来处理
+    // 对于 gemini 类型接口
     if (this.isGeminiSource(source)) {
-      return `${apiUrl}/v1beta/models/${modelName}:${geminiEndpoint}`;
+      const url = `${apiUrl}/v1beta/models/${modelName}:${geminiEndpoint}`;
+      return buildGeminiUrl(url);
     }
 
     // claude code 请求 openai 类型接口，直接使用 openai-chat 接口来处理
@@ -2486,7 +2785,7 @@ export class ProxyServer {
     if (tool === 'claude-code') {
       // claudecode向claude发送的请求，无需转换，但需要应用模型覆盖
       if (this.isClaudeSource(source) || this.isClaudeChatSource(source)) {
-        return applyModelOverride(payloadData);
+        return applyPayloadOverride(payloadData, targetModel);
       }
 
       // claudecode发送给gemini
@@ -2509,7 +2808,7 @@ export class ProxyServer {
     if (tool === 'codex') {
       // Codex 发送给 OpenAI Responses
       if (this.isOpenAISource(source)) {
-        return applyModelOverride(payloadData);
+        return applyPayloadOverride(payloadData, targetModel);
       }
 
       // Codex 发送给 OpenAI Chat
@@ -2530,7 +2829,7 @@ export class ProxyServer {
     }
 
     // 默认: 直接返回原始数据（如果需要，应用模型覆盖）
-    return applyModelOverride(payloadData);
+    return applyPayloadOverride(payloadData, targetModel);
   }
 
   /**
@@ -2598,9 +2897,9 @@ export class ProxyServer {
         return {
           converter: new ChatCompletionsToClaudeEventTransform({ model }),
           extractUsage: (usage) => ({
-            input_tokens: usage?.input_tokens || 0,
-            output_tokens: usage?.output_tokens || 0,
-            cache_read_input_tokens: usage?.cache_read_input_tokens || 0,
+            inputTokens: usage?.input_tokens || 0,
+            outputTokens: usage?.output_tokens || 0,
+            cacheReadInputTokens: usage?.cache_read_input_tokens || 0,
           }),
         };
       }
@@ -2611,9 +2910,9 @@ export class ProxyServer {
         return {
           converter: new ResponsesToClaudeEventTransform({ model }),
           extractUsage: (usage) => ({
-            input_tokens: usage?.input_tokens || 0,
-            output_tokens: usage?.output_tokens || 0,
-            cache_read_input_tokens: usage?.cache_read_input_tokens || 0,
+            inputTokens: usage?.input_tokens || 0,
+            outputTokens: usage?.output_tokens || 0,
+            cacheReadInputTokens: usage?.cache_read_input_tokens || 0,
           }),
         };
       }
@@ -2623,9 +2922,9 @@ export class ProxyServer {
         return {
           converter: new GeminiToClaudeEventTransform({ model }),
           extractUsage: (usage) => ({
-            input_tokens: usage?.input_tokens || 0,
-            output_tokens: usage?.output_tokens || 0,
-            cache_read_input_tokens: usage?.cache_read_input_tokens || 0,
+            inputTokens: usage?.input_tokens || 0,
+            outputTokens: usage?.output_tokens || 0,
+            cacheReadInputTokens: usage?.cache_read_input_tokens || 0,
           }),
         };
       }
@@ -2639,9 +2938,9 @@ export class ProxyServer {
         return {
           converter: new ClaudeToResponsesEventTransform({ model }),
           extractUsage: (usage) => ({
-            input_tokens: usage?.input_tokens || 0,
-            output_tokens: usage?.output_tokens || 0,
-            total_tokens: (usage?.input_tokens || 0) + (usage?.output_tokens || 0),
+            inputTokens: usage?.input_tokens || 0,
+            outputTokens: usage?.output_tokens || 0,
+            totalTokens: (usage?.input_tokens || 0) + (usage?.output_tokens || 0),
           }),
         };
       }
@@ -2652,9 +2951,9 @@ export class ProxyServer {
         return {
           converter: new ChatCompletionsToResponsesEventTransform({ model }),
           extractUsage: (usage) => ({
-            input_tokens: usage?.input_tokens || 0,
-            output_tokens: usage?.output_tokens || 0,
-            total_tokens: (usage?.input_tokens || 0) + (usage?.output_tokens || 0),
+            inputTokens: usage?.input_tokens || 0,
+            outputTokens: usage?.output_tokens || 0,
+            totalTokens: (usage?.input_tokens || 0) + (usage?.output_tokens || 0),
           }),
         };
       }
@@ -2665,9 +2964,9 @@ export class ProxyServer {
         return {
           converter: new GeminiToResponsesEventTransform({ model }),
           extractUsage: (usage) => ({
-            input_tokens: usage?.input_tokens || 0,
-            output_tokens: usage?.output_tokens || 0,
-            total_tokens: (usage?.input_tokens || 0) + (usage?.output_tokens || 0),
+            inputTokens: usage?.input_tokens || 0,
+            outputTokens: usage?.output_tokens || 0,
+            totalTokens: (usage?.input_tokens || 0) + (usage?.output_tokens || 0),
           }),
         };
       }
@@ -2728,9 +3027,11 @@ export class ProxyServer {
     const failoverEnabled = options?.failoverEnabled === true;
     const forwardedToServiceName = options?.forwardedToServiceName;
     const useOriginalConfig = options?.useOriginalConfig === true;
+    let relayedForLog = !useOriginalConfig;
     let requestBody: any = req.body || {};
     let usageForLog: TokenUsage | undefined;
     let logged = false;
+    const extraTagsForLog: string[] = [];
 
     // MCP 图像理解处理
     let tempImageFiles: string[] = [];
@@ -2858,6 +3159,7 @@ export class ProxyServer {
     let responseHeadersForLog: Record<string, string> | undefined;
     let responseBodyForLog: string | undefined;
     let streamChunksForLog: string[] | undefined;
+    let downstreamResponseBodyForLog: string | undefined;
     let upstreamRequestForLog: RequestLog['upstreamRequest'] | undefined;
     let actuallyUsedProxy = false; // 标记是否实际使用了代理
 
@@ -2882,6 +3184,11 @@ export class ProxyServer {
       // 从请求体中提取模型信息
       const requestModel = req.body?.model;
 
+      const tagsForLog = this.buildRelayTags(relayedForLog, useOriginalConfig);
+      if (extraTagsForLog.length > 0) {
+        tagsForLog.push(...extraTagsForLog);
+      }
+
       await this.dbManager.addLog({
         timestamp: Date.now(),
         method: req.method,
@@ -2904,13 +3211,13 @@ export class ProxyServer {
         vendorId: service.vendorId,
         vendorName: vendor?.name,
         requestModel,
-        tags: this.buildRelayTags(!useOriginalConfig, useOriginalConfig),
+        tags: tagsForLog,
         responseHeaders: responseHeadersForLog,
         responseBody: responseBodyForLog,
         streamChunks: streamChunksForLog,
 
         upstreamRequest: upstreamRequestForLog,
-        downstreamResponseBody: streamChunksForLog || responseBodyForLog,
+        downstreamResponseBody: downstreamResponseBodyForLog ?? responseBodyForLog,
       });
 
       // Session 索引逻辑
@@ -2997,6 +3304,15 @@ export class ProxyServer {
         cleanupTempImages(tempImageFiles);
         console.log(`[MCP] Cleaned up ${tempImageFiles.length} temporary image files`);
       }
+
+      // 请求完成后立即更新规则状态
+      if (statusCode >= 400) {
+        // 请求失败，标记为错误状态
+        rulesStatusBroadcaster.markRuleError(route.id, rule.id, error);
+      } else {
+        // 请求成功，标记为空闲状态
+        rulesStatusBroadcaster.markRuleIdle(route.id, rule.id);
+      }
     };
 
     const handleUpstreamHttpError = async (
@@ -3062,6 +3378,26 @@ export class ProxyServer {
       await finalizeLog(res.statusCode);
     };
 
+    if (this.shouldHandleCountTokensLocally(req, targetType, sourceType)) {
+      const inputTokens = this.estimateClaudeCountTokens(requestBody);
+      const localTokenResponse = { input_tokens: inputTokens };
+      usageForLog = {
+        inputTokens,
+        outputTokens: 0,
+        totalTokens: inputTokens,
+      };
+      responseHeadersForLog = {
+        'content-type': 'application/json',
+      };
+      responseBodyForLog = JSON.stringify(localTokenResponse);
+      streamChunksForLog = undefined;
+      relayedForLog = false;
+      extraTagsForLog.push('系统计算Token直返');
+      res.status(200).json(localTokenResponse);
+      await finalizeLog(200);
+      return;
+    }
+
     const upstreamAbortController = new AbortController();
     const abortUpstreamRequest = (reason: string) => {
       if (!upstreamAbortController.signal.aborted) {
@@ -3081,12 +3417,19 @@ export class ProxyServer {
 
     try {
       // 使用统一的请求转换方法
-      requestBody = this.transformRequestToUpstream(targetType, sourceType, requestBody, rule.targetModel as string);
+      const transformedRequestBody = this.transformRequestToUpstream(targetType, sourceType, requestBody, rule.targetModel as string);
+      requestBody = transformedRequestBody ?? requestBody ?? {};
 
       // 应用 max_output_tokens 限制
       requestBody = this.applyMaxOutputTokensLimit(requestBody, service);
 
-      const streamRequested = this.isStreamRequested(req, requestBody);
+      if (this.shouldDefaultStreamingForClaudeBridge(req, targetType, sourceType, requestBody)
+          && requestBody?.stream === undefined
+          && typeof requestBody === 'object') {
+        requestBody.stream = true;
+      }
+
+      const streamRequested = this.isStreamRequested(req, requestBody, targetType, sourceType);
 
       // Build the full URL by appending the request path to the service API URL
       let pathToRequest = req.path;
@@ -3097,7 +3440,7 @@ export class ProxyServer {
       }
 
       // 使用 mapRequestPathToUpstreamUrl 统一构建上游 URL
-      const model = rule.targetModel || requestBody.model;
+      const model = rule.targetModel || requestBody?.model;
       const apiUrl = service.apiUrl;
       const upstreamUrl = this.mapRequestPathToUpstreamUrl(
         route.targetType,
@@ -3629,6 +3972,7 @@ export class ProxyServer {
         const parser = new SSEParserTransform();
         const eventCollector = new SSEEventCollectorTransform();
         const serializer = new SSESerializerTransform();
+        const downstreamChunkCollector = new ChunkCollectorTransform();
         responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
 
         // 使用 transformSSEToTool 方法选择转换器
@@ -3636,11 +3980,14 @@ export class ProxyServer {
 
         this.copyResponseHeaders(responseHeaders, res);
 
-        // 监听事件收集器的完成事件，确保所有chunks都被收集
+        // 收集日志：responseBody/streamChunks 记录上游原始响应；downstreamResponseBody 记录实际下发内容
         const finalizeChunks = () => {
-          streamChunksForLog = eventCollector.getChunks();
-          // 将所有 chunks 合并成完整的响应体用于日志记录
-          responseBodyForLog = streamChunksForLog.join('\n');
+          const upstreamChunks = eventCollector.getChunks();
+          streamChunksForLog = upstreamChunks;
+          responseBodyForLog = upstreamChunks.join('\n');
+
+          const downstreamChunks = downstreamChunkCollector.getChunks();
+          downstreamResponseBodyForLog = downstreamChunks.join('');
 
           // 尝试从event collector或converter中提取usage信息
           let extractedUsage = eventCollector.extractUsage();
@@ -3658,14 +4005,14 @@ export class ProxyServer {
             usageForLog = this.extractTokenUsageFromResponse(extractedUsage, sourceType);
           }
 
-          console.log('[Proxy] Default stream request finished, collected chunks:', streamChunksForLog?.length || 0);
+          console.log('[Proxy] Default stream request finished, collected upstream chunks:', streamChunksForLog?.length || 0);
           console.log('[Proxy] Response body length:', responseBodyForLog?.length || 0);
           void finalizeLog(res.statusCode);
         };
 
-        // 在pipeline完成且eventCollector flush后执行
-        eventCollector.on('finish', () => {
-          console.log('[Proxy] EventCollector finished (default stream), collecting chunks...');
+        // 在下游 chunk 收集器完成后执行，确保拿到真正下发给客户端的完整文本
+        downstreamChunkCollector.on('finish', () => {
+          console.log('[Proxy] Downstream chunk collector finished (default stream), collecting chunks...');
           finalizeChunks();
         });
 
@@ -3686,7 +4033,7 @@ export class ProxyServer {
         // 构建 pipeline，根据是否需要转换选择不同的处理链
         if (converter) {
           ensureResponseWritable();
-          pipeline(response.data, parser, eventCollector, converter, serializer, res, async (error) => {
+          pipeline(response.data, parser, eventCollector, converter, serializer, downstreamChunkCollector, res, async (error) => {
             if (error) {
               if (this.isClientDisconnectError(error, res)) {
                 console.warn('[Proxy] Default stream pipeline closed because client disconnected');
@@ -3717,7 +4064,7 @@ export class ProxyServer {
           });
         } else {
           ensureResponseWritable();
-          pipeline(response.data, parser, eventCollector, serializer, res, async (error) => {
+          pipeline(response.data, parser, eventCollector, serializer, downstreamChunkCollector, res, async (error) => {
             if (error) {
               if (this.isClientDisconnectError(error, res)) {
                 console.warn('[Proxy] Default stream pipeline closed because client disconnected');
@@ -3765,13 +4112,17 @@ export class ProxyServer {
       // 提取 token usage（从原始响应数据中提取）
       usageForLog = this.extractTokenUsageFromResponse(responseData, sourceType);
 
+      this.copyResponseHeaders(responseHeaders, res);
+
       if (converted && converted !== responseData) {
-        // 如果进行了转换，记录转换后的响应体
-        responseBodyForLog = JSON.stringify(converted);
+        // 非流式：responseBody 记录上游原始响应，downstreamResponseBody 记录转换后下发内容
+        responseBodyForLog = typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
+        downstreamResponseBodyForLog = JSON.stringify(converted);
         res.status(response.status).json(converted);
       } else {
         // 没有转换，使用原始数据
         responseBodyForLog = typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
+        downstreamResponseBodyForLog = responseBodyForLog;
         console.log('[Proxy] Non-stream response logged, body length:', responseBodyForLog?.length || 0);
         if (contentType.includes('application/json')) {
           res.status(response.status).json(responseData);
@@ -3780,7 +4131,6 @@ export class ProxyServer {
         }
       }
 
-      this.copyResponseHeaders(responseHeaders, res);
       await finalizeLog(res.statusCode);
     } catch (error: any) {
       if (this.isClientDisconnectError(error, res)) {
@@ -3839,8 +4189,12 @@ export class ProxyServer {
         throw this.createFailoverError(errorMessage, isTimeout ? 504 : 500, error);
       }
 
+      if (this.isResponseCommitted(res)) {
+        return;
+      }
+
       // 根据请求类型返回适当格式的错误响应
-      const streamRequested = this.isStreamRequested(req, req.body || {});
+      const streamRequested = this.isStreamRequested(req, req.body || {}, targetType, sourceType);
 
       if (route.targetType === 'claude-code') {
         // 对于 Claude Code，返回符合 Claude API 标准的错误响应

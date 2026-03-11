@@ -14,6 +14,11 @@ export interface OriginalConfig {
   authType: AuthType;
   sourceType?: SourceType;
   model?: string;
+  claudeDefaultModels?: {
+    haiku?: string;
+    sonnet?: string;
+    opus?: string;
+  };
 }
 
 /**
@@ -28,33 +33,105 @@ const parseToml = (content: string): Record<string, any> => {
   }
 };
 
+const normalizeApiUrl = (value: string): string => {
+  return value.replace(/\/+$/, '');
+};
+
+const inferSourceTypeFromBaseUrlAndWireApi = (baseUrl: string, wireApi?: string): SourceType => {
+  const lowerBaseUrl = baseUrl.toLowerCase();
+  const normalizedWireApi = (wireApi || '').toLowerCase();
+
+  if (lowerBaseUrl.includes('anthropic')) {
+    return normalizedWireApi === 'chat' ? 'claude-chat' : 'claude';
+  }
+
+  if (
+    lowerBaseUrl.includes('generativelanguage.googleapis.com') ||
+    lowerBaseUrl.includes('aiplatform.googleapis.com') ||
+    lowerBaseUrl.includes('vertexai')
+  ) {
+    return normalizedWireApi === 'chat' ? 'gemini-chat' : 'gemini';
+  }
+
+  if (lowerBaseUrl.includes('deepseek')) {
+    return 'deepseek-reasoning-chat';
+  }
+
+  if (normalizedWireApi === 'chat') {
+    return 'openai-chat';
+  }
+
+  return 'openai';
+};
+
+const inferAuthTypeFromSource = (sourceType: SourceType): AuthType => {
+  if (sourceType === 'gemini' || sourceType === 'gemini-chat') {
+    return AuthTypeEnum.G_API_KEY;
+  }
+  if (sourceType === 'claude' || sourceType === 'claude-chat') {
+    return AuthTypeEnum.API_KEY;
+  }
+  return AuthTypeEnum.AUTH_TOKEN;
+};
+
+const getProviderCandidateKeys = (providerName?: string): string[] => {
+  if (!providerName) {
+    return [];
+  }
+
+  const upper = providerName.toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+  const lower = providerName.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  return [
+    `${upper}_API_KEY`,
+    `${upper}_AUTH_TOKEN`,
+    `${lower}_api_key`,
+    `${lower}_auth_token`,
+  ];
+};
+
+const pickApiKey = (authConfig: Record<string, any>, candidates: string[]): string => {
+  for (const key of candidates) {
+    const value = authConfig[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return '';
+};
+
 /**
  * 读取 Claude Code 原始配置
- * 从备份文件或当前配置文件中读取（如果未激活路由）
+ * fallback 场景下仅从备份文件读取
  */
 export const readClaudeOriginalConfig = (): OriginalConfig | null => {
   try {
     const homeDir = os.homedir();
-    const settingsPath = path.join(homeDir, '.claude/settings.json');
     const settingsBakPath = path.join(homeDir, '.claude/settings.json.aicodeswitch_backup');
 
-    // 优先读取备份文件（原始配置）
-    let configPath = settingsBakPath;
-    if (!fs.existsSync(configPath)) {
-      // 如果没有备份，尝试读取当前配置
-      configPath = settingsPath;
-      if (!fs.existsSync(configPath)) {
-        console.log('No Claude config file found');
-        return null;
-      }
+    // fallback 只读取备份文件，确保使用真实上游配置
+    if (!fs.existsSync(settingsBakPath)) {
+      console.log('No Claude backup config file found');
+      return null;
     }
 
-    const content = fs.readFileSync(configPath, 'utf-8');
+    const content = fs.readFileSync(settingsBakPath, 'utf-8');
     const config = JSON.parse(content);
 
     // 提取配置信息
-    const baseUrl = config.env?.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
-    const apiKey = config.env?.ANTHROPIC_AUTH_TOKEN || config.env?.ANTHROPIC_API_KEY || '';
+    const baseUrlRaw = config.env?.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
+    const baseUrl = normalizeApiUrl(baseUrlRaw);
+    const authToken = typeof config.env?.ANTHROPIC_AUTH_TOKEN === 'string' ? config.env.ANTHROPIC_AUTH_TOKEN : '';
+    const apiKeyValue = typeof config.env?.ANTHROPIC_API_KEY === 'string' ? config.env.ANTHROPIC_API_KEY : '';
+    const apiKey = (authToken || apiKeyValue).trim();
+    const defaultHaikuModel = typeof config.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL === 'string'
+      ? config.env.ANTHROPIC_DEFAULT_HAIKU_MODEL.trim()
+      : '';
+    const defaultSonnetModel = typeof config.env?.ANTHROPIC_DEFAULT_SONNET_MODEL === 'string'
+      ? config.env.ANTHROPIC_DEFAULT_SONNET_MODEL.trim()
+      : '';
+    const defaultOpusModel = typeof config.env?.ANTHROPIC_DEFAULT_OPUS_MODEL === 'string'
+      ? config.env.ANTHROPIC_DEFAULT_OPUS_MODEL.trim()
+      : '';
 
     if (!apiKey) {
       console.log('No API key found in Claude config');
@@ -64,8 +141,13 @@ export const readClaudeOriginalConfig = (): OriginalConfig | null => {
     return {
       apiUrl: baseUrl,
       apiKey: apiKey,
-      authType: AuthTypeEnum.AUTH_TOKEN,
+      authType: authToken ? AuthTypeEnum.AUTH_TOKEN : AuthTypeEnum.API_KEY,
       sourceType: 'claude',
+      claudeDefaultModels: {
+        haiku: defaultHaikuModel || undefined,
+        sonnet: defaultSonnetModel || undefined,
+        opus: defaultOpusModel || undefined,
+      },
     };
   } catch (error) {
     console.error('Failed to read Claude original config:', error);
@@ -75,38 +157,54 @@ export const readClaudeOriginalConfig = (): OriginalConfig | null => {
 
 /**
  * 读取 Codex 原始配置
- * 从备份文件或当前配置文件中读取（如果未激活路由）
+ * fallback 场景下仅从备份文件读取
  */
 export const readCodexOriginalConfig = (): OriginalConfig | null => {
   try {
     const homeDir = os.homedir();
-    const configPath = path.join(homeDir, '.codex/config.toml');
     const configBakPath = path.join(homeDir, '.codex/config.toml.aicodeswitch_backup');
-    const authPath = path.join(homeDir, '.codex/auth.json');
+    const authBakPath = path.join(homeDir, '.codex/auth.json.aicodeswitch_backup');
 
-    // 优先读取备份文件（原始配置）
-    let tomlPath = configBakPath;
-    if (!fs.existsSync(tomlPath)) {
-      // 如果没有备份，尝试读取当前配置
-      tomlPath = configPath;
-      if (!fs.existsSync(tomlPath)) {
-        console.log('No Codex config file found');
-        return null;
+    // fallback 只读取备份文件，确保使用真实上游配置
+    if (!fs.existsSync(configBakPath)) {
+      console.log('No Codex backup config file found');
+      return null;
+    }
+
+    const tomlContent = fs.readFileSync(configBakPath, 'utf-8');
+    const config = parseToml(tomlContent);
+
+    // 提取 provider 配置
+    let baseUrl = '';
+    let wireApi = '';
+    const model = typeof config.model === 'string' ? config.model : undefined;
+    const providerName = typeof config.model_provider === 'string' ? config.model_provider : undefined;
+
+    // 从 model_providers 中查找配置
+    if (config.model_providers && typeof config.model_providers === 'object') {
+      const providers = config.model_providers as Record<string, any>;
+      if (providerName && providers[providerName]) {
+        const providerConfig = providers[providerName];
+        if (typeof providerConfig?.base_url === 'string') {
+          baseUrl = providerConfig.base_url;
+        }
+        if (typeof providerConfig?.wire_api === 'string') {
+          wireApi = providerConfig.wire_api;
+        }
+      } else {
+        const firstProvider = Object.values(providers).find(provider => typeof provider?.base_url === 'string') as Record<string, any> | undefined;
+        if (firstProvider) {
+          baseUrl = firstProvider.base_url;
+          if (typeof firstProvider.wire_api === 'string') {
+            wireApi = firstProvider.wire_api;
+          }
+        }
       }
     }
 
-    const tomlContent = fs.readFileSync(tomlPath, 'utf-8');
-    const config = parseToml(tomlContent);
-
-    // 提取 base_url
-    let baseUrl = '';
-    let model = config.model;
-
-    // 从 model_providers 中查找配置
-    if (config.model_providers) {
-      const providerName = config.model_provider;
-      if (providerName && config.model_providers[providerName]) {
-        baseUrl = config.model_providers[providerName].base_url;
+    if (!baseUrl) {
+      if (typeof config.base_url === 'string' && config.base_url.trim()) {
+        baseUrl = config.base_url;
       }
     }
 
@@ -115,30 +213,53 @@ export const readCodexOriginalConfig = (): OriginalConfig | null => {
       return null;
     }
 
-    // 读取 API key（从 auth.json）
+    const normalizedBaseUrl = normalizeApiUrl(baseUrl);
+    const sourceType = inferSourceTypeFromBaseUrlAndWireApi(normalizedBaseUrl, wireApi);
+
+    // 读取 API key（从 auth.json.aicodeswitch_backup）
     let apiKey = '';
-    if (fs.existsSync(authPath)) {
+    if (fs.existsSync(authBakPath)) {
       try {
-        const authContent = fs.readFileSync(authPath, 'utf-8');
-        const authConfig = JSON.parse(authContent);
-        // Codex 的 auth.json 可能包含多个 provider 的 key
-        // 尝试读取常见的字段
-        apiKey = authConfig.OPENAI_API_KEY || authConfig.api_key || authConfig.openai_api_key || authConfig.key || '';
+        const authContent = fs.readFileSync(authBakPath, 'utf-8');
+        const authConfig = JSON.parse(authContent) as Record<string, any>;
+        const providerCandidateKeys = getProviderCandidateKeys(providerName);
+        const sourceTypeKeys: string[] = sourceType === 'claude' || sourceType === 'claude-chat'
+          ? ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY']
+          : sourceType === 'gemini' || sourceType === 'gemini-chat'
+            ? ['GEMINI_API_KEY', 'GOOGLE_API_KEY']
+            : ['OPENAI_API_KEY', 'DEEPSEEK_API_KEY'];
+        const commonKeys = ['api_key', 'openai_api_key', 'key'];
+
+        apiKey = pickApiKey(authConfig, [
+          ...providerCandidateKeys,
+          ...sourceTypeKeys,
+          ...commonKeys,
+        ]);
       } catch (error) {
-        console.error('Failed to read Codex auth.json:', error);
+        console.error('Failed to read Codex auth backup:', error);
+      }
+    } else {
+      console.log('No Codex backup auth file found');
+    }
+
+    // 某些配置会把 key 内联在 provider 中
+    if (!apiKey && config.model_providers && providerName) {
+      const providerConfig = (config.model_providers as Record<string, any>)[providerName];
+      if (providerConfig && typeof providerConfig.api_key === 'string' && providerConfig.api_key.trim()) {
+        apiKey = providerConfig.api_key.trim();
       }
     }
 
     if (!apiKey) {
-      console.log('No API key found in Codex auth.json');
+      console.log('No API key found in Codex backup config/auth');
       return null;
     }
 
     return {
-      apiUrl: baseUrl,
+      apiUrl: normalizedBaseUrl,
       apiKey: apiKey,
-      authType: AuthTypeEnum.API_KEY,
-      sourceType: 'openai',
+      authType: inferAuthTypeFromSource(sourceType),
+      sourceType,
       model: model,
     };
   } catch (error) {

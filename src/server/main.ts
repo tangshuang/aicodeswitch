@@ -141,39 +141,6 @@ const asyncHandler =
     });
   };
 
-const OPENAI_V1_SUFFIX_RE = /\/v1\/?$/i;
-
-const validateOpenAIServiceBaseUrl = (service: any): string | null => {
-  if (service?.sourceType !== 'openai') {
-    return null;
-  }
-
-  if (typeof service.apiUrl !== 'string') {
-    return null;
-  }
-
-  if (!OPENAI_V1_SUFFIX_RE.test(service.apiUrl.trim())) {
-    return null;
-  }
-
-  return 'OpenAI 数据源请填写不包含 /v1 的 base URL，例如：https://api.openai.com';
-};
-
-const validateOpenAIServiceBaseUrlsInVendorPayload = (vendorBody: any): string | null => {
-  if (!Array.isArray(vendorBody?.services)) {
-    return null;
-  }
-
-  for (const service of vendorBody.services) {
-    const error = validateOpenAIServiceBaseUrl(service);
-    if (error) {
-      return error;
-    }
-  }
-
-  return null;
-};
-
 interface ToolConfigWriteOptions {
   allowOverwriteRefresh?: boolean;
 }
@@ -1192,19 +1159,9 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
 
   app.get('/api/vendors', (_req, res) => res.json(dbManager.getVendors()));
   app.post('/api/vendors', asyncHandler(async (req, res) => {
-    const error = validateOpenAIServiceBaseUrlsInVendorPayload(req.body);
-    if (error) {
-      res.status(400).json({ error });
-      return;
-    }
     res.json(await dbManager.createVendor(req.body));
   }));
   app.put('/api/vendors/:id', asyncHandler(async (req, res) => {
-    const error = validateOpenAIServiceBaseUrlsInVendorPayload(req.body);
-    if (error) {
-      res.status(400).json({ error });
-      return;
-    }
     res.json(await dbManager.updateVendor(req.params.id, req.body));
   }));
   app.delete('/api/vendors/:id', async (req, res) => {
@@ -1224,11 +1181,6 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
   });
   app.post('/api/services', asyncHandler(async (req, res) => {
     console.log('[创建服务] 请求数据:', JSON.stringify(req.body, null, 2));
-    const error = validateOpenAIServiceBaseUrl(req.body);
-    if (error) {
-      res.status(400).json({ error });
-      return;
-    }
     const result = await dbManager.createAPIService(req.body);
     console.log('[创建服务] 创建结果:', JSON.stringify(result, null, 2));
     res.json(result);
@@ -1237,13 +1189,6 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
     const existingService = dbManager.getAPIService(req.params.id);
     if (!existingService) {
       res.status(404).json({ error: '服务不存在' });
-      return;
-    }
-
-    const mergedService = { ...existingService, ...req.body };
-    const error = validateOpenAIServiceBaseUrl(mergedService);
-    if (error) {
-      res.status(400).json({ error });
       return;
     }
 
@@ -1373,6 +1318,36 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
         console.error('Error clearing blacklist:', error);
         res.status(500).json({ error: 'Failed to clear blacklist' });
       }
+    })
+  );
+
+  // 清除规则的错误状态（广播 idle 状态给所有客户端）
+  app.post(
+    '/api/rules/:id/clear-status',
+    asyncHandler(async (req, res) => {
+      const { id } = req.params;
+      const rule = dbManager.getRule(id);
+
+      if (!rule) {
+        res.status(404).json({ error: 'Rule not found' });
+        return;
+      }
+
+      // 找到该规则所属的路由
+      const routes = dbManager.getRoutes();
+      const route = routes.find(r => {
+        const rules = dbManager.getRules(r.id);
+        return rules.some(r => r.id === id);
+      });
+
+      if (!route) {
+        res.status(404).json({ error: 'Route not found' });
+        return;
+      }
+
+      // 广播 idle 状态给所有客户端
+      rulesStatusBroadcaster.markRuleIdle(route.id, id);
+      res.json({ success: true });
     })
   );
 
@@ -2534,16 +2509,16 @@ const start = async () => {
       // 服务终止前恢复配置文件（适用于 aicos stop 与 Ctrl+C）
       try {
         const claudeRestored = await restoreClaudeConfig();
-        console.log(`[Shutdown] Claude Code config ${claudeRestored ? 'restored' : 'was not modified'}`);
+        console.log(`[Shutdown ...] Claude Code config ${claudeRestored ? 'restored' : 'was not modified'}`);
       } catch (error) {
-        console.error('[Shutdown] Failed to restore Claude config:', error);
+        console.error('[Shutdown ...] Failed to restore Claude config:', error);
       }
 
       try {
         const codexRestored = await restoreCodexConfig();
-        console.log(`[Shutdown] Codex config ${codexRestored ? 'restored' : 'was not modified'}`);
+        console.log(`[Shutdown ...] Codex config ${codexRestored ? 'restored' : 'was not modified'}`);
       } catch (error) {
-        console.error('[Shutdown] Failed to restore Codex config:', error);
+        console.error('[Shutdown ...] Failed to restore Codex config:', error);
       }
 
       dbManager.close();

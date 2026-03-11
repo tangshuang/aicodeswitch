@@ -9,9 +9,10 @@ export interface RuleStatusMessage {
   type: 'rule_status';
   data: {
     ruleId: string;
-    status: 'in_use' | 'idle';
+    status: 'in_use' | 'idle' | 'error';
     totalTokensUsed?: number;
     totalRequestsUsed?: number;
+    errorMessage?: string;
     timestamp: number;
   };
 }
@@ -54,7 +55,7 @@ export class RulesStatusBroadcaster {
   private clients: Set<RulesStatusWS> = new Set();
   private activeRules: Map<string, Set<string>> = new Map(); // routeId -> Set of ruleIds
   private ruleTimeouts: Map<string, NodeJS.Timeout> = new Map();
-  private readonly INACTIVITY_TIMEOUT = 30000; // 30秒无活动后标记为空闲
+  private readonly INACTIVITY_TIMEOUT = 10000; // 10秒无活动后标记为空闲
 
   /**
    * 添加客户端
@@ -99,7 +100,7 @@ export class RulesStatusBroadcaster {
       },
     });
 
-    // 设置超时定时器，如果30秒内没有新活动则标记为空闲
+    // 设置超时定时器，如果10秒内没有新活动则标记为空闲
     const timeout = setTimeout(() => {
       this.markRuleIdle(routeId, ruleId);
     }, this.INACTIVITY_TIMEOUT);
@@ -110,7 +111,7 @@ export class RulesStatusBroadcaster {
   /**
    * 标记规则空闲
    */
-  private markRuleIdle(routeId: string, ruleId: string) {
+  markRuleIdle(routeId: string, ruleId: string) {
     const timeoutKey = `${routeId}:${ruleId}`;
 
     // 清除超时定时器
@@ -134,6 +135,39 @@ export class RulesStatusBroadcaster {
       data: {
         ruleId,
         status: 'idle',
+        timestamp: Date.now(),
+      },
+    });
+  }
+
+  /**
+   * 标记规则错误
+   */
+  markRuleError(routeId: string, ruleId: string, errorMessage?: string) {
+    const timeoutKey = `${routeId}:${ruleId}`;
+
+    // 清除超时定时器
+    const existingTimeout = this.ruleTimeouts.get(timeoutKey);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+      this.ruleTimeouts.delete(timeoutKey);
+    }
+
+    // 从活动规则集合中移除
+    if (this.activeRules.has(routeId)) {
+      this.activeRules.get(routeId)!.delete(ruleId);
+      if (this.activeRules.get(routeId)!.size === 0) {
+        this.activeRules.delete(routeId);
+      }
+    }
+
+    // 广播错误状态
+    this.broadcastStatus({
+      type: 'rule_status',
+      data: {
+        ruleId,
+        status: 'error',
+        errorMessage,
         timestamp: Date.now(),
       },
     });

@@ -94,7 +94,7 @@ export default {
                 models: 'ark-code-latest',
             },
             {
-                name: 'Coding Plan | Chat Completions 标准接口',
+                name: 'Coding Plan | Responses 标准接口',
                 sourceType: 'openai',
                 apiUrl: 'https://ark.cn-beijing.volces.com/api/coding/v3',
                 models: 'ark-code-latest',
@@ -103,13 +103,19 @@ export default {
                 name: 'Claude 标准接口（付费API）',
                 sourceType: 'claude',
                 apiUrl: 'https://ark.cn-beijing.volces.com/api/compatible',
-                models: 'doubao-seed-code-preview-251028',
+                models: 'doubao-seed-2-0-code-preview-260215, doubao-seed-code-preview-251028',
+            },
+            {
+                name: 'Responses 标准接口（付费API）',
+                sourceType: 'openai',
+                apiUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+                models: 'doubao-seed-2-0-code-preview-260215, doubao-seed-code-preview-251028',
             },
             {
                 name: 'Chat Completions 标准接口（付费API）',
-                sourceType: 'openai',
-                apiUrl: 'https://ark.cn-beijing.volces.com/api/v3',
-                models: 'doubao-seed-code-preview-251028',
+                sourceType: 'openai-chat',
+                apiUrl: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
+                models: 'doubao-seed-2-0-code-preview-260215, doubao-seed-code-preview-251028',
             },
         ],
     },
@@ -124,15 +130,21 @@ export default {
                 models: 'qwen3-max-2026-01-23, qwen3-coder-plus',
             },
             {
-                name: 'Coding Plan | Chat Completions 标准接口',
+                name: 'Coding Plan | Responses 标准接口',
                 sourceType: 'openai-chat',
-                apiUrl: 'https://coding.dashscope.aliyuncs.com/v1/chat/completions',
+                apiUrl: 'https://coding.dashscope.aliyuncs.com/v1',
                 models: 'qwen3-max-2026-01-23, qwen3-coder-plus',
             },
             {
-                name: 'Chat Completions 标准接口（付费API）',
+                name: 'Responses 标准接口（付费API）',
                 sourceType: 'openai',
-                apiUrl: 'https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode',
+                apiUrl: 'https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1',
+                models: 'qwen3-max-2026-01-23, qwen3-coder-plus, kimi-k2.5, glm-4.7, MiniMax-M2.1',
+            },
+            {
+                name: 'Claude 标准接口（付费API）',
+                sourceType: 'claude',
+                apiUrl: 'https://dashscope.aliyuncs.com/apps/anthropic',
                 models: 'qwen3-max-2026-01-23, qwen3-coder-plus, kimi-k2.5, glm-4.7, MiniMax-M2.1',
             },
         ]
@@ -142,12 +154,12 @@ export default {
         description: '稳定的第三方中转 https://aicodewith.com/login?tab=register&invitation=QCA74W',
         services: [
             {
-                name: 'claudecode',
+                name: 'Claude 标准接口',
                 sourceType: 'claude',
                 apiUrl: 'https://api.aicodewith.com',
             },
             {
-                name: 'codex',
+                name: 'Responses 标准接口',
                 sourceType: 'openai',
                 apiUrl: 'https://api.aicodewith.com/chatgpt',
             },
@@ -205,6 +217,19 @@ export default {
                 apiUrl: 'https://openrouter.ai/api/v1/chat/completions',
                 models: 'anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5, openai/gpt-5.2-codex, openai/gpt-5.2-chat, openai/gpt-5.2-pro, openai/gpt-5.2, openai/gpt-5.1-codex-max, google/gemini-3-flash-preview, google/gemini-3-pro-preview',
             },
+            {
+                name: 'Responses 标准接口 (Beta)',
+                sourceType: 'openai',
+                apiUrl: 'https://openrouter.ai/api/v1',
+                models: 'anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5, openai/gpt-5.2-codex, openai/gpt-5.2-chat, openai/gpt-5.2-pro, openai/gpt-5.2, openai/gpt-5.1-codex-max, google/gemini-3-flash-preview, google/gemini-3-pro-preview',
+            },
+            {
+                name: 'Claude 标准接口',
+                sourceType: 'claude',
+                apiUrl: 'https://openrouter.ai/api',
+                models: 'anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5, openai/gpt-5.2-codex, openai/gpt-5.2-chat, openai/gpt-5.2-pro, openai/gpt-5.2, openai/gpt-5.1-codex-max, google/gemini-3-flash-preview, google/gemini-3-pro-preview',
+                authType: AuthType.AUTH_TOKEN,
+            }
         ],
         is_oversea: true,
     },

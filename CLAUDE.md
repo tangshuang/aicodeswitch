@@ -4,9 +4,9 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 ```
 
-## AI Code Switch - Project Overview
+## Project Overview
 
-AI Code Switch is a local proxy server that manages AI programming tool connections to large language models, allowing tools like Claude Code and Codex to use custom model APIs instead of official ones.
+This project named AICodeSwitch is a local proxy server that manages AI programming tool connections to large language models, allowing tools like Claude Code and Codex to use custom model APIs instead of official ones.
 
 ## Development Commands
 
@@ -65,7 +65,7 @@ aicos version            # Show current version information
 #### Traditional Deployment (CLI/Web)
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     AI Code Switch                          │
+│                     AICodeSwitch                          │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
 │  │   React UI   │  │  Express API │  │  Proxy Core  │     │
@@ -345,8 +345,12 @@ aicos version            # Show current version information
   - Claude Chat
   - Claude Code
   - DeepSeek Chat
+- Model override helper now keeps original payload when no override model is provided (prevents fallback request-body null regression)
+- Claude Code -> Gemini/Gemini Chat/OpenAI Chat/OpenAI/DeepSeek Reasoning Chat defaults to streaming (SSE) when `stream` is not explicitly set to `false`
+- `/v1/messages/count_tokens` is handled locally in server for Claude Code bridge sources, and returns `{ "input_tokens": number }` directly
 
 ### Configuration Management
+- OpenAI `sourceType=openai` service `apiUrl` is no longer normalized or validated against a `/v1` suffix; preserve user input as-is
 - **服务进程生命周期自动写入/恢复配置文件**：
   - 服务启动时自动写入 Claude Code 和 Codex 配置文件（不依赖激活路由）
     - 适用入口：`aicos start` / `aicos ui` / `aicos restart` / `yarn dev:server`
@@ -534,6 +538,7 @@ aicos version            # Show current version information
 - Request logs: Detailed API call records with token usage
   - Tool requests are logged across all server-handled paths (proxy/stream/fallback/early-error)
   - `tags` include relay status per request: `通过中转` or `未通过中转`
+  - Local count_tokens direct-return requests include tag: `系统计算Token直返`
 - Access logs: System access records
 - Error logs: Error and exception records with comprehensive context
   - **Error Log Details**:
@@ -830,9 +835,10 @@ The Tauri build uses a **hybrid approach** that preserves the existing Node.js b
 
 ### NPM 发布流程
 当 PR 合并到 main 分支时，自动触发 npm 发布：
-1. 运行 `npm run release` 创建版本 tag
-2. 发布到 npm registry
-3. 推送 tag 到 GitHub
+1. 检查当前版本是否已被 npm 注册（使用 `can-npm-publish`）
+2. 若当前版本未发布，直接使用该版本发布；否则运行 `npm run release` 创建新版本
+3. 发布到 npm registry
+4. 推送 tag 到 GitHub
 
 ### Tauri 应用构建流程
 npm 发布成功后，自动触发 Tauri 应用构建：
@@ -862,35 +868,9 @@ npm 发布成功后，自动触发 Tauri 应用构建：
 
 ## 最近变更
 
-- 2026-03-11: 修复 Codex + `openai-chat` 流式场景下的转换与连接稳定性
-  - 修复 SSE 事件收集器对象模式透传问题，确保转换器收到完整事件
-  - 流式序列化时自动补齐 `data.type`（当存在 `event` 且 `data.type` 缺失）
-  - 客户端断开时主动中止上游请求并跳过故障切换/黑名单，避免 `Cannot pipe to a closed or destroyed stream`
-  - 统一 `codex/claude-code` 到 OpenAI/Claude/Gemini 的 SSE 转发实现，避免历史特殊分支的行为漂移
-  - 全面审计 `streaming.ts` 的 11 个 Transform 类并修复协议对齐问题（事件来源兼容、usage 映射、函数调用 done、finish reason 映射）
-- 2026-03-11: 路由配置页布局调整
-  - 将“Claude Code 全局配置”“Codex 全局配置”移动到“📝 配置文件自动管理”模块上方
-  - 全局工具配置不再与路由规则区块混排，页面层次更清晰
-- 2026-03-11: 修正全局配置生效路径
-  - 保存全局配置后服务端会立即回写 Claude/Codex 配置文件
-  - 路由规则仍为后端实时加载；全局配置变更无需重启服务，仅需重启对应编程工具
-- 2026-03-11: 路由规则页新增优先级说明模块
-  - 在“智能故障切换机制”上方新增“规则优先级顺序”提示
-  - 说明开启/关闭故障切换时的规则匹配顺序，帮助用户理解命中逻辑
-- 2026-03-11: 路由规则提示文案用户化
-  - 将复杂优先级说明改为“如何配置规则（推荐）”操作指引
-  - 以用户配置步骤为主线，突出“先分类型、再排顺序、上主下备”
-- 2026-03-11: 补充常见类型优先顺序提示
-  - 在路由规则指引文案末尾补充：图像理解 → 高智商 → 长上下文 → 思考 → 后台 → 模型顶替 → 默认
-- 2026-03-11: 服务不可用自动恢复时间统一为 10 秒
-  - 后端黑名单过期时间统一为 `10s`（修复不同存储实现的时长不一致）
-  - 路由页与设置页的故障切换说明文案同步更新为 10 秒
-- 2026-03-11: 故障自动恢复时间支持用户配置
-  - 设置页新增“故障自动恢复时间（秒）”字段，默认 10，且仅在启用故障切换时可编辑
-  - 服务端按 `AppConfig.failoverRecoverySeconds` 计算黑名单恢复时间；缺省回退 10 秒
-- 2026-03-11: `aicos restore` 增加服务运行检测
-  - restore 前检测服务是否运行中（PID/端口）
-  - 若服务运行中则跳过 restore 并提示执行 `aicos stop`，避免运行中手动恢复导致服务不可用
+- 2026-03-11: 修复 Claude Code → Gemini thinking 参数冲突
+  - 当存在 `budget_tokens` 时，Gemini `thinkingConfig` 仅写入 `thinkingBudget`，不再同时写入 `thinkingLevel`
+  - 同步修复 `transformRequestFromClaudeToGemini` 与 `transformRequestFromResponsesToGemini`，避免 400 `You can only set only one of thinking budget and thinking level`
 
 ## Development
 
@@ -898,7 +878,7 @@ npm 发布成功后，自动触发 Tauri 应用构建：
 * 前端依赖库安装在devDependencies中，请使用yarn install --dev安装。
 * 所有对话请使用中文。生成代码中的文案及相关注释根据代码原本的语言生成。
 * 在服务端，直接使用 __dirname 来获取当前目录，不要使用 process.cwd()
-* 每次有新的变化时，你需要更新 CLAUDE.md, AGENTS.md 来让文档保持最新。
+* 每次有新的架构变化时，你需要更新 CLAUDE.md, AGENTS.md 来让文档保持最新。
 * 每次有变更，以非常简单的概述，将变化内容记录到 CHANGELOG.md 中。
 * 禁止在ui中使用依赖GPU的css样式。
 * 禁止运行 dev:ui, dev:server, tauri:dev 等命令来进行测试。
