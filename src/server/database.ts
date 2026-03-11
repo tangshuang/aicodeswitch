@@ -18,6 +18,16 @@ import type {
   Session,
 } from '../types';
 
+const DEFAULT_FAILOVER_RECOVERY_SECONDS = 10;
+
+const normalizeFailoverRecoverySeconds = (value: unknown): number => {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_FAILOVER_RECOVERY_SECONDS;
+  }
+  return Math.floor(parsed);
+};
+
 export class DatabaseManager {
   private db: Database.Database;
   private logDb: Level<string, string>;
@@ -414,7 +424,7 @@ export class DatabaseManager {
   }
 
   private async ensureDefaultConfig() {
-    const config = this.db.prepare('SELECT * FROM config WHERE key = ?').get('app_config');
+    const config = this.db.prepare('SELECT * FROM config WHERE key = ?').get('app_config') as { key: string; value: string } | undefined;
     if (!config) {
       const defaultConfig: AppConfig = {
         enableLogging: true,
@@ -422,6 +432,10 @@ export class DatabaseManager {
         maxLogSize: 100000,
         apiKey: '',
         enableFailover: true,  // 默认启用智能故障切换
+        failoverRecoverySeconds: DEFAULT_FAILOVER_RECOVERY_SECONDS,
+        enableAgentTeams: false,
+        enableBypassPermissionsSupport: false,
+        codexModelReasoningEffort: 'high',
         proxyEnabled: false,  // 默认不启用代理
         proxyUrl: '',
         proxyUsername: '',
@@ -431,6 +445,41 @@ export class DatabaseManager {
         'app_config',
         JSON.stringify(defaultConfig)
       );
+      return;
+    }
+
+    try {
+      const current = JSON.parse(config.value || '{}') as AppConfig;
+      const normalized: AppConfig = {
+        ...current,
+        failoverRecoverySeconds: normalizeFailoverRecoverySeconds(current.failoverRecoverySeconds),
+      };
+
+      if (JSON.stringify(current) !== JSON.stringify(normalized)) {
+        this.db
+          .prepare('UPDATE config SET value = ? WHERE key = ?')
+          .run(JSON.stringify(normalized), 'app_config');
+      }
+    } catch (error) {
+      console.error('[DB] Failed to parse app_config, reset to defaults:', error);
+      const fallbackConfig: AppConfig = {
+        enableLogging: true,
+        logRetentionDays: 30,
+        maxLogSize: 100000,
+        apiKey: '',
+        enableFailover: true,
+        failoverRecoverySeconds: DEFAULT_FAILOVER_RECOVERY_SECONDS,
+        enableAgentTeams: false,
+        enableBypassPermissionsSupport: false,
+        codexModelReasoningEffort: 'high',
+        proxyEnabled: false,
+        proxyUrl: '',
+        proxyUsername: '',
+        proxyPassword: '',
+      };
+      this.db
+        .prepare('UPDATE config SET value = ? WHERE key = ?')
+        .run(JSON.stringify(fallbackConfig), 'app_config');
     }
   }
 
@@ -1144,6 +1193,12 @@ export class DatabaseManager {
   }
 
   // Service blacklist operations
+  private getFailoverRecoveryMs(): number {
+    const config = this.getConfig() || {};
+    const seconds = normalizeFailoverRecoverySeconds(config.failoverRecoverySeconds);
+    return seconds * 1000;
+  }
+
   async isServiceBlacklisted(
     serviceId: string,
     routeId: string,
@@ -1180,6 +1235,7 @@ export class DatabaseManager {
   ): Promise<void> {
     const key = `${routeId}:${contentType}:${serviceId}`;
     const now = Date.now();
+    const recoveryMs = this.getFailoverRecoveryMs();
 
     try {
       // 尝试读取现有记录
@@ -1188,7 +1244,7 @@ export class DatabaseManager {
 
       // 更新现有记录
       entry.blacklistedAt = now;
-      entry.expiresAt = now + 10 * 60 * 1000; // 10分钟
+      entry.expiresAt = now + recoveryMs;
       entry.errorCount++;
       entry.lastError = errorMessage;
       entry.lastStatusCode = statusCode;
@@ -1203,7 +1259,7 @@ export class DatabaseManager {
           routeId,
           contentType,
           blacklistedAt: now,
-          expiresAt: now + 10 * 60 * 1000,
+          expiresAt: now + recoveryMs,
           errorCount: 1,
           lastError: errorMessage,
           lastStatusCode: statusCode,
@@ -1248,9 +1304,20 @@ export class DatabaseManager {
   }
 
   updateConfig(config: AppConfig): boolean {
+    const current = this.getConfig() || {};
+    const merged: AppConfig = {
+      ...current,
+      ...config,
+    };
+
+    if (!['low', 'medium', 'high', 'xhigh'].includes(String(merged.codexModelReasoningEffort))) {
+      merged.codexModelReasoningEffort = 'high';
+    }
+    merged.failoverRecoverySeconds = normalizeFailoverRecoverySeconds(merged.failoverRecoverySeconds);
+
     const result = this.db
       .prepare('UPDATE config SET value = ? WHERE key = ?')
-      .run(JSON.stringify(config), 'app_config');
+      .run(JSON.stringify(merged), 'app_config');
     return result.changes > 0;
   }
 

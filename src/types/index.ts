@@ -112,9 +112,12 @@ export interface Route {
   description?: string;
   targetType: ToolType;
   isActive: boolean;
-  enableAgentTeams?: boolean;  // 是否启用Agent Teams功能（仅Claude Code）
-  enableBypassPermissionsSupport?: boolean;  // 是否开启对bypassPermissions的支持（仅Claude Code）
-  codexModelReasoningEffort?: CodexReasoningEffort;  // Codex model_reasoning_effort（仅Codex）
+  /** @deprecated 已迁移为全局配置 AppConfig.enableAgentTeams */
+  enableAgentTeams?: boolean;
+  /** @deprecated 已迁移为全局配置 AppConfig.enableBypassPermissionsSupport */
+  enableBypassPermissionsSupport?: boolean;
+  /** @deprecated 已迁移为全局配置 AppConfig.codexModelReasoningEffort */
+  codexModelReasoningEffort?: CodexReasoningEffort;
   createdAt: number;
   updatedAt: number;
 }
@@ -227,6 +230,11 @@ export interface AppConfig {
   maxLogSize?: number;
   apiKey?: string;
   enableFailover?: boolean;  // 是否启用智能故障切换,默认 true
+  failoverRecoverySeconds?: number;  // 故障自动恢复时间（秒）,默认 10
+  // 工具全局配置
+  enableAgentTeams?: boolean;  // Claude Code Agent Teams（全局）
+  enableBypassPermissionsSupport?: boolean;  // Claude Code bypassPermissions 支持（全局）
+  codexModelReasoningEffort?: CodexReasoningEffort;  // Codex reasoning effort（全局）
   // 代理配置
   proxyEnabled?: boolean;  // 是否启用代理
   proxyUrl?: string;  // 代理地址，例如: proxy.example.com:8080

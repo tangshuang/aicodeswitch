@@ -19,6 +19,7 @@ import type {
   ImportPreview,
   MCPServer,
   TargetType,
+  CodexReasoningEffort,
 } from '../types';
 import { migrateSourceType, isLegacySourceType, normalizeSourceType } from './type-migration';
 
@@ -29,6 +30,22 @@ interface LogShardIndex {
   endTime: number;
   count: number;
 }
+
+const VALID_CODEX_REASONING_EFFORTS: CodexReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
+const DEFAULT_CODEX_REASONING_EFFORT: CodexReasoningEffort = 'high';
+const DEFAULT_FAILOVER_RECOVERY_SECONDS = 10;
+
+const isCodexReasoningEffort = (value: unknown): value is CodexReasoningEffort => {
+  return typeof value === 'string' && VALID_CODEX_REASONING_EFFORTS.includes(value as CodexReasoningEffort);
+};
+
+const normalizeFailoverRecoverySeconds = (value: unknown): number => {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_FAILOVER_RECOVERY_SECONDS;
+  }
+  return Math.floor(parsed);
+};
 
 /**
  * 基于文件系统的数据库管理器
@@ -120,6 +137,9 @@ export class FileSystemDatabaseManager {
     await this.migrateSourceTypes();
     // OpenAI base URL 迁移：将末尾 /v1 自动移除
     await this.migrateOpenAIBaseUrls();
+
+    // 路由级工具配置迁移到全局配置（兼容旧版本）
+    await this.migrateRouteToolSettingsToGlobalConfig();
 
     // 确保默认配置
     await this.ensureDefaultConfig();
@@ -757,19 +777,97 @@ export class FileSystemDatabaseManager {
   }
 
   private async ensureDefaultConfig() {
-    if (!this.config) {
-      this.config = {
-        enableLogging: true,
-        logRetentionDays: 30,
-        maxLogSize: 100000,
-        apiKey: '',
-        enableFailover: true,
-        proxyEnabled: false,
-        proxyUrl: '',
-        proxyUsername: '',
-        proxyPassword: '',
-      };
+    const current = this.config;
+    this.config = {
+      enableLogging: current?.enableLogging ?? true,
+      logRetentionDays: current?.logRetentionDays ?? 30,
+      maxLogSize: current?.maxLogSize ?? 100000,
+      apiKey: current?.apiKey ?? '',
+      enableFailover: current?.enableFailover ?? true,
+      failoverRecoverySeconds: normalizeFailoverRecoverySeconds(current?.failoverRecoverySeconds),
+      enableAgentTeams: current?.enableAgentTeams ?? false,
+      enableBypassPermissionsSupport: current?.enableBypassPermissionsSupport ?? false,
+      codexModelReasoningEffort: isCodexReasoningEffort(current?.codexModelReasoningEffort)
+        ? current!.codexModelReasoningEffort
+        : DEFAULT_CODEX_REASONING_EFFORT,
+      proxyEnabled: current?.proxyEnabled ?? false,
+      proxyUrl: current?.proxyUrl ?? '',
+      proxyUsername: current?.proxyUsername ?? '',
+      proxyPassword: current?.proxyPassword ?? '',
+    };
+
+    // 仅在首次创建或存在字段补齐时落盘
+    if (!current || JSON.stringify(current) !== JSON.stringify(this.config)) {
       await this.saveConfig();
+    }
+  }
+
+  private async migrateRouteToolSettingsToGlobalConfig(): Promise<void> {
+    const hasGlobalToolConfig =
+      !!this.config &&
+      (
+        Object.prototype.hasOwnProperty.call(this.config, 'enableAgentTeams') ||
+        Object.prototype.hasOwnProperty.call(this.config, 'enableBypassPermissionsSupport') ||
+        Object.prototype.hasOwnProperty.call(this.config, 'codexModelReasoningEffort')
+      );
+
+    const getPreferredRoute = (targetType: TargetType) => {
+      const activeRoute = this.routes.find(route => route.targetType === targetType && route.isActive);
+      if (activeRoute) {
+        return activeRoute;
+      }
+      return this.routes.find(route => route.targetType === targetType);
+    };
+
+    let configUpdated = false;
+    if (!hasGlobalToolConfig) {
+      const preferredClaudeRoute = getPreferredRoute('claude-code');
+      const preferredCodexRoute = getPreferredRoute('codex');
+      const nextConfig: AppConfig = { ...(this.config || {}) };
+
+      if (typeof preferredClaudeRoute?.enableAgentTeams === 'boolean') {
+        nextConfig.enableAgentTeams = preferredClaudeRoute.enableAgentTeams;
+        configUpdated = true;
+      }
+      if (typeof preferredClaudeRoute?.enableBypassPermissionsSupport === 'boolean') {
+        nextConfig.enableBypassPermissionsSupport = preferredClaudeRoute.enableBypassPermissionsSupport;
+        configUpdated = true;
+      }
+      if (isCodexReasoningEffort(preferredCodexRoute?.codexModelReasoningEffort)) {
+        nextConfig.codexModelReasoningEffort = preferredCodexRoute.codexModelReasoningEffort;
+        configUpdated = true;
+      }
+
+      if (configUpdated) {
+        this.config = nextConfig;
+        await this.saveConfig();
+        console.log('[ConfigMigration] Migrated route-level tool settings to global app config');
+      }
+    }
+
+    // 清理路由中的旧字段，避免后续重复歧义
+    let routesUpdated = false;
+    this.routes = this.routes.map((route) => {
+      const hasLegacyFields =
+        Object.prototype.hasOwnProperty.call(route, 'enableAgentTeams') ||
+        Object.prototype.hasOwnProperty.call(route, 'enableBypassPermissionsSupport') ||
+        Object.prototype.hasOwnProperty.call(route, 'codexModelReasoningEffort');
+
+      if (!hasLegacyFields) {
+        return route;
+      }
+
+      routesUpdated = true;
+      const cleanedRoute = { ...route };
+      delete (cleanedRoute as Partial<Route>).enableAgentTeams;
+      delete (cleanedRoute as Partial<Route>).enableBypassPermissionsSupport;
+      delete (cleanedRoute as Partial<Route>).codexModelReasoningEffort;
+      return cleanedRoute;
+    });
+
+    if (routesUpdated) {
+      await this.saveRoutes();
+      console.log('[ConfigMigration] Removed deprecated route-level tool settings');
     }
   }
 
@@ -1627,6 +1725,11 @@ export class FileSystemDatabaseManager {
   }
 
   // Service blacklist operations
+  private getFailoverRecoveryMs(): number {
+    const seconds = normalizeFailoverRecoverySeconds(this.config?.failoverRecoverySeconds);
+    return seconds * 1000;
+  }
+
   async isServiceBlacklisted(
     serviceId: string,
     routeId: string,
@@ -1656,11 +1759,12 @@ export class FileSystemDatabaseManager {
   ): Promise<void> {
     const key = `${routeId}:${contentType}:${serviceId}`;
     const now = Date.now();
+    const recoveryMs = this.getFailoverRecoveryMs();
     const existing = this.blacklist.get(key);
 
     if (existing) {
       existing.blacklistedAt = now;
-      existing.expiresAt = now + 2 * 60 * 1000; // 2分钟黑名单（从10分钟缩短）
+      existing.expiresAt = now + recoveryMs;
       existing.errorCount++;
       existing.lastError = errorMessage;
       existing.lastStatusCode = statusCode;
@@ -1671,7 +1775,7 @@ export class FileSystemDatabaseManager {
         routeId,
         contentType,
         blacklistedAt: now,
-        expiresAt: now + 2 * 60 * 1000, // 2分钟黑名单（从10分钟缩短）
+        expiresAt: now + recoveryMs,
         errorCount: 1,
         lastError: errorMessage,
         lastStatusCode: statusCode,
@@ -1716,7 +1820,17 @@ export class FileSystemDatabaseManager {
   }
 
   async updateConfig(config: AppConfig): Promise<boolean> {
-    this.config = config;
+    const merged: AppConfig = {
+      ...(this.config || {}),
+      ...config,
+    };
+
+    if (!isCodexReasoningEffort(merged.codexModelReasoningEffort)) {
+      merged.codexModelReasoningEffort = DEFAULT_CODEX_REASONING_EFFORT;
+    }
+    merged.failoverRecoverySeconds = normalizeFailoverRecoverySeconds(merged.failoverRecoverySeconds);
+
+    this.config = merged;
     await this.saveConfig();
     return true;
   }
@@ -2002,6 +2116,7 @@ export class FileSystemDatabaseManager {
       }));
       this.config = {
         ...importData.config,
+        failoverRecoverySeconds: normalizeFailoverRecoverySeconds(importData.config?.failoverRecoverySeconds),
         updatedAt: now
       };
 

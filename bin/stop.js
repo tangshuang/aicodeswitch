@@ -25,7 +25,7 @@ const stop = async (options = {}) => {
         console.log('\n' + chalk.gray(`Process found: ${chalk.white(pid)} (${chalk.gray(processInfo)})`));
       }
 
-      // 尝试终止进程
+      // 尝试终止进程（服务端会在 SIGTERM/SIGINT 时执行配置恢复）
       process.kill(pid, 'SIGTERM');
 
       // 等待进程停止
@@ -58,7 +58,7 @@ const stop = async (options = {}) => {
     catch (err) {
       // 进程不存在
       if (err.code === 'ESRCH') {
-          spinner.warn(chalk.yellow(`PID ${pid} not found!`));
+        spinner.warn(chalk.yellow(`PID ${pid} not found!`));
       }
       else {
         spinner.fail(chalk.red(`\nError: ${err.message}\n`));

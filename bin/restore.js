@@ -4,6 +4,9 @@ const os = require('os');
 const chalk = require('chalk');
 const boxen = require('boxen');
 const ora = require('ora');
+const { parseToml, stringifyToml, mergeJsonSettings, mergeTomlSettings, atomicWriteFile } = require('./utils/config-helpers');
+const { isServerRunning, getServerInfo } = require('./utils/get-server');
+const { findPidByPort } = require('./utils/port-utils');
 
 // 停用所有激活的路由（直接操作数据库文件）
 const deactivateAllRoutes = () => {
@@ -55,7 +58,7 @@ const deactivateAllRoutes = () => {
   }
 };
 
-// 恢复 Claude Code 配置
+// 恢复 Claude Code 配置（使用智能合并）
 const restoreClaudeConfig = () => {
   const results = {
     restored: [],
@@ -69,13 +72,33 @@ const restoreClaudeConfig = () => {
     const claudeSettingsPath = path.join(claudeDir, 'settings.json');
     const claudeSettingsBakPath = path.join(claudeDir, 'settings.json.aicodeswitch_backup');
 
-    // Restore settings.json
+    // Restore settings.json（智能合并）
     if (fs.existsSync(claudeSettingsBakPath)) {
-      if (fs.existsSync(claudeSettingsPath)) {
-        fs.unlinkSync(claudeSettingsPath);
+      try {
+        const backupSettings = JSON.parse(fs.readFileSync(claudeSettingsBakPath, 'utf-8'));
+        let currentSettings = {};
+        if (fs.existsSync(claudeSettingsPath)) {
+          try {
+            currentSettings = JSON.parse(fs.readFileSync(claudeSettingsPath, 'utf-8'));
+          } catch (e) {
+            // 忽略解析错误
+          }
+        }
+
+        const mergedSettings = mergeJsonSettings(
+          backupSettings,
+          currentSettings,
+          ['env.ANTHROPIC_AUTH_TOKEN', 'env.ANTHROPIC_BASE_URL', 'env.API_TIMEOUT_MS',
+             'env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
+             'permissions', 'skipDangerousModePermissionPrompt']
+        );
+
+        atomicWriteFile(claudeSettingsPath, JSON.stringify(mergedSettings, null, 2));
+        fs.unlinkSync(claudeSettingsBakPath);
+        results.restored.push('settings.json');
+      } catch (error) {
+        results.errors.push({ file: 'settings.json', error: error.message });
       }
-      fs.renameSync(claudeSettingsBakPath, claudeSettingsPath);
-      results.restored.push('settings.json');
     } else {
       results.notFound.push('settings.json.aicodeswitch_backup');
     }
@@ -88,13 +111,31 @@ const restoreClaudeConfig = () => {
     const claudeJsonPath = path.join(homeDir, '.claude.json');
     const claudeJsonBakPath = path.join(homeDir, '.claude.json.aicodeswitch_backup');
 
-    // Restore .claude.json
+    // Restore .claude.json（智能合并）
     if (fs.existsSync(claudeJsonBakPath)) {
-      if (fs.existsSync(claudeJsonPath)) {
-        fs.unlinkSync(claudeJsonPath);
+      try {
+        const backupJson = JSON.parse(fs.readFileSync(claudeJsonBakPath, 'utf-8'));
+        let currentJson = {};
+        if (fs.existsSync(claudeJsonPath)) {
+          try {
+            currentJson = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf-8'));
+          } catch (e) {
+            // 忽略解析错误
+          }
+        }
+
+        const mergedJson = mergeJsonSettings(
+          backupJson,
+          currentJson,
+          ['hasCompletedOnboarding', 'mcpServers']
+        );
+
+        atomicWriteFile(claudeJsonPath, JSON.stringify(mergedJson, null, 2));
+        fs.unlinkSync(claudeJsonBakPath);
+        results.restored.push('.claude.json');
+      } catch (error) {
+        results.errors.push({ file: '.claude.json', error: error.message });
       }
-      fs.renameSync(claudeJsonBakPath, claudeJsonPath);
-      results.restored.push('.claude.json');
     } else {
       results.notFound.push('.claude.json.aicodeswitch_backup');
     }
@@ -105,7 +146,7 @@ const restoreClaudeConfig = () => {
   return results;
 };
 
-// 恢复 Codex 配置
+// 恢复 Codex 配置（使用智能合并）
 const restoreCodexConfig = () => {
   const results = {
     restored: [],
@@ -119,13 +160,32 @@ const restoreCodexConfig = () => {
     const codexConfigPath = path.join(codexDir, 'config.toml');
     const codexConfigBakPath = path.join(codexDir, 'config.toml.aicodeswitch_backup');
 
-    // Restore config.toml
+    // Restore config.toml（智能合并）
     if (fs.existsSync(codexConfigBakPath)) {
-      if (fs.existsSync(codexConfigPath)) {
-        fs.unlinkSync(codexConfigPath);
+      try {
+        const backupConfig = parseToml(fs.readFileSync(codexConfigBakPath, 'utf-8'));
+        let currentConfig = {};
+        if (fs.existsSync(codexConfigPath)) {
+          try {
+            currentConfig = parseToml(fs.readFileSync(codexConfigPath, 'utf-8'));
+          } catch (e) {
+            // 忽略解析错误
+          }
+        }
+
+        const mergedConfig = mergeTomlSettings(
+          backupConfig,
+          currentConfig,
+          ['model_provider', 'model', 'model_reasoning_effort', 'disable_response_storage',
+             'preferred_auth_method', 'requires_openai_auth', 'enableRouteSelection', 'model_providers.aicodeswitch']
+        );
+
+        atomicWriteFile(codexConfigPath, stringifyToml(mergedConfig));
+        fs.unlinkSync(codexConfigBakPath);
+        results.restored.push('config.toml');
+      } catch (error) {
+        results.errors.push({ file: 'config.toml', error: error.message });
       }
-      fs.renameSync(codexConfigBakPath, codexConfigPath);
-      results.restored.push('config.toml');
     } else {
       results.notFound.push('config.toml.aicodeswitch_backup');
     }
@@ -138,13 +198,31 @@ const restoreCodexConfig = () => {
     const codexAuthPath = path.join(homeDir, '.codex', 'auth.json');
     const codexAuthBakPath = path.join(homeDir, '.codex', 'auth.json.aicodeswitch_backup');
 
-    // Restore auth.json
+    // Restore auth.json（智能合并）
     if (fs.existsSync(codexAuthBakPath)) {
-      if (fs.existsSync(codexAuthPath)) {
-        fs.unlinkSync(codexAuthPath);
+      try {
+        const backupAuth = JSON.parse(fs.readFileSync(codexAuthBakPath, 'utf-8'));
+        let currentAuth = {};
+        if (fs.existsSync(codexAuthPath)) {
+          try {
+            currentAuth = JSON.parse(fs.readFileSync(codexAuthPath, 'utf-8'));
+          } catch (e) {
+            // 忽略解析错误
+          }
+        }
+
+        const mergedAuth = mergeJsonSettings(
+          backupAuth,
+          currentAuth,
+          ['OPENAI_API_KEY']
+        );
+
+        atomicWriteFile(codexAuthPath, JSON.stringify(mergedAuth, null, 2));
+        fs.unlinkSync(codexAuthBakPath);
+        results.restored.push('auth.json');
+      } catch (error) {
+        results.errors.push({ file: 'auth.json', error: error.message });
       }
-      fs.renameSync(codexAuthBakPath, codexAuthPath);
-      results.restored.push('auth.json');
     } else {
       results.notFound.push('auth.json.aicodeswitch_backup');
     }
@@ -241,6 +319,32 @@ const restore = async () => {
     ));
     console.log('');
     process.exit(1);
+  }
+
+  // 服务运行中时，禁止执行手动 restore，避免中断当前代理服务
+  const { host, port } = getServerInfo();
+  const runningPid = await findPidByPort(port);
+  const runningByPidFile = isServerRunning();
+
+  if (runningByPidFile || runningPid) {
+    const pidText = runningPid ? `${runningPid}` : 'unknown';
+    const message = chalk.yellow.bold('⚠ Restore skipped: server is running\n\n') +
+      chalk.white('Detected running server: ') +
+      chalk.cyan(`http://${host}:${port}`) +
+      chalk.white(` (PID: ${pidText})\n\n`) +
+      chalk.white('Please run ') + chalk.cyan.bold('aicos stop') +
+      chalk.white(' first.\n') +
+      chalk.white('The ') + chalk.cyan.bold('stop') +
+      chalk.white(' command will automatically restore configuration files.\n');
+
+    console.log(boxen(message, {
+      padding: 1,
+      margin: 1,
+      borderStyle: 'round',
+      borderColor: 'yellow'
+    }));
+    console.log('');
+    return;
   }
 
   // 恢复配置

@@ -31,7 +31,6 @@ import { createRulesStatusWSServer } from './rules-status-service';
 import { normalizeSourceType, isLegacySourceType } from './type-migration';
 import {
   saveMetadata,
-  loadMetadata,
   deleteMetadata,
   checkClaudeConfigStatus,
   checkCodexConfigStatus,
@@ -175,7 +174,16 @@ const validateOpenAIServiceBaseUrlsInVendorPayload = (vendorBody: any): string |
   return null;
 };
 
-const writeClaudeConfig = async (dbManager: FileSystemDatabaseManager, enableAgentTeams?: boolean, enableBypassPermissionsSupport?: boolean): Promise<boolean> => {
+interface ToolConfigWriteOptions {
+  allowOverwriteRefresh?: boolean;
+}
+
+const writeClaudeConfig = async (
+  dbManager: FileSystemDatabaseManager,
+  enableAgentTeams?: boolean,
+  enableBypassPermissionsSupport?: boolean,
+  options: ToolConfigWriteOptions = {}
+): Promise<boolean> => {
   try {
     const homeDir = os.homedir();
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
@@ -189,26 +197,31 @@ const writeClaudeConfig = async (dbManager: FileSystemDatabaseManager, enableAge
 
     // 使用新的配置状态检测来判断是否可以写入
     const configStatus = checkClaudeConfigStatus();
+    const isRuntimeRefresh = options.allowOverwriteRefresh === true && configStatus.isOverwritten;
 
     // 只有当当前配置已经是代理配置时，才拒绝写入
-    if (configStatus.isOverwritten) {
+    if (configStatus.isOverwritten && !isRuntimeRefresh) {
       console.error('Claude config has already been overwritten. Please restore the original config first.');
       return false;
     }
 
     // 如果 .aicodeswitch_backup 文件不存在，才进行备份（避免覆盖已有备份）
-    let originalSettingsHash: string | undefined = undefined;
+    let originalSettingsHash: string | undefined = isRuntimeRefresh
+      ? configStatus.metadata?.originalHash
+      : undefined;
 
-    if (!fs.existsSync(claudeSettingsBakPath)) {
-      // 计算原始配置文件的 hash(如果存在)
-      if (fs.existsSync(claudeSettingsPath)) {
-        originalSettingsHash = createHash('sha256').update(fs.readFileSync(claudeSettingsPath, 'utf-8')).digest('hex');
-        // 备份当前配置文件
-        fs.renameSync(claudeSettingsPath, claudeSettingsBakPath);
+    if (!isRuntimeRefresh) {
+      if (!fs.existsSync(claudeSettingsBakPath)) {
+        // 计算原始配置文件的 hash(如果存在)
+        if (fs.existsSync(claudeSettingsPath)) {
+          originalSettingsHash = createHash('sha256').update(fs.readFileSync(claudeSettingsPath, 'utf-8')).digest('hex');
+          // 备份当前配置文件
+          fs.renameSync(claudeSettingsPath, claudeSettingsBakPath);
+        }
+      } else {
+        // .aicodeswitch_backup 已存在，直接使用现有的备份文件
+        console.log('Backup file already exists, skipping backup step');
       }
-    } else {
-      // .aicodeswitch_backup 已存在，直接使用现有的备份文件
-      console.log('Backup file already exists, skipping backup step');
     }
 
     if (!fs.existsSync(claudeDir)) {
@@ -275,9 +288,11 @@ const writeClaudeConfig = async (dbManager: FileSystemDatabaseManager, enableAge
     }
 
     // 然后处理备份
-    if (!fs.existsSync(claudeJsonBakPath)) {
-      if (fs.existsSync(claudeJsonPath)) {
-        fs.renameSync(claudeJsonPath, claudeJsonBakPath);
+    if (!isRuntimeRefresh) {
+      if (!fs.existsSync(claudeJsonBakPath)) {
+        if (fs.existsSync(claudeJsonPath)) {
+          fs.renameSync(claudeJsonPath, claudeJsonBakPath);
+        }
       }
     }
 
@@ -324,116 +339,6 @@ const writeClaudeConfig = async (dbManager: FileSystemDatabaseManager, enableAge
   }
 };
 
-/**
- * 更新Claude Code配置中的Agent Teams设置
- * 此函数假设配置文件已经被代理覆盖，直接修改环境变量而不重新备份
- */
-const updateClaudeAgentTeamsConfig = async (enableAgentTeams: boolean): Promise<boolean> => {
-  try {
-    const homeDir = os.homedir();
-    const claudeSettingsPath = path.join(homeDir, '.claude/settings.json');
-
-    // 检查配置文件是否存在
-    if (!fs.existsSync(claudeSettingsPath)) {
-      console.error('Claude settings.json does not exist');
-      return false;
-    }
-
-    // 读取当前配置
-    const currentContent = fs.readFileSync(claudeSettingsPath, 'utf-8');
-    const currentConfig = JSON.parse(currentContent);
-
-    // 检查是否是代理配置
-    const configStatus = checkClaudeConfigStatus();
-    if (!configStatus.isOverwritten) {
-      console.error('Claude config is not overwritten by proxy. Please activate a route first.');
-      return false;
-    }
-
-    // 更新或删除Agent Teams环境变量
-    if (enableAgentTeams) {
-      currentConfig.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
-    } else {
-      delete currentConfig.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS;
-    }
-
-    // 写入更新后的配置
-    fs.writeFileSync(claudeSettingsPath, JSON.stringify(currentConfig, null, 2));
-
-    // 更新元数据中的当前配置hash
-    const metadata = loadMetadata('claude');
-    if (metadata && metadata.files[0]) {
-      metadata.files[0].currentHash = createHash('sha256')
-        .update(fs.readFileSync(claudeSettingsPath, 'utf-8'))
-        .digest('hex');
-      metadata.timestamp = Date.now();
-      saveMetadata(metadata);
-    }
-
-    return true;
-  } catch (error) {
-    console.error('Failed to update Claude Agent Teams config:', error);
-    return false;
-  }
-};
-
-/**
- * 更新Claude Code配置中的bypassPermissions支持设置
- * 此函数假设配置文件已经被代理覆盖，直接修改配置而不重新备份
- */
-const updateClaudeBypassPermissionsSupportConfig = async (enableBypassPermissionsSupport: boolean): Promise<boolean> => {
-  try {
-    const homeDir = os.homedir();
-    const claudeSettingsPath = path.join(homeDir, '.claude/settings.json');
-
-    // 检查配置文件是否存在
-    if (!fs.existsSync(claudeSettingsPath)) {
-      console.error('Claude settings.json does not exist');
-      return false;
-    }
-
-    // 读取当前配置
-    const currentContent = fs.readFileSync(claudeSettingsPath, 'utf-8');
-    const currentConfig = JSON.parse(currentContent);
-
-    // 检查是否是代理配置
-    const configStatus = checkClaudeConfigStatus();
-    if (!configStatus.isOverwritten) {
-      console.error('Claude config is not overwritten by proxy. Please activate a route first.');
-      return false;
-    }
-
-    // 更新或删除bypassPermissions支持配置项
-    if (enableBypassPermissionsSupport) {
-      currentConfig.permissions = {
-        defaultMode: "bypassPermissions"
-      };
-      currentConfig.skipDangerousModePermissionPrompt = true;
-    } else {
-      delete currentConfig.permissions;
-      delete currentConfig.skipDangerousModePermissionPrompt;
-    }
-
-    // 写入更新后的配置
-    fs.writeFileSync(claudeSettingsPath, JSON.stringify(currentConfig, null, 2));
-
-    // 更新元数据中的当前配置hash
-    const metadata = loadMetadata('claude');
-    if (metadata && metadata.files[0]) {
-      metadata.files[0].currentHash = createHash('sha256')
-        .update(fs.readFileSync(claudeSettingsPath, 'utf-8'))
-        .digest('hex');
-      metadata.timestamp = Date.now();
-      saveMetadata(metadata);
-    }
-
-    return true;
-  } catch (error) {
-    console.error('Failed to update Claude bypassPermissions support config:', error);
-    return false;
-  }
-};
-
 const VALID_CODEX_REASONING_EFFORTS: CodexReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
 const DEFAULT_CODEX_REASONING_EFFORT: CodexReasoningEffort = 'high';
 
@@ -441,26 +346,10 @@ const isCodexReasoningEffort = (value: unknown): value is CodexReasoningEffort =
   return typeof value === 'string' && VALID_CODEX_REASONING_EFFORTS.includes(value as CodexReasoningEffort);
 };
 
-const buildCodexConfigToml = (modelReasoningEffort: CodexReasoningEffort): string => {
-  const localPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
-  return `model_provider = "aicodeswitch"
-model = "gpt-5.3-codex"
-model_reasoning_effort = "${modelReasoningEffort}"
-disable_response_storage = true
-preferred_auth_method = "apikey"
-requires_openai_auth = true
-enableRouteSelection = true
-
-[model_providers.aicodeswitch]
-name = "aicodeswitch"
-base_url = "http://${host}:${localPort}/codex"
-wire_api = "responses"
-`;
-};
-
 const writeCodexConfig = async (
   dbManager: FileSystemDatabaseManager,
-  modelReasoningEffort: CodexReasoningEffort = DEFAULT_CODEX_REASONING_EFFORT
+  modelReasoningEffort: CodexReasoningEffort = DEFAULT_CODEX_REASONING_EFFORT,
+  options: ToolConfigWriteOptions = {}
 ): Promise<boolean> => {
   try {
     const homeDir = os.homedir();
@@ -474,26 +363,31 @@ const writeCodexConfig = async (
 
     // 使用新的配置状态检测来判断是否可以写入
     const configStatus = checkCodexConfigStatus();
+    const isRuntimeRefresh = options.allowOverwriteRefresh === true && configStatus.isOverwritten;
 
     // 只有当当前配置已经是代理配置时，才拒绝写入
-    if (configStatus.isOverwritten) {
+    if (configStatus.isOverwritten && !isRuntimeRefresh) {
       console.error('Codex config has already been overwritten. Please restore the original config first.');
       return false;
     }
 
     // 如果 .aicodeswitch_backup 文件不存在，才进行备份（避免覆盖已有备份）
-    let originalConfigHash: string | undefined = undefined;
+    let originalConfigHash: string | undefined = isRuntimeRefresh
+      ? configStatus.metadata?.originalHash
+      : undefined;
 
-    if (!fs.existsSync(codexConfigBakPath)) {
-      // 计算原始配置文件的 hash(如果存在)
-      if (fs.existsSync(codexConfigPath)) {
-        originalConfigHash = createHash('sha256').update(fs.readFileSync(codexConfigPath, 'utf-8')).digest('hex');
-        // 备份当前配置文件
-        fs.renameSync(codexConfigPath, codexConfigBakPath);
+    if (!isRuntimeRefresh) {
+      if (!fs.existsSync(codexConfigBakPath)) {
+        // 计算原始配置文件的 hash(如果存在)
+        if (fs.existsSync(codexConfigPath)) {
+          originalConfigHash = createHash('sha256').update(fs.readFileSync(codexConfigPath, 'utf-8')).digest('hex');
+          // 备份当前配置文件
+          fs.renameSync(codexConfigPath, codexConfigBakPath);
+        }
+      } else {
+        // .aicodeswitch_backup 已存在，直接使用现有的备份文件
+        console.log('Backup file already exists, skipping backup step');
       }
-    } else {
-      // .aicodeswitch_backup 已存在，直接使用现有的备份文件
-      console.log('Backup file already exists, skipping backup step');
     }
 
     if (!fs.existsSync(codexDir)) {
@@ -552,9 +446,11 @@ const writeCodexConfig = async (
     }
 
     // 同样处理 auth.json 的备份
-    if (!fs.existsSync(codexAuthBakPath)) {
-      if (fs.existsSync(codexAuthPath)) {
-        fs.renameSync(codexAuthPath, codexAuthBakPath);
+    if (!isRuntimeRefresh) {
+      if (!fs.existsSync(codexAuthBakPath)) {
+        if (fs.existsSync(codexAuthPath)) {
+          fs.renameSync(codexAuthPath, codexAuthBakPath);
+        }
       }
     }
 
@@ -601,43 +497,10 @@ const writeCodexConfig = async (
   }
 };
 
-const updateCodexReasoningEffortConfig = async (modelReasoningEffort: CodexReasoningEffort): Promise<boolean> => {
-  try {
-    const homeDir = os.homedir();
-    const codexConfigPath = path.join(homeDir, '.codex/config.toml');
-
-    if (!fs.existsSync(codexConfigPath)) {
-      console.error('Codex config.toml does not exist');
-      return false;
-    }
-
-    const configStatus = checkCodexConfigStatus();
-    if (!configStatus.isOverwritten) {
-      console.error('Codex config is not overwritten by proxy. Please activate a route first.');
-      return false;
-    }
-
-    fs.writeFileSync(codexConfigPath, buildCodexConfigToml(modelReasoningEffort));
-
-    const metadata = loadMetadata('codex');
-    if (metadata && metadata.files[0]) {
-      metadata.files[0].currentHash = createHash('sha256')
-        .update(fs.readFileSync(codexConfigPath, 'utf-8'))
-        .digest('hex');
-      metadata.timestamp = Date.now();
-      saveMetadata(metadata);
-    }
-
-    return true;
-  } catch (error) {
-    console.error('Failed to update Codex reasoning effort config:', error);
-    return false;
-  }
-};
-
 const restoreClaudeConfig = async (): Promise<boolean> => {
   try {
     const homeDir = os.homedir();
+    let restoredAnyFile = false;
 
     // Restore Claude Code settings.json
     const claudeDir = path.join(homeDir, '.claude');
@@ -672,6 +535,7 @@ const restoreClaudeConfig = async (): Promise<boolean> => {
 
       // 删除备份文件
       fs.unlinkSync(claudeSettingsBakPath);
+      restoredAnyFile = true;
     }
 
     // Restore Claude Code .claude.json
@@ -706,12 +570,13 @@ const restoreClaudeConfig = async (): Promise<boolean> => {
 
       // 删除备份文件
       fs.unlinkSync(claudeJsonBakPath);
+      restoredAnyFile = true;
     }
 
     // 删除元数据
     deleteMetadata('claude');
 
-    return true;
+    return restoredAnyFile;
   } catch (error) {
     console.error('Failed to restore Claude config files:', error);
     return false;
@@ -721,6 +586,7 @@ const restoreClaudeConfig = async (): Promise<boolean> => {
 const restoreCodexConfig = async (): Promise<boolean> => {
   try {
     const homeDir = os.homedir();
+    let restoredAnyFile = false;
 
     // Restore Codex config.toml
     const codexDir = path.join(homeDir, '.codex');
@@ -755,6 +621,7 @@ const restoreCodexConfig = async (): Promise<boolean> => {
 
       // 删除备份文件
       fs.unlinkSync(codexConfigBakPath);
+      restoredAnyFile = true;
     }
 
     // Restore Codex auth.json
@@ -789,12 +656,13 @@ const restoreCodexConfig = async (): Promise<boolean> => {
 
       // 删除备份文件
       fs.unlinkSync(codexAuthBakPath);
+      restoredAnyFile = true;
     }
 
     // 删除元数据
     deleteMetadata('codex');
 
-    return true;
+    return restoredAnyFile;
   } catch (error) {
     console.error('Failed to restore Codex config files:', error);
     return false;
@@ -831,6 +699,46 @@ const checkCodexBackupExists = (): boolean => {
     console.error('Failed to check Codex backup files:', error);
     return false;
   }
+};
+
+const syncConfigsOnServerStartup = async (dbManager: FileSystemDatabaseManager): Promise<void> => {
+  const config = dbManager.getConfig();
+
+  // 服务启动即执行写入，参数来源改为全局配置
+  const claudeWritten = await writeClaudeConfig(
+    dbManager,
+    config.enableAgentTeams,
+    config.enableBypassPermissionsSupport
+  );
+  console.log(`[Startup Config Sync] Claude Code config ${claudeWritten ? 'written' : 'skipped'}`);
+
+  const modelReasoningEffort = isCodexReasoningEffort(config.codexModelReasoningEffort)
+    ? config.codexModelReasoningEffort
+    : DEFAULT_CODEX_REASONING_EFFORT;
+  const codexWritten = await writeCodexConfig(dbManager, modelReasoningEffort);
+  console.log(`[Startup Config Sync] Codex config ${codexWritten ? 'written' : 'skipped'}`);
+};
+
+const syncConfigsOnGlobalConfigUpdate = async (dbManager: FileSystemDatabaseManager): Promise<void> => {
+  const config = dbManager.getConfig();
+
+  const claudeUpdated = await writeClaudeConfig(
+    dbManager,
+    config.enableAgentTeams,
+    config.enableBypassPermissionsSupport,
+    { allowOverwriteRefresh: true }
+  );
+  console.log(`[Config Update Sync] Claude Code config ${claudeUpdated ? 'written' : 'skipped'}`);
+
+  const modelReasoningEffort = isCodexReasoningEffort(config.codexModelReasoningEffort)
+    ? config.codexModelReasoningEffort
+    : DEFAULT_CODEX_REASONING_EFFORT;
+  const codexUpdated = await writeCodexConfig(
+    dbManager,
+    modelReasoningEffort,
+    { allowOverwriteRefresh: true }
+  );
+  console.log(`[Config Update Sync] Codex config ${codexUpdated ? 'written' : 'skipped'}`);
 };
 
 const getCentralSkillsDir = (): string => {
@@ -1396,27 +1304,9 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
   app.post(
     '/api/routes/deactivate-all',
     asyncHandler(async (_req, res) => {
-      console.log('[Deactivate All Routes] Starting cleanup process...');
+      console.log('[Deactivate All Routes] Starting route deactivation...');
 
-      // 步骤1：恢复 Claude Code 配置文件
-      try {
-        console.log('[Deactivate All Routes] Restoring Claude Code config...');
-        const claudeRestored = await restoreClaudeConfig();
-        console.log(`[Deactivate All Routes] Claude Code config ${claudeRestored ? 'restored' : 'was not modified'}`);
-      } catch (error: any) {
-        console.error('[Deactivate All Routes] Failed to restore Claude config:', error);
-      }
-
-      // 步骤2：恢复 Codex 配置文件
-      try {
-        console.log('[Deactivate All Routes] Restoring Codex config...');
-        const codexRestored = await restoreCodexConfig();
-        console.log(`[Deactivate All Routes] Codex config ${codexRestored ? 'restored' : 'was not modified'}`);
-      } catch (error: any) {
-        console.error('[Deactivate All Routes] Failed to restore Codex config:', error);
-      }
-
-      // 步骤3：停用所有激活的路由
+      // 仅停用路由，不再在路由接口内处理配置文件恢复
       console.log('[Deactivate All Routes] Deactivating all active routes...');
       const deactivatedCount = await dbManager.deactivateAllRoutes();
 
@@ -1428,7 +1318,7 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
         console.log('[Deactivate All Routes] No active routes to deactivate');
       }
 
-      console.log('[Deactivate All Routes] Cleanup process completed');
+      console.log('[Deactivate All Routes] Route deactivation completed');
 
       res.json({
         success: true,
@@ -1629,8 +1519,10 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
       const config = req.body as AppConfig;
       const result = await dbManager.updateConfig(config);
       if (result) {
-        await proxyServer.updateConfig(config);
-        updateProxyConfig(config);
+        const latestConfig = dbManager.getConfig();
+        await proxyServer.updateConfig(latestConfig);
+        updateProxyConfig(latestConfig);
+        await syncConfigsOnGlobalConfigUpdate(dbManager);
       }
       res.json(result);
     })
@@ -2066,8 +1958,15 @@ ${instruction}
   app.post(
     '/api/write-config/claude',
     asyncHandler(async (req, res) => {
-      const enableAgentTeams = req.body.enableAgentTeams as boolean | undefined;
-      const enableBypassPermissionsSupport = req.body.enableBypassPermissionsSupport as boolean | undefined;
+      const appConfig = dbManager.getConfig();
+      const requestedEnableAgentTeams = req.body.enableAgentTeams;
+      const requestedBypass = req.body.enableBypassPermissionsSupport;
+      const enableAgentTeams = typeof requestedEnableAgentTeams === 'boolean'
+        ? requestedEnableAgentTeams
+        : appConfig.enableAgentTeams;
+      const enableBypassPermissionsSupport = typeof requestedBypass === 'boolean'
+        ? requestedBypass
+        : appConfig.enableBypassPermissionsSupport;
       const result = await writeClaudeConfig(dbManager, enableAgentTeams, enableBypassPermissionsSupport);
       res.json(result);
     })
@@ -2076,31 +1975,54 @@ ${instruction}
   app.post(
     '/api/write-config/codex',
     asyncHandler(async (req, res) => {
+      const appConfig = dbManager.getConfig();
       const requestedEffort = req.body.modelReasoningEffort;
       const modelReasoningEffort = isCodexReasoningEffort(requestedEffort)
         ? requestedEffort
+        : isCodexReasoningEffort(appConfig.codexModelReasoningEffort)
+          ? appConfig.codexModelReasoningEffort
         : DEFAULT_CODEX_REASONING_EFFORT;
       const result = await writeCodexConfig(dbManager, modelReasoningEffort);
       res.json(result);
     })
   );
 
-  // 更新Claude Code配置中的Agent Teams设置（当路由已激活时）
+  // 兼容接口：更新全局 Agent Teams 配置
   app.post(
     '/api/update-claude-agent-teams',
     asyncHandler(async (req, res) => {
       const { enableAgentTeams } = req.body as { enableAgentTeams: boolean };
-      const result = await updateClaudeAgentTeamsConfig(enableAgentTeams);
+      const current = dbManager.getConfig();
+      const result = await dbManager.updateConfig({
+        ...current,
+        enableAgentTeams: !!enableAgentTeams
+      });
+      if (result) {
+        const latestConfig = dbManager.getConfig();
+        await proxyServer.updateConfig(latestConfig);
+        updateProxyConfig(latestConfig);
+        await syncConfigsOnGlobalConfigUpdate(dbManager);
+      }
       res.json(result);
     })
   );
 
-  // 更新Claude Code配置中的bypassPermissions支持设置（当路由已激活时）
+  // 兼容接口：更新全局 bypassPermissions 支持配置
   app.post(
     '/api/update-claude-bypass-permissions-support',
     asyncHandler(async (req, res) => {
       const { enableBypassPermissionsSupport } = req.body as { enableBypassPermissionsSupport: boolean };
-      const result = await updateClaudeBypassPermissionsSupportConfig(enableBypassPermissionsSupport);
+      const current = dbManager.getConfig();
+      const result = await dbManager.updateConfig({
+        ...current,
+        enableBypassPermissionsSupport: !!enableBypassPermissionsSupport
+      });
+      if (result) {
+        const latestConfig = dbManager.getConfig();
+        await proxyServer.updateConfig(latestConfig);
+        updateProxyConfig(latestConfig);
+        await syncConfigsOnGlobalConfigUpdate(dbManager);
+      }
       res.json(result);
     })
   );
@@ -2114,7 +2036,17 @@ ${instruction}
         return;
       }
 
-      const result = await updateCodexReasoningEffortConfig(requestedEffort);
+      const current = dbManager.getConfig();
+      const result = await dbManager.updateConfig({
+        ...current,
+        codexModelReasoningEffort: requestedEffort
+      });
+      if (result) {
+        const latestConfig = dbManager.getConfig();
+        await proxyServer.updateConfig(latestConfig);
+        updateProxyConfig(latestConfig);
+        await syncConfigsOnGlobalConfigUpdate(dbManager);
+      }
       res.json(result);
     })
   );
@@ -2521,6 +2453,15 @@ const start = async () => {
   const dbManager = await DatabaseFactory.createAuto(dataDir, legacyDataDir) as FileSystemDatabaseManager;
   console.log('[Server] Database initialized successfully');
 
+  // 服务启动时自动同步配置文件（适用于 CLI 和 dev:server）
+  console.log('[Server] Syncing tool configs with global settings...');
+  try {
+    await syncConfigsOnServerStartup(dbManager);
+    console.log('[Server] Tool config sync completed');
+  } catch (error) {
+    console.error('[Server] Tool config sync failed:', error);
+  }
+
   const proxyServer = new ProxyServer(dbManager, app);
   // Initialize proxy server and register proxy routes last
   proxyServer.initialize();
@@ -2578,17 +2519,53 @@ const start = async () => {
   console.log(`WebSocket server for tool installation attached to ws://${host}:${port}/api/tools/install`);
   console.log(`WebSocket server for rules status attached to ws://${host}:${port}/api/rules/status`);
 
-  const shutdown = async () => {
-    console.log('Shutting down server...');
-    dbManager.close();
-    server.close(() => {
+  let isShuttingDown = false;
+  let shutdownPromise: Promise<void> | null = null;
+
+  const shutdown = async (signal: NodeJS.Signals) => {
+    if (isShuttingDown) {
+      return shutdownPromise ?? Promise.resolve();
+    }
+
+    isShuttingDown = true;
+    shutdownPromise = (async () => {
+      console.log(`[Server] Received ${signal}, shutting down...`);
+
+      // 服务终止前恢复配置文件（适用于 aicos stop 与 Ctrl+C）
+      try {
+        const claudeRestored = await restoreClaudeConfig();
+        console.log(`[Shutdown] Claude Code config ${claudeRestored ? 'restored' : 'was not modified'}`);
+      } catch (error) {
+        console.error('[Shutdown] Failed to restore Claude config:', error);
+      }
+
+      try {
+        const codexRestored = await restoreCodexConfig();
+        console.log(`[Shutdown] Codex config ${codexRestored ? 'restored' : 'was not modified'}`);
+      } catch (error) {
+        console.error('[Shutdown] Failed to restore Codex config:', error);
+      }
+
+      dbManager.close();
+
+      await Promise.race([
+        new Promise<void>((resolve) => {
+          server.close(() => resolve());
+        }),
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, 5000);
+        })
+      ]);
+
       console.log('Server stopped.');
       process.exit(0);
-    });
+    })();
+
+    return shutdownPromise;
   };
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => { void shutdown('SIGINT'); });
+  process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
 };
 
 // 全局未捕获异常处理 - 防止服务崩溃

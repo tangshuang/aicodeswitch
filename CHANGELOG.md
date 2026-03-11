@@ -12,10 +12,80 @@ All notable changes to this project will be documented in this file. See [standa
   - 重构配置恢复函数（`restoreClaudeConfig`, `restoreCodexConfig`），使用智能合并恢复原始配置
   - 使用原子性写入确保配置文件不会损坏
   - 使用 `@iarna/toml` 库处理 Codex 的 TOML 格式配置
+* 重构配置写入时机
+  - 服务启动时自动写入 Claude Code 和 Codex 配置文件（不依赖激活路由）
+  - `aicos stop` 时自动恢复原始配置文件
+  - `aicos restore` 时主动恢复原始配置文件
+  - 新增 `bin/utils/config-helpers.js` 模块，提供 CLI 脚本的配置处理辅助函数
+    - `parseToml()` - TOML 解析器
+    - `stringifyToml()` - TOML 序列化器
+    - `mergeJsonSettings()` - JSON 配置合并
+    - `mergeTomlSettings()` - TOML 配置合并
+    - `atomicWriteFile()` - 原子性文件写入
+  - `bin/start.js` / `bin/stop.js` 保持仅进程启停职责
+  - 统一 `src/server/original-config-reader.ts` 使用 `@iarna/toml` 库进行 TOML 解析
+  - 移除路由激活/停用时的配置覆盖/恢复动作，`/api/routes/deactivate-all` 改为仅停用路由
+* 新增“故障自动恢复时间”全局配置
+  - 设置页在“启用智能故障切换”下新增“故障自动恢复时间（秒）”，默认 10 秒
+  - 仅当“启用智能故障切换=是”时可编辑该字段
+  - 后端黑名单恢复时间改为读取该配置（默认 10 秒）
 
 #### Fixes
 * 修复 Claude Code 激活/停用路由时 `projects` 丢失的问题
 * 修复 Codex 激活/停用路由时 `[projects...]` 丢失的问题
+* 修复全局工具配置修改后的生效时机
+  - `/api/config` 与兼容更新接口在保存全局配置后，立即回写 Claude/Codex 配置文件
+  - 无需重启服务；重启对应编程工具即可使全局配置生效
+* 调整服务不可用自动恢复时间
+  - 服务黑名单自动恢复时间统一改为 10 秒（原实现存在 2 分钟/10 分钟不一致）
+  - 同步更新 Routes/Settings 页面中的故障切换提示文案为 10 秒
+* 优化 `aicos restore` 运行中保护逻辑
+  - restore 执行前新增服务运行状态检查（PID/端口）
+  - 若服务仍在运行，则跳过恢复并提示先执行 `aicos stop`（stop 会自动恢复配置）
+* 修复 CLI 配置备份/恢复重构回归问题
+  - 修复 `bin/start.js` 语法错误导致 CLI 全命令无法加载的问题
+  - `bin/start.js` 改为读取 `~/.aicodeswitch/fs-db`（不存在时回退 `~/.aicodeswitch/data`），并在读取前执行数据库 `initialize()`
+  - `bin/start.js` 写入代理地址统一使用 `HOST/PORT`（与 `aicodeswitch.conf` 一致），不再使用 `AICOS_HOST/AICOS_PORT`
+  - `bin/start.js` 补齐 Claude `.claude.json` 写入逻辑，并透传路由配置 `enableAgentTeams` / `enableBypassPermissionsSupport` / `codexModelReasoningEffort`
+  - `bin/utils/config-helpers.js` 改为使用 `@iarna/toml` 进行 TOML 解析和序列化，修复复杂 TOML（数组、quoted key、projects）被破坏的问题
+  - `bin/utils/config-helpers.js` 合并逻辑改为管理字段前缀匹配，确保 `model_providers.aicodeswitch` 等托管区块不会被旧值反向覆盖
+  - `aicos stop` / `aicos restore` 在恢复成功后删除对应 `*.aicodeswitch_backup`，避免长期陈旧备份反复覆盖用户后续修改
+  - `src/server/original-config-reader.ts` 兼容读取 `OPENAI_API_KEY`
+* 调整配置文件写入/恢复触发时机（按服务生命周期）
+  - 配置备份与覆盖改为在服务进程启动时执行（覆盖 `aicos start`、`aicos ui`、`aicos restart`、`yarn dev:server`）
+  - 配置恢复改为在服务进程终止前执行（覆盖 `aicos stop` 发送 SIGTERM、开发态 `Ctrl+C` 触发 SIGINT）
+  - `bin/start.js` 与 `bin/stop.js` 不再直接处理配置文件，仅负责进程启停
+  - 保留 `aicos restore` 作为手动恢复入口
+* 修复服务启动写配置触发条件
+  - 移除“必须有激活路由才写入”的限制，改为服务启动即写入配置（按目标路由优先级选择参数：激活路由优先，否则使用同目标第一条路由，缺省回退默认值）
+* 补齐工具请求日志覆盖范围与中转标记
+  - 路由未命中、规则未命中、服务未配置、鉴权失败等早退场景也会写入请求日志
+  - 请求日志 `tags` 统一记录中转状态：`通过中转` / `未通过中转`；fallback 原始配置额外记录 `使用原始配置`
+  - 统计维持按日志 `usage` 聚合 token（通过 `addLog -> updateStatistics` 链路）
+
+#### Docs
+* 完善 `CLAUDE.md` 的“智能配置合并”文档
+  - 细化服务启动写入/备份、服务终止恢复、UI 配置项修改生效时机与 `aicos restore` 命令行为
+  - 补充状态检测、metadata 清理、Fallback 读取与 MCP 同步例外说明
+* 调整路由页全局配置区块布局
+  - 将“Claude Code 全局配置”和“Codex 全局配置”从路由规则区域移至“配置文件自动管理”模块上方，避免与路由规则混排
+* 路由页新增“规则优先级顺序”提示模块
+  - 在“智能故障切换机制”上方展示规则命中顺序，说明开启/关闭故障切换时的匹配优先级与同类规则排序行为
+* 优化路由页规则说明文案（用户视角）
+  - 将“规则优先级顺序”改为“如何配置规则（推荐）”，按操作步骤给出配置建议，降低理解成本
+  - 追加常见类型优先顺序：图像理解 → 高智商 → 长上下文 → 思考 → 后台 → 模型顶替 → 默认
+* 同步更新故障切换文案
+  - Routes/Settings 页面改为“按故障自动恢复时间（默认10秒）”描述，避免写死时间与配置不一致
+
+#### Fixes
+* 修复服务终止恢复未生效但日志显示成功的问题
+  - 修复 `config-merge` 路径收集策略：由“父子路径全量复制”改为“仅叶子路径复制”，避免 `env`/`model_providers` 整体覆盖导致托管字段被反向带回
+  - `restoreClaudeConfig` / `restoreCodexConfig` 返回值改为“是否实际恢复过文件”，避免无 backup 场景误报 restored
+* 工具配置改为全局配置并增加迁移兼容
+  - 新增全局配置字段：`enableAgentTeams`、`enableBypassPermissionsSupport`、`codexModelReasoningEffort`
+  - `syncConfigsOnServerStartup` 改为仅读取全局配置，不再从路由推导参数
+  - 增加启动迁移：旧路由字段自动迁移到全局配置，并清理路由中的废弃字段
+  - `RoutesPage` 中 Claude/Codex 配置改为读写 `/api/config`
 
 ### 2026-03-11
 

@@ -27,38 +27,30 @@ const start = async (options = {}) => {
   const { host, port } = getServerInfo();
   if (isServerRunning() || await findPidByPort(port)) {
     if (!silent) {
-      if (!silent) {
-        console.log(boxen(
-          chalk.yellow.bold('⚠ Server is already running!\n\n') +
-          chalk.white(`URL: `) + chalk.cyan.bold(`http://${host}:${port}\n\n`) +
-          chalk.white('Use ') + chalk.cyan('aicos restart') + chalk.white(' to restart the server.\n'),
-          {
-            padding: 1,
-            margin: 1,
-            borderStyle: 'round',
-            borderColor: 'yellow'
-          }
-        ));
-        console.log('');
-      }
-
-      if (callback) {
-        callback();
-      }
-
-      if (!noExit) {
-        process.exit(0);
-      }
-
-      return true;
+      console.log(boxen(
+        chalk.yellow.bold('⚠ Server is already running!\n\n') +
+        chalk.white('URL: ') + chalk.cyan.bold(`http://${host}:${port}\n\n`) +
+        chalk.white('Use ') + chalk.cyan('aicos restart') + chalk.white(' to restart the server.\n'),
+        {
+          padding: 1,
+          margin: 1,
+          borderStyle: 'round',
+          borderColor: 'yellow'
+        }
+      ));
+      console.log('');
     }
-    if (callback) callback();
-    if (!noExit) process.exit(0);
+
+    if (callback) {
+      callback();
+    }
+
+    if (!noExit) {
+      process.exit(0);
+    }
+
     return true;
   }
-
-
-  // 启动服务器
 
   const spinner = ora({
     text: chalk.cyan('Starting AI Code Switch server...'),
@@ -79,12 +71,11 @@ const start = async (options = {}) => {
   }
 
   // 启动服务器进程 - 完全分离
-  // 打开日志文件用于输出
   const logFd = fs.openSync(LOG_FILE, 'a');
 
   const serverProcess = spawn('node', [serverPath], {
     detached: true,
-    stdio: ['ignore', logFd, logFd]  // 使用文件描述符
+    stdio: ['ignore', logFd, logFd]
   });
 
   // 关闭文件描述符(子进程会保持打开)
@@ -104,13 +95,13 @@ const start = async (options = {}) => {
     try {
       const pid = parseInt(fs.readFileSync(PID_FILE, 'utf-8'), 10);
       process.kill(pid, 0);
+
       if (!silent) {
         spinner.succeed(chalk.green('Server started successfully!'));
 
-        const { host, port } = getServerInfo();
-        const url = `http://${host}:${port}`;
+        const { host: runningHost, port: runningPort } = getServerInfo();
+        const url = `http://${runningHost}:${runningPort}`;
 
-        // 显示漂亮的启动信息
         console.log(boxen(
           chalk.green.bold('🚀 AI Code Switch Server\n\n') +
           chalk.white('Status:  ') + chalk.green.bold('● Running\n') +
@@ -133,9 +124,7 @@ const start = async (options = {}) => {
         console.log('\n');
       }
 
-      // (callback)
       if (callback) callback();
-      // 立即退出,返回控制台
       if (!noExit) process.exit(0);
       return true;
     } catch (err) {
@@ -144,13 +133,12 @@ const start = async (options = {}) => {
       if (!noExit) process.exit(1);
       return false;
     }
-  } else {
-    spinner.fail(chalk.red('Failed to start server!'));
-    console.log(chalk.yellow(`\nCheck logs: ${chalk.cyan(LOG_FILE)}\n`));
-    if (!noExit) process.exit(1);
-    return false;
   }
+
+  spinner.fail(chalk.red('Failed to start server!'));
+  console.log(chalk.yellow(`\nCheck logs: ${chalk.cyan(LOG_FILE)}\n`));
+  if (!noExit) process.exit(1);
+  return false;
 };
 
-// 导出辅助函数供其他模块使用
 module.exports = start;

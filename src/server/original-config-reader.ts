@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import type { TargetType, SourceType, AuthType } from '../types';
 import { AuthType as AuthTypeEnum } from '../types';
+import toml from '@iarna/toml';
 
 /**
  * 原始配置信息
@@ -16,60 +17,15 @@ export interface OriginalConfig {
 }
 
 /**
- * TOML 解析器（简单实现，仅用于解析 Codex config.toml）
+ * TOML 解析器（使用 @iarna/toml 库）
  */
 const parseToml = (content: string): Record<string, any> => {
-  const result: Record<string, any> = {};
-  let currentSection = result;
-
-  const lines = content.split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // 跳过空行和注释
-    if (!trimmed || trimmed.startsWith('#')) {
-      continue;
-    }
-
-    // 检查是否是 section
-    const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
-    if (sectionMatch) {
-      const sectionPath = sectionMatch[1].split('.');
-      currentSection = result;
-
-      for (const key of sectionPath) {
-        if (!currentSection[key]) {
-          currentSection[key] = {};
-        }
-        currentSection = currentSection[key];
-      }
-      continue;
-    }
-
-    // 解析键值对
-    const kvMatch = trimmed.match(/^([^=]+)=(.*)$/);
-    if (kvMatch) {
-      const key = kvMatch[1].trim();
-      let value: any = kvMatch[2].trim();
-
-      // 移除引号
-      if ((value.startsWith('"') && value.endsWith('"')) ||
-          (value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1);
-      }
-
-      // 尝试转换为布尔值
-      if (value === 'true') {
-        value = true;
-      } else if (value === 'false') {
-        value = false;
-      }
-
-      currentSection[key] = value;
-    }
+  try {
+    return toml.parse(content);
+  } catch (error) {
+    console.warn('Failed to parse TOML file:', error);
+    return {}; // 返回空对象以保持兼容性
   }
-
-  return result;
 };
 
 /**
@@ -167,7 +123,7 @@ export const readCodexOriginalConfig = (): OriginalConfig | null => {
         const authConfig = JSON.parse(authContent);
         // Codex 的 auth.json 可能包含多个 provider 的 key
         // 尝试读取常见的字段
-        apiKey = authConfig.api_key || authConfig.openai_api_key || authConfig.key || '';
+        apiKey = authConfig.OPENAI_API_KEY || authConfig.api_key || authConfig.openai_api_key || authConfig.key || '';
       } catch (error) {
         console.error('Failed to read Codex auth.json:', error);
       }

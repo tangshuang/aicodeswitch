@@ -214,6 +214,62 @@ aicos stop            # 停止服务
   - 使用 `@iarna/toml` 库处理 Codex 的 TOML 格式配置
   - 修复 Claude Code 激活/停用路由时 `projects` 丢失的问题
   - 修复 Codex 激活/停用路由时 `[projects...]` 丢失的问题
+- 2026-03-11: 修复 CLI 配置备份/恢复重构回归
+  - 修复 `bin/start.js` 语法错误导致 CLI 全命令无法运行的问题
+  - `bin/start.js` 读取数据库目录改为优先 `~/.aicodeswitch/fs-db`，不存在时回退 `~/.aicodeswitch/data`，并在读取前执行 `initialize()`
+  - `bin/start.js` 写入配置地址统一使用 `HOST/PORT`（与 `aicodeswitch.conf` 对齐）
+  - `bin/start.js` 补齐 Claude `.claude.json` 写入，并透传路由开关：`enableAgentTeams`、`enableBypassPermissionsSupport`、`codexModelReasoningEffort`
+  - `bin/utils/config-helpers.js` 改为使用 `@iarna/toml`，并修复管理字段前缀匹配（托管 section 不被旧值覆盖）
+  - `aicos stop` / `aicos restore` 恢复成功后删除对应 backup 文件，避免陈旧备份持续污染
+  - `src/server/original-config-reader.ts` 新增 `OPENAI_API_KEY` 兼容读取
+- 2026-03-11: 调整配置写入/恢复为服务生命周期驱动
+  - 配置备份与覆盖改为在服务启动时执行（适用于 `aicos start/ui/restart` 与 `dev:server`）
+  - 配置恢复改为在服务终止前执行（适用于 `aicos stop` 与开发态 `Ctrl+C`）
+  - `bin/start.js`、`bin/stop.js` 回归仅进程启停职责，不再直接读写工具配置
+  - 保留 `aicos restore` 手动恢复能力
+- 2026-03-11: 修复启动写配置触发条件
+  - 移除“仅激活路由才写配置”的限制，改为服务启动即写入配置
+  - 启动写配置时参数选择优先级：激活路由 > 同目标第一条路由 > 默认值
+- 2026-03-11: 移除路由操作触发配置写入/恢复
+  - `RoutesPage` 激活/停用仅更新路由状态，不再调用配置写入/恢复 API
+  - `/api/routes/deactivate-all` 仅停用路由，配置恢复统一由服务退出流程处理
+- 2026-03-11: 补充配置机制文档（CLAUDE.md）
+  - 细化“智能配置合并”章节，补齐服务起停写入/恢复、UI 配置修改、`aicos restore`、状态检测与 MCP 例外说明
+- 2026-03-11: 修复服务退出恢复误报与合并覆盖问题
+  - `src/server/config-merge.ts` 改为仅复制叶子路径，避免父级对象（如 `env`、`model_providers`）整块覆盖回写
+  - `restoreClaudeConfig` / `restoreCodexConfig` 返回“是否实际恢复文件”，日志不再在无 backup 场景误报 restored
+- 2026-03-11: 工具配置改为全局配置并补齐兼容迁移
+  - 新增全局配置字段：`enableAgentTeams`、`enableBypassPermissionsSupport`、`codexModelReasoningEffort`
+  - 服务启动写配置改为仅读取全局配置，不再读取路由字段
+  - `fs-database` 启动时自动迁移旧路由字段到全局配置，并清理路由中的废弃字段
+  - `RoutesPage` 的 Claude/Codex 配置改为读写全局配置（`/api/config`）
+- 2026-03-11: 调整路由配置页全局配置卡片布局
+  - 将“Claude Code 全局配置”“Codex 全局配置”从路由规则区域移至“📝 配置文件自动管理”模块上方
+  - 避免全局工具设置与路由规则混排，提升页面结构清晰度
+- 2026-03-11: 修正全局配置生效逻辑与提示文案
+  - 保存全局配置后服务端立即回写 Claude/Codex 配置文件（不再要求重启服务）
+  - 路由规则修改保持后端实时生效；全局配置修改仅需重启对应编程工具
+- 2026-03-11: 路由规则页补充优先级说明
+  - 在“智能故障切换机制”上方新增“规则优先级顺序”提示模块
+  - 明确展示故障切换开启/关闭时的命中顺序与同类规则排序逻辑
+- 2026-03-11: 路由规则说明改为用户操作指引
+  - 将“规则优先级顺序”文案简化为“如何配置规则（推荐）”
+  - 采用“先分类型、再排顺序、上主下备”的用户视角说明，减少概念负担
+- 2026-03-11: 路由规则文案补充常见优先顺序
+  - 在用户操作指引末尾追加：图像理解 → 高智商 → 长上下文 → 思考 → 后台 → 模型顶替 → 默认
+- 2026-03-11: 调整服务黑名单自动恢复时间为 10 秒
+  - 统一 `fs-database` 与 `database` 的黑名单过期时间为 `10s`
+  - 同步修正 Routes/Settings 页面“不可用恢复时间”提示文案
+- 2026-03-11: 故障自动恢复时间改为可配置
+  - 设置页新增 `failoverRecoverySeconds` 字段（默认 10 秒，仅在启用故障切换时可编辑）
+  - 黑名单过期时间改为按配置读取；旧配置自动回填默认值 10 秒
+- 2026-03-11: `aicos restore` 增加运行中保护
+  - restore 前检查服务是否仍在运行（PID/端口）
+  - 服务运行中时不执行恢复，提示先执行 `aicos stop`（stop 会自动恢复配置）
+- 2026-03-11: 后端请求日志补齐中转标记与全路径记录
+  - 工具请求在路由未命中/鉴权失败/服务未配置等早退场景也会写入请求日志
+  - 请求日志 `tags` 新增中转状态标记：`通过中转` / `未通过中转`，fallback 原始配置额外标记 `使用原始配置`
+  - 统计继续基于每条日志 `usage` 聚合 token（`addLog` 触发 `updateStatistics`）
 
 ---
 

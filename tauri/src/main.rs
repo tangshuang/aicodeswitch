@@ -158,8 +158,45 @@ async fn start_server(
 fn stop_server(state: &State<'_, Mutex<ServerProcess>>) {
     let mut server = state.lock().unwrap();
     if let Some(mut child) = server.process.take() {
-        let _ = child.kill();
-        let _ = child.wait();
+        #[cfg(unix)]
+        {
+            use std::process::Command;
+            use std::thread;
+            use std::time::Duration;
+
+            let pid = child.id();
+            // 优先发送 SIGTERM，让 Node.js 有机会执行优雅关停（恢复配置、关闭资源）
+            let _ = Command::new("kill")
+                .arg("-TERM")
+                .arg(pid.to_string())
+                .status();
+
+            // 最多等待 5 秒
+            let mut exited = false;
+            for _ in 0..50 {
+                match child.try_wait() {
+                    Ok(Some(_)) => {
+                        exited = true;
+                        break;
+                    }
+                    Ok(None) => thread::sleep(Duration::from_millis(100)),
+                    Err(_) => break,
+                }
+            }
+
+            // 超时后再强制终止
+            if !exited {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+
         println!("Node.js server stopped");
     }
 }
@@ -477,4 +514,3 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-

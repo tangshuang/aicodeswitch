@@ -310,7 +310,7 @@ aicos version            # Show current version information
   - Claude Code: Reads `~/.claude/settings.json` (prefers backup file if exists)
   - Codex: Reads `~/.codex/config.toml` and `auth.json` (prefers backup files if exist)
   - Ensures tools continue working even without active routes
-  - Logs include "使用原始配置" tag when fallback is used
+  - Logs include tags: `未通过中转` + `使用原始配置` when fallback is used
   - **Dead Loop Prevention**: Automatically detects if original config points to local proxy and rejects to avoid infinite loops
 
 - **Content Type Detection**:
@@ -347,58 +347,158 @@ aicos version            # Show current version information
   - DeepSeek Chat
 
 ### Configuration Management
-- Writes/ restores Claude Code config files (`~/.claude/settings.json`, `~/.claude.json`)
-- Writes/ restores Codex config files (`~/.codex/config.toml`, `~/.codex/auth.json`)
+- **服务进程生命周期自动写入/恢复配置文件**：
+  - 服务启动时自动写入 Claude Code 和 Codex 配置文件（不依赖激活路由）
+    - 适用入口：`aicos start` / `aicos ui` / `aicos restart` / `yarn dev:server`
+  - 服务终止前自动恢复原始配置文件
+    - 适用入口：`aicos stop`（SIGTERM）/ 开发态 `Ctrl+C`（SIGINT）
+  - `aicos restore` 保留为手动恢复命令
+- **路由激活/停用**：不再自动写入/恢复配置文件
+  - `/api/routes/:id/activate` - 不调用配置写入
+  - `/api/routes/:id/deactivate` - 不调用配置恢复
+  - `/api/routes/deactivate-all` - 仅停用路由，不调用配置恢复（配置恢复由服务终止信号统一触发）
+- **配置修改 API**：保留现有的修改 API
+  - `/api/write-config/claude` - 手动写入 Claude Code 配置
+  - `/api/write-config/codex` - 手动写入 Codex 配置
+  - `/api/update-claude-agent-teams` - 更新全局 Agent Teams 配置（兼容旧调用）
+  - `/api/update-claude-bypass-permissions-support` - 更新全局 bypassPermissions 支持配置（兼容旧调用）
+  - `/api/update-codex-reasoning-effort` - 更新全局 Codex Reasoning Effort（兼容旧调用）
 - Exports/ imports encrypted configuration data
+
+**配置文件**：
+- Claude Code: `~/.claude/settings.json`, `~/.claude.json`
+- Codex: `~/.codex/config.toml`, `~/.codex/auth.json`
+- 备份文件：`*.aicodeswitch_backup`
 
 #### 智能配置合并
 
-系统使用智能合并策略来处理配置文件，确保在激活和停用路由时，不会丢失编程工具运行时写入的内容。
+系统使用“管理字段 + 保留字段”的智能合并策略，核心目标是：
+- 代理接管期间稳定覆盖必要字段
+- 恢复时尽量保留工具运行期新增的非托管内容
+- 避免重复覆盖、备份污染和状态错乱
 
-**核心思路**：
-- 定义**管理字段**（由我们控制的配置）和**保留字段**（工具运行时写入的配置）
-- **写入配置时**：保留当前配置中的非管理字段，写入我们的管理字段
-- **恢复配置时**：使用备份配置作为基础，合并当前配置中的非管理字段
+**一、服务启动：备份与覆盖写入（生命周期入口）**
+- 触发入口：
+  - `aicos start` / `aicos ui` / `aicos restart`
+  - `yarn dev:server`
+- 执行流程（`syncConfigsOnServerStartup`）：
+  - 直接读取全局配置：`AppConfig.enableAgentTeams` / `AppConfig.enableBypassPermissionsSupport` / `AppConfig.codexModelReasoningEffort`
+  - 调用 `writeClaudeConfig` / `writeCodexConfig`
+- 写入保护：
+  - 通过 `checkClaudeConfigStatus` / `checkCodexConfigStatus` 检测是否已是代理覆盖态
+  - 若 `isOverwritten=true`，拒绝重复覆盖（返回 `false`）
+- 备份策略：
+  - 仅当对应 `*.aicodeswitch_backup` 不存在时备份原文件
+  - backup 已存在时不覆盖旧备份，避免原始配置丢失
+- 覆盖策略（智能合并）：
+  - 代理配置仅写入管理字段
+  - 当前文件中的非管理字段会被保留
+  - 使用原子写入，降低中断损坏风险
+- 元数据：
+  - 写入后记录 metadata（hash / proxy marker / 文件路径）用于状态识别
 
-**管理字段定义**：
+**二、服务停止：恢复原始配置（生命周期出口）**
+- 触发入口：
+  - `aicos stop`（SIGTERM）
+  - 开发态 `Ctrl+C`（SIGINT）
+  - Tauri 生产模式关闭窗口后的服务终止流程
+- 恢复流程（`restoreClaudeConfig` / `restoreCodexConfig`）：
+  - 若 backup 存在：
+    - 读取 backup（恢复基线）
+    - 读取当前配置（可能包含工具运行时新增内容）
+    - 以 backup 为基础，合并当前配置的非管理字段
+    - 原子写回后删除 backup
+  - 删除 metadata（`deleteMetadata`）
+- 若 backup 不存在：
+  - 视为 no-op，直接返回成功
+- 异常场景：
+  - 如被强制 `SIGKILL`，可能来不及恢复，可通过 `aicos restore` 手动修复
 
-Claude Code `settings.json`:
-- `env.ANTHROPIC_AUTH_TOKEN`
-- `env.ANTHROPIC_BASE_URL`
-- `env.API_TIMEOUT_MS`
-- `env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`
-- `env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` (可选)
-- `permissions.defaultMode` (可选)
-- `skipDangerousModePermissionPrompt` (可选)
+**三、UI 修改工具配置时的处理逻辑**
+- 路由页（`RoutesPage`）：
+  - `enableAgentTeams` / `enableBypassPermissionsSupport` / `codexModelReasoningEffort`
+  - 当前写入全局配置（`config.json`），不直接写用户配置文件
+  - 这些设置在“下次服务启动”时写入并生效（同时需重启对应编程工具）
+- 兼容接口保留：
+  - `/api/update-claude-agent-teams`
+  - `/api/update-claude-bypass-permissions-support`
+  - `/api/update-codex-reasoning-effort`
+  - 这三个接口现在更新全局配置，不再直接改写工具配置文件
+- 手动入口保留：
+  - `/api/write-config/*`、`/api/restore-config/*`
+  - UI 中的 `/write-config` 页面可用于调试/运维手动覆盖或恢复
 
-Claude Code `.claude.json`:
-- `hasCompletedOnboarding`
-- `mcpServers` (可选)
+**全局配置迁移（兼容旧版本）**
+- 服务启动初始化时会尝试把历史“路由级工具配置”迁移到全局配置（仅在全局字段尚不存在时）
+  - `Route.enableAgentTeams` -> `AppConfig.enableAgentTeams`
+  - `Route.enableBypassPermissionsSupport` -> `AppConfig.enableBypassPermissionsSupport`
+  - `Route.codexModelReasoningEffort` -> `AppConfig.codexModelReasoningEffort`
+- 迁移后会清理路由对象中的旧字段，避免后续歧义
 
-Codex `config.toml`:
-- `model_provider`
-- `model`
-- `model_reasoning_effort`
-- `disable_response_storage`
-- `preferred_auth_method`
-- `requires_openai_auth`
-- `enableRouteSelection`
-- `[model_providers.aicodeswitch]` 整个 section
+**四、`aicos restore` 命令处理逻辑**
+- 调用方式：
+  - `aicos restore`（恢复全部）
+  - `aicos restore claude-code`
+  - `aicos restore codex`
+- 恢复行为：
+  - 与服务退出使用同一套“智能恢复”策略（backup 基线 + 当前非管理字段）
+  - 恢复后删除 backup 文件，防止陈旧备份反复覆盖
+- 附加行为：
+  - 命令结束前会停用所有激活路由（直接更新 routes 数据文件）
+  - 输出“重启服务/工具”提示
 
-Codex `auth.json`:
-- `OPENAI_API_KEY`
+**五、管理字段定义（托管字段）**
+- Claude Code `settings.json`：
+  - `env.ANTHROPIC_AUTH_TOKEN`
+  - `env.ANTHROPIC_BASE_URL`
+  - `env.API_TIMEOUT_MS`
+  - `env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`
+  - `env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`（可选）
+  - `permissions.defaultMode`（可选）
+  - `skipDangerousModePermissionPrompt`（可选）
+- Claude Code `.claude.json`：
+  - `hasCompletedOnboarding`
+  - `mcpServers`（可选）
+- Codex `config.toml`：
+  - `model_provider`
+  - `model`
+  - `model_reasoning_effort`
+  - `disable_response_storage`
+  - `preferred_auth_method`
+  - `requires_openai_auth`
+  - `enableRouteSelection`
+  - `[model_providers.aicodeswitch]` 整个 section
+- Codex `auth.json`：
+  - `OPENAI_API_KEY`
+- 保留字段：
+  - 以上以外的全部字段（如 Claude 的 `projects`、Codex 的 `[projects...]`）
 
-**保留字段**：
-- 所有其他字段（如 Claude Code 的 `projects`、Codex 的 `[projects...]` 等）
+**六、其他关联逻辑**
+- 状态检测：
+  - `check*ConfigStatus` 返回 `isOverwritten / isModified / hasBackup`
+  - 综合 proxy marker、hash、backup 与 metadata 判断状态
+- 无效 metadata 清理：
+  - `cleanupInvalidMetadata` 会清理“metadata 存在但 backup 丢失”的异常状态
+- 合并实现细节：
+  - 合并器按“叶子路径”复制非管理字段，避免父级对象整块复制导致管理字段被反向覆盖
+- 原始配置读取兜底：
+  - `original-config-reader` 优先读取 backup，再读取当前配置
+  - Codex `auth.json` 兼容读取 `OPENAI_API_KEY`、`api_key` 等字段
+- 路由停用接口职责：
+  - `/api/routes/deactivate-all` 仅停用路由，不执行配置恢复
+  - 配置恢复统一由服务终止信号触发
+- MCP 例外说明：
+  - MCP 同步仍会在相关路由/MCP 操作时更新 `.claude.json` 的 `mcpServers`
+  - 该行为属于 MCP 配置同步，不属于代理主配置生命周期写入逻辑
 
-**实现细节**：
-- 原子性写入：先写临时文件，再重命名，确保写入失败时不会损坏原文件
-- 使用 `@iarna/toml` 库处理 Codex 的 TOML 格式配置
-- JSON 配置使用深度合并算法
-
-**相关模块**：
-- `src/server/config-managed-fields.ts` - 管理字段定义
-- `src/server/config-merge.ts` - 合并逻辑实现
+**相关模块**
+- `src/server/config-managed-fields.ts`：管理字段定义
+- `src/server/config-merge.ts`：JSON/TOML 智能合并与原子写入
+- `src/server/config-metadata.ts`：配置状态与元数据管理
+- `src/server/main.ts`：生命周期写入/恢复与配置 API
+- `bin/utils/config-helpers.js`：CLI 恢复侧合并工具
+- `bin/restore.js`：`aicos restore` 命令实现
+- `src/server/original-config-reader.ts`：原始配置读取兜底
 
 #### Data Import/Export
 - **Export**: Exports all configuration data (vendors, services, routes, rules, config) as AES-encrypted JSON
@@ -432,6 +532,8 @@ Codex `auth.json`:
 
 ### Logging
 - Request logs: Detailed API call records with token usage
+  - Tool requests are logged across all server-handled paths (proxy/stream/fallback/early-error)
+  - `tags` include relay status per request: `通过中转` or `未通过中转`
 - Access logs: System access records
 - Error logs: Error and exception records with comprehensive context
   - **Error Log Details**:
@@ -766,6 +868,29 @@ npm 发布成功后，自动触发 Tauri 应用构建：
   - 客户端断开时主动中止上游请求并跳过故障切换/黑名单，避免 `Cannot pipe to a closed or destroyed stream`
   - 统一 `codex/claude-code` 到 OpenAI/Claude/Gemini 的 SSE 转发实现，避免历史特殊分支的行为漂移
   - 全面审计 `streaming.ts` 的 11 个 Transform 类并修复协议对齐问题（事件来源兼容、usage 映射、函数调用 done、finish reason 映射）
+- 2026-03-11: 路由配置页布局调整
+  - 将“Claude Code 全局配置”“Codex 全局配置”移动到“📝 配置文件自动管理”模块上方
+  - 全局工具配置不再与路由规则区块混排，页面层次更清晰
+- 2026-03-11: 修正全局配置生效路径
+  - 保存全局配置后服务端会立即回写 Claude/Codex 配置文件
+  - 路由规则仍为后端实时加载；全局配置变更无需重启服务，仅需重启对应编程工具
+- 2026-03-11: 路由规则页新增优先级说明模块
+  - 在“智能故障切换机制”上方新增“规则优先级顺序”提示
+  - 说明开启/关闭故障切换时的规则匹配顺序，帮助用户理解命中逻辑
+- 2026-03-11: 路由规则提示文案用户化
+  - 将复杂优先级说明改为“如何配置规则（推荐）”操作指引
+  - 以用户配置步骤为主线，突出“先分类型、再排顺序、上主下备”
+- 2026-03-11: 补充常见类型优先顺序提示
+  - 在路由规则指引文案末尾补充：图像理解 → 高智商 → 长上下文 → 思考 → 后台 → 模型顶替 → 默认
+- 2026-03-11: 服务不可用自动恢复时间统一为 10 秒
+  - 后端黑名单过期时间统一为 `10s`（修复不同存储实现的时长不一致）
+  - 路由页与设置页的故障切换说明文案同步更新为 10 秒
+- 2026-03-11: 故障自动恢复时间支持用户配置
+  - 设置页新增“故障自动恢复时间（秒）”字段，默认 10，且仅在启用故障切换时可编辑
+  - 服务端按 `AppConfig.failoverRecoverySeconds` 计算黑名单恢复时间；缺省回退 10 秒
+- 2026-03-11: `aicos restore` 增加服务运行检测
+  - restore 前检测服务是否运行中（PID/端口）
+  - 若服务运行中则跳过 restore 并提示执行 `aicos stop`，避免运行中手动恢复导致服务不可用
 
 ## Development
 

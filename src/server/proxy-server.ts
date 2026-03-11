@@ -102,6 +102,60 @@ export class ProxyServer {
     this.app = app;
   }
 
+  private inferTargetTypeFromPath(path: string): ToolType | undefined {
+    if (path === '/claude-code' || path.startsWith('/claude-code/')) {
+      return 'claude-code';
+    }
+    if (path === '/codex' || path.startsWith('/codex/')) {
+      return 'codex';
+    }
+    return undefined;
+  }
+
+  private buildRelayTags(relayed: boolean, useOriginalConfig: boolean = false): string[] {
+    const tags = [relayed ? '通过中转' : '未通过中转'];
+    if (useOriginalConfig) {
+      tags.push('使用原始配置');
+    }
+    return tags;
+  }
+
+  private async logToolRequest(
+    req: Request,
+    options: {
+      statusCode: number;
+      error?: string;
+      responseTime?: number;
+      targetType?: ToolType;
+      usage?: TokenUsage;
+      tags?: string[];
+    }
+  ): Promise<void> {
+    const enableLogging = this.config?.enableLogging !== false;
+    const resolvedTargetType = options.targetType ||
+      this.inferTargetTypeFromPath(req.path) ||
+      this.inferTargetTypeFromPath(req.originalUrl || '');
+
+    if (!enableLogging || !resolvedTargetType) {
+      return;
+    }
+
+    await this.dbManager.addLog({
+      timestamp: Date.now(),
+      method: req.method,
+      path: req.originalUrl || req.path,
+      headers: this.normalizeHeaders(req.headers),
+      body: req.body,
+      statusCode: options.statusCode,
+      responseTime: options.responseTime,
+      usage: options.usage,
+      error: options.error,
+      targetType: resolvedTargetType,
+      requestModel: req.body?.model,
+      tags: options.tags,
+    });
+  }
+
   initialize() {
     // Dynamic proxy middleware
     this.app.use(async (req: Request, res: Response, next: NextFunction) => {
@@ -110,7 +164,11 @@ export class ProxyServer {
         return next();
       }
 
+      const requestStartAt = Date.now();
+      let hasRelayAttempt = false;
+
       try {
+        const pathTargetType = this.inferTargetTypeFromPath(req.path);
         const route = this.findMatchingRoute(req);
         if (!route) {
           // 没有找到激活的路由，尝试使用原始配置
@@ -118,6 +176,15 @@ export class ProxyServer {
           if (fallbackResult) {
             return; // 成功使用原始配置处理请求
           }
+
+          await this.logToolRequest(req, {
+            statusCode: 404,
+            responseTime: Date.now() - requestStartAt,
+            targetType: pathTargetType,
+            error: 'No matching route found and no original config available',
+            tags: this.buildRelayTags(false),
+          });
+
           // 如果原始配置也不可用，返回错误
           return res.status(404).json({ error: 'No matching route found and no original config available' });
         }
@@ -132,14 +199,29 @@ export class ProxyServer {
           // 故障切换已禁用,使用传统的单一规则匹配
           const rule = await this.findMatchingRule(route.id, req, forcedContentType);
           if (!rule) {
+            await this.logToolRequest(req, {
+              statusCode: 404,
+              responseTime: Date.now() - requestStartAt,
+              targetType: route.targetType,
+              error: 'No matching rule found',
+              tags: this.buildRelayTags(false),
+            });
             return res.status(404).json({ error: 'No matching rule found' });
           }
 
           const service = this.getServiceById(rule.targetServiceId);
           if (!service) {
+            await this.logToolRequest(req, {
+              statusCode: 500,
+              responseTime: Date.now() - requestStartAt,
+              targetType: route.targetType,
+              error: 'Target service not configured',
+              tags: this.buildRelayTags(false),
+            });
             return res.status(500).json({ error: 'Target service not configured' });
           }
 
+          hasRelayAttempt = true;
           await this.proxyRequest(req, res, route, rule, service);
           return;
         }
@@ -147,6 +229,13 @@ export class ProxyServer {
         // 启用故障切换:获取所有候选规则
         const allRules = this.getAllMatchingRules(route.id, req, forcedContentType);
         if (allRules.length === 0) {
+          await this.logToolRequest(req, {
+            statusCode: 404,
+            responseTime: Date.now() - requestStartAt,
+            targetType: route.targetType,
+            error: 'No matching rule found',
+            tags: this.buildRelayTags(false),
+          });
           return res.status(404).json({ error: 'No matching rule found' });
         }
 
@@ -175,6 +264,7 @@ export class ProxyServer {
           try {
             const nextServiceName = await this.findNextAvailableServiceName(allRules, index + 1, route.id);
             // 尝试代理请求
+            hasRelayAttempt = true;
             await this.proxyRequest(req, res, route, rule, service, {
               failoverEnabled: true,
               forwardedToServiceName: nextServiceName,
@@ -235,6 +325,7 @@ export class ProxyServer {
         if (lastFailedRule && lastFailedService) {
           console.log(`All services in blacklist, attempting fallback to last failed service: ${lastFailedService.name}`);
           try {
+            hasRelayAttempt = true;
             await this.proxyRequest(req, res, route, lastFailedRule, lastFailedService, {
               failoverEnabled: false,  // Fallback 模式不启用故障切换
               forwardedToServiceName: undefined,
@@ -246,17 +337,13 @@ export class ProxyServer {
           }
         }
 
-        // 记录日志
-        if (this.config?.enableLogging !== false && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
-          await this.dbManager.addLog({
-            timestamp: Date.now(),
-            method: req.method,
-            path: req.path,
-            headers: this.normalizeHeaders(req.headers),
-            body: req.body,
-            error: lastError?.message || 'All services failed',
-          });
-        }
+        await this.logToolRequest(req, {
+          statusCode: 503,
+          responseTime: Date.now() - requestStartAt,
+          targetType: route.targetType,
+          error: lastError?.message || 'All services failed',
+          tags: this.buildRelayTags(hasRelayAttempt),
+        });
 
         // 确定目标类型
         const targetType: ToolType = req.path.startsWith('/claude-code/') ? 'claude-code' : 'codex';
@@ -296,16 +383,13 @@ export class ProxyServer {
         }
       } catch (error: any) {
         console.error('Proxy error:', error);
-        if (this.config?.enableLogging !== false && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
-          await this.dbManager.addLog({
-            timestamp: Date.now(),
-            method: req.method,
-            path: req.path,
-            headers: this.normalizeHeaders(req.headers),
-            body: req.body,
-            error: error.message,
-          });
-        }
+        await this.logToolRequest(req, {
+          statusCode: 500,
+          responseTime: Date.now() - requestStartAt,
+          targetType: this.inferTargetTypeFromPath(req.path),
+          error: error.message,
+          tags: this.buildRelayTags(hasRelayAttempt),
+        });
         // Add error log - 包含请求详情
         const targetType: ToolType = req.path.startsWith('/claude-code/') ? 'claude-code' : 'codex';
         await this.dbManager.addErrorLog({
@@ -351,18 +435,35 @@ export class ProxyServer {
 
   private createFixedRouteHandler(targetType: 'claude-code' | 'codex') {
     return async (req: Request, res: Response) => {
+      const requestStartAt = Date.now();
+      let hasRelayAttempt = false;
+
       try {
         // 检查API Key验证
         if (this.config.apiKey) {
           const authHeader = req.headers.authorization;
           const providedKey = authHeader?.replace('Bearer ', '');
           if (!providedKey || providedKey !== this.config.apiKey) {
+            await this.logToolRequest(req, {
+              statusCode: 401,
+              responseTime: Date.now() - requestStartAt,
+              targetType,
+              error: 'Invalid API key',
+              tags: this.buildRelayTags(false),
+            });
             return res.status(401).json({ error: 'Invalid API key' });
           }
         }
 
         const route = this.findRouteByTargetType(targetType);
         if (!route) {
+          await this.logToolRequest(req, {
+            statusCode: 404,
+            responseTime: Date.now() - requestStartAt,
+            targetType,
+            error: `No active route found for target type: ${targetType}`,
+            tags: this.buildRelayTags(false),
+          });
           return res.status(404).json({ error: `No active route found for target type: ${targetType}` });
         }
 
@@ -376,14 +477,29 @@ export class ProxyServer {
           // 故障切换已禁用,使用传统的单一规则匹配
           const rule = await this.findMatchingRule(route.id, req, forcedContentType);
           if (!rule) {
+            await this.logToolRequest(req, {
+              statusCode: 404,
+              responseTime: Date.now() - requestStartAt,
+              targetType,
+              error: 'No matching rule found',
+              tags: this.buildRelayTags(false),
+            });
             return res.status(404).json({ error: 'No matching rule found' });
           }
 
           const service = this.getServiceById(rule.targetServiceId);
           if (!service) {
+            await this.logToolRequest(req, {
+              statusCode: 500,
+              responseTime: Date.now() - requestStartAt,
+              targetType,
+              error: 'Target service not configured',
+              tags: this.buildRelayTags(false),
+            });
             return res.status(500).json({ error: 'Target service not configured' });
           }
 
+          hasRelayAttempt = true;
           await this.proxyRequest(req, res, route, rule, service);
           return;
         }
@@ -391,6 +507,13 @@ export class ProxyServer {
         // 启用故障切换:获取所有候选规则
         const allRules = this.getAllMatchingRules(route.id, req, forcedContentType);
         if (allRules.length === 0) {
+          await this.logToolRequest(req, {
+            statusCode: 404,
+            responseTime: Date.now() - requestStartAt,
+            targetType,
+            error: 'No matching rule found',
+            tags: this.buildRelayTags(false),
+          });
           return res.status(404).json({ error: 'No matching rule found' });
         }
 
@@ -419,6 +542,7 @@ export class ProxyServer {
           try {
             const nextServiceName = await this.findNextAvailableServiceName(allRules, index + 1, route.id);
             // 尝试代理请求
+            hasRelayAttempt = true;
             await this.proxyRequest(req, res, route, rule, service, {
               failoverEnabled: true,
               forwardedToServiceName: nextServiceName,
@@ -479,6 +603,7 @@ export class ProxyServer {
         if (lastFailedRule && lastFailedService) {
           console.log(`All services in blacklist, attempting fallback to last failed service: ${lastFailedService.name}`);
           try {
+            hasRelayAttempt = true;
             await this.proxyRequest(req, res, route, lastFailedRule, lastFailedService, {
               failoverEnabled: false,  // Fallback 模式不启用故障切换
               forwardedToServiceName: undefined,
@@ -490,17 +615,13 @@ export class ProxyServer {
           }
         }
 
-        // 记录日志
-        if (this.config?.enableLogging !== false && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
-          await this.dbManager.addLog({
-            timestamp: Date.now(),
-            method: req.method,
-            path: req.path,
-            headers: this.normalizeHeaders(req.headers),
-            body: req.body,
-            error: lastError?.message || 'All services failed',
-          });
-        }
+        await this.logToolRequest(req, {
+          statusCode: 503,
+          responseTime: Date.now() - requestStartAt,
+          targetType,
+          error: lastError?.message || 'All services failed',
+          tags: this.buildRelayTags(hasRelayAttempt),
+        });
 
         // 记录错误日志 - 包含请求详情（使用函数参数 targetType）
         await this.dbManager.addErrorLog({
@@ -537,16 +658,13 @@ export class ProxyServer {
         }
       } catch (error: any) {
         console.error(`Fixed route error for ${targetType}:`, error);
-        if (this.config?.enableLogging !== false && SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
-          await this.dbManager.addLog({
-            timestamp: Date.now(),
-            method: req.method,
-            path: req.path,
-            headers: this.normalizeHeaders(req.headers),
-            body: req.body,
-            error: error.message,
-          });
-        }
+        await this.logToolRequest(req, {
+          statusCode: 500,
+          responseTime: Date.now() - requestStartAt,
+          targetType,
+          error: error.message,
+          tags: this.buildRelayTags(hasRelayAttempt),
+        });
         // Add error log - 包含请求详情（使用函数参数 targetType）
         await this.dbManager.addErrorLog({
           timestamp: Date.now(),
@@ -2755,11 +2873,6 @@ export class ProxyServer {
         return;
       }
 
-      // 只记录来自编程工具的请求
-      if (!SUPPORTED_TARGETS.some(target => req.path.startsWith(`/${target}/`))) {
-        return;
-      }
-
       logged = true;
 
       // 获取供应商信息
@@ -2772,7 +2885,7 @@ export class ProxyServer {
       await this.dbManager.addLog({
         timestamp: Date.now(),
         method: req.method,
-        path: req.path,
+        path: req.originalUrl || req.path,
         headers: this.normalizeHeaders(req.headers),
         body: req.body,
         statusCode,
@@ -2791,7 +2904,7 @@ export class ProxyServer {
         vendorId: service.vendorId,
         vendorName: vendor?.name,
         requestModel,
-        tags: useOriginalConfig ? ['使用原始配置'] : undefined,
+        tags: this.buildRelayTags(!useOriginalConfig, useOriginalConfig),
         responseHeaders: responseHeadersForLog,
         responseBody: responseBodyForLog,
         streamChunks: streamChunksForLog,

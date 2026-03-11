@@ -50,7 +50,7 @@ export const isFieldManaged = (
 };
 
 /**
- * 递归遍历对象，收集所有字段路径
+ * 递归遍历对象，收集叶子字段路径
  * @param obj 要遍历的对象
  * @param currentPath 当前路径
  * @param allPaths 收集所有路径的数组
@@ -60,21 +60,41 @@ const collectPaths = (
   currentPath: FieldPath,
   allPaths: FieldPath[]
 ): void => {
-  if (obj === null || typeof obj !== 'object') {
+  // 基础类型/null：当前路径即叶子
+  if (obj === null || obj === undefined || typeof obj !== 'object') {
+    if (currentPath.length > 0) {
+      allPaths.push(currentPath);
+    }
     return;
   }
 
+  // 数组：递归收集元素叶子；空数组本身视为叶子
   if (Array.isArray(obj)) {
+    if (obj.length === 0) {
+      if (currentPath.length > 0) {
+        allPaths.push(currentPath);
+      }
+      return;
+    }
+
     obj.forEach((item, index) => {
       collectPaths(item, [...currentPath, index], allPaths);
     });
-  } else {
-    for (const key in obj) {
-      if (Object.prototype.hasOwnProperty.call(obj, key)) {
-        const newPath = [...currentPath, key];
-        allPaths.push(newPath);
-        collectPaths(obj[key], newPath, allPaths);
-      }
+    return;
+  }
+
+  // 对象：递归收集子字段；空对象本身视为叶子
+  const keys = Object.keys(obj);
+  if (keys.length === 0) {
+    if (currentPath.length > 0) {
+      allPaths.push(currentPath);
+    }
+    return;
+  }
+
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      collectPaths(obj[key], [...currentPath, key], allPaths);
     }
   }
 };
