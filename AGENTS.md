@@ -68,11 +68,9 @@ aicodeswitch/
 
 ## 特殊约定
 
-### 数据库与迁移
+### 数据库
 - **数据格式:** 所有数据存为 JSON 文件 (`~/.aicodeswitch/fs-db/*.json`)
-- **数据结构:** `vendors.json` 内嵌 `services` 数组（已迁移，旧结构已废弃）
-- **自动迁移:** 启动时自动检测并迁移旧 SQLite/LevelDB/旧 JSON 结构
-- **迁移工具:** `src/server/migrate-to-fs.ts`
+- **数据结构:** `vendors.json` 内嵌 `services` 数组
 
 ### 路由与故障切换
 - **路由规则:** 按请求内容类型 (image-understanding/thinking/long-context/background/default) 匹配

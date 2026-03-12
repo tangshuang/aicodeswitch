@@ -132,9 +132,7 @@ aicos version            # Show current version information
 - Reads configuration from `~/.aicodeswitch/aicodeswitch.conf`
 - Sets up authentication middleware
 - Registers all API routes
-- Initializes database using `DatabaseFactory.createAuto()` which automatically:
-  - Detects and migrates old SQLite/LevelDB databases if present
-  - Creates new file system database if none exists
+- Initializes database using `DatabaseFactory.createAuto()` which creates file system database
 - Initializes proxy server
 
 #### 2. Proxy Server - `server/proxy-server.ts`
@@ -198,8 +196,7 @@ aicos version            # Show current version information
 
 #### 5. Database - `server/fs-database.ts`
 - **FileSystemDatabaseManager**: Pure JSON file-based storage (no database dependencies)
-- **DatabaseFactory** (`server/database-factory.ts`): Auto-detects database type and handles migration
-- **Migration Tool** (`server/migrate-to-fs.ts`): Migrates data from SQLite/LevelDB to JSON files
+- **DatabaseFactory** (`server/database-factory.ts`): Creates file system database instances
 - **Data Files**: Stores data as JSON in `~/.aicodeswitch/data/`:
   - `vendors.json` - AI service vendors with nested API services
   - `routes.json` - Route definitions
@@ -215,26 +212,6 @@ aicos version            # Show current version information
 - Vendors contain nested services array: `vendors[{ id, name, services: [{ id, name, apiUrl, ... }], ... }]`
 - Services are no longer stored in a separate file, they are embedded within their parent vendor
 - This structure ensures data consistency and simplifies cascade operations
-
-**Migration from SQLite**:
-- Automatic migration on first startup using `DatabaseFactory.createAuto()`
-- Detects old SQLite database (`app.db`) and automatically migrates to file system database
-- Migration process includes:
-  - Exporting all data from SQLite (vendors, services, routes, rules, config, sessions, logs, error logs)
-  - Restructuring services to be nested within vendors
-  - Creating JSON files in `~/.aicodeswitch/data/`
-  - Backing up old database files to `~/.aicodeswitch/data/backup/`
-  - Verifying migration success
-- If migration fails, a new file system database is created anyway (user can manually restore backup)
-
-**Migration from Old File System Database**:
-- Automatic migration on startup if `services.json` exists (old structure)
-- Migration process includes:
-  - Reading vendors.json and services.json
-  - Grouping services by vendorId
-  - Embedding services into vendors
-  - Backing up old services.json to `services.json.backup.{timestamp}`
-  - Saving new vendors.json with nested services
 
 #### 6. UI (React) - `ui/`
 - Main app: `App.tsx` - Navigation and layout with collapsible sidebar
@@ -579,7 +556,6 @@ aicos version            # Show current version information
 4. **Dev Ports**: UI (4568), Server (4567) - configured in `vite.config.ts` and `server/main.ts`
 5. **Skills Search**: `SKILLSMP_API_KEY` is required for Skills discovery via SkillsMP
 6. **API Endpoints**: All routes are prefixed with `/api/` except proxy routes (`/claude-code/`, `/codex/`)
-7. **Database Migration**: If you have an old SQLite database, it will be automatically migrated to JSON files on first startup.
 
 ### Tauri Development Tips
 
@@ -649,9 +625,8 @@ aicodeswitch/
 │   └── server/                  # Node.js backend
 │       ├── main.ts
 │       ├── config.ts
-│       ├── database-factory.ts  # Database factory with migration support
+│       ├── database-factory.ts  # Database factory
 │       ├── fs-database.ts       # JSON file-based database manager
-│       ├── migrate-to-fs.ts     # Migration tool (SQLite → JSON)
 │       ├── proxy-server.ts
 │       └── transformers/
 ├── tauri/                   # Tauri desktop application

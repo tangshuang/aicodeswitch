@@ -32,8 +32,7 @@
   "main": "dist/server/main.js",
   "bin": {
     "aicos": "./bin/cli.js",
-    "aicodeswitch": "./bin/cli.js",
-    "aicos-migrate": "./bin/migrate.js"
+    "aicodeswitch": "./bin/cli.js"
   },
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:ui\"",
@@ -70,13 +69,8 @@
     "ora": "^5.4.1",
     "ws": "^8.19.0"
   },
-  "optionalDependencies": {
-    "better-sqlite3": "^11.8.1",
-    "level": "^8.0.0"
-  },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
-    "@types/better-sqlite3": "^7.6.9",
     "@types/cors": "^2.8.17",
     "@types/crypto-js": "^4.2.2",
     "@types/express": "^4.17.21",

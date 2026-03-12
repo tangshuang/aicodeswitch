@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file. See [standa
 
 ### 2026-03-11 (继续)
 
+#### Breaking Changes
+* **移除旧的 SQLite/LevelDB 数据库支持**
+  - 删除 `src/server/database.ts`（旧的 SQLite/LevelDB 实现）
+  - 删除 `src/server/migrate-to-fs.ts`（迁移工具）
+  - 简化 `src/server/database-factory.ts`，移除所有迁移相关代码
+  - 移除 npm 依赖：`better-sqlite3`、`level`、`@types/better-sqlite3`
+  - 移除 CLI 命令 `aicos-migrate`
+  - 更新文档，移除所有与 SQLite/LevelDB/迁移相关的内容
+
+### 2026-03-11 (继续)
+
+#### Fixes
+* **修复日志记录中的Tokens用量统计问题**
+  - 问题：所有日志记录中的usage字段为null，导致tokens用量无法正常统计和显示
+  - 根本原因：流式响应处理中，usage提取逻辑存在时序和优先级问题
+    - 当`extractedUsage`为null时，整个usage赋值逻辑被跳过
+    - converter和eventCollector的usage提取时机不同步
+  - 修复方案：
+    - 改进usage提取逻辑：优先从converter获取，失败后再从eventCollector获取
+    - 去除if-else的互斥逻辑，改为顺序尝试
+    - 在所有流式处理分支添加详细的调试日志
+    - 修复main.ts中rulesStatusBroadcaster的导入问题
+  - 影响：现在日志记录可以正确保存tokens使用情况，统计数据页面能够正常显示用量信息
+  - 相关文件：`src/server/proxy-server.ts`, `src/server/main.ts`
+
+### 2026-03-11 (继续)
+
 #### Fixes
 * 修复 Claude Code → Gemini 流式响应 Token 使用统计显示 undefined
   - 统一默认流式链路的 `extractUsage` 函数返回 camelCase 字段名（`inputTokens`, `outputTokens`）

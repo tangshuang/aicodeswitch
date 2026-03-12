@@ -27,7 +27,7 @@ import { checkVersionUpdate } from './version-check';
 import { checkPortUsable } from './utils';
 import { getToolsInstallationStatus } from './tools-service';
 import { createToolInstallationWSServer } from './websocket-service';
-import { createRulesStatusWSServer } from './rules-status-service';
+import { createRulesStatusWSServer, rulesStatusBroadcaster } from './rules-status-service';
 import { normalizeSourceType, isLegacySourceType } from './type-migration';
 import {
   saveMetadata,

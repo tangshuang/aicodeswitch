@@ -3562,21 +3562,27 @@ export class ProxyServer {
           // 监听事件收集器的完成事件，确保所有chunks都被收集
           const finalizeChunks = () => {
             const usage = converter.getUsage();
+            console.log('[Proxy] Claude Code stream: converter usage:', usage);
             if (usage) {
               usageForLog = extractTokenUsageFromClaudeUsage(usage);
-            } else {
-              // 尝试从event collector中提取usage
-              const extractedUsage = eventCollector.extractUsage();
-              if (extractedUsage) {
-                usageForLog = this.extractTokenUsageFromResponse(extractedUsage, sourceType);
-              }
+              console.log('[Proxy] Claude Code stream: usageForLog from converter:', usageForLog);
             }
+
+            // 尝试从event collector中提取usage（作为补充）
+            const extractedUsage = eventCollector.extractUsage();
+            console.log('[Proxy] Claude Code stream: extracted usage from eventCollector:', extractedUsage);
+            if (!usageForLog && extractedUsage) {
+              usageForLog = this.extractTokenUsageFromResponse(extractedUsage, sourceType);
+              console.log('[Proxy] Claude Code stream: usageForLog from eventCollector:', usageForLog);
+            }
+
             // 收集stream chunks（每个chunk是一个完整的SSE事件）
             streamChunksForLog = eventCollector.getChunks();
             // 将所有 chunks 合并成完整的响应体用于日志记录
             responseBodyForLog = streamChunksForLog.join('\n');
             console.log('[Proxy] Stream request finished, collected chunks:', streamChunksForLog?.length || 0);
             console.log('[Proxy] Response body length:', responseBodyForLog?.length || 0);
+            console.log('[Proxy] Claude Code stream: final usageForLog before finalizeLog:', usageForLog);
             void finalizeLog(res.statusCode);
           };
 
@@ -3673,20 +3679,26 @@ export class ProxyServer {
           // 监听事件收集器的完成事件，确保所有chunks都被收集
           const finalizeChunks = () => {
             const usage = converter.getUsage();
+            console.log('[Proxy] Codex stream: converter usage:', usage);
             if (usage) {
               usageForLog = extractTokenUsageFromOpenAIUsage(usage);
-            } else {
-              // 尝试从event collector中提取usage
-              const extractedUsage = eventCollector.extractUsage();
-              if (extractedUsage) {
-                usageForLog = this.extractTokenUsageFromResponse(extractedUsage, sourceType);
-              }
+              console.log('[Proxy] Codex stream: usageForLog from converter:', usageForLog);
             }
+
+            // 尝试从event collector中提取usage（作为补充）
+            const extractedUsage = eventCollector.extractUsage();
+            console.log('[Proxy] Codex stream: extracted usage from eventCollector:', extractedUsage);
+            if (!usageForLog && extractedUsage) {
+              usageForLog = this.extractTokenUsageFromResponse(extractedUsage, sourceType);
+              console.log('[Proxy] Codex stream: usageForLog from eventCollector:', usageForLog);
+            }
+
             streamChunksForLog = eventCollector.getChunks();
             // 将所有 chunks 合并成完整的响应体用于日志记录
             responseBodyForLog = streamChunksForLog.join('\n');
             console.log('[Proxy] Codex stream request finished, collected chunks:', streamChunksForLog?.length || 0);
             console.log('[Proxy] Response body length:', responseBodyForLog?.length || 0);
+            console.log('[Proxy] Codex stream: final usageForLog before finalizeLog:', usageForLog);
             void finalizeLog(res.statusCode);
           };
 
@@ -3991,19 +4003,28 @@ export class ProxyServer {
 
           // 尝试从event collector或converter中提取usage信息
           let extractedUsage = eventCollector.extractUsage();
+          console.log('[Proxy] Default stream: extracted usage from eventCollector:', extractedUsage);
           if (converter && typeof (converter as any).getUsage === 'function') {
             const converterUsage = (converter as any).getUsage();
+            console.log('[Proxy] Default stream: converter usage:', converterUsage);
             if (converterUsage) {
               extractedUsage = converterUsage || extractedUsage;
             }
           }
+          console.log('[Proxy] Default stream: final extractedUsage:', extractedUsage);
+          console.log('[Proxy] Default stream: extractUsage function exists:', !!extractUsage);
 
           // 如果有自定义的 extractUsage 函数，使用它
           if (extractUsage && extractedUsage) {
             usageForLog = extractUsage(extractedUsage);
+            console.log('[Proxy] Default stream: applied extractUsage function, result:', usageForLog);
           } else if (extractedUsage) {
             usageForLog = this.extractTokenUsageFromResponse(extractedUsage, sourceType);
+            console.log('[Proxy] Default stream: applied extractTokenUsageFromResponse, result:', usageForLog);
+          } else {
+            console.log('[Proxy] Default stream: no usage extracted, usageForLog remains:', usageForLog);
           }
+          console.log('[Proxy] Default stream: final usageForLog before finalizeLog:', usageForLog);
 
           console.log('[Proxy] Default stream request finished, collected upstream chunks:', streamChunksForLog?.length || 0);
           console.log('[Proxy] Response body length:', responseBodyForLog?.length || 0);
@@ -4111,6 +4132,7 @@ export class ProxyServer {
 
       // 提取 token usage（从原始响应数据中提取）
       usageForLog = this.extractTokenUsageFromResponse(responseData, sourceType);
+      console.log('[Proxy] Non-stream response: extracted usageForLog:', usageForLog);
 
       this.copyResponseHeaders(responseHeaders, res);
 

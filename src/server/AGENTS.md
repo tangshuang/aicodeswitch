@@ -13,10 +13,8 @@ src/server/
 ├── main.ts              # 入口: 配置加载、中间件注册、服务启动
 ├── proxy-server.ts      # 核心代理路由、规则匹配、流式响应
 ├── config.ts            # 环境变量与全局配置
-├── database.ts          # 数据库抽象层 (SQLite/LevleDB 旧实现)
-├── database-factory.ts  # 数据库工厂: 自动检测类型并创建实例
+├── database-factory.ts  # 数据库工厂: 创建文件系统数据库实例
 ├── fs-database.ts       # 文件系统数据库: JSON 文件 CRUD
-├── migrate-to-fs.ts     # 数据迁移工具 (SQLite → JSON)
 ├── auth.ts              # 认证中间件
 ├── utils.ts             # 工具函数 (端口检测等)
 ├── websocket-service.ts # WebSocket 服务
@@ -39,9 +37,8 @@ src/server/
 - 路由按功能模块划分 (vendors、routes、rules、logs、config 等)
 
 ### Database Access
-- **旧实现**: `database.ts` - SQLite/LevelDB 抽象
-- **新实现**: `fs-database.ts` - JSON 文件存储
-- **自动迁移**: `migrate-to-fs.ts` - 启动时检测并迁移旧数据
+- **实现**: `fs-database.ts` - JSON 文件存储
+- **工厂**: `database-factory.ts` - 创建数据库实例
 - 数据文件位于: `~/.aicodeswitch/fs-db/*.json`
 
 ### Proxy & Transformation
