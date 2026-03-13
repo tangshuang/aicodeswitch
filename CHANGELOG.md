@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-03-13
+
+#### Changes
+* **高智商标识符从 `!!` 改为 `[!]`**
+  - 原因：Claude Code 已占用 `!` 作为执行 bash 命令的标识符
+  - 使用方式：`[!] 重构A模块` 启用高智商模式
+  - 移除自动移除标识符的逻辑，保持原始 prompt 不变
+  - 更新 UI 提示文本和文档
+
 ### 2026-03-11 (继续)
 
 #### Breaking Changes

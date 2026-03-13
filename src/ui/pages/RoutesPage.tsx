@@ -1561,7 +1561,7 @@ export default function RoutesPage() {
                           borderRadius: '3px',
                           fontFamily: 'monospace',
                           fontSize: '12px'
-                        }}>!!</code> 标记高智商请求（仅在“最近一条真实用户输入”生效）</li>
+                        }}>[!]</code> 标记高智商请求（仅在”最近一条真实用户输入”生效）</li>
                         <li>系统会自动忽略工具构造的 user 消息（如 tool_result），按对话上下文推断是否继续走高智商规则</li>
                       </ul>
                     </div>
@@ -1573,14 +1573,14 @@ export default function RoutesPage() {
                         borderRadius: '3px',
                         fontFamily: 'monospace',
                         fontSize: '12px'
-                      }}>!! 重构A模块</code><br />
+                      }}>[!] 重构A模块</code><br />
                       • <code style={{
                         background: 'var(--bg-code-inline, #f5f5f5)',
                         padding: '2px 6px',
                         borderRadius: '3px',
                         fontFamily: 'monospace',
                         fontSize: '12px'
-                      }}>继续正常对话（不加 !!）</code>
+                      }}>继续正常对话（不加 [!]）</code>
                     </div>
                   </div>
                 )}

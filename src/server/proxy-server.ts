@@ -74,7 +74,6 @@ type FailoverProxyError = Error & {
 
 type HighIqInferenceResult = {
   shouldUseHighIq: boolean;
-  shouldStripPrefix: boolean;
   decisionSource: 'human' | 'fallback' | 'none';
 };
 
@@ -1715,14 +1714,12 @@ export class ProxyServer {
       if (signal.hasHighIqPrefix) {
         return {
           shouldUseHighIq: true,
-          shouldStripPrefix: true,
           decisionSource: 'human',
         };
       }
 
       return {
         shouldUseHighIq: false,
-        shouldStripPrefix: false,
         decisionSource: 'human',
       };
     }
@@ -1730,14 +1727,12 @@ export class ProxyServer {
     if (previousMode) {
       return {
         shouldUseHighIq: true,
-        shouldStripPrefix: false,
         decisionSource: 'fallback',
       };
     }
 
     return {
       shouldUseHighIq: false,
-      shouldStripPrefix: false,
       decisionSource: 'none',
     };
   }
@@ -1747,11 +1742,6 @@ export class ProxyServer {
     const session = sessionId ? this.dbManager.getSession(sessionId) : null;
     const previousMode = session?.highIqMode === true;
     const inference = this.inferHighIqRouting(req.body, previousMode);
-
-    if (inference.shouldStripPrefix) {
-      req.body = this.removeHighIqPrefix(req.body);
-      console.log('[HIGH-IQ] Removed "!!" prefix from user message');
-    }
 
     if (!inference.shouldUseHighIq) {
       if (sessionId && session?.highIqMode && inference.decisionSource === 'human') {
@@ -1830,7 +1820,7 @@ export class ProxyServer {
       if (treatAsHuman) {
         hasHumanText = true;
       }
-      if (treatAsHuman && trimmed.startsWith('!!')) {
+      if (treatAsHuman && trimmed.startsWith('[!]')) {
         hasHighIqPrefix = true;
       }
     };
@@ -1879,90 +1869,6 @@ export class ProxyServer {
     }
 
     return { hasHumanText, hasHighIqPrefix };
-  }
-
-  private removeHighIqPrefix(body: any): any {
-    if (!body || typeof body !== 'object') {
-      return body;
-    }
-
-    const processed = JSON.parse(JSON.stringify(body));
-
-    if (typeof processed.input === 'string') {
-      processed.input = processed.input.replace(/^\s*!!\s*/, '');
-      return processed;
-    }
-    if (Array.isArray(processed.input)) {
-      for (let i = processed.input.length - 1; i >= 0; i--) {
-        if (typeof processed.input[i] !== 'string') {
-          continue;
-        }
-        const next = processed.input[i].replace(/^\s*!!\s*/, '');
-        if (next !== processed.input[i]) {
-          processed.input[i] = next;
-          return processed;
-        }
-      }
-    }
-
-    const messages = this.extractConversationMessages(processed);
-
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i];
-      if (message?.role !== 'user') {
-        continue;
-      }
-      if (this.stripHighIqPrefixInMessage(message)) {
-        break;
-      }
-    }
-
-    return processed;
-  }
-
-  private stripHighIqPrefixInMessage(message: any): boolean {
-    const content = message?.content;
-    if (typeof content === 'string') {
-      const next = content.replace(/^\s*!!\s*/, '');
-      if (next !== content) {
-        message.content = next;
-        return true;
-      }
-      return false;
-    }
-
-    if (!Array.isArray(content)) {
-      return false;
-    }
-
-    for (const block of content) {
-      if (!block || typeof block !== 'object') {
-        continue;
-      }
-      const type = typeof block.type === 'string' ? block.type : '';
-      const toolGenerated = type === 'tool_result' || type === 'tool' || Boolean(block.tool_use_id || block.tool_call_id);
-      if (toolGenerated) {
-        continue;
-      }
-
-      if (typeof block.text === 'string') {
-        const next = block.text.replace(/^\s*!!\s*/, '');
-        if (next !== block.text) {
-          block.text = next;
-          return true;
-        }
-      }
-
-      if (typeof block.content === 'string') {
-        const next = block.content.replace(/^\s*!!\s*/, '');
-        if (next !== block.content) {
-          block.content = next;
-          return true;
-        }
-      }
-    }
-
-    return false;
   }
 
   /**

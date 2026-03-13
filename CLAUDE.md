@@ -292,10 +292,10 @@ aicos version            # Show current version information
 
 - **Content Type Detection**:
   - `high-iq`: High intelligence mode (persistent across conversation)
-    - Use `!!` prefix to enable: "!! 重构A模块"
-    - Use `!x` prefix to disable: "!x 继续正常对话"
+    - Use `[!]` prefix to enable: "[!] 重构A模块"
     - Once enabled, the entire conversation uses the high-IQ model
-    - State persists in session until explicitly disabled or rule becomes unavailable
+    - State persists in session until rule becomes unavailable
+    - System automatically infers whether to continue using high-IQ based on conversation context
     - Automatically detects rule availability and gracefully degrades when rule is unavailable
   - `image-understanding`: Requests with image content
     - 支持使用 MCP 工具处理图像理解请求
