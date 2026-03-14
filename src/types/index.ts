@@ -291,7 +291,7 @@ export interface ServiceBlacklistEntry {
   routeId: string;
   contentType: ContentType;
   blacklistedAt: number;      // 标记时间戳
-  expiresAt: number;          // 过期时间 = blacklistedAt + 10分钟
+  expiresAt: number;          // 过期时间 = blacklistedAt + 默认30秒（可通过failoverRecoverySeconds配置）
   errorCount: number;         // 错误计数
   lastError?: string;         // 最后一次错误信息
   lastStatusCode?: number;    // 最后一次错误的状态码

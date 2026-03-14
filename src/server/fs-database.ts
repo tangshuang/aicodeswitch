@@ -33,7 +33,7 @@ interface LogShardIndex {
 
 const VALID_CODEX_REASONING_EFFORTS: CodexReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
 const DEFAULT_CODEX_REASONING_EFFORT: CodexReasoningEffort = 'high';
-const DEFAULT_FAILOVER_RECOVERY_SECONDS = 10;
+const DEFAULT_FAILOVER_RECOVERY_SECONDS = 30;
 
 const isCodexReasoningEffort = (value: unknown): value is CodexReasoningEffort => {
   return typeof value === 'string' && VALID_CODEX_REASONING_EFFORTS.includes(value as CodexReasoningEffort);

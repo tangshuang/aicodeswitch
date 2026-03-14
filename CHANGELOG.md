@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file. See [standa
 ### 2026-03-13
 
 #### Changes
+* **故障自动重置时间从 10 秒改为 30 秒**
+  - 更新 `DEFAULT_FAILOVER_RECOVERY_SECONDS` 常量
+  - 更新类型注释说明
+
 * **高智商标识符从 `!!` 改为 `[!]`**
   - 原因：Claude Code 已占用 `!` 作为执行 bash 命令的标识符
   - 使用方式：`[!] 重构A模块` 启用高智商模式
