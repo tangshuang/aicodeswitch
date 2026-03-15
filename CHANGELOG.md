@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file. See [standa
 ### 2026-03-15
 
 #### Features
+* **优化图像理解请求类型检测**
+  - 新增 `containsImageContentInLatestMessage` 方法，仅检测最新用户消息中的图像内容
+  - 修复后续对话轮次仍被错误匹配为"图像理解"类型的问题
+  - 忽略历史消息中的图像内容，只关注当前用户输入
+
 * **优化 WebSocket 规则状态实时同步**
   - 移除心跳检测机制，改用事件驱动的状态通知
   - 新增 `suspended`（挂起）状态类型，表示规则因黑名单暂时不可用

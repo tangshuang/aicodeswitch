@@ -1598,7 +1598,7 @@ export class ProxyServer {
     return [
       {
         type: 'image-understanding',
-        match: (_req, body) => this.containsImageContent(body.messages) || this.containsImageContent(body.input),
+        match: (_req, body) => this.containsImageContentInLatestMessage(body.messages) || this.containsImageContent(body.input),
       },
       {
         type: 'high-iq',
@@ -1689,6 +1689,37 @@ export class ProxyServer {
     };
 
     return mapping[normalized] || null;
+  }
+
+  /** 检测最新用户消息中是否包含图像内容 */
+  private containsImageContentInLatestMessage(messages: any[] | undefined): boolean {
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return false;
+    }
+
+    // 从后向���找到最后一个用户消息
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      if (message?.role === 'user') {
+        const content = message?.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (!block || typeof block !== 'object') continue;
+            const type = (block as any).type;
+            if (type === 'image' || type === 'image_url' || type === 'input_image') {
+              return true;
+            }
+            if ((block as any).image_url) {
+              return true;
+            }
+          }
+        }
+        // 只检查最后一个用户消息，找到后立即返回
+        return false;
+      }
+    }
+
+    return false;
   }
 
   private containsImageContent(payload: any): boolean {
