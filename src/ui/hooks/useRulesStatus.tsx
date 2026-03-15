@@ -2,24 +2,28 @@ import { createContext, useContext, useEffect, useState, ReactNode } from 'react
 import { api } from '../api/client';
 
 // 类型定义
+export type RuleStatus = 'in_use' | 'idle' | 'error' | 'suspended';
+
 interface RuleStatusMessage {
   type: 'rule_status';
   data: {
     ruleId: string;
-    status: 'in_use' | 'idle' | 'error';
+    status: RuleStatus;
     totalTokensUsed?: number;
     totalRequestsUsed?: number;
     errorMessage?: string;
+    errorType?: 'http' | 'timeout' | 'unknown';
     timestamp: number;
   };
 }
 
 export interface RuleStatusState {
   [ruleId: string]: {
-    status: 'in_use' | 'idle' | 'error';
+    status: RuleStatus;
     totalTokensUsed?: number;
     totalRequestsUsed?: number;
     errorMessage?: string;
+    errorType?: 'http' | 'timeout' | 'unknown';
     lastUpdate: number;
   };
 }
@@ -130,7 +134,7 @@ const connect = () => {
         const message = JSON.parse(event.data) as RuleStatusMessage;
 
         if (message.type === 'rule_status') {
-          const { ruleId, status, totalTokensUsed, totalRequestsUsed, errorMessage, timestamp } = message.data;
+          const { ruleId, status, totalTokensUsed, totalRequestsUsed, errorMessage, errorType, timestamp } = message.data;
 
           globalRuleStatuses = {
             ...globalRuleStatuses,
@@ -139,6 +143,7 @@ const connect = () => {
               totalTokensUsed,
               totalRequestsUsed,
               errorMessage,
+              errorType,
               lastUpdate: timestamp,
             },
           };

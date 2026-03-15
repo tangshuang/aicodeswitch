@@ -306,6 +306,13 @@ export class ProxyServer {
               console.log(
                 `Service ${service.name} added to blacklist due to timeout (${route.id}:${rule.contentType}:${service.id})`
               );
+              // 广播规则挂起状态
+              rulesStatusBroadcaster.markRuleSuspended(
+                route.id,
+                rule.id,
+                '请求超时 - 服务暂时不可用',
+                'timeout'
+              );
             } else {
               // HTTP错误，检查状态码
               const statusCode = error.response?.status || 500;
@@ -320,6 +327,13 @@ export class ProxyServer {
                 );
                 console.log(
                   `Service ${service.name} added to blacklist due to HTTP error ${statusCode} (${route.id}:${rule.contentType}:${service.id})`
+                );
+                // 广播规则挂起状态
+                rulesStatusBroadcaster.markRuleSuspended(
+                  route.id,
+                  rule.id,
+                  `HTTP ${statusCode} 错误 - 服务暂时不可用`,
+                  'http'
                 );
               }
             }
@@ -610,6 +624,13 @@ export class ProxyServer {
               console.log(
                 `Service ${service.name} added to blacklist due to timeout (${route.id}:${rule.contentType}:${service.id})`
               );
+              // 广播规则挂起状态
+              rulesStatusBroadcaster.markRuleSuspended(
+                route.id,
+                rule.id,
+                '请求超时 - 服务暂时不可用',
+                'timeout'
+              );
             } else {
               // HTTP错误，检查状态码
               const statusCode = error.response?.status || 500;
@@ -624,6 +645,13 @@ export class ProxyServer {
                 );
                 console.log(
                   `Service ${service.name} added to blacklist due to HTTP error ${statusCode} (${route.id}:${rule.contentType}:${service.id})`
+                );
+                // 广播规则挂起状态
+                rulesStatusBroadcaster.markRuleSuspended(
+                  route.id,
+                  rule.id,
+                  `HTTP ${statusCode} 错误 - 服务暂时不可用`,
+                  'http'
                 );
               }
             }

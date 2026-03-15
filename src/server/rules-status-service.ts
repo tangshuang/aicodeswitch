@@ -3,16 +3,22 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { IncomingMessage } from 'http';
 
 /**
+ * 规则状态类型
+ */
+export type RuleStatus = 'in_use' | 'idle' | 'error' | 'suspended';
+
+/**
  * 规则状态消息类型
  */
 export interface RuleStatusMessage {
   type: 'rule_status';
   data: {
     ruleId: string;
-    status: 'in_use' | 'idle' | 'error';
+    status: RuleStatus;
     totalTokensUsed?: number;
     totalRequestsUsed?: number;
     errorMessage?: string;
+    errorType?: 'http' | 'timeout' | 'unknown';
     timestamp: number;
   };
 }
@@ -74,6 +80,17 @@ export class RulesStatusBroadcaster {
   }
 
   /**
+   * 清除规则的超时定时器
+   */
+  private clearRuleTimeout(timeoutKey: string) {
+    const existingTimeout = this.ruleTimeouts.get(timeoutKey);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+      this.ruleTimeouts.delete(timeoutKey);
+    }
+  }
+
+  /**
    * 标记规则正在使用
    */
   markRuleInUse(routeId: string, ruleId: string) {
@@ -83,12 +100,10 @@ export class RulesStatusBroadcaster {
     }
     this.activeRules.get(routeId)!.add(ruleId);
 
-    // 清除之前的超时定时器
     const timeoutKey = `${routeId}:${ruleId}`;
-    const existingTimeout = this.ruleTimeouts.get(timeoutKey);
-    if (existingTimeout) {
-      clearTimeout(existingTimeout);
-    }
+
+    // 清除之前的超时定时器
+    this.clearRuleTimeout(timeoutKey);
 
     // 广播状态
     this.broadcastStatus({
@@ -115,11 +130,7 @@ export class RulesStatusBroadcaster {
     const timeoutKey = `${routeId}:${ruleId}`;
 
     // 清除超时定时器
-    const existingTimeout = this.ruleTimeouts.get(timeoutKey);
-    if (existingTimeout) {
-      clearTimeout(existingTimeout);
-      this.ruleTimeouts.delete(timeoutKey);
-    }
+    this.clearRuleTimeout(timeoutKey);
 
     // 从活动规则集合中移除
     if (this.activeRules.has(routeId)) {
@@ -147,11 +158,7 @@ export class RulesStatusBroadcaster {
     const timeoutKey = `${routeId}:${ruleId}`;
 
     // 清除超时定时器
-    const existingTimeout = this.ruleTimeouts.get(timeoutKey);
-    if (existingTimeout) {
-      clearTimeout(existingTimeout);
-      this.ruleTimeouts.delete(timeoutKey);
-    }
+    this.clearRuleTimeout(timeoutKey);
 
     // 从活动规则集合中移除
     if (this.activeRules.has(routeId)) {
@@ -168,6 +175,41 @@ export class RulesStatusBroadcaster {
         ruleId,
         status: 'error',
         errorMessage,
+        timestamp: Date.now(),
+      },
+    });
+  }
+
+  /**
+   * 标记规则被挂起（进入黑名单）
+   */
+  markRuleSuspended(
+    routeId: string,
+    ruleId: string,
+    errorMessage?: string,
+    errorType?: 'http' | 'timeout' | 'unknown'
+  ) {
+    const timeoutKey = `${routeId}:${ruleId}`;
+
+    // 清除超时定时器
+    this.clearRuleTimeout(timeoutKey);
+
+    // 从活动规则集合中移除
+    if (this.activeRules.has(routeId)) {
+      this.activeRules.get(routeId)!.delete(ruleId);
+      if (this.activeRules.get(routeId)!.size === 0) {
+        this.activeRules.delete(routeId);
+      }
+    }
+
+    // 广播挂起状态
+    this.broadcastStatus({
+      type: 'rule_status',
+      data: {
+        ruleId,
+        status: 'suspended',
+        errorMessage,
+        errorType,
         timestamp: Date.now(),
       },
     });

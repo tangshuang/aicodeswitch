@@ -20,6 +20,7 @@ import type {
   TargetType,
   MCPInstallRequest,
   CodexReasoningEffort,
+  ClaudeEffortLevel,
 } from '../types';
 import os from 'os';
 import { isAuthEnabled, verifyAuthCode, generateToken, authMiddleware } from './auth';
@@ -145,10 +146,18 @@ interface ToolConfigWriteOptions {
   allowOverwriteRefresh?: boolean;
 }
 
+const VALID_CLAUDE_EFFORT_LEVELS: ClaudeEffortLevel[] = ['low', 'medium', 'high'];
+const DEFAULT_CLAUDE_EFFORT_LEVEL: ClaudeEffortLevel = 'medium';
+
+const isClaudeEffortLevel = (value: unknown): value is ClaudeEffortLevel => {
+  return typeof value === 'string' && VALID_CLAUDE_EFFORT_LEVELS.includes(value as ClaudeEffortLevel);
+};
+
 const writeClaudeConfig = async (
   dbManager: FileSystemDatabaseManager,
   enableAgentTeams?: boolean,
   enableBypassPermissionsSupport?: boolean,
+  effortLevel?: ClaudeEffortLevel,
   options: ToolConfigWriteOptions = {}
 ): Promise<boolean> => {
   try {
@@ -229,6 +238,11 @@ const writeClaudeConfig = async (
         defaultMode: "bypassPermissions"
       };
       proxySettings.skipDangerousModePermissionPrompt = true;
+    }
+
+    // 如果设置了 effortLevel，添加对应的配置项
+    if (effortLevel && isClaudeEffortLevel(effortLevel)) {
+      proxySettings.effortLevel = effortLevel;
     }
 
     // 使用智能合并：将代理配置的管理字段写入，保留当前配置的非管理字段
@@ -672,10 +686,14 @@ const syncConfigsOnServerStartup = async (dbManager: FileSystemDatabaseManager):
   const config = dbManager.getConfig();
 
   // 服务启动即执行写入，参数来源改为全局配置
+  const claudeEffortLevel = isClaudeEffortLevel(config.claudeEffortLevel)
+    ? config.claudeEffortLevel
+    : DEFAULT_CLAUDE_EFFORT_LEVEL;
   const claudeWritten = await writeClaudeConfig(
     dbManager,
     config.enableAgentTeams,
-    config.enableBypassPermissionsSupport
+    config.enableBypassPermissionsSupport,
+    claudeEffortLevel
   );
   console.log(`[Startup Config Sync] Claude Code config ${claudeWritten ? 'written' : 'skipped'}`);
 
@@ -689,10 +707,14 @@ const syncConfigsOnServerStartup = async (dbManager: FileSystemDatabaseManager):
 const syncConfigsOnGlobalConfigUpdate = async (dbManager: FileSystemDatabaseManager): Promise<void> => {
   const config = dbManager.getConfig();
 
+  const claudeEffortLevel = isClaudeEffortLevel(config.claudeEffortLevel)
+    ? config.claudeEffortLevel
+    : DEFAULT_CLAUDE_EFFORT_LEVEL;
   const claudeUpdated = await writeClaudeConfig(
     dbManager,
     config.enableAgentTeams,
     config.enableBypassPermissionsSupport,
+    claudeEffortLevel,
     { allowOverwriteRefresh: true }
   );
   console.log(`[Config Update Sync] Claude Code config ${claudeUpdated ? 'written' : 'skipped'}`);

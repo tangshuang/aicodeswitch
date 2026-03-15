@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-03-15
+
+#### Features
+* **优化 WebSocket 规则状态实时同步**
+  - 移除心跳检测机制，改用事件驱动的状态通知
+  - 新增 `suspended`（挂起）状态类型，表示规则因黑名单暂时不可用
+  - 服务被加入黑名单时实时广播规则挂起状态
+  - 前端增加 `suspended` 状态的视觉显示（紫色 ⏸ 图标）
+  - 挂起状态下支持一键恢复功能
+  - 新增 `errorType` 字段区分 `http` / `timeout` / `unknown` 错误类型
+  - 10 秒无活动后自动标记规则为空闲状态
+
+### 2026-03-14
+
+#### Features
+* **优化 WebSocket 规则状态同步机制**
+  - 在中转过程中持续发送规则状态心跳（每 0.2 秒一次）
+  - 新增 `ruleHeartbeats` Map 管理心跳定时器
+  - 新增 `HEARTBEAT_INTERVAL` 常量（200ms）
+  - 新增 `clearRuleTimers` 私有方法统一清理定时器
+  - 确保前端路由规则列表的"状态"实时同步
+
+* **新增 Claude Code Effort Level 配置支持**
+  - 新增 `ClaudeEffortLevel` 类型（可选值：'low', 'medium', 'high'）
+  - 在 `AppConfig` 中添加 `claudeEffortLevel` 全局配置字段
+  - 在 Claude Code settings.json 管理字段中添加 `effortLevel`
+  - 更新 `writeClaudeConfig` 函数支持 `effortLevel` 参数
+  - 在路由页面添加 Effort Level 下拉选择器 UI
+  - 配置会实时写入 ~/.claude/settings.json，重启 Claude Code 后生效
+
 ### 2026-03-13
 
 #### Changes

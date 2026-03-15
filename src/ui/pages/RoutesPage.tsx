@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
-import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry, MCPServer, ToolInstallationStatus, CodexReasoningEffort, AppConfig } from '../../types';
+import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry, MCPServer, ToolInstallationStatus, CodexReasoningEffort, ClaudeEffortLevel, AppConfig } from '../../types';
 import { useFlipAnimation } from '../hooks/useFlipAnimation';
 import { useConfirm } from '../components/Confirm';
 import { toast } from '../components/Toast';
@@ -49,14 +49,30 @@ const CODEX_REASONING_EFFORT_OPTIONS: Array<{ value: CodexReasoningEffort; label
   { value: 'xhigh', label: 'Extra high' },
 ];
 
+const CLAUDE_EFFORT_LEVEL_OPTIONS: Array<{ value: ClaudeEffortLevel; label: string }> = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+];
+
 const isCodexReasoningEffort = (value: unknown): value is CodexReasoningEffort => {
   return CODEX_REASONING_EFFORT_OPTIONS.some(option => option.value === value);
+};
+
+const isClaudeEffortLevel = (value: unknown): value is ClaudeEffortLevel => {
+  return CLAUDE_EFFORT_LEVEL_OPTIONS.some(option => option.value === value);
 };
 
 const getGlobalCodexReasoningEffort = (config: AppConfig | null): CodexReasoningEffort => {
   return isCodexReasoningEffort(config?.codexModelReasoningEffort)
     ? config.codexModelReasoningEffort
     : 'high';
+};
+
+const getGlobalClaudeEffortLevel = (config: AppConfig | null): ClaudeEffortLevel => {
+  return isClaudeEffortLevel(config?.claudeEffortLevel)
+    ? config.claudeEffortLevel
+    : 'medium';
 };
 
 /**
@@ -124,6 +140,7 @@ export default function RoutesPage() {
   // 配置操作loading状态
   const [isConfiguringRoute, setIsConfiguringRoute] = useState<string | null>(null);
   const [isUpdatingCodexReasoning, setIsUpdatingCodexReasoning] = useState(false);
+  const [isUpdatingClaudeEffort, setIsUpdatingClaudeEffort] = useState(false);
 
   // FLIP动画相关
   const { recordPositions, applyAnimation } = useFlipAnimation();
@@ -569,6 +586,23 @@ export default function RoutesPage() {
     }
   };
 
+  const handleUpdateClaudeEffortLevel = async (newValue: ClaudeEffortLevel) => {
+    try {
+      setIsUpdatingClaudeEffort(true);
+      const current = appConfig || {};
+      await api.updateConfig({
+        ...current,
+        claudeEffortLevel: newValue,
+      });
+      toast.success('Effort Level 设置已保存（重启 Claude Code 后生效）');
+      await loadAppConfig();
+    } catch (error: any) {
+      toast.error('更新失败: ' + error.message);
+    } finally {
+      setIsUpdatingClaudeEffort(false);
+    }
+  };
+
   const getAvailableContentTypes = () => {
     // 取消对象请求类型的互斥限制，允许添加多个相同类型的规则
     // 通过 sort_order 字段区分优先级
@@ -679,6 +713,17 @@ export default function RoutesPage() {
         status: 'in_use',
         label: '使用中',
         reason: '正在处理请求'
+      };
+    }
+
+    // 检查是否被挂起（黑名单）
+    if (wsStatus?.status === 'suspended') {
+      const errorTypeLabel = wsStatus.errorType === 'timeout' ? '超时' :
+                             wsStatus.errorType === 'http' ? 'HTTP错误' : '错误';
+      return {
+        status: 'suspended',
+        label: '已挂起',
+        reason: wsStatus.errorMessage || `${errorTypeLabel}导致服务暂时不可用`
       };
     }
 
@@ -1066,6 +1111,9 @@ export default function RoutesPage() {
                                     {ruleStatus.status === 'error' && (
                                       <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '14px' }}>✗</span>
                                     )}
+                                    {ruleStatus.status === 'suspended' && (
+                                      <span style={{ color: '#6f42c1', fontWeight: 'bold', fontSize: '14px' }}>⏸</span>
+                                    )}
                                     {ruleStatus.status === 'in_use' && (
                                       <>
                                         <span
@@ -1085,7 +1133,8 @@ export default function RoutesPage() {
                                       color: ruleStatus.status === 'success' ? '#28a745' :
                                         ruleStatus.status === 'warning' ? '#ffc107' :
                                           ruleStatus.status === 'in_use' ? '#007bff' :
-                                            '#dc3545',
+                                            ruleStatus.status === 'suspended' ? '#6f42c1' :
+                                              '#dc3545',
                                       fontWeight: ruleStatus.status !== 'success' ? 'bold' : 'normal'
                                     }}>
                                       {ruleStatus.label}
@@ -1138,7 +1187,7 @@ export default function RoutesPage() {
                                       恢复
                                     </button>
                                   )}
-                                  {ruleStatuses[rule.id]?.status === 'error' && (
+                                  {(ruleStatuses[rule.id]?.status === 'error' || ruleStatuses[rule.id]?.status === 'suspended') && (
                                     <button
                                       className="btn btn-info"
                                       style={{ padding: '2px 8px', fontSize: '11px' }}
@@ -1350,6 +1399,39 @@ export default function RoutesPage() {
             </div>
             <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
               开启后默认编辑跳过危险模式权限提示，你可以切换到其他模式。该设置会实时写入配置文件，重启 Claude Code 后生效。
+            </div>
+          </div>
+          <div style={{ marginTop: '20px' }}>
+            <div
+              className="form-group"
+              style={{
+                marginBottom: '0',
+                maxWidth: '420px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}
+            >
+              <label
+                htmlFor="claude-effort-level"
+                style={{ marginBottom: 0, minWidth: '100px', whiteSpace: 'nowrap' }}
+              >
+                Effort Level
+              </label>
+              <select
+                id="claude-effort-level"
+                value={getGlobalClaudeEffortLevel(appConfig)}
+                onChange={(e) => handleUpdateClaudeEffortLevel(e.target.value as ClaudeEffortLevel)}
+                disabled={isUpdatingClaudeEffort}
+                style={{ flex: 1, minWidth: 0 }}
+              >
+                {CLAUDE_EFFORT_LEVEL_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+              该设置会实时写入 ~/.claude/settings.json，重启 Claude Code 后生效。
             </div>
           </div>
         </div>

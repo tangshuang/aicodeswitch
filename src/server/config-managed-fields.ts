@@ -14,6 +14,7 @@ export const CLAUDE_SETTINGS_MANAGED_FIELDS: ManagedFieldPath[] = [
   { path: ['env', 'ANTHROPIC_DEFAULT_OPUS_MODEL'], optional: true },
   { path: ['permissions'], optional: true },
   { path: ['skipDangerousModePermissionPrompt'], optional: true },
+  { path: ['effortLevel'], optional: true },
 ];
 
 /**

@@ -19,6 +19,9 @@ export type TargetType = ToolType;
 /** Codex 推理强度配置 */
 export type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 
+/** Claude Code effort level 配置 */
+export type ClaudeEffortLevel = 'low' | 'medium' | 'high';
+
 /** Skills 管理相关类型 */
 export interface InstalledSkill {
   id: string;
@@ -236,6 +239,7 @@ export interface AppConfig {
   // 工具全局配置
   enableAgentTeams?: boolean;  // Claude Code Agent Teams（全局）
   enableBypassPermissionsSupport?: boolean;  // Claude Code bypassPermissions 支持（全局）
+  claudeEffortLevel?: ClaudeEffortLevel;  // Claude Code effort level（全局）
   codexModelReasoningEffort?: CodexReasoningEffort;  // Codex reasoning effort（全局）
   // 代理配置
   proxyEnabled?: boolean;  // 是否启用代理
