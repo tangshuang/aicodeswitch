@@ -97,7 +97,7 @@ export class RulesStatusBroadcaster {
   private syncInterval: NodeJS.Timeout | null = null;
   private blacklistChecker: BlacklistChecker | null = null;
   private readonly INACTIVITY_TIMEOUT = 10000; // 10秒无活动后标记为空闲
-  private readonly IDLE_DEBOUNCE_DELAY = 1000; // idle 广播延迟1秒，避免对话快速进入 in_use 时闪烁
+  private readonly IDLE_DEBOUNCE_DELAY = 3000; // idle 广播延迟3秒，避免对话快速进入 in_use 时闪烁
   private readonly SYNC_INTERVAL = 10000; // 每10秒全量同步一次
   private readonly ERROR_RECOVERY_TIMEOUT = 30000; // error 状态30秒后自动恢复
 
