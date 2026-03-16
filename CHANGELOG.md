@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-03-16
+
+#### Bug Fixes
+* **修复非空闲状态（error/suspended）规则未自动恢复的问题**
+  - `error` 状态超过 30 秒后自动恢复为 `idle`，并通过 WebSocket 广播给前端
+  - `suspended` 状态在黑名单过期后自动恢复为 `idle`
+  - 覆盖"请求失败"、"服务不可用"等所有非空闲状态的自动恢复场景
+
+* **修复黑名单过期后规则状态未同步恢复的问题**
+  - 在全量同步定时器中增加黑名单过期检查逻辑
+  - 当 `suspended` 状态的规则对应的黑名单过期时，自动恢复为 `idle` 状态
+  - 前端无需刷新即可看到规则状态自动恢复
+
+#### Features
+* **新增 WebSocket 规则状态全量同步机制**
+  - ��端每 10 秒广播一次所有规则状态（`all_rules_status` 消息类型）
+  - 前端收到全量同步消息后自动替换本地状态
+  - 新客户端连接时立即发送当前所有规则状态
+  - 作为兜底机制，确保状态不会因网络问题丢失同步
+
 ### 2026-03-15
 
 #### Features

@@ -22,6 +22,7 @@ import type {
   CodexReasoningEffort,
 } from '../types';
 import { migrateSourceType, isLegacySourceType, normalizeSourceType } from './type-migration';
+import { rulesStatusBroadcaster } from './rules-status-service';
 
 interface LogShardIndex {
   filename: string;

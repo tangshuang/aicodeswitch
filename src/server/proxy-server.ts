@@ -310,6 +310,8 @@ export class ProxyServer {
               rulesStatusBroadcaster.markRuleSuspended(
                 route.id,
                 rule.id,
+                service.id,
+                rule.contentType,
                 '请求超时 - 服务暂时不可用',
                 'timeout'
               );
@@ -332,6 +334,8 @@ export class ProxyServer {
                 rulesStatusBroadcaster.markRuleSuspended(
                   route.id,
                   rule.id,
+                  service.id,
+                  rule.contentType,
                   `HTTP ${statusCode} 错误 - 服务暂时不可用`,
                   'http'
                 );
@@ -628,6 +632,8 @@ export class ProxyServer {
               rulesStatusBroadcaster.markRuleSuspended(
                 route.id,
                 rule.id,
+                service.id,
+                rule.contentType,
                 '请求超时 - 服务暂时不可用',
                 'timeout'
               );
@@ -650,6 +656,8 @@ export class ProxyServer {
                 rulesStatusBroadcaster.markRuleSuspended(
                   route.id,
                   rule.id,
+                  service.id,
+                  rule.contentType,
                   `HTTP ${statusCode} 错误 - 服务暂时不可用`,
                   'http'
                 );

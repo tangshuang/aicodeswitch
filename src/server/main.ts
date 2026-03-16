@@ -2498,6 +2498,18 @@ const start = async () => {
   // 创建 WebSocket 服务器用于规则状态
   const rulesStatusWss = createRulesStatusWSServer();
 
+
+  // 设置黑名单检查函数，用于在规则状态同步时检查黑名单是否已过期
+  rulesStatusBroadcaster.setBlacklistChecker(async (serviceId, routeId, contentType) => {
+    // 检查服务��否在黑名单中
+    const isBlacklisted = await dbManager.isServiceBlacklisted(
+      serviceId,
+      routeId,
+      contentType
+    );
+    return isBlacklisted;
+  });
+
   // 将 WebSocket 服务器附加到 HTTP 服务器
   server.on('upgrade', (request, socket, head) => {
     if (request.url === '/api/tools/install') {
