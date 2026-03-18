@@ -3279,7 +3279,10 @@ export class ProxyServer {
       }
 
       // 请求完成后立即更新规则状态
-      if (statusCode >= 400) {
+      // 499 Client disconnect 不视为错误，直接恢复为 idle
+      if (statusCode === 499) {
+        rulesStatusBroadcaster.markRuleIdle(route.id, rule.id);
+      } else if (statusCode >= 400) {
         // 请求失败，标记为错误状态
         rulesStatusBroadcaster.markRuleError(route.id, rule.id, error);
       } else {

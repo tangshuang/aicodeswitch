@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-03-18
+
+#### Bug Fixes
+* **忽略 499 Client Disconnect 状态码作为错误处理**
+  - 当上游供应商返回 499 状态码时，不再将规则标记为"请求失败"错误状态
+  - 499 状态码现在会恢复为 idle 状态，与正常请求相同
+  - 避免客户端主动断开连接导致的误报错误
+
 ### 2026-03-16
 
 #### Bug Fixes

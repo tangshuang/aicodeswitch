@@ -146,7 +146,7 @@ interface ToolConfigWriteOptions {
   allowOverwriteRefresh?: boolean;
 }
 
-const VALID_CLAUDE_EFFORT_LEVELS: ClaudeEffortLevel[] = ['low', 'medium', 'high'];
+const VALID_CLAUDE_EFFORT_LEVELS: ClaudeEffortLevel[] = ['low', 'medium', 'high', 'max'];
 const DEFAULT_CLAUDE_EFFORT_LEVEL: ClaudeEffortLevel = 'medium';
 
 const isClaudeEffortLevel = (value: unknown): value is ClaudeEffortLevel => {
@@ -158,6 +158,7 @@ const writeClaudeConfig = async (
   enableAgentTeams?: boolean,
   enableBypassPermissionsSupport?: boolean,
   effortLevel?: ClaudeEffortLevel,
+  defaultModel?: string,
   options: ToolConfigWriteOptions = {}
 ): Promise<boolean> => {
   try {
@@ -243,6 +244,11 @@ const writeClaudeConfig = async (
     // 如果设置了 effortLevel，添加对应的配置项
     if (effortLevel && isClaudeEffortLevel(effortLevel)) {
       proxySettings.effortLevel = effortLevel;
+    }
+
+    // 如果设置了默认模型，添加对应的配置项
+    if (defaultModel && typeof defaultModel === 'string' && defaultModel.trim()) {
+      proxySettings.model = defaultModel.trim();
     }
 
     // 使用智能合并：将代理配置的管理字段写入，保留当前配置的非管理字段
@@ -693,7 +699,8 @@ const syncConfigsOnServerStartup = async (dbManager: FileSystemDatabaseManager):
     dbManager,
     config.enableAgentTeams,
     config.enableBypassPermissionsSupport,
-    claudeEffortLevel
+    claudeEffortLevel,
+    config.claudeDefaultModel
   );
   console.log(`[Startup Config Sync] Claude Code config ${claudeWritten ? 'written' : 'skipped'}`);
 
@@ -715,6 +722,7 @@ const syncConfigsOnGlobalConfigUpdate = async (dbManager: FileSystemDatabaseMana
     config.enableAgentTeams,
     config.enableBypassPermissionsSupport,
     claudeEffortLevel,
+    config.claudeDefaultModel,
     { allowOverwriteRefresh: true }
   );
   console.log(`[Config Update Sync] Claude Code config ${claudeUpdated ? 'written' : 'skipped'}`);
@@ -1964,7 +1972,7 @@ ${instruction}
       const enableBypassPermissionsSupport = typeof requestedBypass === 'boolean'
         ? requestedBypass
         : appConfig.enableBypassPermissionsSupport;
-      const result = await writeClaudeConfig(dbManager, enableAgentTeams, enableBypassPermissionsSupport);
+      const result = await writeClaudeConfig(dbManager, enableAgentTeams, enableBypassPermissionsSupport, undefined, appConfig.claudeDefaultModel);
       res.json(result);
     })
   );

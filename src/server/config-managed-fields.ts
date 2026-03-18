@@ -15,6 +15,7 @@ export const CLAUDE_SETTINGS_MANAGED_FIELDS: ManagedFieldPath[] = [
   { path: ['permissions'], optional: true },
   { path: ['skipDangerousModePermissionPrompt'], optional: true },
   { path: ['effortLevel'], optional: true },
+  { path: ['model'], optional: true },
 ];
 
 /**
