@@ -467,18 +467,6 @@ export default function RoutesPage() {
   //   }
   // };
 
-  const handleClearBlacklist = async (id: string) => {
-    try {
-      await api.clearRuleBlacklist(id);
-      if (selectedRoute) {
-        loadRules(selectedRoute.id);
-      }
-      toast.success('已恢复');
-    } catch (error: any) {
-      toast.error('恢复失败: ' + error.message);
-    }
-  };
-
   const handleToggleRuleDisable = async (id: string) => {
     try {
       const result = await api.toggleRuleDisable(id);
@@ -488,6 +476,36 @@ export default function RoutesPage() {
       toast.success(result.isDisabled ? '规则已屏蔽' : '规则已启用');
     } catch (error: any) {
       toast.error('操作失败: ' + error.message);
+    }
+  };
+
+  // 统一的规则恢复处理（同时清除黑名单和 WebSocket 实时状态）
+  const handleRuleRecovery = async (ruleId: string) => {
+    try {
+      const promises: Promise<void>[] = [];
+
+      // 清除黑名单状态
+      if (blacklistStatuses[ruleId]?.isBlacklisted) {
+        promises.push(api.clearRuleBlacklist(ruleId));
+      }
+
+      // 清除 WebSocket 实时状态
+      const wsStatus = ruleStatuses[ruleId]?.status;
+      if (wsStatus === 'error' || wsStatus === 'suspended') {
+        promises.push(clearRuleStatus(ruleId));
+      }
+
+      // 并行执行所有清除操作
+      await Promise.all(promises);
+
+      // 重新加载规则列表
+      if (selectedRoute) {
+        loadRules(selectedRoute.id);
+      }
+
+      toast.success('已恢复');
+    } catch (error: any) {
+      toast.error('恢复失败: ' + error.message);
     }
   };
 
@@ -1123,6 +1141,11 @@ export default function RoutesPage() {
                                 );
                               }
 
+                              // 判断是否需要显示恢复按钮（黑名单或 WebSocket 挂起/错误状态）
+                              const needsRecovery = isBlacklistedOnly ||
+                                ruleStatuses[rule.id]?.status === 'error' ||
+                                ruleStatuses[rule.id]?.status === 'suspended';
+
                               return (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -1202,26 +1225,12 @@ export default function RoutesPage() {
                                       </div>
                                     )}
                                   </div>
-                                  {isBlacklistedOnly && (
+                                  {/* 统一的恢复按钮 */}
+                                  {needsRecovery && (
                                     <button
                                       className="btn btn-info"
                                       style={{ padding: '2px 8px', fontSize: '11px' }}
-                                      onClick={() => handleClearBlacklist(rule.id)}
-                                    >
-                                      恢复
-                                    </button>
-                                  )}
-                                  {(ruleStatuses[rule.id]?.status === 'error' || ruleStatuses[rule.id]?.status === 'suspended') && (
-                                    <button
-                                      className="btn btn-info"
-                                      style={{ padding: '2px 8px', fontSize: '11px' }}
-                                      onClick={async () => {
-                                        try {
-                                          await clearRuleStatus(rule.id);
-                                        } catch (error) {
-                                          toast.error('恢复状态失败');
-                                        }
-                                      }}
+                                      onClick={() => handleRuleRecovery(rule.id)}
                                     >
                                       恢复
                                     </button>
