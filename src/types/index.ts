@@ -242,6 +242,7 @@ export interface AppConfig {
   claudeEffortLevel?: ClaudeEffortLevel;  // Claude Code effort level（全局）
   claudeDefaultModel?: string;  // Claude Code 默认模型（全局）
   codexModelReasoningEffort?: CodexReasoningEffort;  // Codex reasoning effort（全局）
+  codexDefaultModel?: string;  // Codex 默认模型（全局）
   // 代理配置
   proxyEnabled?: boolean;  // 是否启用代理
   proxyUrl?: string;  // 代理地址，例如: proxy.example.com:8080

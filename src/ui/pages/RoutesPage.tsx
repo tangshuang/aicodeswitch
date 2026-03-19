@@ -145,6 +145,9 @@ export default function RoutesPage() {
   const [claudeDefaultModelInput, setClaudeDefaultModelInput] = useState<string>('');
   const [claudeDefaultModelDirty, setClaudeDefaultModelDirty] = useState(false);
   const [isUpdatingClaudeDefaultModel, setIsUpdatingClaudeDefaultModel] = useState(false);
+  const [codexDefaultModelInput, setCodexDefaultModelInput] = useState<string>('');
+  const [codexDefaultModelDirty, setCodexDefaultModelDirty] = useState(false);
+  const [isUpdatingCodexDefaultModel, setIsUpdatingCodexDefaultModel] = useState(false);
 
   // FLIP动画相关
   const { recordPositions, applyAnimation } = useFlipAnimation();
@@ -276,6 +279,8 @@ export default function RoutesPage() {
       setAppConfig(data);
       setClaudeDefaultModelInput(data.claudeDefaultModel || '');
       setClaudeDefaultModelDirty(false);
+      setCodexDefaultModelInput(data.codexDefaultModel || '');
+      setCodexDefaultModelDirty(false);
     } catch (error) {
       console.error('Failed to load app config:', error);
     }
@@ -642,6 +647,24 @@ export default function RoutesPage() {
       toast.error('保存失败: ' + error.message);
     } finally {
       setIsUpdatingClaudeDefaultModel(false);
+    }
+  };
+
+  const handleSaveCodexDefaultModel = async () => {
+    try {
+      setIsUpdatingCodexDefaultModel(true);
+      const current = appConfig || {};
+      await api.updateConfig({
+        ...current,
+        codexDefaultModel: codexDefaultModelInput.trim() || undefined,
+      });
+      toast.success('默认模型已保存（重启 Codex 后生效）');
+      setCodexDefaultModelDirty(false);
+      await loadAppConfig();
+    } catch (error: any) {
+      toast.error('保存失败: ' + error.message);
+    } finally {
+      setIsUpdatingCodexDefaultModel(false);
     }
   };
 
@@ -1551,6 +1574,52 @@ export default function RoutesPage() {
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
             该设置会实时写入 ~/.codex/config.toml，重启 Codex 后生效。
+          </div>
+          <div style={{ marginTop: '20px' }}>
+            <div
+              className="form-group"
+              style={{
+                marginBottom: '0',
+                maxWidth: '420px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}
+            >
+              <label
+                htmlFor="codex-default-model"
+                style={{ marginBottom: 0, minWidth: '100px', whiteSpace: 'nowrap' }}
+              >
+                默认模型
+              </label>
+              <input
+                id="codex-default-model"
+                type="text"
+                value={codexDefaultModelInput}
+                onChange={(e) => {
+                  setCodexDefaultModelInput(e.target.value);
+                  setCodexDefaultModelDirty(e.target.value !== (appConfig?.codexDefaultModel || ''));
+                }}
+                placeholder="例如：o1"
+                style={{ flex: 1, minWidth: 0 }}
+              />
+              <button
+                onClick={handleSaveCodexDefaultModel}
+                disabled={isUpdatingCodexDefaultModel}
+                className="btn btn-primary"
+                style={{ whiteSpace: 'nowrap' }}
+              >
+                保存
+              </button>
+              {codexDefaultModelDirty && (
+                <span style={{ fontSize: '12px', color: 'var(--warning-color, #e6a817)', whiteSpace: 'nowrap' }}>
+                  未保存
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+              设置后写入 ~/.codex/config.toml 的 model 字段，重启 Codex 后生效。留空则使用默认值 gpt-5.3-codex。
+            </div>
           </div>
         </div>
       </div>

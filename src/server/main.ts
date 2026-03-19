@@ -336,6 +336,7 @@ const isCodexReasoningEffort = (value: unknown): value is CodexReasoningEffort =
 const writeCodexConfig = async (
   dbManager: FileSystemDatabaseManager,
   modelReasoningEffort: CodexReasoningEffort = DEFAULT_CODEX_REASONING_EFFORT,
+  codexDefaultModel?: string,
   options: ToolConfigWriteOptions = {}
 ): Promise<boolean> => {
   try {
@@ -394,7 +395,7 @@ const writeCodexConfig = async (
     // 构建代理配置
     const proxyConfig: Record<string, any> = {
       model_provider: "aicodeswitch",
-      model: "gpt-5.3-codex",
+      model: codexDefaultModel || "gpt-5.3-codex",  // 使用配置的默认模型，否则使用默认值
       model_reasoning_effort: modelReasoningEffort,
       disable_response_storage: true,
       preferred_auth_method: "apikey",
@@ -707,7 +708,11 @@ const syncConfigsOnServerStartup = async (dbManager: FileSystemDatabaseManager):
   const modelReasoningEffort = isCodexReasoningEffort(config.codexModelReasoningEffort)
     ? config.codexModelReasoningEffort
     : DEFAULT_CODEX_REASONING_EFFORT;
-  const codexWritten = await writeCodexConfig(dbManager, modelReasoningEffort);
+  const codexWritten = await writeCodexConfig(
+    dbManager,
+    modelReasoningEffort,
+    config.codexDefaultModel
+  );
   console.log(`[Startup Config Sync] Codex config ${codexWritten ? 'written' : 'skipped'}`);
 };
 
@@ -733,6 +738,7 @@ const syncConfigsOnGlobalConfigUpdate = async (dbManager: FileSystemDatabaseMana
   const codexUpdated = await writeCodexConfig(
     dbManager,
     modelReasoningEffort,
+    config.codexDefaultModel,
     { allowOverwriteRefresh: true }
   );
   console.log(`[Config Update Sync] Codex config ${codexUpdated ? 'written' : 'skipped'}`);
@@ -1987,7 +1993,11 @@ ${instruction}
         : isCodexReasoningEffort(appConfig.codexModelReasoningEffort)
           ? appConfig.codexModelReasoningEffort
         : DEFAULT_CODEX_REASONING_EFFORT;
-      const result = await writeCodexConfig(dbManager, modelReasoningEffort);
+      const result = await writeCodexConfig(
+        dbManager,
+        modelReasoningEffort,
+        appConfig.codexDefaultModel
+      );
       res.json(result);
     })
   );
