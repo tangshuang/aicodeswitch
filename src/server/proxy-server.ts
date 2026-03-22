@@ -2959,11 +2959,16 @@ export class ProxyServer {
 
     // OpenAI 使用 usage 字段
     if (this.isOpenAIChatSource(sourceType) || this.isOpenAISource(sourceType)) {
-        return extractTokenUsageFromOpenAIUsage(responseData.usage);
+      return extractTokenUsageFromOpenAIUsage(responseData.usage);
     }
 
-    // Claude 使用 input_tokens 和 output_tokens
+    // Claude：responseData 可能是 usage 对象本身，也可能包含 usage 字段
     if (this.isClaudeSource(sourceType) || this.isClaudeChatSource(sourceType)) {
+      // 如果 responseData 直接包含 input_tokens/output_tokens，说明它本身就是 usage 对象
+      if (typeof responseData.input_tokens === 'number' || typeof responseData.output_tokens === 'number') {
+        return extractTokenUsageFromClaudeUsage(responseData);
+      }
+      // 否则尝试从 usage 字段提取
       return extractTokenUsageFromClaudeUsage(responseData.usage);
     }
 
@@ -3979,45 +3984,31 @@ export class ProxyServer {
 
           // 尝试从event collector或converter中提取usage信息
           let extractedUsage = eventCollector.extractUsage();
-          console.log('[Proxy] Default stream: extracted usage from eventCollector:', extractedUsage);
           if (converter && typeof (converter as any).getUsage === 'function') {
             const converterUsage = (converter as any).getUsage();
-            console.log('[Proxy] Default stream: converter usage:', converterUsage);
             if (converterUsage) {
               extractedUsage = converterUsage || extractedUsage;
             }
           }
-          console.log('[Proxy] Default stream: final extractedUsage:', extractedUsage);
-          console.log('[Proxy] Default stream: extractUsage function exists:', !!extractUsage);
 
           // 如果有自定义的 extractUsage 函数，使用它
           if (extractUsage && extractedUsage) {
             usageForLog = extractUsage(extractedUsage);
-            console.log('[Proxy] Default stream: applied extractUsage function, result:', usageForLog);
           } else if (extractedUsage) {
             usageForLog = this.extractTokenUsageFromResponse(extractedUsage, sourceType);
-            console.log('[Proxy] Default stream: applied extractTokenUsageFromResponse, result:', usageForLog);
-          } else {
-            console.log('[Proxy] Default stream: no usage extracted, usageForLog remains:', usageForLog);
           }
-          console.log('[Proxy] Default stream: final usageForLog before finalizeLog:', usageForLog);
 
-          console.log('[Proxy] Default stream request finished, collected upstream chunks:', streamChunksForLog?.length || 0);
-          console.log('[Proxy] Response body length:', responseBodyForLog?.length || 0);
           void finalizeLog(res.statusCode);
         };
 
         // 在下游 chunk 收集器完成后执行，确保拿到真正下发给客户端的完整文本
         downstreamChunkCollector.on('finish', () => {
-          console.log('[Proxy] Downstream chunk collector finished (default stream), collecting chunks...');
           finalizeChunks();
         });
 
         // 备用：如果eventCollector的finish没有触发，监听res的finish
         res.on('finish', () => {
-          console.log('[Proxy] Response finished (default stream)');
           if (!streamChunksForLog) {
-            console.log('[Proxy] Chunks not collected yet, forcing collection...');
             finalizeChunks();
           }
         });
