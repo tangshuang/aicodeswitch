@@ -13,10 +13,8 @@ src/server/
 ├── main.ts              # 入口: 配置加载、中间件注册、服务启动
 ├── proxy-server.ts      # 核心代理路由、规则匹配、流式响应
 ├── config.ts            # 环境变量与全局配置
-├── database.ts          # 数据库抽象层 (SQLite/LevleDB 旧实现)
-├── database-factory.ts  # 数据库工厂: 自动检测类型并创建实例
+├── database-factory.ts  # 数据库工厂: 创建文件系统数据库实例
 ├── fs-database.ts       # 文件系统数据库: JSON 文件 CRUD
-├── migrate-to-fs.ts     # 数据迁移工具 (SQLite → JSON)
 ├── auth.ts              # 认证中间件
 ├── utils.ts             # 工具函数 (端口检测等)
 ├── websocket-service.ts # WebSocket 服务
@@ -25,9 +23,10 @@ src/server/
 ├── version-check.ts     # 版本检查
 ├── config-metadata.ts   # 配置元数据
 └── transformers/        # API 格式转换
-    ├── claude-openai.ts      # Claude ↔ OpenAI 格式互转
+    ├── claude-openai.ts      # 辅助函数（usage 转换、stop reason 映射）
     ├── streaming.ts           # SSE 流式处理
-    └── chunk-collector.ts     # 流式块收集器
+    ├── chunk-collector.ts     # 流式块收集器
+    └── transformers.ts       # 统一的 API 转换器导出
 ```
 
 ## Key Patterns
@@ -38,9 +37,8 @@ src/server/
 - 路由按功能模块划分 (vendors、routes、rules、logs、config 等)
 
 ### Database Access
-- **旧实现**: `database.ts` - SQLite/LevelDB 抽象
-- **新实现**: `fs-database.ts` - JSON 文件存储
-- **自动迁移**: `migrate-to-fs.ts` - 启动时检测并迁移旧数据
+- **实现**: `fs-database.ts` - JSON 文件存储
+- **工厂**: `database-factory.ts` - 创建数据库实例
 - 数据文件位于: `~/.aicodeswitch/fs-db/*.json`
 
 ### Proxy & Transformation
@@ -60,41 +58,42 @@ src/server/
 | `main.ts` | 服务入口点，配置加载 |
 | `proxy-server.ts` | 核心代理逻辑 |
 | `fs-database.ts` | JSON 文件数据库 |
-| `transformers/claude-openai.ts` | API 格式转换 |
+| `transformers/claude-openai.ts` | OpenAI usage 辅助转换、stop reason 映射 |
 
 ## API 格式转换
 
-项目支持 Claude API 与 OpenAI Chat API 之间的双向转换，使得 Claude Code 可以使用 OpenAI 兼容的后端服务，Codex 也可以使用 Claude 后端服务。
+项目支持多种 API 格式之间的双向转换，包括 Claude Messages API、OpenAI Chat Completions API、OpenAI Responses API、以及 Gemini GenerateContent API。
 
 ### 转换逻辑位置
 
 | 文件 | 函数/类 | 说明 |
 |------|---------|------|
-| `transformers/claude-openai.ts:312` | `transformClaudeRequestToOpenAIChat()` | Claude 请求 → OpenAI Chat 格式 |
-| `transformers/claude-openai.ts:680` | `transformClaudeResponseToOpenAIChat()` | Claude 响应 → OpenAI Chat 格式 |
-| `transformers/claude-openai.ts:588` | `transformOpenAIChatResponseToClaude()` | OpenAI Chat 响应 → Claude 格式 |
+| `transformers/transformers.ts` | Claude → Chat/Responses/Gemini | Claude 请求转换 |
+| `transformers/transformers.ts` | Chat/Responses/Gemini → Claude | Claude 响应转换 |
+| `transformers/transformers.ts` | Chat ↔ Responses/Gemini | Chat/Responses/Gemini 互转 |
 | `transformers/streaming.ts` | `ClaudeToOpenAIChatEventTransform` | Claude 流式事件 → OpenAI Chat 格式 |
 | `transformers/streaming.ts` | `OpenAIToClaudeEventTransform` | OpenAI Chat 流式事件 → Claude 格式 |
+| `transformers/streaming.ts` | `GeminiToClaudeEventTransform` | Gemini 流式事件 → Claude 格式 |
+| `transformers/streaming.ts` | `GeminiToOpenAIChatEventTransform` | Gemini 流式事件 → OpenAI Chat 格式 |
+| `transformers/claude-openai.ts` | `convertOpenAIUsageToClaude()` | OpenAI usage → Claude usage |
+| `transformers/claude-openai.ts` | `mapStopReason()` | OpenAI finish_reason → Claude stop_reason |
 
 ### 路由调度逻辑
 
-在 `proxy-server.ts:1648-1667` 中根据 `targetType` 和 `sourceType` 决定转换方向：
+在 `proxy-server.ts` 中根据工具类型（`toolType`）和数据源类型（`sourceType`）决定转换方向，调用 `transformers.ts` 中对应的转换函数。
 
-```typescript
-// Codex 使用 Claude 后端服务
-if (targetType === 'codex') {
-  if (this.isClaudeSource(sourceType)) {
-    requestBody = transformClaudeRequestToOpenAIChat(requestBody, rule.targetModel);
-  }
-}
+**请求转换** (`transformRequestToUpstream` 方法)：
+- **Claude Code 工具**：使用 Claude Messages API 格式发起请求，根据数据源类型转换
+  - OpenAI Chat/Responses：转换为对应的格式
+  - Gemini：转换为 Gemini GenerateContent 格式
+- **Codex 工具**：使用 Responses API 格式发起请求，根据数据源类型转换
+  - OpenAI Chat：转换为 Chat Completions 格式
+  - Gemini：转换为 Gemini GenerateContent 格式
+  - Claude：转换为 Claude Messages 格式
 
-// Claude Code 使用 OpenAI 兼容后端服务
-if (targetType === 'claude-code') {
-  if (this.isOpenAIChatSource(sourceType)) {
-    requestBody = transformClaudeRequestToOpenAIChat(requestBody, rule.targetModel);
-  }
-}
-```
+**响应转换** (`transformResponseToTool` 方法)：
+- **Claude Code 工具**：接收 API 响应后转换为 Claude Messages API 格式
+- **Codex 工具**：接收 API 响应后转换为 Responses API 格式
 
 ### 支持的转换内容
 

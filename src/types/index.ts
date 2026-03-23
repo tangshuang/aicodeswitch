@@ -3,6 +3,7 @@ export interface Vendor {
   id: string;
   name: string;
   description?: string;
+  apiKey?: string;
   sortOrder?: number;
   services: APIService[];  // 供应商的 API 服务列表
   createdAt: number;
@@ -12,17 +13,22 @@ export interface Vendor {
 /** 供应商API接口的数据结构标准类型 */
 export type SourceType = 'openai-chat' | 'openai' | 'claude-chat' | 'claude' | 'deepseek-reasoning-chat' | 'gemini' | 'gemini-chat';
 /** 路由的目标对象类型，目前，仅支持claude-code和codex */
-export type TargetType = 'claude-code' | 'codex';
+export type ToolType = 'claude-code' | 'codex';
+/** TargetType 是 ToolType 的别名，用于向后兼容 */
+export type TargetType = ToolType;
 /** Codex 推理强度配置 */
-export type CodexReasoningEffort = 'low' | 'medium' | 'high';
+export type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
+
+/** Claude Code effort level 配置 */
+export type ClaudeEffortLevel = 'low' | 'medium' | 'high' | 'max';
 
 /** Skills 管理相关类型 */
 export interface InstalledSkill {
   id: string;
   name: string;
   description?: string;
-  targets: TargetType[];
-  enabledTargets: TargetType[];
+  targets: ToolType[];
+  enabledTargets: ToolType[];
   githubUrl?: string;
   skillPath?: string;
   installedAt: number;
@@ -39,7 +45,7 @@ export interface SkillCatalogItem {
 
 export interface SkillInstallRequest {
   skillId: string;
-  targetType: TargetType;
+  targetType: ToolType;
   name?: string;
   description?: string;
   tags?: string[];
@@ -81,6 +87,7 @@ export interface APIService {
   name: string;
   apiUrl: string;
   apiKey: string;
+  inheritVendorApiKey?: boolean;
   sourceType?: SourceType;
   authType?: AuthType; // 认证方式（ AUTH_TOKEN/API_KEY/G_API_KEY），默认为 AUTH_TOKEN
   supportedModels?: string[];
@@ -108,11 +115,14 @@ export interface Route {
   id: string;
   name: string;
   description?: string;
-  targetType: TargetType;
+  targetType: ToolType;
   isActive: boolean;
-  enableAgentTeams?: boolean;  // 是否启用Agent Teams功能（仅Claude Code）
-  enableBypassPermissionsSupport?: boolean;  // 是否开启对bypassPermissions的支持（仅Claude Code）
-  codexModelReasoningEffort?: CodexReasoningEffort;  // Codex model_reasoning_effort（仅Codex）
+  /** @deprecated 已迁移为全局配置 AppConfig.enableAgentTeams */
+  enableAgentTeams?: boolean;
+  /** @deprecated 已迁移为全局配置 AppConfig.enableBypassPermissionsSupport */
+  enableBypassPermissionsSupport?: boolean;
+  /** @deprecated 已迁移为全局配置 AppConfig.codexModelReasoningEffort */
+  codexModelReasoningEffort?: CodexReasoningEffort;
   createdAt: number;
   updatedAt: number;
 }
@@ -165,7 +175,7 @@ export interface RequestLog {
   // 新增字段 - 用于日志筛选和详情展示
   contentType?: ContentType;                       // 请求类型（规则内容类型）
   ruleId?: string;                                 // 使用的规则ID
-  targetType?: TargetType;                         // 客户端类型
+  targetType?: ToolType;                         // 客户端类型
   targetServiceId?: string;                        // API服务ID
   targetServiceName?: string;                      // API服务名
   targetModel?: string;                            // 模型名
@@ -183,6 +193,7 @@ export interface RequestLog {
     headers?: Record<string, string>;              // 实际发送的请求头
     body?: any;                                    // 实际发送的请求体，改为对象类型
   };
+  downstreamResponseBody?: any;                      // 实际转发的响应体（经过转换后发送给客户端的响应体）
 }
 
 export interface ErrorLog {
@@ -201,7 +212,7 @@ export interface ErrorLog {
 
   // 请求日志中的详细信息字段
   ruleId?: string;                                 // 使用的规则ID
-  targetType?: TargetType;                         // 客户端类型
+  targetType?: ToolType;                         // 客户端类型
   targetServiceId?: string;                        // API服务ID
   targetServiceName?: string;                      // API服务名
   targetModel?: string;                            // 模型名
@@ -224,6 +235,14 @@ export interface AppConfig {
   maxLogSize?: number;
   apiKey?: string;
   enableFailover?: boolean;  // 是否启用智能故障切换,默认 true
+  failoverRecoverySeconds?: number;  // 故障自动恢复时间（秒）,默认 10
+  // 工具全局配置
+  enableAgentTeams?: boolean;  // Claude Code Agent Teams（全局）
+  enableBypassPermissionsSupport?: boolean;  // Claude Code bypassPermissions 支持（全局）
+  claudeEffortLevel?: ClaudeEffortLevel;  // Claude Code effort level（全局）
+  claudeDefaultModel?: string;  // Claude Code 默认模型（全局）
+  codexModelReasoningEffort?: CodexReasoningEffort;  // Codex reasoning effort（全局）
+  codexDefaultModel?: string;  // Codex 默认模型（全局）
   // 代理配置
   proxyEnabled?: boolean;  // 是否启用代理
   proxyUrl?: string;  // 代理地址，例如: proxy.example.com:8080
@@ -278,7 +297,7 @@ export interface ServiceBlacklistEntry {
   routeId: string;
   contentType: ContentType;
   blacklistedAt: number;      // 标记时间戳
-  expiresAt: number;          // 过期时间 = blacklistedAt + 10分钟
+  expiresAt: number;          // 过期时间 = blacklistedAt + 默认30秒（可通过failoverRecoverySeconds配置）
   errorCount: number;         // 错误计数
   lastError?: string;         // 最后一次错误信息
   lastStatusCode?: number;    // 最后一次错误的状态码
@@ -303,7 +322,7 @@ export interface LoginResponse {
 /** Session 会话信息 */
 export interface Session {
   id: string;              // session ID (对于Claude Code是metadata.user_id，对于Codex是headers.session_id)
-  targetType: TargetType;  // 客户端类型 (claude-code 或 codex)
+  targetType: ToolType;  // 客户端类型 (claude-code 或 codex)
   title?: string;          // 会话标题（从第一条消息内容提取）
   firstRequestAt: number;  // 第一次请求时间
   lastRequestAt: number;   // 最后一次请求时间
@@ -336,7 +355,7 @@ export interface Statistics {
     totalCodingTime: number; // 编程时长(分钟)
   };
   byTargetType: {
-    targetType: TargetType;
+    targetType: ToolType;
     totalRequests: number;
     totalTokens: number;
     avgResponseTime: number;
@@ -416,7 +435,7 @@ export interface MCPServer {
   url?: string;
   headers?: Record<string, string>;
   env?: Record<string, string>;
-  targets?: TargetType[];
+  targets?: ToolType[];
   createdAt: number;
   updatedAt: number;
 }
@@ -431,12 +450,37 @@ export interface MCPInstallRequest {
   url?: string;
   headers?: Record<string, string>;
   env?: Record<string, string>;
-  targets?: TargetType[];
+  targets?: ToolType[];
 }
 
 /** MCP 工具启用/禁用请求 */
 export interface MCPEnableRequest {
   mcpId: string;
-  target: TargetType;
+  target: ToolType;
   enabled: boolean;
+}
+
+// ============================================================================
+// 配置合并相关类型
+// ============================================================================
+
+/** 字段路径表示（用于定义管理字段） */
+export type FieldPath = (string | number)[];
+
+/** 管理字段路径定义 */
+export interface ManagedFieldPath {
+  path: FieldPath;
+  isSection?: boolean;  // 是否是整个对象/section
+  optional?: boolean;   // 字段是否可选
+}
+
+/** 增强的配置文件状态 */
+export interface ConfigFileState {
+  filePath: string;
+  exists: boolean;
+  backupExists: boolean;
+  currentHash?: string;
+  backupHash?: string;
+  hasUnmanagedChanges?: boolean;
+  managedFieldsChanged?: boolean;
 }

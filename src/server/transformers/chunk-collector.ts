@@ -11,6 +11,20 @@ export interface SSEEvent {
 }
 
 /**
+ * 检测是否是客户端断开相关的错误（这些错误是正常的，不应记录为错误）
+ */
+function isClientDisconnectError(error: any): boolean {
+  const code = error?.code;
+  const message = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
+  return (
+    code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+    code === 'ERR_STREAM_UNABLE_TO_PIPE' ||
+    code === 'ERR_STREAM_DESTROYED' ||
+    message.includes('premature close')
+  );
+}
+
+/**
  * ChunkCollectorTransform - 收集stream chunks用于日志记录
  * 这个Transform会记录所有经过它的数据块,同时将数据原封不动地传递给下一个stream
  */
@@ -22,7 +36,11 @@ export class ChunkCollectorTransform extends Transform {
     super({ writableObjectMode: true, readableObjectMode: true });
 
     this.on('error', (err) => {
-      console.error('[ChunkCollectorTransform] Stream error:', err);
+      if (isClientDisconnectError(err)) {
+        console.warn('[ChunkCollectorTransform] Stream closed (client disconnected)');
+      } else {
+        console.error('[ChunkCollectorTransform] Stream error:', err);
+      }
       this.errorEmitted = true;
     });
   }
@@ -84,7 +102,11 @@ export class SSEEventCollectorTransform extends Transform {
     super({ writableObjectMode: true, readableObjectMode: true });
 
     this.on('error', (err) => {
-      console.error('[SSEEventCollectorTransform] Stream error:', err);
+      if (isClientDisconnectError(err)) {
+        console.warn('[SSEEventCollectorTransform] Stream closed (client disconnected)');
+      } else {
+        console.error('[SSEEventCollectorTransform] Stream error:', err);
+      }
       this.errorEmitted = true;
     });
   }
@@ -96,7 +118,7 @@ export class SSEEventCollectorTransform extends Transform {
     }
 
     try {
-      // 如果是对象（来自 SSEParserTransform），先转换为字符串格式进行处理
+      // 如果是对象（来自 SSEParserTransform 或上游转换器），先转换为字符串格式进行处理
       if (typeof chunk === 'object' && chunk !== null) {
         const sseEvent = chunk as { event?: string; id?: string; data?: any };
         const lines: string[] = [];
@@ -119,7 +141,7 @@ export class SSEEventCollectorTransform extends Transform {
           }
           this.flushEvent();
         }
-        // 将原始对象传递给下一个stream
+        // 对象模式下保持原样透传，避免影响后续转换器读取 event/data 字段
         this.push(chunk);
       } else {
         // Buffer/string 模式
@@ -143,6 +165,7 @@ export class SSEEventCollectorTransform extends Transform {
       }
       // 刷新最后一个事件
       this.flushEvent();
+      // 不调用 this.end()，让 Node.js 自动管理流的生命周期
       callback();
     } catch (error) {
       console.error('[SSEEventCollectorTransform] Error in _flush:', error);

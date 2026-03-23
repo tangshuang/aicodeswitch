@@ -19,12 +19,12 @@ export const SOURCE_TYPE: Record<SourceType, string> = {
 
 export const SOURCE_TYPE_MESSAGE: Record<SourceType, string> = {
   'openai-chat': '填写完整的接口地址，如：https://api.openai.com/v1/chat/completions',
-  'openai': '只填写不含 /v1 的 base 地址，如：https://api.openai.com；系统会自动拼接 /v1/responses',
+  'openai': '填写接口Base URL地址，如：https://api.openai.com，（注，有的服务商需要带/v1）',
   'claude-chat': '填写完整的接口地址，如：https://api.anthropic.com/v1/messages',
   'claude': '只填写 base 地址，如：https://api.anthropic.com',
   'deepseek-reasoning-chat': '推理类模型，填写完整的接口地址，如：https://api.deepseek.com/v1/chat/completions',
   'gemini': '只填写 base 地址，如：https://generativelanguage.googleapis.com',
-  'gemini-chat': '填写完整的接口地址，如：https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent',
+  'gemini-chat': '填写完整的接口地址，如：https://generativelanguage.googleapis.com/v1beta/models/{modelName}:{endPoint} 注意，{modelName}和{endPoint}会在实际运行时被替换，你只需要按此处的格式填写即可',
 };
 
 /** 认证方式类型 */

@@ -6,6 +6,8 @@ import { Switch } from '../components/Switch';
 
 function SettingsPage() {
   const [config, setConfig] = useState<AppConfig | null>(null);
+  const [failoverEnabled, setFailoverEnabled] = useState(true);
+  const [failoverRecoverySeconds, setFailoverRecoverySeconds] = useState('10');
   const [password, setPassword] = useState('');
   const [importData, setImportData] = useState('');
   const [exportedData, setExportedData] = useState('');
@@ -28,6 +30,12 @@ function SettingsPage() {
   const loadConfig = async () => {
     const data = await api.getConfig();
     setConfig(data);
+    setFailoverEnabled(data.enableFailover !== false);
+    setFailoverRecoverySeconds(
+      typeof data.failoverRecoverySeconds === 'number' && data.failoverRecoverySeconds > 0
+        ? String(Math.floor(data.failoverRecoverySeconds))
+        : '10'
+    );
     setProxyFormData({
       proxyEnabled: data.proxyEnabled || false,
       proxyUrl: data.proxyUrl || '',
@@ -39,10 +47,15 @@ function SettingsPage() {
   const handleSaveConfig = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
+    const parsedRecoverySeconds = Number(failoverRecoverySeconds);
+    const normalizedRecoverySeconds = Number.isFinite(parsedRecoverySeconds) && parsedRecoverySeconds > 0
+      ? Math.floor(parsedRecoverySeconds)
+      : 10;
     const newConfig: AppConfig = {
       ...config, // 保留现有配置
       apiKey: formData.get('apiKey') as string,
-      enableFailover: formData.get('enableFailover') === 'true',
+      enableFailover: failoverEnabled,
+      failoverRecoverySeconds: normalizedRecoverySeconds,
     };
 
     const success = await api.updateConfig(newConfig);
@@ -191,12 +204,31 @@ function SettingsPage() {
            </div>
           <div className="form-group">
             <label>启用智能故障切换</label>
-            <select name="enableFailover" defaultValue={config.enableFailover !== false ? 'true' : 'false'}>
+            <select
+              name="enableFailover"
+              value={failoverEnabled ? 'true' : 'false'}
+              onChange={(e) => setFailoverEnabled(e.target.value === 'true')}
+            >
               <option value="true">是</option>
               <option value="false">否</option>
             </select>
             <small style={{ display: 'block', marginTop: '4px', color: '#666', fontSize: '12px' }}>
-              启用后,当某个服务报错时会自动切换到备用服务,并将报错服务标记为不可用10分钟
+              启用后,当某个服务报错时会自动切换到备用服务,并按下方“故障自动恢复时间”自动恢复
+            </small>
+          </div>
+          <div className="form-group">
+            <label>故障自动恢复时间（秒）</label>
+            <input
+              type="number"
+              name="failoverRecoverySeconds"
+              min={1}
+              step={1}
+              value={failoverRecoverySeconds}
+              onChange={(e) => setFailoverRecoverySeconds(e.target.value)}
+              disabled={!failoverEnabled}
+            />
+            <small style={{ display: 'block', marginTop: '4px', color: '#666', fontSize: '12px' }}>
+              默认 10 秒。仅在“启用智能故障切换”为“是”时可修改
             </small>
           </div>
            <button type="submit" className="btn btn-primary">保存配置</button>

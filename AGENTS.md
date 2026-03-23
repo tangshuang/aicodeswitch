@@ -37,7 +37,7 @@ aicodeswitch/
 | 任务 | 位置 | 说明 |
 |------|------|------|
 | 核心代理逻辑 | `src/server/proxy-server.ts` | 请求路由、匹配规则、转发 |
-| API 格式转换 | `src/server/transformers/` | Claude ↔ OpenAI 数据格式互转 |
+| API 格式转换 | `src/server/transformers/` | Claude ↔ OpenAI ↔ Gemini 数据格式互转 |
 | 数据库层 | `src/server/fs-database.ts` | JSON 文件存储 CRUD |
 | UI 页面 | `src/ui/pages/` | 供应商管理、路由配置、日志等 |
 | CLI 命令 | `bin/*.js` | start/stop/ui/upgrade/restore 等 |
@@ -68,11 +68,9 @@ aicodeswitch/
 
 ## 特殊约定
 
-### 数据库与迁移
+### 数据库
 - **数据格式:** 所有数据存为 JSON 文件 (`~/.aicodeswitch/fs-db/*.json`)
-- **数据结构:** `vendors.json` 内嵌 `services` 数组（已迁移，旧结构已废弃）
-- **自动迁移:** 启动时自动检测并迁移旧 SQLite/LevelDB/旧 JSON 结构
-- **迁移工具:** `src/server/migrate-to-fs.ts`
+- **数据结构:** `vendors.json` 内嵌 `services` 数组
 
 ### 路由与故障切换
 - **路由规则:** 按请求内容类型 (image-understanding/thinking/long-context/background/default) 匹配
@@ -120,23 +118,15 @@ aicos stop            # 停止服务
 - `src/ui/AGENTS.md` - 前端 React 应用约定
 - `tauri/AGENTS.md` - Tauri 桌面应用约定
 
-## 变更记录
+## 最近变更
+
+- 2026-03-11: 修复 Claude Code → Gemini thinking 配置互斥冲突
+  - 生成 `thinkingConfig` 时，若存在 `budget_tokens` 则仅写入 `thinkingBudget`，不再同时写入 `thinkingLevel`
+  - 覆盖 `transformRequestFromClaudeToGemini` 与 `transformRequestFromResponsesToGemini`，修复 Gemini 400 报错
+
+## Development
 
 每次代码变更后:
-1. 更新 AGENTS.md, CLAUDE.md 保持文档同步
-2. 在 `CHANGELOG.md` 中以简单概述记录变更
 
-- 2026-02-11: 调整 UI 弹层层级与日志页弹层叠放逻辑，修复侧栏遮挡问题。
-- 2026-02-11: 请求日志补充记录规则内容类型，补齐统计页的请求类型分布数据。
-- 2026-02-24: 智能故障切换改为同一请求内即时兜底（上游 4xx/5xx 立即切换下一服务），并在错误日志增加“已转发给 xx 服务继续处理”提示。
-- 2026-03-03: OpenAI（Responses）数据源 base URL 增加版本兼容：若地址不以 `/v{number}` 结尾，服务端转发时自动补 `/v1`；若已以版本结尾则直接拼接路径。
-- 2026-03-03: 修复前端 Vendors 页面中旧数据源类型 `claude-code` 的类型判断残留，统一为 `claude`，消除 TypeScript 类型检查报错。
-- 2026-03-03: 路由管理新增 Codex 配置区域，支持设置 `model_reasoning_effort`（Reasoning Effort 下拉）；路由激活时按配置写入 Codex 配置文件，激活后修改可立即覆盖 `~/.codex/config.toml`。
-- 2026-03-03: 调整 Codex 配置区 Reasoning Effort 表单布局为 label/value 左右排列，避免上下排布。
-- 2026-03-08: 高智商规则改为自动推断模式：移除 `!x` 关闭语法，按“最近真实用户输入 + 工具消息过滤”判断是否命中 `high-iq`，并修复高智商规则优先级与会话状态持久化问题。
-- 2026-03-09: OpenAI（Responses）数据源调整为固定拼接 `/v1/responses` 转发；供应商 OpenAI base URL 规范为不包含 `/v1`，并补充前后端保存校验与提示文案。
-- 2026-03-09: 新增 OpenAI base URL 启动迁移：仅对 `sourceType=openai` 且地址末尾为 `/v1` 的服务自动去尾并回写 `vendors.json`，导入数据时同步归一化。
-
----
-
-*本文件由 `/init-deep` 自动生成*
+* 每次有新的架构变化时，你需要更新 CLAUDE.md, AGENTS.md 来让文档保持最新。
+* 在 `CHANGELOG.md` 中以简单概述记录变更

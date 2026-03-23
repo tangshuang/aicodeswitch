@@ -1,6 +1,6 @@
 {
   "name": "aicodeswitch",
-  "version": "3.9.4",
+  "version": "4.0.0",
   "description": "A tool to help you manage AI programming tools to access large language models locally. It allows your Claude Code, Codex and other tools to no longer be limited to official models.",
   "author": "tangshuang",
   "license": "GPL-3.0",
@@ -32,8 +32,7 @@
   "main": "dist/server/main.js",
   "bin": {
     "aicos": "./bin/cli.js",
-    "aicodeswitch": "./bin/cli.js",
-    "aicos-migrate": "./bin/migrate.js"
+    "aicodeswitch": "./bin/cli.js"
   },
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:ui\"",
@@ -56,6 +55,7 @@
     }
   },
   "dependencies": {
+    "@iarna/toml": "^2.2.5",
     "@types/jsonwebtoken": "^9.0.10",
     "axios": "^1.6.7",
     "boxen": "^5.1.2",
@@ -69,16 +69,12 @@
     "ora": "^5.4.1",
     "ws": "^8.19.0"
   },
-  "optionalDependencies": {
-    "better-sqlite3": "^11.8.1",
-    "level": "^8.0.0"
-  },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
-    "@types/better-sqlite3": "^7.6.9",
     "@types/cors": "^2.8.17",
     "@types/crypto-js": "^4.2.2",
     "@types/express": "^4.17.21",
+    "@types/iarna__toml": "^2.0.5",
     "@types/node": "^20.11.5",
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",

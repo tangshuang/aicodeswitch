@@ -4,9 +4,9 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 ```
 
-## AI Code Switch - Project Overview
+## Project Overview
 
-AI Code Switch is a local proxy server that manages AI programming tool connections to large language models, allowing tools like Claude Code and Codex to use custom model APIs instead of official ones.
+This project named AICodeSwitch is a local proxy server that manages AI programming tool connections to large language models, allowing tools like Claude Code and Codex to use custom model APIs instead of official ones.
 
 ## Development Commands
 
@@ -65,7 +65,7 @@ aicos version            # Show current version information
 #### Traditional Deployment (CLI/Web)
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     AI Code Switch                          │
+│                     AICodeSwitch                          │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
 │  │   React UI   │  │  Express API │  │  Proxy Core  │     │
@@ -132,9 +132,7 @@ aicos version            # Show current version information
 - Reads configuration from `~/.aicodeswitch/aicodeswitch.conf`
 - Sets up authentication middleware
 - Registers all API routes
-- Initializes database using `DatabaseFactory.createAuto()` which automatically:
-  - Detects and migrates old SQLite/LevelDB databases if present
-  - Creates new file system database if none exists
+- Initializes database using `DatabaseFactory.createAuto()` which creates file system database
 - Initializes proxy server
 
 #### 2. Proxy Server - `server/proxy-server.ts`
@@ -184,6 +182,8 @@ aicos version            # Show current version information
 - **Claude Messages API** ↔ **OpenAI Responses API**
 - **Claude Messages API** ↔ **Gemini GenerateContent API**
 - **OpenAI Chat Completions API** ↔ **Gemini GenerateContent API**
+- **OpenAI Chat Completions API** ↔ **OpenAI Responses API**
+- **OpenAI Responses API** ↔ **Gemini GenerateContent API**
 - **DeepSeek Chat** ↔ 其他格式（支持 developer 角色映射）
 
 **支持的转换内容**：
@@ -196,8 +196,7 @@ aicos version            # Show current version information
 
 #### 5. Database - `server/fs-database.ts`
 - **FileSystemDatabaseManager**: Pure JSON file-based storage (no database dependencies)
-- **DatabaseFactory** (`server/database-factory.ts`): Auto-detects database type and handles migration
-- **Migration Tool** (`server/migrate-to-fs.ts`): Migrates data from SQLite/LevelDB to JSON files
+- **DatabaseFactory** (`server/database-factory.ts`): Creates file system database instances
 - **Data Files**: Stores data as JSON in `~/.aicodeswitch/data/`:
   - `vendors.json` - AI service vendors with nested API services
   - `routes.json` - Route definitions
@@ -213,26 +212,6 @@ aicos version            # Show current version information
 - Vendors contain nested services array: `vendors[{ id, name, services: [{ id, name, apiUrl, ... }], ... }]`
 - Services are no longer stored in a separate file, they are embedded within their parent vendor
 - This structure ensures data consistency and simplifies cascade operations
-
-**Migration from SQLite**:
-- Automatic migration on first startup using `DatabaseFactory.createAuto()`
-- Detects old SQLite database (`app.db`) and automatically migrates to file system database
-- Migration process includes:
-  - Exporting all data from SQLite (vendors, services, routes, rules, config, sessions, logs, error logs)
-  - Restructuring services to be nested within vendors
-  - Creating JSON files in `~/.aicodeswitch/data/`
-  - Backing up old database files to `~/.aicodeswitch/data/backup/`
-  - Verifying migration success
-- If migration fails, a new file system database is created anyway (user can manually restore backup)
-
-**Migration from Old File System Database**:
-- Automatic migration on startup if `services.json` exists (old structure)
-- Migration process includes:
-  - Reading vendors.json and services.json
-  - Grouping services by vendorId
-  - Embedding services into vendors
-  - Backing up old services.json to `services.json.backup.{timestamp}`
-  - Saving new vendors.json with nested services
 
 #### 6. UI (React) - `ui/`
 - Main app: `App.tsx` - Navigation and layout with collapsible sidebar
@@ -300,23 +279,26 @@ aicos version            # Show current version information
     - Sets `permissions.defaultMode` to `"bypassPermissions"` in `~/.claude/settings.json`
     - Sets `skipDangerousModePermissionPrompt` to `true` in `~/.claude/settings.json`
     - Can be toggled on/off for both active and inactive routes
+  - **Effort Level (Claude Code only)**: Controls the effort level for Claude Code
+    - Options: `low`, `medium`, `high` (default: `medium`)
+    - Sets `effortLevel` in `~/.claude/settings.json`
   - **Reasoning Effort (Codex only)**: Controls the reasoning effort level
-    - Options: `low`, `medium`, `high` (default: `high`)
+    - Options: `low`, `medium`, `high`, `xhigh` (default: `high`)
     - Sets `model_reasoning_effort` in `~/.codex/config.toml`
 - **Fallback Mechanism**:
   - When no route is activated, system automatically falls back to original config files
   - Claude Code: Reads `~/.claude/settings.json` (prefers backup file if exists)
   - Codex: Reads `~/.codex/config.toml` and `auth.json` (prefers backup files if exist)
   - Ensures tools continue working even without active routes
-  - Logs include "使用原始配置" tag when fallback is used
+  - Logs include tags: `未通过中转` + `使用原始配置` when fallback is used
   - **Dead Loop Prevention**: Automatically detects if original config points to local proxy and rejects to avoid infinite loops
 
 - **Content Type Detection**:
   - `high-iq`: High intelligence mode (persistent across conversation)
-    - Use `!!` prefix to enable: "!! 重构A模块"
-    - Use `!x` prefix to disable: "!x 继续正常对话"
+    - Use `[!]` prefix to enable: "[!] 重构A模块"
     - Once enabled, the entire conversation uses the high-IQ model
-    - State persists in session until explicitly disabled or rule becomes unavailable
+    - State persists in session until rule becomes unavailable
+    - System automatically infers whether to continue using high-IQ based on conversation context
     - Automatically detects rule availability and gracefully degrades when rule is unavailable
   - `image-understanding`: Requests with image content
     - 支持使用 MCP 工具处理图像理解请求
@@ -343,11 +325,165 @@ aicos version            # Show current version information
   - Claude Chat
   - Claude Code
   - DeepSeek Chat
+- Model override helper now keeps original payload when no override model is provided (prevents fallback request-body null regression)
+- Claude Code -> Gemini/Gemini Chat/OpenAI Chat/OpenAI/DeepSeek Reasoning Chat defaults to streaming (SSE) when `stream` is not explicitly set to `false`
+- `/v1/messages/count_tokens` is handled locally in server for Claude Code bridge sources, and returns `{ "input_tokens": number }` directly
 
 ### Configuration Management
-- Writes/ restores Claude Code config files (`~/.claude/settings.json`, `~/.claude.json`)
-- Writes/ restores Codex config files (`~/.codex/config.toml`, `~/.codex/auth.json`)
+- OpenAI `sourceType=openai` service `apiUrl` is no longer normalized or validated against a `/v1` suffix; preserve user input as-is
+- **服务进程生命周期自动写入/恢复配置文件**：
+  - 服务启动时自动写入 Claude Code 和 Codex 配置文件（不依赖激活路由）
+    - 适用入口：`aicos start` / `aicos ui` / `aicos restart` / `yarn dev:server`
+  - 服务终止前自动恢复原始配置文件
+    - 适用入口：`aicos stop`（SIGTERM）/ 开发态 `Ctrl+C`（SIGINT）
+  - `aicos restore` 保留为手动恢复命令
+- **路由激活/停用**：不再自动写入/恢复配置文件
+  - `/api/routes/:id/activate` - 不调用配置写入
+  - `/api/routes/:id/deactivate` - 不调用配置恢复
+  - `/api/routes/deactivate-all` - 仅停用路由，不调用配置恢复（配置恢复由服务终止信号统一触发）
+- **配置修改 API**：保留现有的修改 API
+  - `/api/write-config/claude` - 手动写入 Claude Code 配置
+  - `/api/write-config/codex` - 手动写入 Codex 配置
+  - `/api/update-claude-agent-teams` - 更新全局 Agent Teams 配置（兼容旧调用）
+  - `/api/update-claude-bypass-permissions-support` - 更新全局 bypassPermissions 支持配置（兼容旧调用）
+  - `/api/update-codex-reasoning-effort` - 更新全局 Codex Reasoning Effort（兼容旧调用）
 - Exports/ imports encrypted configuration data
+
+**配置文件**：
+- Claude Code: `~/.claude/settings.json`, `~/.claude.json`
+- Codex: `~/.codex/config.toml`, `~/.codex/auth.json`
+- 备份文件：`*.aicodeswitch_backup`
+
+#### 智能配置合并
+
+系统使用“管理字段 + 保留字段”的智能合并策略，核心目标是：
+- 代理接管期间稳定覆盖必要字段
+- 恢复时尽量保留工具运行期新增的非托管内容
+- 避免重复覆盖、备份污染和状态错乱
+
+**一、服务启动：备份与覆盖写入（生命周期入口）**
+- 触发入口：
+  - `aicos start` / `aicos ui` / `aicos restart`
+  - `yarn dev:server`
+- 执行流程（`syncConfigsOnServerStartup`）：
+  - 直接读取全局配置：`AppConfig.enableAgentTeams` / `AppConfig.enableBypassPermissionsSupport` / `AppConfig.codexModelReasoningEffort`
+  - 调用 `writeClaudeConfig` / `writeCodexConfig`
+- 写入保护：
+  - 通过 `checkClaudeConfigStatus` / `checkCodexConfigStatus` 检测是否已是代理覆盖态
+  - 若 `isOverwritten=true`，拒绝重复覆盖（返回 `false`）
+- 备份策略：
+  - 仅当对应 `*.aicodeswitch_backup` 不存在时备份原文件
+  - backup 已存在时不覆盖旧备份，避免原始配置丢失
+- 覆盖策略（智能合并）：
+  - 代理配置仅写入管理字段
+  - 当前文件中的非管理字段会被保留
+  - 使用原子写入，降低中断损坏风险
+- 元数据：
+  - 写入后记录 metadata（hash / proxy marker / 文件路径）用于状态识别
+
+**二、服务停止：恢复原始配置（生命周期出口）**
+- 触发入口：
+  - `aicos stop`（SIGTERM）
+  - 开发态 `Ctrl+C`（SIGINT）
+  - Tauri 生产模式关闭窗口后的服务终止流程
+- 恢复流程（`restoreClaudeConfig` / `restoreCodexConfig`）：
+  - 若 backup 存在：
+    - 读取 backup（恢复基线）
+    - 读取当前配置（可能包含工具运行时新增内容）
+    - 以 backup 为基础，合并当前配置的非管理字段
+    - 原子写回后删除 backup
+  - 删除 metadata（`deleteMetadata`）
+- 若 backup 不存在：
+  - 视为 no-op，直接返回成功
+- 异常场景：
+  - 如被强制 `SIGKILL`，可能来不及恢复，可通过 `aicos restore` 手动修复
+
+**三、UI 修改工具配置时的处理逻辑**
+- 路由页（`RoutesPage`）：
+  - `enableAgentTeams` / `enableBypassPermissionsSupport` / `codexModelReasoningEffort`
+  - 当前写入全局配置（`config.json`），不直接写用户配置文件
+  - 这些设置在“下次服务启动”时写入并生效（同时需重启对应编程工具）
+- 兼容接口保留：
+  - `/api/update-claude-agent-teams`
+  - `/api/update-claude-bypass-permissions-support`
+  - `/api/update-codex-reasoning-effort`
+  - 这三个接口现在更新全局配置，不再直接改写工具配置文件
+- 手动入口保留：
+  - `/api/write-config/*`、`/api/restore-config/*`
+  - UI 中的 `/write-config` 页面可用于调试/运维手动覆盖或恢复
+
+**全局配置迁移（兼容旧版本）**
+- 服务启动初始化时会尝试把历史“路由级工具配置”迁移到全局配置（仅在全局字段尚不存在时）
+  - `Route.enableAgentTeams` -> `AppConfig.enableAgentTeams`
+  - `Route.enableBypassPermissionsSupport` -> `AppConfig.enableBypassPermissionsSupport`
+  - `Route.codexModelReasoningEffort` -> `AppConfig.codexModelReasoningEffort`
+- 迁移后会清理路由对象中的旧字段，避免后续歧义
+
+**四、`aicos restore` 命令处理逻辑**
+- 调用方式：
+  - `aicos restore`（恢复全部）
+  - `aicos restore claude-code`
+  - `aicos restore codex`
+- 恢复行为：
+  - 与服务退出使用同一套“智能恢复”策略（backup 基线 + 当前非管理字段）
+  - 恢复后删除 backup 文件，防止陈旧备份反复覆盖
+- 附加行为：
+  - 命令结束前会停用所有激活路由（直接更新 routes 数据文件）
+  - 输出“重启服务/工具”提示
+
+**五、管理字段定义（托管字段）**
+- Claude Code `settings.json`：
+  - `env.ANTHROPIC_AUTH_TOKEN`
+  - `env.ANTHROPIC_BASE_URL`
+  - `env.API_TIMEOUT_MS`
+  - `env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`
+  - `env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`（可选）
+  - `permissions.defaultMode`（可选）
+  - `skipDangerousModePermissionPrompt`（可选）
+  - `effortLevel`（可选）
+- Claude Code `.claude.json`：
+  - `hasCompletedOnboarding`
+  - `mcpServers`（可选）
+- Codex `config.toml`：
+  - `model_provider`
+  - `model`
+  - `model_reasoning_effort`
+  - `disable_response_storage`
+  - `preferred_auth_method`
+  - `requires_openai_auth`
+  - `enableRouteSelection`
+  - `[model_providers.aicodeswitch]` 整个 section
+- Codex `auth.json`：
+  - `OPENAI_API_KEY`
+- 保留字段：
+  - 以上以外的全部字段（如 Claude 的 `projects`、Codex 的 `[projects...]`）
+
+**六、其他关联逻辑**
+- 状态检测：
+  - `check*ConfigStatus` 返回 `isOverwritten / isModified / hasBackup`
+  - 综合 proxy marker、hash、backup 与 metadata 判断状态
+- 无效 metadata 清理：
+  - `cleanupInvalidMetadata` 会清理“metadata 存在但 backup 丢失”的异常状态
+- 合并实现细节：
+  - 合并器按“叶子路径”复制非管理字段，避免父级对象整块复制导致管理字段被反向覆盖
+- 原始配置读取兜底：
+  - `original-config-reader` 优先读取 backup，再读取当前配置
+  - Codex `auth.json` 兼容读取 `OPENAI_API_KEY`、`api_key` 等字段
+- 路由停用接口职责：
+  - `/api/routes/deactivate-all` 仅停用路由，不执行配置恢复
+  - 配置恢复统一由服务终止信号触发
+- MCP 例外说明：
+  - MCP 同步仍会在相关路由/MCP 操作时更新 `.claude.json` 的 `mcpServers`
+  - 该行为属于 MCP 配置同步，不属于代理主配置生命周期写入逻辑
+
+**相关模块**
+- `src/server/config-managed-fields.ts`：管理字段定义
+- `src/server/config-merge.ts`：JSON/TOML 智能合并与原子写入
+- `src/server/config-metadata.ts`：配置状态与元数据管理
+- `src/server/main.ts`：生命周期写入/恢复与配置 API
+- `bin/utils/config-helpers.js`：CLI 恢复侧合并工具
+- `bin/restore.js`：`aicos restore` 命令实现
+- `src/server/original-config-reader.ts`：原始配置读取兜底
 
 #### Data Import/Export
 - **Export**: Exports all configuration data (vendors, services, routes, rules, config) as AES-encrypted JSON
@@ -381,6 +517,9 @@ aicos version            # Show current version information
 
 ### Logging
 - Request logs: Detailed API call records with token usage
+  - Tool requests are logged across all server-handled paths (proxy/stream/fallback/early-error)
+  - `tags` include relay status per request: `通过中转` or `未通过中转`
+  - Local count_tokens direct-return requests include tag: `系统计算Token直返`
 - Access logs: System access records
 - Error logs: Error and exception records with comprehensive context
   - **Error Log Details**:
@@ -389,7 +528,10 @@ aicos version            # Show current version information
     - Routing context: ruleId (used rule), targetServiceId/Name (API service), targetModel (actual model)
     - Vendor context: vendorId/Name (service provider)
     - Request details: request headers, request body, response headers, response body
-    - **Upstream Request Information**: URL, headers, body, proxy usage
+    - **Upstream Request Information**: URL, headers, body, proxy usage (actual request sent to upstream API)
+    - **Upstream Response Body**: Actual response body sent to the client after transformation
+      - For stream responses: Stores the SSE chunks array (actual format sent to client, after transformation)
+      - For non-stream responses: Stores the JSON response body
     - Response time metrics
     - **Tags**: Array of labels for special request characteristics (e.g., "使用原始配置")
 - **Data Sanitization**:
@@ -418,7 +560,6 @@ aicos version            # Show current version information
 4. **Dev Ports**: UI (4568), Server (4567) - configured in `vite.config.ts` and `server/main.ts`
 5. **Skills Search**: `SKILLSMP_API_KEY` is required for Skills discovery via SkillsMP
 6. **API Endpoints**: All routes are prefixed with `/api/` except proxy routes (`/claude-code/`, `/codex/`)
-7. **Database Migration**: If you have an old SQLite database, it will be automatically migrated to JSON files on first startup.
 
 ### Tauri Development Tips
 
@@ -488,9 +629,8 @@ aicodeswitch/
 │   └── server/                  # Node.js backend
 │       ├── main.ts
 │       ├── config.ts
-│       ├── database-factory.ts  # Database factory with migration support
+│       ├── database-factory.ts  # Database factory
 │       ├── fs-database.ts       # JSON file-based database manager
-│       ├── migrate-to-fs.ts     # Migration tool (SQLite → JSON)
 │       ├── proxy-server.ts
 │       └── transformers/
 ├── tauri/                   # Tauri desktop application
@@ -674,9 +814,10 @@ The Tauri build uses a **hybrid approach** that preserves the existing Node.js b
 
 ### NPM 发布流程
 当 PR 合并到 main 分支时，自动触发 npm 发布：
-1. 运行 `npm run release` 创建版本 tag
-2. 发布到 npm registry
-3. 推送 tag 到 GitHub
+1. 检查当前版本是否已被 npm 注册（使用 `can-npm-publish`）
+2. 若当前版本未发布，直接使用该版本发布；否则运行 `npm run release` 创建新版本
+3. 发布到 npm registry
+4. 推送 tag 到 GitHub
 
 ### Tauri 应用构建流程
 npm 发布成功后，自动触发 Tauri 应用构建：
@@ -704,16 +845,24 @@ npm 发布成功后，自动触发 Tauri 应用构建：
 - `.github/workflows/publish-to-npm.yaml` - NPM 发布
 - `.github/workflows/build-tauri.yaml` - Tauri 构建和发布
 
+## 最近变更
+
+- 2026-03-11: 修复 Claude Code → Gemini thinking 参数冲突
+  - 当存在 `budget_tokens` 时，Gemini `thinkingConfig` 仅写入 `thinkingBudget`，不再同时写入 `thinkingLevel`
+  - 同步修复 `transformRequestFromClaudeToGemini` 与 `transformRequestFromResponsesToGemini`，避免 400 `You can only set only one of thinking budget and thinking level`
+
 ## Development
 
 * 使用yarn作为包管理器，请使用yarn安装依赖，使用yarn来运行脚本。
 * 前端依赖库安装在devDependencies中，请使用yarn install --dev安装。
 * 所有对话请使用中文。生成代码中的文案及相关注释根据代码原本的语言生成。
 * 在服务端，直接使用 __dirname 来获取当前目录，不要使用 process.cwd()
-* 每次有新的变化时，你需要更新 CLAUDE.md, AGENTS.md 来让文档保持最新。
+* 每次有新的架构变化时，你需要更新 CLAUDE.md, AGENTS.md 来让文档保持最新。
 * 每次有变更，以非常简单的概述，将变化内容记录到 CHANGELOG.md 中。
 * 禁止在ui中使用依赖GPU的css样式。
 * 禁止运行 dev:ui, dev:server, tauri:dev 等命令来进行测试。
 * 如果你需要创建文档，必须将文档放在 documents 目录下
 * 如果你需要创建测试脚本，必须将脚本文件放在 scripts 目录下
 * currentDate: Today's date is 2026-02-20.
+
+**注意，codex已经不再支持 `wire_api = "chat"` 的设置了，因此，由codex发起的请求，一定是和 Responses API 的请求数据一致。**

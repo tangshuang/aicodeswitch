@@ -85,7 +85,7 @@ interface Message {
   content: string | ContentBlock[];
 }
 
-type ContentBlock = 
+type ContentBlock =
   | TextContent
   | ImageContent
   | ToolUseContent
@@ -155,11 +155,11 @@ interface DocumentContent {
   "role": "assistant",                      // 角色
   "content": ContentBlock[],                // 响应内容
   "model": string,                          // 使用的模型
-  "stop_reason": 
-    "end_turn" | 
-    "max_tokens" | 
-    "tool_use" | 
-    "stop_sequence" | 
+  "stop_reason":
+    "end_turn" |
+    "max_tokens" |
+    "tool_use" |
+    "stop_sequence" |
     "max_thinking_length",
   "stop_sequence"?: string | null,          // 触发的停止序列
   "usage": {
@@ -439,7 +439,7 @@ if (response.stop_reason === "max_thinking_length") {
   // 增加预算后重新请求
   const newBudget = (response.thinking_tokens_used || 5000) * 1.5;
   console.log(`思考预算不足，将${newBudget}重试`);
-  
+
   // 重新发送请求，使用更大的 budget_tokens
 }
 ```
@@ -561,18 +561,18 @@ async function requestWithRetry(
         headers: {...},
         body: JSON.stringify(request)
       });
-      
+
       if (response.status === 429) {
         // 速率限制：指数退避
         const delay = Math.pow(2, attempt - 1) * 1000;
         await new Promise(r => setTimeout(r, delay));
         continue;
       }
-      
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
-      
+
       return await response.json();
     } catch (error) {
       if (attempt === maxRetries) throw error;
@@ -714,13 +714,13 @@ const thinkingCostMultiplier = 0.4;  // 40% of output cost
 
 ```typescript
 // ✅ 启用思考的场景
-if (task.complexity === 'high' || 
+if (task.complexity === 'high' ||
     task.requires('reasoning', 'proof', 'analysis')) {
   thinking = { type: 'enabled', budget_tokens: 10000 };
 }
 
 // ❌ 不启用思考的场景
-if (task.type === 'simple_lookup' || 
+if (task.type === 'simple_lookup' ||
     task.needsSpeed === true) {
   thinking = { type: 'disabled' };
 }
@@ -878,7 +878,7 @@ async function callClaudeStream(messages, onChunk) {
     for (const event of events) {
       if (!event.trim()) continue;
       const data = JSON.parse(event.split('data: ')[1]);
-      
+
       if (data.delta?.type === 'text_delta') {
         onChunk(data.delta.text);
       }
@@ -907,7 +907,7 @@ async function executeToolCall(toolCall: ToolCall): Promise<string> {
 
   const tool = tools[toolCall.name];
   if (!tool) throw new Error(`Tool ${toolCall.name} not found`);
-  
+
   return await tool(...Object.values(toolCall.arguments));
 }
 ```
@@ -943,3 +943,4 @@ async function executeToolCall(toolCall: ToolCall): Promise<string> {
 - [Anthropic 官方文档](https://docs.anthropic.com)
 - [Claude API 参考](https://docs.anthropic.com/en/api/messages)
 - [模型概览](https://docs.anthropic.com/en/docs/about/models/models-overview)
+

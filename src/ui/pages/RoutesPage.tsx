@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
-import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry, MCPServer, ToolInstallationStatus, CodexReasoningEffort } from '../../types';
+import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry, MCPServer, ToolInstallationStatus, CodexReasoningEffort, ClaudeEffortLevel, AppConfig } from '../../types';
 import { useFlipAnimation } from '../hooks/useFlipAnimation';
 import { useConfirm } from '../components/Confirm';
 import { toast } from '../components/Toast';
@@ -46,16 +46,34 @@ const CODEX_REASONING_EFFORT_OPTIONS: Array<{ value: CodexReasoningEffort; label
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
+  { value: 'xhigh', label: 'Extra high' },
+];
+
+const CLAUDE_EFFORT_LEVEL_OPTIONS: Array<{ value: ClaudeEffortLevel; label: string }> = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'max', label: 'Max' },
 ];
 
 const isCodexReasoningEffort = (value: unknown): value is CodexReasoningEffort => {
   return CODEX_REASONING_EFFORT_OPTIONS.some(option => option.value === value);
 };
 
-const getRouteCodexReasoningEffort = (route: Route): CodexReasoningEffort => {
-  return isCodexReasoningEffort(route.codexModelReasoningEffort)
-    ? route.codexModelReasoningEffort
+const isClaudeEffortLevel = (value: unknown): value is ClaudeEffortLevel => {
+  return CLAUDE_EFFORT_LEVEL_OPTIONS.some(option => option.value === value);
+};
+
+const getGlobalCodexReasoningEffort = (config: AppConfig | null): CodexReasoningEffort => {
+  return isCodexReasoningEffort(config?.codexModelReasoningEffort)
+    ? config.codexModelReasoningEffort
     : 'high';
+};
+
+const getGlobalClaudeEffortLevel = (config: AppConfig | null): ClaudeEffortLevel => {
+  return isClaudeEffortLevel(config?.claudeEffortLevel)
+    ? config.claudeEffortLevel
+    : 'medium';
 };
 
 /**
@@ -70,34 +88,16 @@ function formatDateTimeLocal(date: Date): string {
   return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
-/**
- * 获取配置文件相关的API方法
- */
-const getConfigApi = (targetType: 'claude-code' | 'codex') => {
-  return targetType === 'claude-code'
-    ? {
-      write: api.writeClaudeConfig,
-      restore: api.restoreClaudeConfig,
-      checkBackup: api.checkClaudeBackup,
-      toolName: 'Claude Code'
-    }
-    : {
-      write: api.writeCodexConfig,
-      restore: api.restoreCodexConfig,
-      checkBackup: api.checkCodexBackup,
-      toolName: 'Codex'
-    };
-};
-
 export default function RoutesPage() {
   const { confirm } = useConfirm();
-  const { ruleStatuses } = useRulesStatus();
+  const { ruleStatuses, clearRuleStatus } = useRulesStatus();
   const [routes, setRoutes] = useState<Route[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [allServices, setAllServices] = useState<APIService[]>([]);
   const [services, setServices] = useState<APIService[]>([]);
   const [mcps, setMCPs] = useState<MCPServer[]>([]);
+  const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
   const [showRouteModal, setShowRouteModal] = useState(false);
   const [showRuleModal, setShowRuleModal] = useState(false);
@@ -141,6 +141,13 @@ export default function RoutesPage() {
   // 配置操作loading状态
   const [isConfiguringRoute, setIsConfiguringRoute] = useState<string | null>(null);
   const [isUpdatingCodexReasoning, setIsUpdatingCodexReasoning] = useState(false);
+  const [isUpdatingClaudeEffort, setIsUpdatingClaudeEffort] = useState(false);
+  const [claudeDefaultModelInput, setClaudeDefaultModelInput] = useState<string>('');
+  const [claudeDefaultModelDirty, setClaudeDefaultModelDirty] = useState(false);
+  const [isUpdatingClaudeDefaultModel, setIsUpdatingClaudeDefaultModel] = useState(false);
+  const [codexDefaultModelInput, setCodexDefaultModelInput] = useState<string>('');
+  const [codexDefaultModelDirty, setCodexDefaultModelDirty] = useState(false);
+  const [isUpdatingCodexDefaultModel, setIsUpdatingCodexDefaultModel] = useState(false);
 
   // FLIP动画相关
   const { recordPositions, applyAnimation } = useFlipAnimation();
@@ -152,7 +159,7 @@ export default function RoutesPage() {
     loadVendors();
     loadAllServices();
     loadMCPs();
-    checkBackupStatus();
+    loadAppConfig();
     checkClaudeVersion();
   }, []);
 
@@ -266,146 +273,64 @@ export default function RoutesPage() {
     setMCPs(data);
   };
 
-  const checkBackupStatus = async (): Promise<{ 'claude-code': boolean; 'codex': boolean }> => {
+  const loadAppConfig = async () => {
     try {
-      const [claudeBackup, codexBackup] = await Promise.all([
-        api.checkClaudeBackup(),
-        api.checkCodexBackup()
-      ]);
-      return {
-        'claude-code': claudeBackup.exists,
-        'codex': codexBackup.exists
-      };
+      const data = await api.getConfig();
+      setAppConfig(data);
+      setClaudeDefaultModelInput(data.claudeDefaultModel || '');
+      setClaudeDefaultModelDirty(false);
+      setCodexDefaultModelInput(data.codexDefaultModel || '');
+      setCodexDefaultModelDirty(false);
     } catch (error) {
-      console.error('检查备份状态失败:', error);
-      // 失败时假设没有备份，避免误判
-      return {
-        'claude-code': false,
-        'codex': false
-      };
+      console.error('Failed to load app config:', error);
     }
   };
 
   const handleActivateRoute = async (id: string) => {
-    const route = routes.find(r => r.id === id);
-    if (!route) return;
-
-    // 重新检查备份状态，避免使用过期数据
-    const latestBackupStatus = await checkBackupStatus();
-    const needsConfigWrite = !latestBackupStatus[route.targetType];
-
     setIsConfiguringRoute(id);
-    let configWritten = false;
 
     try {
-      // 步骤1：覆盖配置文件（如果需要）
-      try {
-        if (route.targetType === 'claude-code') {
-          if (needsConfigWrite) {
-            await api.writeClaudeConfig(route.enableAgentTeams, route.enableBypassPermissionsSupport);
-            configWritten = true;
-          }
-        } else {
-          const modelReasoningEffort = getRouteCodexReasoningEffort(route);
-          if (needsConfigWrite) {
-            await api.writeCodexConfig(modelReasoningEffort);
-            configWritten = true;
-          } else {
-            // 已激活过配置时，切换路由也要同步该路由的 Reasoning Effort
-            const updated = await api.updateCodexReasoningEffort(modelReasoningEffort);
-            if (!updated) {
-              // 兜底：若当前并非代理态但存在备份，改为重写配置文件
-              await api.writeCodexConfig(modelReasoningEffort);
-              configWritten = true;
-            }
-          }
-        }
-      } catch (error: any) {
-        throw new Error(`配置文件覆盖失败: ${error.message || '未知错误'}`);
+      // 仅激活路由（配置写入由服务生命周期统一处理）
+      const routeElement = routeRefs.current.get(id);
+      if (routeElement) {
+        recordPositions(id, routeElement);
       }
 
-      // 步骤2：激活路由（使用现有的FLIP动画逻辑）
-      try {
-        // 记录当前被激活路由项的位置（First阶段）
-        const routeElement = routeRefs.current.get(id);
-        if (routeElement) {
-          recordPositions(id, routeElement);
-        }
+      activatingRouteIdRef.current = id;
+      await api.activateRoute(id);
+      await loadRoutes();
 
-        activatingRouteIdRef.current = id;
-        await api.activateRoute(id);
-        await loadRoutes();
-        await checkBackupStatus();
-
-        // 在下一帧应用动画（Invert和Play阶段）
-        if (routeElement) {
-          // 使用setTimeout确保DOM已经更新
-          setTimeout(() => {
-            const newRouteElement = routeRefs.current.get(id);
-            if (newRouteElement) {
-              applyAnimation(id, newRouteElement, 250);
-            }
-            activatingRouteIdRef.current = null;
-          }, 0);
-        }
-      } catch (error: any) {
-        // 如果路由激活失败且刚刚覆盖了配置，尝试回滚
-        if (configWritten) {
-          try {
-            const configApi = getConfigApi(route.targetType);
-            await configApi.restore();
-            throw new Error(`路由激活失败，配置文件已回滚: ${error.message || '未知错误'}`);
-          } catch (rollbackError: any) {
-            throw new Error(
-              `路由激活失败且配置回滚失败！请手动检查配置文件。\n` +
-              `激活错误: ${error.message}\n` +
-              `回滚错误: ${rollbackError.message}`
-            );
+      // 在下一帧应用动画（Invert和Play阶段）
+      if (routeElement) {
+        setTimeout(() => {
+          const newRouteElement = routeRefs.current.get(id);
+          if (newRouteElement) {
+            applyAnimation(id, newRouteElement, 250);
           }
-        }
-        throw new Error(`路由激活失败: ${error.message || '未知错误'}`);
+          activatingRouteIdRef.current = null;
+        }, 0);
+      } else {
+        activatingRouteIdRef.current = null;
       }
     } catch (error: any) {
       console.error('激活路由失败:', error);
-      toast.error(error.message);
+      activatingRouteIdRef.current = null;
+      toast.error(`路由激活失败: ${error.message || '未知错误'}`);
     } finally {
       setIsConfiguringRoute(null);
     }
   };
 
   const handleDeactivateRoute = async (id: string) => {
-    const route = routes.find(r => r.id === id);
-    if (!route) return;
-
-    const configApi = getConfigApi(route.targetType);
     setIsConfiguringRoute(id);
 
     try {
-      // 步骤1：先恢复配置文件
-      try {
-        await configApi.restore();
-      } catch (error: any) {
-        throw new Error(
-          `配置文件恢复失败: ${error.message || '未知错误'}\n\n` +
-          `路由未停用，请检查配置文件权限。`
-        );
-      }
-
-      // 步骤2：停用路由
-      try {
-        await api.deactivateRoute(id);
-        await loadRoutes();
-        await checkBackupStatus();
-      } catch (error: any) {
-        // 配置已恢复但路由停用失败
-        throw new Error(
-          `配置文件已恢复，但路由停用失败: ${error.message || '未知错误'}\n\n` +
-          `请刷新页面后重试。`
-        );
-      }
+      // 仅停用路由（配置恢复由服务生命周期统一处理）
+      await api.deactivateRoute(id);
+      await loadRoutes();
     } catch (error: any) {
       console.error('停用路由失败:', error);
-      toast.error(error.message);
+      toast.error(`路由停用失败: ${error.message || '未知错误'}`);
     } finally {
       setIsConfiguringRoute(null);
     }
@@ -547,18 +472,6 @@ export default function RoutesPage() {
   //   }
   // };
 
-  const handleClearBlacklist = async (id: string) => {
-    try {
-      await api.clearRuleBlacklist(id);
-      if (selectedRoute) {
-        loadRules(selectedRoute.id);
-      }
-      toast.success('已恢复');
-    } catch (error: any) {
-      toast.error('恢复失败: ' + error.message);
-    }
-  };
-
   const handleToggleRuleDisable = async (id: string) => {
     try {
       const result = await api.toggleRuleDisable(id);
@@ -568,6 +481,36 @@ export default function RoutesPage() {
       toast.success(result.isDisabled ? '规则已屏蔽' : '规则已启用');
     } catch (error: any) {
       toast.error('操作失败: ' + error.message);
+    }
+  };
+
+  // 统一的规则恢复处理（同时清除黑名单和 WebSocket 实时状态）
+  const handleRuleRecovery = async (ruleId: string) => {
+    try {
+      const promises: Promise<void>[] = [];
+
+      // 清除黑名单状态
+      if (blacklistStatuses[ruleId]?.isBlacklisted) {
+        promises.push(api.clearRuleBlacklist(ruleId));
+      }
+
+      // 清除 WebSocket 实时状态
+      const wsStatus = ruleStatuses[ruleId]?.status;
+      if (wsStatus === 'error' || wsStatus === 'suspended') {
+        promises.push(clearRuleStatus(ruleId));
+      }
+
+      // 并行执行所有清除操作
+      await Promise.all(promises);
+
+      // 重新加载规则列表
+      if (selectedRoute) {
+        loadRules(selectedRoute.id);
+      }
+
+      toast.success('已恢复');
+    } catch (error: any) {
+      toast.error('恢复失败: ' + error.message);
     }
   };
 
@@ -618,8 +561,6 @@ export default function RoutesPage() {
   };
 
   const handleToggleAgentTeams = async (newValue: boolean) => {
-    if (!selectedRoute) return;
-
     // 检查版本是否支持
     if (newValue && !isAgentTeamsSupported()) {
       toast.error('当前 Claude Code 版本不支持 Agent Teams 功能，需要版本 ≥ 2.1.32');
@@ -627,70 +568,103 @@ export default function RoutesPage() {
     }
 
     try {
-      if (selectedRoute.isActive) {
-        // 路由激活时：同时更新配置文件和路由数据库
-        await api.updateClaudeAgentTeams(newValue);
-        await api.updateRoute(selectedRoute.id, { enableAgentTeams: newValue });
-        toast.success(newValue ? 'Agent Teams 功能已开启' : 'Agent Teams 功能已关闭');
-      } else {
-        // 路由未激活时：只更新路由数据库
-        await api.updateRoute(selectedRoute.id, { enableAgentTeams: newValue });
-        toast.success(newValue ? 'Agent Teams 设置已保存（将在激活时生效）' : 'Agent Teams 设置已取消');
-      }
-      // 立即更新 selectedRoute 状态，避免 UI 延迟
-      setSelectedRoute({ ...selectedRoute, enableAgentTeams: newValue });
-      await loadRoutes();
+      const current = appConfig || {};
+      await api.updateConfig({
+        ...current,
+        enableAgentTeams: newValue,
+      });
+      toast.success(newValue
+        ? 'Agent Teams 设置已保存（重启 Claude Code 后生效）'
+        : 'Agent Teams 设置已取消（重启 Claude Code 后生效）');
+      await loadAppConfig();
     } catch (error: any) {
       toast.error('更新失败: ' + error.message);
     }
   };
 
   const handleToggleBypassPermissionsSupport = async (newValue: boolean) => {
-    if (!selectedRoute) return;
-
     try {
-      if (selectedRoute.isActive) {
-        // 路由激活时：同时更新配置文件和路由数据库
-        await api.updateClaudeBypassPermissionsSupport(newValue);
-        await api.updateRoute(selectedRoute.id, { enableBypassPermissionsSupport: newValue });
-        toast.success(newValue ? '对bypassPermissions的支持已开启' : '对bypassPermissions的支持已关闭');
-      } else {
-        // 路由未激活时：只更新路由数据库
-        await api.updateRoute(selectedRoute.id, { enableBypassPermissionsSupport: newValue });
-        toast.success(newValue ? '对bypassPermissions的支持设置已保存（将在激活时生效）' : '对bypassPermissions的支持设置已取消');
-      }
-      // 立即更新 selectedRoute 状态，避免 UI 延迟
-      setSelectedRoute({ ...selectedRoute, enableBypassPermissionsSupport: newValue });
-      await loadRoutes();
+      const current = appConfig || {};
+      await api.updateConfig({
+        ...current,
+        enableBypassPermissionsSupport: newValue,
+      });
+      toast.success(newValue
+        ? '对 bypassPermissions 的支持设置已保存（重启 Claude Code 后生效）'
+        : '对 bypassPermissions 的支持设置已取消（重启 Claude Code 后生效）');
+      await loadAppConfig();
     } catch (error: any) {
       toast.error('更新失败: ' + error.message);
     }
   };
 
   const handleUpdateCodexReasoningEffort = async (newValue: CodexReasoningEffort) => {
-    if (!selectedRoute || selectedRoute.targetType !== 'codex') return;
-
     try {
       setIsUpdatingCodexReasoning(true);
-
-      if (selectedRoute.isActive) {
-        const result = await api.updateCodexReasoningEffort(newValue);
-        if (!result) {
-          throw new Error('Codex 配置文件未处于代理状态，请先重新激活路由');
-        }
-        await api.updateRoute(selectedRoute.id, { codexModelReasoningEffort: newValue });
-        toast.success('Reasoning Effort 已更新，Codex 配置已立即生效');
-      } else {
-        await api.updateRoute(selectedRoute.id, { codexModelReasoningEffort: newValue });
-        toast.success('Reasoning Effort 设置已保存（将在激活时生效）');
-      }
-
-      setSelectedRoute({ ...selectedRoute, codexModelReasoningEffort: newValue });
-      await loadRoutes();
+      const current = appConfig || {};
+      await api.updateConfig({
+        ...current,
+        codexModelReasoningEffort: newValue,
+      });
+      toast.success('Reasoning Effort 设置已保存（重启 Codex 后生效）');
+      await loadAppConfig();
     } catch (error: any) {
       toast.error('更新失败: ' + error.message);
     } finally {
       setIsUpdatingCodexReasoning(false);
+    }
+  };
+
+  const handleUpdateClaudeEffortLevel = async (newValue: ClaudeEffortLevel) => {
+    try {
+      setIsUpdatingClaudeEffort(true);
+      const current = appConfig || {};
+      await api.updateConfig({
+        ...current,
+        claudeEffortLevel: newValue,
+      });
+      toast.success('Effort Level 设置已保存（重启 Claude Code 后生效）');
+      await loadAppConfig();
+    } catch (error: any) {
+      toast.error('更新失败: ' + error.message);
+    } finally {
+      setIsUpdatingClaudeEffort(false);
+    }
+  };
+
+  const handleSaveClaudeDefaultModel = async () => {
+    try {
+      setIsUpdatingClaudeDefaultModel(true);
+      const current = appConfig || {};
+      await api.updateConfig({
+        ...current,
+        claudeDefaultModel: claudeDefaultModelInput.trim() || undefined,
+      });
+      toast.success('默认模型已保存（重启 Claude Code 后生效）');
+      setClaudeDefaultModelDirty(false);
+      await loadAppConfig();
+    } catch (error: any) {
+      toast.error('保存失败: ' + error.message);
+    } finally {
+      setIsUpdatingClaudeDefaultModel(false);
+    }
+  };
+
+  const handleSaveCodexDefaultModel = async () => {
+    try {
+      setIsUpdatingCodexDefaultModel(true);
+      const current = appConfig || {};
+      await api.updateConfig({
+        ...current,
+        codexDefaultModel: codexDefaultModelInput.trim() || undefined,
+      });
+      toast.success('默认模型已保存（重启 Codex 后生效）');
+      setCodexDefaultModelDirty(false);
+      await loadAppConfig();
+    } catch (error: any) {
+      toast.error('保存失败: ' + error.message);
+    } finally {
+      setIsUpdatingCodexDefaultModel(false);
     }
   };
 
@@ -795,13 +769,35 @@ export default function RoutesPage() {
     const blacklistStatus = blacklistStatuses[rule.id];
     const issues: string[] = [];
 
-    // 0. 首先检查是否正在使用（从 WebSocket 状态）
+    // 0. 首先检查实时状态（从 WebSocket 状态）
     const wsStatus = ruleStatuses[rule.id];
+
+    // 检查是否正在使用
     if (wsStatus?.status === 'in_use') {
       return {
         status: 'in_use',
         label: '使用中',
         reason: '正在处理请求'
+      };
+    }
+
+    // 检查是否被挂起（黑名单）
+    if (wsStatus?.status === 'suspended') {
+      const errorTypeLabel = wsStatus.errorType === 'timeout' ? '超时' :
+                             wsStatus.errorType === 'http' ? 'HTTP错误' : '错误';
+      return {
+        status: 'suspended',
+        label: '已挂起',
+        reason: wsStatus.errorMessage || `${errorTypeLabel}导致服务暂时不可用`
+      };
+    }
+
+    // 检查是否有错误
+    if (wsStatus?.status === 'error') {
+      return {
+        status: 'error',
+        label: '请求失败',
+        reason: wsStatus.errorMessage || '请求处理失败'
       };
     }
 
@@ -917,7 +913,7 @@ export default function RoutesPage() {
               <button className="btn btn-primary" onClick={() => setShowRouteModal(true)}>新建</button>
             </div>
             {routes.length === 0 ? (
-              <div className="empty-state"><p>暂无路由</p></div>
+              <div className="empty-state"><p>暂无路由规则</p></div>
             ) : (
               <div style={{ marginTop: '10px' }}>
                 {routes.map((route) => (
@@ -1019,7 +1015,7 @@ export default function RoutesPage() {
               {!selectedRoute ? (
                 <div className="empty-state"><p>请先选择一个路由</p></div>
               ) : rules.length === 0 ? (
-                <div className="empty-state"><p>暂无路由</p></div>
+                <div className="empty-state"><p>暂无路由规则</p></div>
               ) : (
                 <table className="rules-table">
                   <thead>
@@ -1033,18 +1029,17 @@ export default function RoutesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {/* 排序规则：先按 sortOrder 倒序，再按 contentType 分类排序 */}
+                    {/* 排序规则：先按类型顺序，再按同类型内的 sortOrder 倒序 */}
                     {[...rules].sort((a, b) => {
-                      // 首先按 sortOrder 倒序
-                      const sortOrderA = a.sortOrder || 0;
-                      const sortOrderB = b.sortOrder || 0;
-                      if (sortOrderA !== sortOrderB) {
-                        return sortOrderB - sortOrderA;
-                      }
-                      // sortOrder 相同时，按 contentType 分类排序
                       const orderA = CONTENT_TYPE_ORDER[a.contentType] ?? 999;
                       const orderB = CONTENT_TYPE_ORDER[b.contentType] ?? 999;
-                      return orderA - orderB;
+                      if (orderA !== orderB) {
+                        return orderA - orderB;
+                      }
+
+                      const sortOrderA = a.sortOrder || 0;
+                      const sortOrderB = b.sortOrder || 0;
+                      return sortOrderB - sortOrderA;
                     }).map((rule) => {
                       const service = allServices.find(s => s.id === rule.targetServiceId);
                       const vendor = vendors.find(v => v.id === service?.vendorId);
@@ -1169,6 +1164,11 @@ export default function RoutesPage() {
                                 );
                               }
 
+                              // 判断是否需要显示恢复按钮（黑名单或 WebSocket 挂起/错误状态）
+                              const needsRecovery = isBlacklistedOnly ||
+                                ruleStatuses[rule.id]?.status === 'error' ||
+                                ruleStatuses[rule.id]?.status === 'suspended';
+
                               return (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -1180,6 +1180,9 @@ export default function RoutesPage() {
                                     )}
                                     {ruleStatus.status === 'error' && (
                                       <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '14px' }}>✗</span>
+                                    )}
+                                    {ruleStatus.status === 'suspended' && (
+                                      <span style={{ color: '#6f42c1', fontWeight: 'bold', fontSize: '14px' }}>⏸</span>
                                     )}
                                     {ruleStatus.status === 'in_use' && (
                                       <>
@@ -1200,7 +1203,8 @@ export default function RoutesPage() {
                                       color: ruleStatus.status === 'success' ? '#28a745' :
                                         ruleStatus.status === 'warning' ? '#ffc107' :
                                           ruleStatus.status === 'in_use' ? '#007bff' :
-                                            '#dc3545',
+                                            ruleStatus.status === 'suspended' ? '#6f42c1' :
+                                              '#dc3545',
                                       fontWeight: ruleStatus.status !== 'success' ? 'bold' : 'normal'
                                     }}>
                                       {ruleStatus.label}
@@ -1244,11 +1248,12 @@ export default function RoutesPage() {
                                       </div>
                                     )}
                                   </div>
-                                  {isBlacklistedOnly && (
+                                  {/* 统一的恢复按钮 */}
+                                  {needsRecovery && (
                                     <button
                                       className="btn btn-info"
                                       style={{ padding: '2px 8px', fontSize: '11px' }}
-                                      onClick={() => handleClearBlacklist(rule.id)}
+                                      onClick={() => handleRuleRecovery(rule.id)}
                                     >
                                       恢复
                                     </button>
@@ -1348,12 +1353,35 @@ export default function RoutesPage() {
                   border: '1px solid var(--border-info-box)',
                   lineHeight: '1.6'
                 }}>
+                  <strong>📌 如何配置规则（推荐）</strong>
+                  <div style={{ marginTop: '6px' }}>
+                    • 先创建一条 <strong>默认</strong> 规则作为兜底，避免请求无规则可走<br />
+                    • 再按你的实际场景增加规则：如图像理解、长上下文、思考、高智商等<br />
+                    • 按类型匹配顺序：<strong>图像理解 → 高智商 → 长上下文 → 思考 → 后台 → 模型顶替 → 默认</strong><br />
+                    • 如果要“指定模型走指定服务”，再加 <strong>模型顶替</strong> 规则<br />
+                    • 同一类型可配多条：<strong>把主力服务放上面（优先级更大），备用服务放下面</strong><br />
+                    • 开启智能故障切换后，系统会在主力不可用时自动切到下一个可用规则<br />
+                    • 你只需要记住：<strong>先分类型，再排顺序，上主下备</strong>
+                  </div>
+                </div>
+              )}
+              {selectedRoute && rules.length > 0 && (
+                <div style={{
+                  fontSize: '12px',
+                  color: 'var(--text-info-box)',
+                  marginTop: '12px',
+                  padding: '12px',
+                  backgroundColor: 'var(--bg-info-box)',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-info-box)',
+                  lineHeight: '1.6'
+                }}>
                   <strong>💡 智能故障切换机制</strong>
                   <div style={{ marginTop: '6px' }}>
                     • 当同一请求类型配置多个规则时,系统会按排序优先使用第一个<br />
                     • 如果某个服务报错(4xx/5xx)或请求超时,将自动切换到下一个可用服务<br />
-                    • 报错或超时的服务会被标记为不可用,有效期10分钟<br />
-                    • 10分钟后自动解除标记,如果再次报错或超时则重新标记<br />
+                    • 报错或超时的服务会被标记为不可用（默认10秒），可在设置页面修改“故障自动恢复时间”<br />
+                    • 到达恢复时间后自动解除标记,如果再次报错或超时则重新标记<br />
                     • 确保您的请求始终路由到稳定可用的服务<br />
                     • 规则状态列会实时显示每个规则的可用性状态<br />
                     • 如不需要此功能,可在<strong>设置</strong>页面关闭"启用智能故障切换"选项
@@ -1361,121 +1389,239 @@ export default function RoutesPage() {
                 </div>
               )}
             </div>
-            {/* Claude Code 配置容器 - 独立卡片，仅对 Claude Code 路由显示 */}
-            {selectedRoute && selectedRoute.targetType === 'claude-code' && (
-              <div className="card">
-                <div className="toolbar">
-                  <h3>Claude Code 配置</h3>
-                </div>
-                <div style={{ padding: '20px' }}>
-                  {!isAgentTeamsSupported() && claudeVersionCheck?.claudeCode?.version && (
-                    <div style={{
-                      backgroundColor: 'var(--bg-warning, #fff3cd)',
-                      border: '1px solid var(--border-warning, #ffc107)',
-                      borderRadius: '6px',
-                      padding: '12px',
-                      marginBottom: '12px',
-                      fontSize: '13px',
-                      color: 'var(--text-warning, #856404)'
-                    }}>
-                      ⚠️ 当前 Claude Code 版本 ({claudeVersionCheck.claudeCode.version}) 不支持 Agent Teams 功能。<br />
-                      Agent Teams 功能需要 Claude Code 版本 ≥ 2.1.32。请升级 Claude Code 后再使用此功能。
-                    </div>
-                  )}
-                  <div style={{ marginBottom: '20px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <input
-                        type="checkbox"
-                        id="agent-teams-toggle"
-                        checked={selectedRoute.enableAgentTeams || false}
-                        onChange={(e) => handleToggleAgentTeams(e.target.checked)}
-                        disabled={!isAgentTeamsSupported()}
-                        style={{ cursor: isAgentTeamsSupported() ? 'pointer' : 'not-allowed', width: '16px', height: '16px' }}
-                      />
-                      <label
-                        htmlFor="agent-teams-toggle"
-                        style={{ cursor: isAgentTeamsSupported() ? 'pointer' : 'not-allowed', fontSize: '14px', userSelect: 'none', color: isAgentTeamsSupported() ? 'inherit' : 'var(--text-muted)' }}
-                      >
-                        开启 Agent Teams 功能
-                      </label>
-                    </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
-                      {!isAgentTeamsSupported()
-                        ? 'Agent Teams 功能需要 Claude Code 版本 ≥ 2.1.32。请升级 Claude Code 后再使用此功能。'
-                        : selectedRoute.isActive
-                          ? '开启后将启用 Agent Teams 实验性功能，可在重启claude code后立即生效。'
-                          : '开启后将在激活此路由时启用 Agent Teams 实验性功能。'}
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <input
-                        type="checkbox"
-                        id="bypass-permissions-support-toggle"
-                        checked={selectedRoute.enableBypassPermissionsSupport || false}
-                        onChange={(e) => handleToggleBypassPermissionsSupport(e.target.checked)}
-                        style={{ cursor: 'pointer', width: '16px', height: '16px' }}
-                      />
-                      <label
-                        htmlFor="bypass-permissions-support-toggle"
-                        style={{ cursor: 'pointer', fontSize: '14px', userSelect: 'none' }}
-                      >
-                        开启对 bypassPermissions 的支持
-                      </label>
-                    </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
-                      开启后默认编辑跳过危险模式权限提示，你可以切换到其他模式{selectedRoute.isActive ? '。开启后立即写入配置文件，可在重启claude code后立即生效。' : '。开启后将在激活此路由时写入配置文件。'}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-            {selectedRoute && selectedRoute.targetType === 'codex' && (
-              <div className="card">
-                <div className="toolbar">
-                  <h3>Codex 配置</h3>
-                </div>
-                <div style={{ padding: '20px' }}>
-                  <div
-                    className="form-group"
-                    style={{
-                      marginBottom: '0',
-                      maxWidth: '420px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '12px',
-                    }}
-                  >
-                    <label
-                      htmlFor="codex-reasoning-effort"
-                      style={{ marginBottom: 0, minWidth: '120px', whiteSpace: 'nowrap' }}
-                    >
-                      Reasoning Effort
-                    </label>
-                    <select
-                      id="codex-reasoning-effort"
-                      value={getRouteCodexReasoningEffort(selectedRoute)}
-                      onChange={(e) => handleUpdateCodexReasoningEffort(e.target.value as CodexReasoningEffort)}
-                      disabled={isUpdatingCodexReasoning}
-                      style={{ flex: 1, minWidth: 0 }}
-                    >
-                      {CODEX_REASONING_EFFORT_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
-                    {selectedRoute.isActive
-                      ? '修改后会立即覆盖写入 ~/.codex/config.toml 的 model_reasoning_effort。'
-                      : '该设置会在激活此路由时写入 ~/.codex/config.toml。'}
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         </div>
 
 
+      </div>
+
+      <div className="card" style={{ marginTop: '20px' }}>
+        <div className="toolbar">
+          <h3>Claude Code 全局配置</h3>
+        </div>
+        <div style={{ padding: '20px' }}>
+          {!isAgentTeamsSupported() && claudeVersionCheck?.claudeCode?.version && (
+            <div style={{
+              backgroundColor: 'var(--bg-warning, #fff3cd)',
+              border: '1px solid var(--border-warning, #ffc107)',
+              borderRadius: '6px',
+              padding: '12px',
+              marginBottom: '12px',
+              fontSize: '13px',
+              color: 'var(--text-warning, #856404)'
+            }}>
+              ⚠️ 当前 Claude Code 版本 ({claudeVersionCheck.claudeCode.version}) 不支持 Agent Teams 功能。<br />
+              Agent Teams 功能需要 Claude Code 版本 ≥ 2.1.32。请升级 Claude Code 后再使用此功能。
+            </div>
+          )}
+          <div style={{ marginBottom: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <input
+                type="checkbox"
+                id="agent-teams-toggle"
+                checked={appConfig?.enableAgentTeams || false}
+                onChange={(e) => handleToggleAgentTeams(e.target.checked)}
+                disabled={!isAgentTeamsSupported()}
+                style={{ cursor: isAgentTeamsSupported() ? 'pointer' : 'not-allowed', width: '16px', height: '16px' }}
+              />
+              <label
+                htmlFor="agent-teams-toggle"
+                style={{ cursor: isAgentTeamsSupported() ? 'pointer' : 'not-allowed', fontSize: '14px', userSelect: 'none', color: isAgentTeamsSupported() ? 'inherit' : 'var(--text-muted)' }}
+              >
+                开启 Agent Teams 功能
+              </label>
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+              {!isAgentTeamsSupported()
+                ? 'Agent Teams 功能需要 Claude Code 版本 ≥ 2.1.32。请升级 Claude Code 后再使用此功能。'
+                : '开启后将启用 Agent Teams 实验性功能，并实时写入配置；重启 Claude Code 后生效。'}
+            </div>
+          </div>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <input
+                type="checkbox"
+                id="bypass-permissions-support-toggle"
+                checked={appConfig?.enableBypassPermissionsSupport || false}
+                onChange={(e) => handleToggleBypassPermissionsSupport(e.target.checked)}
+                style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+              />
+              <label
+                htmlFor="bypass-permissions-support-toggle"
+                style={{ cursor: 'pointer', fontSize: '14px', userSelect: 'none' }}
+              >
+                开启对 bypassPermissions 的支持
+              </label>
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+              开启后默认编辑跳过危险模式权限提示，你可以切换到其他模式。该设置会实时写入配置文件，重启 Claude Code 后生效。
+            </div>
+          </div>
+          <div style={{ marginTop: '20px' }}>
+            <div
+              className="form-group"
+              style={{
+                marginBottom: '0',
+                maxWidth: '420px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}
+            >
+              <label
+                htmlFor="claude-effort-level"
+                style={{ marginBottom: 0, minWidth: '100px', whiteSpace: 'nowrap' }}
+              >
+                Effort Level
+              </label>
+              <select
+                id="claude-effort-level"
+                value={getGlobalClaudeEffortLevel(appConfig)}
+                onChange={(e) => handleUpdateClaudeEffortLevel(e.target.value as ClaudeEffortLevel)}
+                disabled={isUpdatingClaudeEffort}
+                style={{ flex: 1, minWidth: 0 }}
+              >
+                {CLAUDE_EFFORT_LEVEL_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+              该设置会实时写入 ~/.claude/settings.json，重启 Claude Code 后生效。
+            </div>
+          </div>
+          <div style={{ marginTop: '20px' }}>
+            <div
+              className="form-group"
+              style={{
+                marginBottom: '0',
+                maxWidth: '420px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}
+            >
+              <label
+                htmlFor="claude-default-model"
+                style={{ marginBottom: 0, minWidth: '100px', whiteSpace: 'nowrap' }}
+              >
+                默认模型
+              </label>
+              <input
+                id="claude-default-model"
+                type="text"
+                value={claudeDefaultModelInput}
+                onChange={(e) => {
+                  setClaudeDefaultModelInput(e.target.value);
+                  setClaudeDefaultModelDirty(e.target.value !== (appConfig?.claudeDefaultModel || ''));
+                }}
+                placeholder="例如：claude-3-5-sonnet-20241022"
+                style={{ flex: 1, minWidth: 0 }}
+              />
+              <button
+                onClick={handleSaveClaudeDefaultModel}
+                disabled={isUpdatingClaudeDefaultModel}
+                className="btn btn-primary"
+                style={{ whiteSpace: 'nowrap' }}
+              >
+                保存
+              </button>
+              {claudeDefaultModelDirty && (
+                <span style={{ fontSize: '12px', color: 'var(--warning-color, #e6a817)', whiteSpace: 'nowrap' }}>
+                  未保存
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+              设置后写入 ~/.claude/settings.json 的 model 字段，重启 Claude Code 后生效。留空则不写入。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginTop: '20px' }}>
+        <div className="toolbar">
+          <h3>Codex 全局配置</h3>
+        </div>
+        <div style={{ padding: '20px' }}>
+          <div
+            className="form-group"
+            style={{
+              marginBottom: '0',
+              maxWidth: '420px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+            }}
+          >
+            <label
+              htmlFor="codex-reasoning-effort"
+              style={{ marginBottom: 0, minWidth: '120px', whiteSpace: 'nowrap' }}
+            >
+              Reasoning Effort
+            </label>
+            <select
+              id="codex-reasoning-effort"
+              value={getGlobalCodexReasoningEffort(appConfig)}
+              onChange={(e) => handleUpdateCodexReasoningEffort(e.target.value as CodexReasoningEffort)}
+              disabled={isUpdatingCodexReasoning}
+              style={{ flex: 1, minWidth: 0 }}
+            >
+              {CODEX_REASONING_EFFORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+            该设置会实时写入 ~/.codex/config.toml，重启 Codex 后生效。
+          </div>
+          <div style={{ marginTop: '20px' }}>
+            <div
+              className="form-group"
+              style={{
+                marginBottom: '0',
+                maxWidth: '420px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}
+            >
+              <label
+                htmlFor="codex-default-model"
+                style={{ marginBottom: 0, minWidth: '100px', whiteSpace: 'nowrap' }}
+              >
+                默认模型
+              </label>
+              <input
+                id="codex-default-model"
+                type="text"
+                value={codexDefaultModelInput}
+                onChange={(e) => {
+                  setCodexDefaultModelInput(e.target.value);
+                  setCodexDefaultModelDirty(e.target.value !== (appConfig?.codexDefaultModel || ''));
+                }}
+                placeholder="例如：o1"
+                style={{ flex: 1, minWidth: 0 }}
+              />
+              <button
+                onClick={handleSaveCodexDefaultModel}
+                disabled={isUpdatingCodexDefaultModel}
+                className="btn btn-primary"
+                style={{ whiteSpace: 'nowrap' }}
+              >
+                保存
+              </button>
+              {codexDefaultModelDirty && (
+                <span style={{ fontSize: '12px', color: 'var(--warning-color, #e6a817)', whiteSpace: 'nowrap' }}>
+                  未保存
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+              设置后写入 ~/.codex/config.toml 的 model 字段，重启 Codex 后生效。留空则使用默认值 gpt-5.3-codex。
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* 配置文件自动管理说明 - 独立容器 */}
@@ -1493,8 +1639,7 @@ export default function RoutesPage() {
           }}>
             <strong>💡 工作原理</strong>
             <p style={{ marginTop: '8px', marginBottom: '0' }}>
-              激活路由时，系统会自动修改编程工具的配置文件，使其通过本代理服务器访问AI服务。
-              停用路由时，系统会自动恢复原始配置。
+              配置文件由服务生命周期统一管理：服务启动时自动写入代理配置，服务停止时自动恢复原始配置；运行中修改全局工具配置会实时写入配置文件。
             </p>
           </div>
 
@@ -1505,10 +1650,10 @@ export default function RoutesPage() {
               borderRadius: '8px',
               borderLeft: '4px solid var(--border-info-green)'
             }}>
-              <strong>✓ 激活路由</strong>
+              <strong>✓ 服务启动</strong>
               <ul style={{ marginTop: '8px', paddingLeft: '20px', marginBottom: '0' }}>
-                <li>首次激活：自动备份并覆盖配置文件</li>
-                <li>再次激活：仅切换路由，不重复覆盖</li>
+                <li>自动备份并覆盖配置文件</li>
+                <li>按全局工具设置写入 Claude/Codex 配置</li>
               </ul>
             </div>
 
@@ -1518,7 +1663,7 @@ export default function RoutesPage() {
               borderRadius: '8px',
               borderLeft: '4px solid var(--border-info-orange)'
             }}>
-              <strong>○ 停用路由</strong>
+              <strong>○ 服务停止</strong>
               <ul style={{ marginTop: '8px', paddingLeft: '20px', marginBottom: '0' }}>
                 <li>自动恢复原始配置文件</li>
                 <li>删除备份文件</li>
@@ -1535,7 +1680,7 @@ export default function RoutesPage() {
           }}>
             <strong>⚠️ 重要提示</strong>
             <ul style={{ marginTop: '8px', paddingLeft: '20px', marginBottom: '0' }}>
-              <li>激活（首次）/停用路由后，<strong>必须重启对应的编程工具</strong>才能使配置生效</li>
+              <li>修改路由规则后立即生效；修改全局工具配置后仅需重启对应编程工具（无需重启服务）</li>
               <li>操作前建议关闭编程工具，避免配置冲突</li>
             </ul>
           </div>
@@ -1646,7 +1791,7 @@ export default function RoutesPage() {
                           borderRadius: '3px',
                           fontFamily: 'monospace',
                           fontSize: '12px'
-                        }}>!!</code> 标记高智商请求（仅在“最近一条真实用户输入”生效）</li>
+                        }}>[!]</code> 标记高智商请求（仅在”最近一条真实用户输入”生效）</li>
                         <li>系统会自动忽略工具构造的 user 消息（如 tool_result），按对话上下文推断是否继续走高智商规则</li>
                       </ul>
                     </div>
@@ -1658,14 +1803,14 @@ export default function RoutesPage() {
                         borderRadius: '3px',
                         fontFamily: 'monospace',
                         fontSize: '12px'
-                      }}>!! 重构A模块</code><br />
+                      }}>[!] 重构A模块</code><br />
                       • <code style={{
                         background: 'var(--bg-code-inline, #f5f5f5)',
                         padding: '2px 6px',
                         borderRadius: '3px',
                         fontFamily: 'monospace',
                         fontSize: '12px'
-                      }}>继续正常对话（不加 !!）</code>
+                      }}>继续正常对话（不加 [!]）</code>
                     </div>
                   </div>
                 )}

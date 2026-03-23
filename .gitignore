@@ -63,3 +63,4 @@ tauri/resources/
 # documents
 /documents/
 /scripts/
+.tmp/

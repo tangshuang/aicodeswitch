@@ -19,6 +19,7 @@ import type {
   ImportPreview,
   MCPServer,
   TargetType,
+  CodexReasoningEffort,
 } from '../types';
 import { migrateSourceType, isLegacySourceType, normalizeSourceType } from './type-migration';
 
@@ -29,6 +30,22 @@ interface LogShardIndex {
   endTime: number;
   count: number;
 }
+
+const VALID_CODEX_REASONING_EFFORTS: CodexReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
+const DEFAULT_CODEX_REASONING_EFFORT: CodexReasoningEffort = 'high';
+const DEFAULT_FAILOVER_RECOVERY_SECONDS = 30;
+
+const isCodexReasoningEffort = (value: unknown): value is CodexReasoningEffort => {
+  return typeof value === 'string' && VALID_CODEX_REASONING_EFFORTS.includes(value as CodexReasoningEffort);
+};
+
+const normalizeFailoverRecoverySeconds = (value: unknown): number => {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_FAILOVER_RECOVERY_SECONDS;
+  }
+  return Math.floor(parsed);
+};
 
 /**
  * 基于文件系统的数据库管理器
@@ -118,8 +135,8 @@ export class FileSystemDatabaseManager {
 
     // 执行数据源类型迁移（在加载数据之后）
     await this.migrateSourceTypes();
-    // OpenAI base URL 迁移：将末尾 /v1 自动移除
-    await this.migrateOpenAIBaseUrls();
+    // 路由级工具配置迁移到全局配置（兼容旧版本）
+    await this.migrateRouteToolSettingsToGlobalConfig();
 
     // 确保默认配置
     await this.ensureDefaultConfig();
@@ -141,15 +158,52 @@ export class FileSystemDatabaseManager {
   }
 
   private async loadVendors() {
+    let needSave = false;
     try {
       const data = await fs.readFile(this.vendorsFile, 'utf-8');
-      this.vendors = JSON.parse(data);
+      const parsed = JSON.parse(data);
+      this.vendors = Array.isArray(parsed) ? parsed.map((vendor: Vendor) => {
+        const normalizedServices = Array.isArray(vendor.services)
+          ? vendor.services.map((service: APIService) => {
+            const normalizedService: APIService = {
+              ...service,
+              apiKey: typeof service.apiKey === 'string' ? service.apiKey : '',
+              inheritVendorApiKey: service.inheritVendorApiKey === true,
+            };
+            if (
+              normalizedService.apiKey !== service.apiKey ||
+              normalizedService.inheritVendorApiKey !== service.inheritVendorApiKey
+            ) {
+              needSave = true;
+            }
+            return normalizedService;
+          })
+          : [];
+
+        const normalizedVendor: Vendor = {
+          ...vendor,
+          apiKey: typeof vendor.apiKey === 'string' ? vendor.apiKey : '',
+          services: normalizedServices,
+        };
+
+        if (
+          normalizedVendor.apiKey !== vendor.apiKey ||
+          !Array.isArray(vendor.services)
+        ) {
+          needSave = true;
+        }
+
+        return normalizedVendor;
+      }) : [];
     } catch {
       this.vendors = [];
     }
 
     // 兼容性检查：如果存在旧的 services.json，自动迁移
     await this.migrateServicesIfNeeded();
+    if (needSave) {
+      await this.saveVendors();
+    }
   }
 
   /**
@@ -280,45 +334,6 @@ export class FileSystemDatabaseManager {
   }
 
   /**
-   * 迁移 OpenAI base URL（在初始化时执行）
-   * 仅处理 sourceType=openai 且 apiUrl 末尾为 /v1 的服务
-   */
-  private async migrateOpenAIBaseUrls(): Promise<void> {
-    console.log('[OpenAIBaseUrlMigration] Checking for OpenAI base URL migration...');
-
-    let migratedCount = 0;
-    for (const vendor of this.vendors) {
-      if (!vendor.services) continue;
-
-      for (const service of vendor.services) {
-        if (service.sourceType !== 'openai' || typeof service.apiUrl !== 'string') {
-          continue;
-        }
-
-        const trimmedUrl = service.apiUrl.trim();
-        if (!/\/v1\/?$/i.test(trimmedUrl)) {
-          continue;
-        }
-
-        const migratedUrl = trimmedUrl.replace(/\/v1\/?$/i, '');
-        if (migratedUrl && migratedUrl !== service.apiUrl) {
-          console.log(`[OpenAIBaseUrlMigration] Migrated service "${service.name}": ${service.apiUrl} -> ${migratedUrl}`);
-          service.apiUrl = migratedUrl;
-          migratedCount++;
-        }
-      }
-    }
-
-    if (migratedCount === 0) {
-      console.log('[OpenAIBaseUrlMigration] No migration needed');
-      return;
-    }
-
-    await this.saveVendors();
-    console.log(`[OpenAIBaseUrlMigration] Migration completed. Migrated ${migratedCount} services.`);
-  }
-
-  /**
    * 迁移导入数据中的类型
    * 用于导入功能，自动将旧类型转换为新类型
    */
@@ -326,15 +341,9 @@ export class FileSystemDatabaseManager {
     return vendors.map(vendor => ({
       ...vendor,
       services: vendor.services?.map(service => {
-        const normalizedSourceType = service.sourceType ? normalizeSourceType(service.sourceType) : undefined;
-        const normalizedApiUrl = normalizedSourceType === 'openai' && typeof service.apiUrl === 'string'
-          ? service.apiUrl.trim().replace(/\/v1\/?$/i, '')
-          : service.apiUrl;
-
         return {
           ...service,
-          sourceType: normalizedSourceType,
-          apiUrl: normalizedApiUrl
+          sourceType: service.sourceType ? normalizeSourceType(service.sourceType) : undefined
         };
       })
     }));
@@ -757,19 +766,97 @@ export class FileSystemDatabaseManager {
   }
 
   private async ensureDefaultConfig() {
-    if (!this.config) {
-      this.config = {
-        enableLogging: true,
-        logRetentionDays: 30,
-        maxLogSize: 100000,
-        apiKey: '',
-        enableFailover: true,
-        proxyEnabled: false,
-        proxyUrl: '',
-        proxyUsername: '',
-        proxyPassword: '',
-      };
+    const current = this.config;
+    this.config = {
+      enableLogging: current?.enableLogging ?? true,
+      logRetentionDays: current?.logRetentionDays ?? 30,
+      maxLogSize: current?.maxLogSize ?? 100000,
+      apiKey: current?.apiKey ?? '',
+      enableFailover: current?.enableFailover ?? true,
+      failoverRecoverySeconds: normalizeFailoverRecoverySeconds(current?.failoverRecoverySeconds),
+      enableAgentTeams: current?.enableAgentTeams ?? false,
+      enableBypassPermissionsSupport: current?.enableBypassPermissionsSupport ?? false,
+      codexModelReasoningEffort: isCodexReasoningEffort(current?.codexModelReasoningEffort)
+        ? current!.codexModelReasoningEffort
+        : DEFAULT_CODEX_REASONING_EFFORT,
+      proxyEnabled: current?.proxyEnabled ?? false,
+      proxyUrl: current?.proxyUrl ?? '',
+      proxyUsername: current?.proxyUsername ?? '',
+      proxyPassword: current?.proxyPassword ?? '',
+    };
+
+    // 仅在首次创建或存在字段补齐时落盘
+    if (!current || JSON.stringify(current) !== JSON.stringify(this.config)) {
       await this.saveConfig();
+    }
+  }
+
+  private async migrateRouteToolSettingsToGlobalConfig(): Promise<void> {
+    const hasGlobalToolConfig =
+      !!this.config &&
+      (
+        Object.prototype.hasOwnProperty.call(this.config, 'enableAgentTeams') ||
+        Object.prototype.hasOwnProperty.call(this.config, 'enableBypassPermissionsSupport') ||
+        Object.prototype.hasOwnProperty.call(this.config, 'codexModelReasoningEffort')
+      );
+
+    const getPreferredRoute = (targetType: TargetType) => {
+      const activeRoute = this.routes.find(route => route.targetType === targetType && route.isActive);
+      if (activeRoute) {
+        return activeRoute;
+      }
+      return this.routes.find(route => route.targetType === targetType);
+    };
+
+    let configUpdated = false;
+    if (!hasGlobalToolConfig) {
+      const preferredClaudeRoute = getPreferredRoute('claude-code');
+      const preferredCodexRoute = getPreferredRoute('codex');
+      const nextConfig: AppConfig = { ...(this.config || {}) };
+
+      if (typeof preferredClaudeRoute?.enableAgentTeams === 'boolean') {
+        nextConfig.enableAgentTeams = preferredClaudeRoute.enableAgentTeams;
+        configUpdated = true;
+      }
+      if (typeof preferredClaudeRoute?.enableBypassPermissionsSupport === 'boolean') {
+        nextConfig.enableBypassPermissionsSupport = preferredClaudeRoute.enableBypassPermissionsSupport;
+        configUpdated = true;
+      }
+      if (isCodexReasoningEffort(preferredCodexRoute?.codexModelReasoningEffort)) {
+        nextConfig.codexModelReasoningEffort = preferredCodexRoute.codexModelReasoningEffort;
+        configUpdated = true;
+      }
+
+      if (configUpdated) {
+        this.config = nextConfig;
+        await this.saveConfig();
+        console.log('[ConfigMigration] Migrated route-level tool settings to global app config');
+      }
+    }
+
+    // 清理路由中的旧字段，避免后续重复歧义
+    let routesUpdated = false;
+    this.routes = this.routes.map((route) => {
+      const hasLegacyFields =
+        Object.prototype.hasOwnProperty.call(route, 'enableAgentTeams') ||
+        Object.prototype.hasOwnProperty.call(route, 'enableBypassPermissionsSupport') ||
+        Object.prototype.hasOwnProperty.call(route, 'codexModelReasoningEffort');
+
+      if (!hasLegacyFields) {
+        return route;
+      }
+
+      routesUpdated = true;
+      const cleanedRoute = { ...route };
+      delete (cleanedRoute as Partial<Route>).enableAgentTeams;
+      delete (cleanedRoute as Partial<Route>).enableBypassPermissionsSupport;
+      delete (cleanedRoute as Partial<Route>).codexModelReasoningEffort;
+      return cleanedRoute;
+    });
+
+    if (routesUpdated) {
+      await this.saveRoutes();
+      console.log('[ConfigMigration] Removed deprecated route-level tool settings');
     }
   }
 
@@ -794,6 +881,7 @@ export class FileSystemDatabaseManager {
     const now = Date.now();
     const newVendor: Vendor = {
       ...vendor,
+      apiKey: typeof vendor.apiKey === 'string' ? vendor.apiKey : '',
       id,
       services: vendor.services || [],  // 确保 services 字段存在
       createdAt: now,
@@ -814,7 +902,11 @@ export class FileSystemDatabaseManager {
       ...this.vendors[index],
       ...vendor,
       id,
-      services: vendor.services !== undefined ? vendor.services : this.vendors[index].services,
+      apiKey: typeof vendor.apiKey === 'string'
+        ? vendor.apiKey
+        : (this.vendors[index].apiKey || ''),
+      // 供应商服务应通过 create/update/deleteAPIService 单独维护，避免编辑供应商时误覆盖
+      services: this.vendors[index].services,
       updatedAt: now,
     };
     await this.saveVendors();
@@ -825,13 +917,15 @@ export class FileSystemDatabaseManager {
     const index = this.vendors.findIndex(v => v.id === id);
     if (index === -1) return false;
 
-    // 检查是否有服务被规则使用
+    // 级联删除：删除该供应商下服务关联的所有规则
     const vendor = this.vendors[index];
     const serviceIds = (vendor.services || []).map(s => s.id);
-    const rulesUsingServices = this.rules.filter(r => serviceIds.includes(r.targetServiceId));
-
-    if (rulesUsingServices.length > 0) {
-      throw new Error(`无法删除供应商：有 ${rulesUsingServices.length} 个路由规则正在使用该供应商的服务`);
+    if (serviceIds.length > 0) {
+      const beforeCount = this.rules.length;
+      this.rules = this.rules.filter(r => !serviceIds.includes(r.targetServiceId));
+      if (this.rules.length !== beforeCount) {
+        await this.saveRules();
+      }
     }
 
     this.vendors.splice(index, 1);
@@ -909,6 +1003,8 @@ export class FileSystemDatabaseManager {
     const now = Date.now();
     const newService: APIService = {
       ...serviceData,
+      apiKey: typeof serviceData.apiKey === 'string' ? serviceData.apiKey : '',
+      inheritVendorApiKey: serviceData.inheritVendorApiKey === true,
       id,
       createdAt: now,
       updatedAt: now
@@ -945,6 +1041,10 @@ export class FileSystemDatabaseManager {
       ...vendor.services![index],
       ...service,
       id,
+      apiKey: typeof service.apiKey === 'string' ? service.apiKey : (vendor.services![index].apiKey || ''),
+      inheritVendorApiKey: service.inheritVendorApiKey !== undefined
+        ? service.inheritVendorApiKey === true
+        : vendor.services![index].inheritVendorApiKey === true,
       updatedAt: now,
     };
 
@@ -967,10 +1067,11 @@ export class FileSystemDatabaseManager {
     const index = vendor.services!.findIndex(s => s.id === id);
     if (index === -1) return false;
 
-    // 检查是否有规则正在使用此服务
-    const rulesUsingService = this.rules.filter(r => r.targetServiceId === id);
-    if (rulesUsingService.length > 0) {
-      throw new Error(`无法删除服务：有 ${rulesUsingService.length} 个路由规则正在使用此服务`);
+    // 级联删除：删除使用该服务的所有规则
+    const beforeCount = this.rules.length;
+    this.rules = this.rules.filter(r => r.targetServiceId !== id);
+    if (this.rules.length !== beforeCount) {
+      await this.saveRules();
     }
 
     vendor.services!.splice(index, 1);
@@ -1626,7 +1727,57 @@ export class FileSystemDatabaseManager {
     return false;
   }
 
+  /**
+   * 获取状态码为 499 的请求日志
+   * @param limit 返回数量限制
+   * @param offset 偏移量
+   * @returns 匹配的请求日志列表
+   */
+  async getClientClosedLogs(limit: number = 100, offset: number = 0): Promise<RequestLog[]> {
+    const allMatches: RequestLog[] = [];
+    const sortedShards = [...this.logShardsIndex].sort((a, b) => b.endTime - a.endTime);
+
+    // 递序遍历所有分片， collect 499 logs
+    for (const shard of sortedShards) {
+      const shardLogs = await this.loadLogShard(shard.filename);
+      for (const log of shardLogs) {
+        if (log.statusCode === 499) {
+          allMatches.push(log);
+        }
+      }
+    }
+
+    // 按时间倒序排列并分页
+    return allMatches
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(offset, offset + limit);
+  }
+
+  /**
+   * 获取状态码为 499 的请求日志数量
+   * @returns 匹配的请求数量
+   */
+  async getClientClosedLogsCount(): Promise<number> {
+    let count = 0;
+    for (const shard of this.logShardsIndex) {
+      const shardLogs = await this.loadLogShard(shard.filename);
+      for (const log of shardLogs) {
+        if (log.statusCode === 499) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }
+
   // Service blacklist operations
+
+  // Service blacklist operations
+  private getFailoverRecoveryMs(): number {
+    const seconds = normalizeFailoverRecoverySeconds(this.config?.failoverRecoverySeconds);
+    return seconds * 1000;
+  }
+
   async isServiceBlacklisted(
     serviceId: string,
     routeId: string,
@@ -1656,11 +1807,12 @@ export class FileSystemDatabaseManager {
   ): Promise<void> {
     const key = `${routeId}:${contentType}:${serviceId}`;
     const now = Date.now();
+    const recoveryMs = this.getFailoverRecoveryMs();
     const existing = this.blacklist.get(key);
 
     if (existing) {
       existing.blacklistedAt = now;
-      existing.expiresAt = now + 2 * 60 * 1000; // 2分钟黑名单（从10分钟缩短）
+      existing.expiresAt = now + recoveryMs;
       existing.errorCount++;
       existing.lastError = errorMessage;
       existing.lastStatusCode = statusCode;
@@ -1671,7 +1823,7 @@ export class FileSystemDatabaseManager {
         routeId,
         contentType,
         blacklistedAt: now,
-        expiresAt: now + 2 * 60 * 1000, // 2分钟黑名单（从10分钟缩短）
+        expiresAt: now + recoveryMs,
         errorCount: 1,
         lastError: errorMessage,
         lastStatusCode: statusCode,
@@ -1716,7 +1868,17 @@ export class FileSystemDatabaseManager {
   }
 
   async updateConfig(config: AppConfig): Promise<boolean> {
-    this.config = config;
+    const merged: AppConfig = {
+      ...(this.config || {}),
+      ...config,
+    };
+
+    if (!isCodexReasoningEffort(merged.codexModelReasoningEffort)) {
+      merged.codexModelReasoningEffort = DEFAULT_CODEX_REASONING_EFFORT;
+    }
+    merged.failoverRecoverySeconds = normalizeFailoverRecoverySeconds(merged.failoverRecoverySeconds);
+
+    this.config = merged;
     await this.saveConfig();
     return true;
   }
@@ -1741,6 +1903,9 @@ export class FileSystemDatabaseManager {
     if (!vendor.name || typeof vendor.name !== 'string') {
       return { valid: false, error: `供应商[${index}](${vendor.id}) 缺少有效的 name 字段` };
     }
+    if (vendor.apiKey !== undefined && typeof vendor.apiKey !== 'string') {
+      return { valid: false, error: `供应商[${index}](${vendor.id}) 的 apiKey 必须是字符串` };
+    }
     if (!Array.isArray(vendor.services)) {
       return { valid: false, error: `供应商[${index}](${vendor.id}) 的 services 不是数组` };
     }
@@ -1759,7 +1924,12 @@ export class FileSystemDatabaseManager {
         return { valid: false, error: `供应商[${index}](${vendor.id}) 的服务[${i}] 缺少有效的 apiUrl 字段` };
       }
       if (!service.apiKey || typeof service.apiKey !== 'string') {
-        return { valid: false, error: `供应商[${index}](${vendor.id}) 的服务[${i}] 缺少有效的 apiKey 字段` };
+        if (service.inheritVendorApiKey !== true) {
+          return { valid: false, error: `供应商[${index}](${vendor.id}) 的服务[${i}] 缺少有效的 apiKey 字段` };
+        }
+      }
+      if (service.inheritVendorApiKey !== undefined && typeof service.inheritVendorApiKey !== 'boolean') {
+        return { valid: false, error: `供应商[${index}](${vendor.id}) 的服务[${i}] inheritVendorApiKey 必须是布尔值` };
       }
     }
     return { valid: true };
@@ -2002,6 +2172,7 @@ export class FileSystemDatabaseManager {
       }));
       this.config = {
         ...importData.config,
+        failoverRecoverySeconds: normalizeFailoverRecoverySeconds(importData.config?.failoverRecoverySeconds),
         updatedAt: now
       };
 

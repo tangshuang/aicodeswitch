@@ -144,6 +144,7 @@ function VendorsPage() {
   const [currentSourceType, setCurrentSourceType] = useState<SourceType>('openai-chat');
   // 当前选择的认证方式（用于动态显示认证方式提示）
   const [currentAuthType, setCurrentAuthType] = useState<AuthType>(AuthType.AUTH_TOKEN);
+  const [inheritVendorApiKey, setInheritVendorApiKey] = useState(true);
 
   // 处理数据源类型变化，自动设置合适的认证方式
   const handleSourceTypeChange = (sourceType: SourceType) => {
@@ -234,8 +235,8 @@ function VendorsPage() {
     setShowVendorModal(true);
   };
 
-  const handleDeleteVendor = async (id: string) => {
-    const confirmed = await confirm({
+  const handleDeleteVendor = async (vendor: Vendor) => {
+    const firstConfirmed = await confirm({
       message: '确定要删除此供应商吗？',
       title: '确认删除',
       type: 'danger',
@@ -243,14 +244,30 @@ function VendorsPage() {
       cancelText: '取消'
     });
 
-    if (confirmed) {
+    if (firstConfirmed) {
       try {
-        await api.deleteVendor(id);
+        const allRules = await api.getRules();
+        const serviceIds = (vendor.services || []).map(s => s.id);
+        const relatedRuleCount = allRules.filter(rule => serviceIds.includes(rule.targetServiceId)).length;
+
+        const secondConfirmed = await confirm({
+          message: `二次确认：删除供应商“${vendor.name}”后，将同时删除关联的 ${relatedRuleCount} 条路由规则。是否继续？`,
+          title: '二次确认',
+          type: 'danger',
+          confirmText: '确认删除',
+          cancelText: '取消'
+        });
+
+        if (!secondConfirmed) {
+          return;
+        }
+
+        await api.deleteVendor(vendor.id);
         loadVendors();
-        if (selectedVendor && selectedVendor.id === id) {
+        if (selectedVendor && selectedVendor.id === vendor.id) {
           setSelectedVendor(null);
         }
-        toast.success('供应商已删除');
+        toast.success(`供应商已删除，关联规则清理 ${relatedRuleCount} 条`);
       } catch (error) {
         // 显示错误信息
         const errorMessage = error instanceof Error ? error.message : '删除失败';
@@ -262,17 +279,20 @@ function VendorsPage() {
   const handleSaveVendor = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    const vendor = {
+    const vendorBase = {
       name: formData.get('name') as string,
       description: formData.get('description') as string,
-      sortOrder: parseInt(formData.get('sortOrder') as string) || 0,
-      services: []
+      apiKey: (formData.get('apiKey') as string) || '',
+      sortOrder: parseInt(formData.get('sortOrder') as string) || 0
     };
 
     if (editingVendor) {
-      await api.updateVendor(editingVendor.id, vendor);
+      await api.updateVendor(editingVendor.id, vendorBase);
     } else {
-      await api.createVendor(vendor);
+      await api.createVendor({
+        ...vendorBase,
+        services: []
+      });
     }
 
     setShowVendorModal(false);
@@ -296,6 +316,7 @@ function VendorsPage() {
     setRequestResetBaseTime(undefined);
     setCurrentSourceType('openai-chat');
     setCurrentAuthType(AuthType.AUTH_TOKEN);
+    setInheritVendorApiKey(true);
     setShowServiceModal(true);
   };
 
@@ -338,13 +359,15 @@ function VendorsPage() {
       setCurrentAuthType(derivedAuthType);
     }
 
+    setInheritVendorApiKey(service.inheritVendorApiKey === true);
+
     setShowServiceModal(true);
   };
 
 
 
   const handleDeleteService = async (id: string) => {
-    const confirmed = await confirm({
+    const firstConfirmed = await confirm({
       message: '确定要删除此API服务吗？',
       title: '确认删除',
       type: 'danger',
@@ -352,8 +375,23 @@ function VendorsPage() {
       cancelText: '取消'
     });
 
-    if (confirmed) {
+    if (firstConfirmed) {
       try {
+        const allRules = await api.getRules();
+        const relatedRuleCount = allRules.filter(rule => rule.targetServiceId === id).length;
+
+        const secondConfirmed = await confirm({
+          message: `二次确认：删除该 API 服务后，将同时删除关联的 ${relatedRuleCount} 条路由规则。是否继续？`,
+          title: '二次确认',
+          type: 'danger',
+          confirmText: '确认删除',
+          cancelText: '取消'
+        });
+
+        if (!secondConfirmed) {
+          return;
+        }
+
         await api.deleteAPIService(id);
         // 重新加载供应商（服务已自动包含）
         const updatedVendors = await loadVendors();
@@ -364,7 +402,7 @@ function VendorsPage() {
             setSelectedVendor(updatedVendor);
           }
         }
-        toast.success('API服务已删除');
+        toast.success(`API服务已删除，关联规则清理 ${relatedRuleCount} 条`);
       } catch (error) {
         // 显示错误信息
         const errorMessage = error instanceof Error ? error.message : '删除失败';
@@ -391,11 +429,11 @@ function VendorsPage() {
     const formData = new FormData(e.currentTarget);
     const sourceType = formData.get('sourceType') as SourceType;
     const apiUrl = (formData.get('apiUrl') as string).trim();
-
-    if (sourceType === 'openai' && /\/v1\/?$/i.test(apiUrl)) {
-      toast.warning('OpenAI 数据源只需填写 base URL（不含 /v1），例如：https://api.openai.com');
-      return;
-    }
+    const shouldInheritVendorApiKey = formData.get('inheritVendorApiKey') === 'on';
+    const inputApiKey = (formData.get('apiKey') as string) || '';
+    const finalApiKey = shouldInheritVendorApiKey
+      ? (editingService?.apiKey || '')
+      : inputApiKey;
 
     // 过滤掉值为空的 modelLimits
     const finalModelLimits: Record<string, number> = {};
@@ -409,7 +447,8 @@ function VendorsPage() {
       vendorId: selectedVendor!.id,
       name: formData.get('name') as string,
       apiUrl,
-      apiKey: formData.get('apiKey') as string,
+      apiKey: finalApiKey,
+      inheritVendorApiKey: shouldInheritVendorApiKey,
       sourceType,
       authType: formData.get('authType') as AuthType || undefined,
       supportedModels: finalModels.length > 0 ? finalModels : undefined,
@@ -445,6 +484,7 @@ function VendorsPage() {
     setRequestCountLimit(undefined);
     setRequestResetInterval(undefined);
     setRequestResetBaseTime(undefined);
+    setInheritVendorApiKey(true);
     // 重新加载供应商（服务已自动包含）
     const updatedVendors = await loadVendors();
     if (selectedVendor) {
@@ -504,6 +544,7 @@ function VendorsPage() {
       const vendorResult = await api.createVendor({
         name: vendorConfig.name,
         description: vendorConfig.description,
+        apiKey,
         sortOrder: 0,  // 添加默认排序值
         services: []
       });
@@ -532,7 +573,8 @@ function VendorsPage() {
           vendorId: vendorResult.id,  // 必须字段
           name: serviceConfig.name,
           apiUrl: serviceConfig.apiUrl,
-          apiKey: apiKey,
+          apiKey: '',
+          inheritVendorApiKey: true,
           sourceType: serviceConfig.sourceType,
           authType: serviceConfig.authType,
           supportedModels: serviceConfig.models ? serviceConfig.models.split(',').map(m => m.trim()) : undefined,
@@ -647,7 +689,7 @@ function VendorsPage() {
                         style={{ padding: '4px 8px', fontSize: '12px' }}
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDeleteVendor(vendor.id);
+                          handleDeleteVendor(vendor);
                         }}
                       >删除</button>
                     </div>
@@ -726,6 +768,10 @@ function VendorsPage() {
                 <textarea name="description" rows={3} defaultValue={editingVendor ? editingVendor.description : ''} />
               </div>
               <div className="form-group">
+                <label>API密钥</label>
+                <input type="password" name="apiKey" defaultValue={editingVendor ? (editingVendor.apiKey || '') : ''} placeholder="可选：供应商默认API密钥" />
+              </div>
+              <div className="form-group">
                 <label>排序 <small>数值越大越靠前</small></label>
                 <input type="number" name="sortOrder" defaultValue={editingVendor ? editingVendor.sortOrder || 0 : 0} min="0" />
               </div>
@@ -782,7 +828,19 @@ function VendorsPage() {
               </div>
               <div className="form-group">
                 <label>供应商API密钥</label>
-                <input type="password" name="apiKey" defaultValue={editingService ? editingService.apiKey : ''} required />
+                <label style={{ display: 'flex', alignItems: 'center', marginBottom: '8px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    name="inheritVendorApiKey"
+                    checked={inheritVendorApiKey}
+                    onChange={(e) => setInheritVendorApiKey(e.target.checked)}
+                    style={{ marginRight: '8px', cursor: 'pointer', width: '16px', height: '16px' }}
+                  />
+                  <span>使用供应商全局配置的API密钥</span>
+                </label>
+                {!inheritVendorApiKey && (
+                  <input type="password" name="apiKey" defaultValue={editingService ? editingService.apiKey : ''} required />
+                )}
               </div>
               <div className="form-group">
                 <label>供应商API认证方式 <small>请在供应商的文档中查阅相关信息</small></label>

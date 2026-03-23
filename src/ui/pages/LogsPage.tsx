@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import type { RequestLog, ErrorLog, Vendor, APIService, Session } from '../../types';
 import dayjs from 'dayjs';
@@ -20,66 +20,54 @@ interface ParsedSSEEvent {
   raw: string;
 }
 
-function parseSSEChunks(chunks: string[]): ParsedSSEEvent[] {
+function parseSSEChunks(sourceText: string): ParsedSSEEvent[] {
+  const chunks = sourceText.split('\n').map(item => item.trim()).join('\n')
+    .split('\n\n').filter(s => s.trim());
   const events: ParsedSSEEvent[] = [];
-  let currentEvent: { event?: string; dataLines: string[]; rawLines: string[] } = {
-    dataLines: [],
-    rawLines: []
-  };
 
   for (const chunk of chunks) {
+    let event: string = '';
+    let dataLines: string[] = [];
+    let dataInsert = 0;
     const lines = chunk.split('\n');
-    for (const line of lines) {
-      currentEvent.rawLines.push(line);
-
-      if (!line.trim()) {
-        // 空行表示事件结束
-        if (currentEvent.event || currentEvent.dataLines.length > 0) {
-          const eventData = currentEvent.dataLines.length > 0
-            ? currentEvent.dataLines.join('\n')
-            : undefined;
-          const parsed: ParsedSSEEvent = {
-            event: currentEvent.event,
-            raw: currentEvent.rawLines.join('\n')
-          };
-          if (eventData) {
-            try {
-              parsed.data = JSON.parse(eventData);
-            } catch {
-              parsed.data = eventData;
-            }
-          }
-          events.push(parsed);
+    lines.forEach((line) => {
+      if (/^[a-z]+:/.test(line)) {
+        const at = line.indexOf(':');
+        const type = line.slice(0, at).trim();
+        const content = line.slice(at + 1).trim();
+        if (type === 'event') {
+          event = content;
         }
-        currentEvent = { dataLines: [], rawLines: [] };
-        continue;
+        else if (type === 'data') {
+          dataLines.push(content);
+          dataInsert = 1;
+        }
+        else if (dataLines.length) {
+          dataInsert = -1;
+        }
       }
-
-      if (line.startsWith('event:')) {
-        currentEvent.event = line.slice(6).trim();
-      } else if (line.startsWith('data:')) {
-        currentEvent.dataLines.push(line.slice(5).trim());
+      else if (dataInsert === 1) {
+        dataLines.push(line);
       }
-    }
-  }
+    });
 
-  // 处理最后一个事件
-  if (currentEvent.event || currentEvent.dataLines.length > 0) {
-    const eventData = currentEvent.dataLines.length > 0
-      ? currentEvent.dataLines.join('\n')
+    const dataText = dataLines.length > 0
+      ? dataLines.join('\n').trim()
       : undefined;
-    const parsed: ParsedSSEEvent = {
-      event: currentEvent.event,
-      raw: currentEvent.rawLines.join('\n')
-    };
-    if (eventData) {
+    let data;
+    if (dataText) {
       try {
-        parsed.data = JSON.parse(eventData);
+        data = JSON.parse(dataText);
       } catch {
-        parsed.data = eventData;
+        data = dataText;
       }
     }
-    events.push(parsed);
+
+    events.push({
+      event,
+      data,
+      raw: chunk
+    });
   }
 
   return events;
@@ -94,12 +82,13 @@ function assembleStreamText(events: ParsedSSEEvent[], _targetType?: string): { t
   let thinking = '';
   let inThinkingBlock = false;
   let inTextBlock = false;
+  let reasoningAccumulated = false; // 是否已通过 delta 累积了 reasoning
 
   for (const event of events) {
     const data = event.data;
     if (!data) continue;
 
-    // 处理Claude格式 (用于claude-code客户端)
+    // ========== 处理 Claude 格式 (用于 claude-code 客户端) ==========
     if (event.event === 'content_block_start' && data.content_block) {
       const blockType = data.content_block.type;
       if (blockType === 'thinking') {
@@ -125,21 +114,47 @@ function assembleStreamText(events: ParsedSSEEvent[], _targetType?: string): { t
       continue;
     }
 
-    // 处理OpenAI格式 (用于codex客户端)
+    // ========== 处理 Responses API 格式 (用于 codex 客户端) ==========
+
+    // response.reasoning_text.delta - reasoning 内容的增量
+    if (event.event === 'response.reasoning_text.delta' && data.delta !== undefined) {
+      thinking += data.delta || '';
+      reasoningAccumulated = true;
+      continue;
+    }
+
+    // response.content_part.done - 完整的 reasoning 或 output_text
+    if (event.event === 'response.content_part.done' && data.part) {
+      const part = data.part;
+      if (part.type === 'reasoning_text' && part.text) {
+        // 如果没有通过 delta 累积，使用完整文本
+        if (!reasoningAccumulated) {
+          thinking = part.text;
+        }
+      } else if (part.type === 'output_text' && part.text) {
+        text += part.text;
+      }
+      continue;
+    }
+
+    // ========== 处理 OpenAI Chat 格式 (兼容性) ==========
+
     if (!event.event && data.choices) {
       const delta = data.choices?.[0]?.delta;
       if (delta) {
         if (typeof delta.content === 'string') {
           text += delta.content;
         }
-        // 某些OpenAI兼容API可能使用thinking字段
+        // 某些 OpenAI 兼容 API 可能使用 thinking 字段
         if (delta.thinking && typeof delta.thinking.content === 'string') {
           thinking += delta.thinking.content;
         }
       }
+      continue;
     }
 
-    // 处理直接包含thinking的数据（DeepSeek等）
+    // ========== 处理直接包含 thinking 的数据（DeepSeek 等） ==========
+
     if (data.reasoning_content || data.thinking) {
       thinking += data.reasoning_content || data.thinking || '';
     }
@@ -151,12 +166,12 @@ function assembleStreamText(events: ParsedSSEEvent[], _targetType?: string): { t
 /**
  * 从stream chunks组装完整文本
  */
-function assembleStreamTextFromChunks(chunks: string[] | undefined, targetType?: string): { text: string; thinking: string } {
-  if (!chunks || chunks.length === 0) {
+function assembleStreamTextFromChunks(sourceText: string | undefined, targetType?: string): { text: string; thinking: string } {
+  if (!sourceText || sourceText.length === 0) {
     return { text: '', thinking: '' };
   }
 
-  const events = parseSSEChunks(chunks);
+  const events = parseSSEChunks(sourceText);
   return assembleStreamText(events, targetType);
 }
 
@@ -188,7 +203,7 @@ function assembleResponseBody(log: RequestLog): any | null {
   // 如果有 streamChunks，组装完整的响应体
   if (log.streamChunks && log.streamChunks.length > 0) {
     console.log('[assembleResponseBody] processing streamChunks:', log.streamChunks.length);
-    const { text, thinking } = assembleStreamTextFromChunks(log.streamChunks, log.targetType);
+    const { text, thinking } = assembleStreamTextFromChunks(log.downstreamResponseBody, log.targetType);
     console.log('[assembleResponseBody] assembled text:', { textLength: text.length, thinkingLength: thinking.length });
 
     // 根据目标类型构建合适的响应体结构
@@ -560,6 +575,233 @@ function LogsPage() {
     return <span className="badge">{targetType}</span>;
   };
 
+  /**
+   * 格式化请求日志为 Markdown
+   */
+  const formatRequestLogAsMarkdown = (log: RequestLog): string => {
+    const lines: string[] = [];
+
+    lines.push('# 请求日志详情\n');
+
+    lines.push(`## 基本信息`);
+    lines.push(`- **日志ID**: ${log.id}`);
+    lines.push(`- **时间**: ${dayjs(log.timestamp).format('YYYY-MM-DD HH:mm:ss')}`);
+    if (log.targetType) {
+      lines.push(`- **客户端类型**: ${TARGET_TYPE[log.targetType] || '-'}`);
+    }
+    if (log.tags && log.tags.length > 0) {
+      lines.push(`- **标签**: ${log.tags.join(', ')}`);
+    }
+    lines.push('');
+
+    lines.push(`## 模型信息`);
+    if (log.requestModel) {
+      lines.push(`- **请求模型**: ${log.requestModel}`);
+    }
+    if (log.vendorName) {
+      lines.push(`- **供应商**: ${log.vendorName}`);
+    }
+    if (log.targetServiceName) {
+      lines.push(`- **供应商API服务**: ${log.targetServiceName}`);
+    }
+    if (log.targetModel) {
+      lines.push(`- **供应商模型**: ${log.targetModel}`);
+    }
+    lines.push('');
+
+    lines.push(`## 请求信息`);
+    lines.push(`- **请求方法**: ${log.method}`);
+    lines.push(`- **请求路径**: ${log.path}`);
+    lines.push('');
+
+    if (log.headers) {
+      lines.push(`## 请求头`);
+      lines.push('```json');
+      lines.push(JSON.stringify(log.headers, null, 2));
+      lines.push('```\n');
+    }
+
+    if (log.body) {
+      lines.push(`## 请求体`);
+      lines.push('```json');
+      lines.push(JSON.stringify(log.body, null, 2));
+      lines.push('```\n');
+    }
+
+    if (log.upstreamRequest) {
+      lines.push(`## 实际转发的请求信息`);
+      lines.push('```json');
+      lines.push(JSON.stringify(log.upstreamRequest, null, 2));
+      lines.push('```\n');
+    }
+
+    lines.push(`## 响应信息`);
+    lines.push(`- **状态码**: ${log.statusCode || 'Error'}`);
+    lines.push(`- **响应时间**: ${log.responseTime ? `${log.responseTime}ms` : '-'}`);
+    lines.push('');
+
+    if (log.responseHeaders) {
+      lines.push(`## 响应头`);
+      lines.push('```json');
+      lines.push(JSON.stringify(log.responseHeaders, null, 2));
+      lines.push('```\n');
+    }
+
+    const assembledBody = assembleResponseBody(log);
+    if (assembledBody) {
+      lines.push(`## 响应体`);
+      lines.push('```json');
+      lines.push(JSON.stringify(assembledBody, null, 2));
+      lines.push('```\n');
+    }
+
+    if (log.usage) {
+      lines.push(`## Token 使用`);
+      lines.push(`- **输入**: ${log.usage.inputTokens}`);
+      lines.push(`- **输出**: ${log.usage.outputTokens}`);
+      if (log.usage.totalTokens !== undefined) {
+        lines.push(`- **总计**: ${log.usage.totalTokens}`);
+      }
+      if (log.usage.cacheReadInputTokens !== undefined) {
+        lines.push(`- **缓存读取**: ${log.usage.cacheReadInputTokens}`);
+      }
+      lines.push('');
+    }
+
+    if (log.error) {
+      lines.push(`## 错误信息`);
+      lines.push('```');
+      lines.push(log.error);
+      lines.push('```\n');
+    }
+
+    if (log.downstreamResponseBody) {
+      lines.push(`## 实际转发的响应体`);
+      lines.push('```json');
+      lines.push(typeof log.downstreamResponseBody === 'string'
+        ? log.downstreamResponseBody
+        : JSON.stringify(log.downstreamResponseBody, null, 2));
+      lines.push('```\n');
+
+      // 检查是否为流式响应
+      if (typeof log.downstreamResponseBody === 'string' &&
+          (log.downstreamResponseBody.includes('event:') || log.downstreamResponseBody.includes('data:'))) {
+        const events = parseSSEChunks(log.downstreamResponseBody);
+        const { text, thinking } = assembleStreamText(events);
+
+        if (thinking) {
+          lines.push(`## 思考内容 (${thinking.length} 字符)`);
+          lines.push('```');
+          lines.push(thinking);
+          lines.push('```\n');
+        }
+
+        if (text) {
+          lines.push(`## 回复内容 (${text.length} 字符)`);
+          lines.push('```');
+          lines.push(text);
+          lines.push('```\n');
+        }
+      }
+    }
+
+    return lines.join('\n');
+  };
+
+  /**
+   * 格式化错误日志为 Markdown
+   */
+  const formatErrorLogAsMarkdown = (log: ErrorLog): string => {
+    const lines: string[] = [];
+
+    lines.push('# 错误日志详情\n');
+
+    lines.push(`## 基本信息`);
+    lines.push(`- **ID**: ${log.id}`);
+    lines.push(`- **时间**: ${dayjs(log.timestamp).format('YYYY-MM-DD HH:mm:ss')}`);
+    if (log.targetType) {
+      lines.push(`- **客户端类型**: ${TARGET_TYPE[log.targetType] || '-'}`);
+    }
+    if (log.tags && log.tags.length > 0) {
+      lines.push(`- **标签**: ${log.tags.join(', ')}`);
+    }
+    lines.push('');
+
+    lines.push(`## 模型信息`);
+    if (log.requestModel) {
+      lines.push(`- **请求模型**: ${log.requestModel}`);
+    }
+    if (log.vendorName) {
+      lines.push(`- **供应商**: ${log.vendorName}`);
+    }
+    if (log.targetServiceName) {
+      lines.push(`- **供应商API服务**: ${log.targetServiceName}`);
+    }
+    if (log.targetModel) {
+      lines.push(`- **供应商模型**: ${log.targetModel}`);
+    }
+    lines.push('');
+
+    lines.push(`## 请求信息`);
+    lines.push(`- **请求方法**: ${log.method}`);
+    lines.push(`- **请求路径**: ${log.path}`);
+    lines.push('');
+
+    if (log.requestHeaders) {
+      lines.push(`## 请求头`);
+      lines.push('```json');
+      lines.push(JSON.stringify(log.requestHeaders, null, 2));
+      lines.push('```\n');
+    }
+
+    if (log.requestBody) {
+      lines.push(`## 请求体`);
+      lines.push('```json');
+      lines.push(JSON.stringify(log.requestBody, null, 2));
+      lines.push('```\n');
+    }
+
+    if (log.upstreamRequest) {
+      lines.push(`## 实际转发的请求信息`);
+      lines.push('```json');
+      lines.push(JSON.stringify(log.upstreamRequest, null, 2));
+      lines.push('```\n');
+    }
+
+    lines.push(`## 错误信息`);
+    lines.push('```');
+    lines.push(log.errorMessage);
+    lines.push('```\n');
+
+    if (log.errorStack) {
+      lines.push(`## 错误堆栈`);
+      lines.push('```');
+      lines.push(log.errorStack);
+      lines.push('```\n');
+    }
+
+    lines.push(`## 响应信息`);
+    lines.push(`- **状态码**: ${log.statusCode || '-'}`);
+    lines.push(`- **响应时间**: ${log.responseTime ? `${log.responseTime}ms` : '-'}`);
+    lines.push('');
+
+    if (log.responseHeaders) {
+      lines.push(`## 响应头`);
+      lines.push('```json');
+      lines.push(JSON.stringify(log.responseHeaders, null, 2));
+      lines.push('```\n');
+    }
+
+    if (log.responseBody) {
+      lines.push(`## 响应体`);
+      lines.push('```json');
+      lines.push(JSON.stringify(log.responseBody, null, 2));
+      lines.push('```\n');
+    }
+
+    return lines.join('\n');
+  };
+
   const renderSessions = () => {
     if (sessions.length === 0) {
       return <div className="empty-state"><p>暂无会话记录</p></div>;
@@ -657,7 +899,29 @@ function LogsPage() {
                 ) : '-'}
               </td>
               <td>
-                <button className="btn btn-secondary" onClick={() => setSelectedRequestLog(log)}>详情</button>
+                <div style={{ position: 'relative', display: 'inline-block' }}>
+                  {(() => {
+                    // 判断是否为流式响应
+                    const downstreamBody = log.downstreamResponseBody;
+                    const isStreaming = typeof downstreamBody === 'string' &&
+                      (downstreamBody.includes('event:') || downstreamBody.includes('data:'));
+                    return isStreaming && (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          top: '-4px',
+                          right: '-4px',
+                          width: '6px',
+                          height: '6px',
+                          backgroundColor: '#f39c12',
+                          borderRadius: '50%',
+                          boxShadow: '0 0 0 2px rgba(243, 156, 18, 0.5)'
+                        }}
+                      />
+                    );
+                  })()}
+                  <button className="btn btn-secondary" onClick={() => setSelectedRequestLog(log)}>详情</button>
+                </div>
               </td>
             </tr>
           ))}
@@ -1014,9 +1278,6 @@ function LogsPage() {
               </button>
             )}
 
-            <div style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: '14px' }}>
-              显示 {filteredRequestLogs.length} / {requestLogs.length} 条
-            </div>
           </div>
         )}
 
@@ -1170,12 +1431,12 @@ function LogsPage() {
               {selectedRequestLog.body && (
                 <div className="form-group">
                   <label>请求体</label>
-                  <JSONViewer data={selectedRequestLog.body} />
+                  <JSONViewer data={selectedRequestLog.body} collapsed />
                 </div>
               )}
               {selectedRequestLog.upstreamRequest && (
                 <div className="form-group">
-                  <label>实际转发信息</label>
+                  <label>实际转发的请求信息</label>
                   <JSONViewer data={selectedRequestLog.upstreamRequest} />
                 </div>
               )}
@@ -1218,52 +1479,6 @@ function LogsPage() {
                   </div>
                 );
               })()}
-              {selectedRequestLog.streamChunks && selectedRequestLog.streamChunks.length > 0 && (
-                <div className="form-group">
-                  <label>
-                    Stream Chunks ({selectedRequestLog.streamChunks.length}个)
-                    <button
-                      onClick={() => setChunksExpanded(!chunksExpanded)}
-                      style={{ marginLeft: '10px', padding: '2px 8px', fontSize: '12px' }}
-                      className='btn btn-sm btn-secondary'
-                    >
-                      {chunksExpanded ? '折叠' : '展开'}
-                    </button>
-                    <button
-                      onClick={() => setAssembledTextExpanded(!assembledTextExpanded)}
-                      style={{ marginLeft: '5px', padding: '2px 8px', fontSize: '12px' }}
-                      className='btn btn-sm btn-primary'
-                    >
-                      {assembledTextExpanded ? '隐藏拼装结果' : '查看拼装结果'}
-                    </button>
-                  </label>
-                  {chunksExpanded && (
-                    <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid #ddd', padding: '10px', borderRadius: '4px' }}>
-                      {selectedRequestLog.streamChunks.map((chunk, index) => (
-                        <div key={index} style={{ marginBottom: '10px' }}>
-                          <div style={{ fontWeight: 'bold', fontSize: '12px', color: '#7f8c8d', marginBottom: '4px' }}>
-                            Chunk #{index + 1}
-                          </div>
-                          <JSONViewer data={chunk} collapsed={true} />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {assembledTextExpanded && (
-                    <div style={{
-                      marginTop: '10px',
-                      maxHeight: '400px',
-                      overflowY: 'auto',
-                      border: '1px solid var(--border-secondary)',
-                      padding: '10px',
-                      borderRadius: '4px',
-                      backgroundColor: 'var(--bg-assembled-text)'
-                    }}>
-                      <AssembledTextView chunks={selectedRequestLog.streamChunks} targetType={selectedRequestLog.targetType} />
-                    </div>
-                  )}
-                </div>
-              )}
               {selectedRequestLog.usage && (
                 <div className="form-group">
                   <label>Token 使用</label>
@@ -1285,8 +1500,92 @@ function LogsPage() {
                   <textarea rows={4} value={selectedRequestLog.error} readOnly style={{ color: 'red' }} />
                 </div>
               )}
+              {selectedRequestLog.downstreamResponseBody && (
+                <div className="form-group">
+                  <label>实际转发的响应体</label>
+                  <JSONViewer data={selectedRequestLog.downstreamResponseBody} collapsed />
+                </div>
+              )}
+              {(() => {
+                // 从 downstreamResponseBody 解析流式事件
+                const downstreamBody = selectedRequestLog.downstreamResponseBody;
+                if (!downstreamBody) {
+                  return null;
+                }
+
+                // 判断是否为流式响应（字符串类型且包含 SSE 格式标记）
+                const isStreaming = typeof downstreamBody === 'string' &&
+                  (downstreamBody.includes('event:') || downstreamBody.includes('data:'));
+
+                if (!isStreaming) {
+                  return null;
+                }
+
+                // 解析 SSE 事件
+                const events = parseSSEChunks(downstreamBody);
+
+                return (
+                  <div className="form-group">
+                    <label>
+                      Stream Events ({events.length}个)
+                      <button
+                        onClick={() => setChunksExpanded(!chunksExpanded)}
+                        style={{ marginLeft: '10px', padding: '2px 8px', fontSize: '12px' }}
+                        className='btn btn-sm btn-secondary'
+                      >
+                        {chunksExpanded ? '折叠' : '展开'}
+                      </button>
+                      <button
+                        onClick={() => setAssembledTextExpanded(!assembledTextExpanded)}
+                        style={{ marginLeft: '5px', padding: '2px 8px', fontSize: '12px' }}
+                        className='btn btn-sm btn-primary'
+                      >
+                        {assembledTextExpanded ? '隐藏拼装结果' : '查看拼装结果'}
+                      </button>
+                    </label>
+                    {chunksExpanded && (
+                      <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid #ddd', padding: '10px', borderRadius: '4px' }}>
+                        {events.map((event, index) => (
+                          <div key={index} style={{ marginBottom: '10px' }}>
+                            <div style={{ fontWeight: 'bold', fontSize: '12px', color: '#7f8c8d', marginBottom: '4px' }}>
+                              Event #{index + 1} {event.event && `[${event.event}]`}
+                            </div>
+                            <JSONViewer data={event.data || event.raw} collapsed={true} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {assembledTextExpanded && (
+                      <div style={{
+                        marginTop: '10px',
+                        maxHeight: '400px',
+                        overflowY: 'auto',
+                        border: '1px solid var(--border-secondary)',
+                        padding: '10px',
+                        borderRadius: '4px',
+                        backgroundColor: 'var(--bg-assembled-text)'
+                      }}>
+                        <AssembledTextViewFromDownstream events={events} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
             <div className="modal-footer">
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  const markdown = formatRequestLogAsMarkdown(selectedRequestLog);
+                  navigator.clipboard.writeText(markdown).then(() => {
+                    toast.success('复制成功');
+                  }).catch(() => {
+                    toast.error('复制失败');
+                  });
+                }}
+              >
+                复制
+              </button>
               <button className="btn btn-secondary" onClick={() => setSelectedRequestLog(null)}>关闭</button>
             </div>
             </div>
@@ -1400,18 +1699,18 @@ function LogsPage() {
               {selectedErrorLog.requestHeaders && (
                 <div className="form-group">
                   <label>请求头</label>
-                  <JSONViewer data={selectedErrorLog.requestHeaders} />
+                  <JSONViewer data={selectedErrorLog.requestHeaders} collapsed />
                 </div>
               )}
               {selectedErrorLog.requestBody && (
                 <div className="form-group">
                   <label>请求体</label>
-                  <JSONViewer data={selectedErrorLog.requestBody} />
+                  <JSONViewer data={selectedErrorLog.requestBody} collapsed />
                 </div>
               )}
               {selectedErrorLog.upstreamRequest && (
                 <div className="form-group">
-                  <label>实际转发信息</label>
+                  <label>实际转发的请求信息</label>
                   <JSONViewer data={selectedErrorLog.upstreamRequest} />
                 </div>
               )}
@@ -1429,6 +1728,19 @@ function LogsPage() {
               )}
             </div>
             <div className="modal-footer">
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  const markdown = formatErrorLogAsMarkdown(selectedErrorLog);
+                  navigator.clipboard.writeText(markdown).then(() => {
+                    toast.success('复制成功');
+                  }).catch(() => {
+                    toast.error('复制失败');
+                  });
+                }}
+              >
+                复制
+              </button>
               <button className="btn btn-secondary" onClick={() => setSelectedErrorLog(null)}>关闭</button>
             </div>
             </div>
@@ -1554,15 +1866,15 @@ function LogsPage() {
 }
 
 /**
- * 拼装文本展示组件
+ * 拼装文本展示组件（从 downstreamResponseBody 解析）
  */
-interface AssembledTextViewProps {
-  chunks: string[];
-  targetType?: string;
+interface AssembledTextViewFromDownstreamProps {
+  events: ParsedSSEEvent[],
 }
 
-function AssembledTextView({ chunks, targetType }: AssembledTextViewProps) {
-  const { text, thinking } = useMemo(() => assembleStreamTextFromChunks(chunks, targetType), [chunks, targetType]);
+function AssembledTextViewFromDownstream({ events }: AssembledTextViewFromDownstreamProps) {
+  const { text, thinking } = assembleStreamText(events);
+  console.log('AssembledTextViewFromDownstream', { text, thinking });
 
   if (!text && !thinking) {
     return <div style={{ color: '#7f8c8d', fontStyle: 'italic' }}>无法解析出文本内容</div>;
