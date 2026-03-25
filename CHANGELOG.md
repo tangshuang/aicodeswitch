@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-03-25
+
+#### Bug Fixes
+* **修复代理响应中文乱码问题**
+  - 修复 `readStreamBody` 方法中 `chunk.toString()` 未指定 UTF-8 编码的问题
+  - 修复所有 SSE 流式响应的 Content-Type 缺少 `; charset=utf-8` 声明
+  - 修复请求头和响应日志中 Content-Type 缺少 charset 声明的问题
+  - 确保中文字符在流式和非流式��应中正确传输
+
 ### 2026-03-18
 
 #### Bug Fixes

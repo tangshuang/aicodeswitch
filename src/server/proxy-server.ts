@@ -2477,7 +2477,7 @@ export class ProxyServer {
     }
 
     if (!headers['content-type']) {
-      headers['content-type'] = 'application/json';
+      headers['content-type'] = 'application/json; charset=utf-8';
     }
 
     // 添加 content-length（对于有请求体的方法）
@@ -2572,7 +2572,7 @@ export class ProxyServer {
     return new Promise((resolve, reject) => {
       let data = '';
       stream.on('data', (chunk) => {
-        data += chunk.toString();
+        data += chunk.toString('utf8');
       });
       stream.on('end', () => resolve(data));
       stream.on('error', reject);
@@ -3368,7 +3368,7 @@ export class ProxyServer {
         totalTokens: inputTokens,
       };
       responseHeadersForLog = {
-        'content-type': 'application/json',
+        'content-type': 'application/json; charset=utf-8',
       };
       responseBodyForLog = JSON.stringify(localTokenResponse);
       streamChunksForLog = undefined;
@@ -3528,7 +3528,7 @@ export class ProxyServer {
         const useLegacySpecialSSEBranches = false;
 
         if (useLegacySpecialSSEBranches && targetType === 'claude-code' && this.isOpenAIType(sourceType)) {
-          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
 
@@ -3646,7 +3646,7 @@ export class ProxyServer {
         }
 
         if (useLegacySpecialSSEBranches && targetType === 'codex' && this.isClaudeSource(sourceType)) {
-          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
 
@@ -3759,7 +3759,7 @@ export class ProxyServer {
 
         // Gemini / Gemini Chat -> Claude Code 流式转换
         if (useLegacySpecialSSEBranches && targetType === 'claude-code' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
-          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
 
@@ -3863,7 +3863,7 @@ export class ProxyServer {
 
         // Gemini / Gemini Chat -> Codex 流式转换
         if (useLegacySpecialSSEBranches && targetType === 'codex' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
-          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
 
@@ -4197,7 +4197,7 @@ export class ProxyServer {
 
         if (streamRequested) {
           // 流式请求：使用 SSE 格式
-          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
           res.status(200);
