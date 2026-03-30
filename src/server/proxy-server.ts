@@ -3233,10 +3233,10 @@ export class ProxyServer {
         if (totalTokens > 0) {
           this.dbManager.incrementRuleTokenUsage(rule.id, totalTokens);
 
-          // 获取更新后的规则数据并广播
+          // 获取更新后的规则数据并更新状态
           const updatedRule = this.dbManager.getRule(rule.id);
           if (updatedRule) {
-            rulesStatusBroadcaster.broadcastUsageUpdate(
+            rulesStatusBroadcaster.updateRuleUsage(
               rule.id,
               updatedRule.totalTokensUsed || 0,
               updatedRule.totalRequestsUsed || 0
@@ -3256,10 +3256,10 @@ export class ProxyServer {
           // 更新频率限制跟踪
           this.recordRequest(rule.id);
 
-          // 获取更新后的规则数据并广播
+          // 获取更新后的规则数据并更新状态
           const updatedRule = this.dbManager.getRule(rule.id);
           if (updatedRule) {
-            rulesStatusBroadcaster.broadcastUsageUpdate(
+            rulesStatusBroadcaster.updateRuleUsage(
               rule.id,
               updatedRule.totalTokensUsed || 0,
               updatedRule.totalRequestsUsed || 0

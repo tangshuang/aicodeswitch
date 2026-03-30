@@ -1,6 +1,3 @@
-// @ts-ignore - ws 类型声明可能需要手动安装 @types/ws
-import { WebSocketServer, WebSocket } from 'ws';
-import { IncomingMessage } from 'http';
 import type { ContentType } from '../types';
 
 /**
@@ -25,28 +22,6 @@ export interface RuleStatusData {
 }
 
 /**
- * 规则状态消息类型（单个规则更新）
- */
-export interface RuleStatusMessage {
-  type: 'rule_status';
-  data: RuleStatusData;
-}
-
-/**
- * 全量规则状态同步消息类型
- */
-export interface AllRulesStatusMessage {
-  type: 'all_rules_status';
-  data: RuleStatusData[];
-  timestamp: number;
-}
-
-/**
- * WebSocket 消息类型联合
- */
-export type WSMessage = RuleStatusMessage | AllRulesStatusMessage;
-
-/**
  * 黑名单检查函数类型
  */
 export type BlacklistChecker = (
@@ -56,53 +31,22 @@ export type BlacklistChecker = (
 ) => Promise<boolean>;
 
 /**
- * 规则状态 WebSocket 连接管理
- */
-class RulesStatusWS {
-  private ws: WebSocket;
-
-  constructor(ws: WebSocket, req: IncomingMessage) {
-    this.ws = ws;
-
-    console.log(`[RulesStatusWS] 新的 WebSocket 连接: ${req.socket.remoteAddress}`);
-
-    this.ws.on('close', () => {
-      console.log(`[RulesStatusWS] WebSocket 连接关闭`);
-    });
-
-    this.ws.on('error', (err: Error) => {
-      console.error(`[RulesStatusWS] WebSocket 错误:`, err);
-    });
-  }
-
-  /**
-   * 发送消息到客户端
-   */
-  sendMessage(message: WSMessage) {
-    if (this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
-    }
-  }
-}
-
-/**
- * 规则状态广播服务
- * 管理所有连接的客户端，负责广播规则使用状态
+ * 规则状态管理服务
+ * 负责管理所有规则的状态（使用中、空闲、错误、挂起）
  */
 export class RulesStatusBroadcaster {
-  private clients: Set<RulesStatusWS> = new Set();
   private ruleStates: Map<string, RuleStatusData> = new Map(); // ruleId -> RuleStatusData
   private ruleTimeouts: Map<string, NodeJS.Timeout> = new Map();
   private idleDebounceTimeouts: Map<string, NodeJS.Timeout> = new Map();
   private syncInterval: NodeJS.Timeout | null = null;
   private blacklistChecker: BlacklistChecker | null = null;
   private readonly INACTIVITY_TIMEOUT = 10000; // 10秒无活动后标记为空闲
-  private readonly IDLE_DEBOUNCE_DELAY = 3000; // idle 广播延迟3秒，避免对话快速进入 in_use 时闪烁
-  private readonly SYNC_INTERVAL = 10000; // 每10秒全量同步一次
+  private readonly IDLE_DEBOUNCE_DELAY = 3000; // idle 延迟3秒，避免对话快速进入 in_use 时闪烁
+  private readonly SYNC_INTERVAL = 10000; // 每10秒检查一次 suspended 和 error 状态
   private readonly ERROR_RECOVERY_TIMEOUT = 30000; // error 状态30秒后自动恢复
 
   constructor() {
-    // 启动全量状态同步定时器
+    // 启动定期状态检查定时器
     this.startSyncInterval();
   }
 
@@ -114,22 +58,18 @@ export class RulesStatusBroadcaster {
   }
 
   /**
-   * 启动全量状态同步定时器
+   * 启动定期状态检查定时器
    */
   private startSyncInterval() {
     this.syncInterval = setInterval(() => {
-      this.checkSuspendedRulesAndBroadcast();
+      this.checkSuspendedAndErrorRules();
     }, this.SYNC_INTERVAL);
   }
 
   /**
-   * 检查 suspended 和 error 状态的规则是否已恢复，然后广播全量状态
+   * 检查 suspended 和 error 状态的规则是否已恢复
    */
-  private async checkSuspendedRulesAndBroadcast() {
-    if (this.clients.size === 0) {
-      return;
-    }
-
+  private async checkSuspendedAndErrorRules() {
     const now = Date.now();
 
     // 1. 检查所有 error 状态的规则，如果超过恢复时间则自动恢复为 idle
@@ -205,55 +145,6 @@ export class RulesStatusBroadcaster {
         }
       }
     }
-
-    // 广播全量状态
-    this.broadcastAllRulesStatus();
-  }
-
-  /**
-   * 广播所有规则状态（全量同步）
-   */
-  private broadcastAllRulesStatus() {
-    if (this.clients.size === 0) {
-      return;
-    }
-
-    const allStatuses: RuleStatusData[] = Array.from(this.ruleStates.values());
-
-    const message: AllRulesStatusMessage = {
-      type: 'all_rules_status',
-      data: allStatuses,
-      timestamp: Date.now(),
-    };
-
-    this.broadcastMessage(message);
-  }
-
-  /**
-   * 添加客户端
-   */
-  addClient(client: RulesStatusWS) {
-    this.clients.add(client);
-    console.log(`[RulesStatusBroadcaster] 客户端已连接，当前客户端数: ${this.clients.size}`);
-
-    // 新客户端连接时，立即发送当前所有规则状态
-    const allStatuses: RuleStatusData[] = Array.from(this.ruleStates.values());
-    if (allStatuses.length > 0) {
-      const message: AllRulesStatusMessage = {
-        type: 'all_rules_status',
-        data: allStatuses,
-        timestamp: Date.now(),
-      };
-      client.sendMessage(message);
-    }
-  }
-
-  /**
-   * 移除客户端
-   */
-  removeClient(client: RulesStatusWS) {
-    this.clients.delete(client);
-    console.log(`[RulesStatusBroadcaster] 客户端已断开，当前客户端数: ${this.clients.size}`);
   }
 
   /**
@@ -279,18 +170,11 @@ export class RulesStatusBroadcaster {
   }
 
   /**
-   * 更新规则状态并广播
+   * 更新规则状态
    */
   private updateRuleStatus(data: RuleStatusData) {
     // 更新本地状态
     this.ruleStates.set(data.ruleId, data);
-
-    // 广播单个规则状态更新
-    const message: RuleStatusMessage = {
-      type: 'rule_status',
-      data,
-    };
-    this.broadcastMessage(message);
   }
 
   /**
@@ -303,7 +187,7 @@ export class RulesStatusBroadcaster {
     this.clearRuleTimeout(timeoutKey);
     this.clearIdleDebounce(timeoutKey);
 
-    // 更新状态并广播
+    // 更新状态
     this.updateRuleStatus({
       ruleId,
       status: 'in_use',
@@ -320,7 +204,7 @@ export class RulesStatusBroadcaster {
   }
 
   /**
-   * 标记规则空闲（带1秒 debounce，避免对话快速进入 in_use 时状态闪烁）
+   * 标记规则空闲（带3秒 debounce，避免对话快速进入 in_use 时状态闪烁）
    */
   markRuleIdle(routeId: string, ruleId: string) {
     const timeoutKey = `${routeId}:${ruleId}`;
@@ -354,7 +238,7 @@ export class RulesStatusBroadcaster {
     this.clearRuleTimeout(timeoutKey);
     this.clearIdleDebounce(timeoutKey);
 
-    // 更新状态并广播
+    // 更新状态
     this.updateRuleStatus({
       ruleId,
       status: 'error',
@@ -381,7 +265,7 @@ export class RulesStatusBroadcaster {
     this.clearRuleTimeout(timeoutKey);
     this.clearIdleDebounce(timeoutKey);
 
-    // 更新状态并广播，同时存储 routeId、serviceId 和 contentType 用于恢复检查
+    // 更新状态，同时存储 routeId、serviceId 和 contentType 用于恢复检查
     this.updateRuleStatus({
       ruleId,
       status: 'suspended',
@@ -395,9 +279,9 @@ export class RulesStatusBroadcaster {
   }
 
   /**
-   * 广播规则使用量更新
+   * 更新规则使用量
    */
-  broadcastUsageUpdate(ruleId: string, totalTokensUsed: number, totalRequestsUsed: number) {
+  updateRuleUsage(ruleId: string, totalTokensUsed: number, totalRequestsUsed: number) {
     // 获取当前状态，保留其他字段
     const currentStatus = this.ruleStates.get(ruleId);
 
@@ -433,24 +317,10 @@ export class RulesStatusBroadcaster {
   }
 
   /**
-   * 广播消息到所有客户端
+   * 获取所有规则的状态（用于 HTTP 轮询）
    */
-  private broadcastMessage(message: WSMessage) {
-    const deadClients: RulesStatusWS[] = [];
-
-    this.clients.forEach((client) => {
-      try {
-        client.sendMessage(message);
-      } catch (error) {
-        console.error('[RulesStatusBroadcaster] 发送消息失败:', error);
-        deadClients.push(client);
-      }
-    });
-
-    // 清理断开的客户端
-    deadClients.forEach((client) => {
-      this.removeClient(client);
-    });
+  getAllRuleStatuses(): RuleStatusData[] {
+    return Array.from(this.ruleStates.values());
   }
 
   /**
@@ -466,29 +336,8 @@ export class RulesStatusBroadcaster {
     this.idleDebounceTimeouts.forEach((timeout) => clearTimeout(timeout));
     this.idleDebounceTimeouts.clear();
     this.ruleStates.clear();
-    this.clients.clear();
   }
 }
 
 // 全局单例
 export const rulesStatusBroadcaster = new RulesStatusBroadcaster();
-
-/**
- * 创建 WebSocket 服务器用于规则状态
- */
-export function createRulesStatusWSServer() {
-  const wss = new WebSocketServer({ noServer: true });
-
-  wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
-    const wsHandler = new RulesStatusWS(ws, req);
-    rulesStatusBroadcaster.addClient(wsHandler);
-
-    ws.on('close', () => {
-      rulesStatusBroadcaster.removeClient(wsHandler);
-    });
-  });
-
-  return wss;
-}
-
-export { RulesStatusWS };

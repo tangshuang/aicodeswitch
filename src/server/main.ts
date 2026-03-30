@@ -28,7 +28,7 @@ import { checkVersionUpdate } from './version-check';
 import { checkPortUsable } from './utils';
 import { getToolsInstallationStatus } from './tools-service';
 import { createToolInstallationWSServer } from './websocket-service';
-import { createRulesStatusWSServer, rulesStatusBroadcaster } from './rules-status-service';
+import { rulesStatusBroadcaster } from './rules-status-service';
 import { normalizeSourceType, isLegacySourceType } from './type-migration';
 import {
   saveMetadata,
@@ -1357,6 +1357,42 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
     })
   );
 
+  // 获取所有规则的当前状态
+  app.get(
+    '/api/rules/status',
+    asyncHandler(async (_req, res) => {
+      // 获取所有规则
+      const allRules = dbManager.getRules();
+
+      // 获取有状态记录的规则
+      const statusMap = rulesStatusBroadcaster.getAllRuleStatuses();
+
+      // 将数组转换为 Map 以便快速查找
+      const statusMapByRuleId = new Map(
+        statusMap.map(status => [status.ruleId, status])
+      );
+
+      // 合并所有规则的状态
+      const allStatuses = allRules.map(rule => {
+        const existingStatus = statusMapByRuleId.get(rule.id);
+
+        if (existingStatus) {
+          // 如果有状态记录，返回记录的状态
+          return existingStatus;
+        } else {
+          // 如果没有状态记录，返回默认的 idle 状态
+          return {
+            ruleId: rule.id,
+            status: 'idle' as const,
+            timestamp: Date.now(),
+          };
+        }
+      });
+
+      res.json(allStatuses);
+    })
+  );
+
   // 清除规则的错误状态（广播 idle 状态给所有客户端）
   app.post(
     '/api/rules/:id/clear-status',
@@ -1381,7 +1417,7 @@ const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: Proxy
         return;
       }
 
-      // 广播 idle 状态给所有客户端
+      // 标记规则为 idle 状态
       rulesStatusBroadcaster.markRuleIdle(route.id, id);
       res.json({ success: true });
     })
@@ -2513,9 +2549,6 @@ const start = async () => {
   // 创建 WebSocket 服务器用于工具安装
   const toolInstallWss = createToolInstallationWSServer();
 
-  // 创建 WebSocket 服务器用于规则状态
-  const rulesStatusWss = createRulesStatusWSServer();
-
 
   // 设置黑名单检查函数，用于在规则状态同步时检查黑名单是否已过期
   rulesStatusBroadcaster.setBlacklistChecker(async (serviceId, routeId, contentType) => {
@@ -2528,15 +2561,11 @@ const start = async () => {
     return isBlacklisted;
   });
 
-  // 将 WebSocket 服务器附加到 HTTP 服务器
+  // 将 WebSocket 服务器附加到 HTTP 服务器（仅用于工具安装）
   server.on('upgrade', (request, socket, head) => {
     if (request.url === '/api/tools/install') {
       toolInstallWss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
         toolInstallWss.emit('connection', ws, request);
-      });
-    } else if (request.url === '/api/rules/status') {
-      rulesStatusWss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
-        rulesStatusWss.emit('connection', ws, request);
       });
     } else {
       socket.destroy();
@@ -2544,7 +2573,6 @@ const start = async () => {
   });
 
   console.log(`WebSocket server for tool installation attached to ws://${host}:${port}/api/tools/install`);
-  console.log(`WebSocket server for rules status attached to ws://${host}:${port}/api/rules/status`);
 
   let isShuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;

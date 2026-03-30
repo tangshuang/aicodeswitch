@@ -514,15 +514,17 @@ export default function RoutesPage() {
     }
   };
 
-  // 提升规则优先级（sortOrder + 1）
+  // 提升规则优先级（设为同类型最大值 + 1）
   const handleIncreasePriority = async (id: string) => {
     try {
       // 找到对应的规则
       const rule = rules.find(r => r.id === id);
       if (!rule) return;
 
-      // 计算新的优先级（当前优先级 + 1）
-      const newSortOrder = (rule.sortOrder || 0) + 1;
+      // 找到同类型的所有规则，计算最大优先级
+      const sameTypeRules = rules.filter(r => r.contentType === rule.contentType);
+      const maxSortOrder = Math.max(...sameTypeRules.map(r => r.sortOrder || 0));
+      const newSortOrder = maxSortOrder + 1;
 
       // 调用 API 更新
       await api.updateRule(id, { sortOrder: newSortOrder });
@@ -531,21 +533,21 @@ export default function RoutesPage() {
       if (selectedRoute) {
         loadRules(selectedRoute.id);
       }
-      toast.success('优先级已提升');
+      toast.success('优先级已提升至最高');
     } catch (error: any) {
       toast.error('操作失败: ' + error.message);
     }
   };
 
-  // 降低规则优先级（sortOrder - 1）
+  // 降低规则优先级（设为同类型最小值 0）
   const handleDecreasePriority = async (id: string) => {
     try {
       // 找到对应的规则
       const rule = rules.find(r => r.id === id);
       if (!rule) return;
 
-      // 计算新的优先级（当前优先级 - 1），最小为 0
-      const newSortOrder = Math.max(0, (rule.sortOrder || 0) - 1);
+      // 设为最小优先级 0
+      const newSortOrder = 0;
 
       // 调用 API 更新
       await api.updateRule(id, { sortOrder: newSortOrder });
@@ -554,7 +556,7 @@ export default function RoutesPage() {
       if (selectedRoute) {
         loadRules(selectedRoute.id);
       }
-      toast.success('优先级已降低');
+      toast.success('优先级已降至最低');
     } catch (error: any) {
       toast.error('操作失败: ' + error.message);
     }
@@ -1052,14 +1054,14 @@ export default function RoutesPage() {
                               <button
                                 className="priority-arrow-btn"
                                 onClick={() => handleDecreasePriority(rule.id)}
-                                title="降低优先级"
+                                title="降至最低优先级"
                               >
                                 ↓
                               </button>
                               <button
                                 className="priority-arrow-btn"
                                 onClick={() => handleIncreasePriority(rule.id)}
-                                title="提升优先级"
+                                title="升至最高优先级"
                               >
                                 ↑
                               </button>
