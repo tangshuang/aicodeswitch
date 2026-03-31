@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-03-30
+
+#### Bug Fixes
+* **修复流式响应中文乱码的根本问题**
+  - 在 `SSEParserTransform` 中使用 `StringDecoder` 正确处理多字节字符边界
+  - 在 `ChunkCollectorTransform` 中使用 `StringDecoder` 确保日志记录不乱码
+  - 在 `SSEEventCollectorTransform` 中使用 `StringDecoder` 确保 SSE 事件解析正确
+  - 修复 `readStreamBody` 方法使用 Buffer 数组收集后一次性解码
+  - 修复 `version-check.ts` 中的流处理使用 Buffer 数组收集
+  - 使用 `StringDecoder` 处理 UTF-8 多字节字符被截断到不同 chunk 的情况
+
 ### 2026-03-25
 
 #### Bug Fixes

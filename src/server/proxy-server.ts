@@ -2570,11 +2570,14 @@ export class ProxyServer {
 
   private async readStreamBody(stream: NodeJS.ReadableStream): Promise<string> {
     return new Promise((resolve, reject) => {
-      let data = '';
-      stream.on('data', (chunk) => {
-        data += chunk.toString('utf8');
+      const chunks: Buffer[] = [];
+      stream.on('data', (chunk: Buffer) => {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       });
-      stream.on('end', () => resolve(data));
+      stream.on('end', () => {
+        const fullBuffer = Buffer.concat(chunks);
+        resolve(fullBuffer.toString('utf8'));
+      });
       stream.on('error', reject);
     });
   }
@@ -2965,7 +2968,7 @@ export class ProxyServer {
     // Claude：responseData 可能是 usage 对象本身，也可能包含 usage 字段
     if (this.isClaudeSource(sourceType) || this.isClaudeChatSource(sourceType)) {
       // 如果 responseData 直接包含 input_tokens/output_tokens，说明它本身就是 usage 对象
-      if (typeof responseData.input_tokens === 'number' || typeof responseData.output_tokens === 'number') {
+      if (typeof responseData?.input_tokens === 'number' || typeof responseData?.output_tokens === 'number') {
         return extractTokenUsageFromClaudeUsage(responseData);
       }
       // 否则尝试从 usage 字段提取
@@ -2976,12 +2979,12 @@ export class ProxyServer {
     if (!usage) return undefined;
 
     // OpenAI 使用 prompt_tokens 和 completion_tokens
-    if (typeof usage.prompt_tokens === 'number' || typeof usage.completion_tokens === 'number') {
+    if (typeof usage?.prompt_tokens === 'number' || typeof usage?.completion_tokens === 'number') {
       return extractTokenUsageFromOpenAIUsage(usage);
     }
 
     // Claude 使用 input_tokens 和 output_tokens
-    if (typeof usage.input_tokens === 'number' || typeof usage.output_tokens === 'number') {
+    if (typeof usage?.input_tokens === 'number' || typeof usage?.output_tokens === 'number') {
       return extractTokenUsageFromClaudeUsage(usage);
     }
 
@@ -3774,9 +3777,9 @@ export class ProxyServer {
             const usage = converter.getUsage();
             if (usage) {
               usageForLog = {
-                inputTokens: usage.input_tokens,
-                outputTokens: usage.output_tokens,
-                cacheReadInputTokens: usage.cache_read_input_tokens,
+                inputTokens: usage?.input_tokens || 0,
+                outputTokens: usage?.output_tokens || 0,
+                cacheReadInputTokens: usage?.cache_read_input_tokens || 0,
               };
             } else {
               const extractedUsage = eventCollector.extractUsage();

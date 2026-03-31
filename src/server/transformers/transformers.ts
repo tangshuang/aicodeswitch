@@ -294,10 +294,10 @@ export const extractTokenUsageFromOpenAIUsage = (usage: any) => {
     return undefined;
   }
   return {
-    inputTokens: usage.input_tokens,
-    outputTokens: usage.output_tokens || usage.completion_tokens,
-    totalTokens: usage.total_tokens,
-    cacheReadInputTokens: usage.cached_tokens,
+    inputTokens: usage?.input_tokens || 0,
+    outputTokens: usage?.output_tokens || usage?.completion_tokens || 0,
+    totalTokens: usage?.total_tokens || 0,
+    cacheReadInputTokens: usage?.cached_tokens || 0,
   };
 };
 
@@ -306,12 +306,12 @@ export const extractTokenUsageFromClaudeUsage = (usage: any) => {
     return undefined;
   }
   return {
-    inputTokens: usage.input_tokens ?? 0,
-    outputTokens: usage.output_tokens ?? 0,
-    totalTokens: usage.input_tokens !== undefined && usage.output_tokens !== undefined
-      ? usage.input_tokens + usage.output_tokens
+    inputTokens: usage?.input_tokens || 0,
+    outputTokens: usage?.output_tokens || 0,
+    totalTokens: usage?.input_tokens !== undefined && usage?.output_tokens !== undefined
+      ? usage?.input_tokens + usage?.output_tokens
       : undefined,
-    cacheReadInputTokens: usage.cache_read_input_tokens,
+    cacheReadInputTokens: usage?.cache_read_input_tokens || 0,
   };
 };
 
@@ -1592,9 +1592,10 @@ export function transformResponseFromClaudeToResponses(response: any): any {
     status,
     incomplete_details: status === 'incomplete' ? { reason: 'max_tokens' } : undefined,
     usage: response.usage ? {
-      input_tokens: response.usage.input_tokens,
-      output_tokens: response.usage.output_tokens,
-      total_tokens: response.usage.total_tokens
+      input_tokens: response.usage?.input_tokens || 0,
+      output_tokens: response.usage?.output_tokens || 0,
+      total_tokens: response.usage?.total_tokens || 0,
+      cache_read_input_tokens: response.usage?.cache_read_input_tokens || 0
     } : undefined
   };
 }
@@ -1830,9 +1831,10 @@ export function transformResponseFromResponsesToClaude(response: any): any {
 
   // 转换 usage
   const usage = response.usage ? {
-    input_tokens: response.usage.input_tokens,
-    output_tokens: response.usage.output_tokens,
-    total_tokens: response.usage.total_tokens,
+    input_tokens: response.usage?.input_tokens || 0,
+    output_tokens: response.usage?.output_tokens || 0,
+    total_tokens: response.usage?.total_tokens || 0,
+    cache_read_input_tokens: response.usage?.cache_read_input_tokens || 0,
   } : undefined;
 
   // 转换 stop_reason

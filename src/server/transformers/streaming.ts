@@ -1,4 +1,5 @@
 import { Transform } from 'stream';
+import { StringDecoder } from 'string_decoder';
 import * as crypto from 'crypto';
 
 /**
@@ -64,6 +65,7 @@ export class SSEParserTransform extends Transform {
   private currentEvent: SSEEvent = {};
   private dataLines: string[] = [];
   private errorEmitted = false;
+  private stringDecoder = new StringDecoder('utf8');
 
   constructor() {
     super({ readableObjectMode: true });
@@ -85,7 +87,8 @@ export class SSEParserTransform extends Transform {
     }
 
     try {
-      this.buffer += chunk.toString('utf8');
+      // 使用 StringDecoder 正确处理多字节字符边界，避免中文乱码
+      this.buffer += this.stringDecoder.write(chunk);
       const lines = this.buffer.split('\n');
       this.buffer = lines.pop() || '';
 
@@ -102,6 +105,11 @@ export class SSEParserTransform extends Transform {
 
   _flush(callback: (error?: Error | null) => void) {
     try {
+      // 处理 StringDecoder 中剩余的字节
+      const remaining = this.stringDecoder.end();
+      if (remaining) {
+        this.buffer += remaining;
+      }
       if (this.buffer.length > 0) {
         this.processLine(this.buffer.replace(/\r$/, ''));
         this.flushEvent();
@@ -855,9 +863,9 @@ export class ClaudeToOpenAIChatEventTransform extends Transform {
         // 处理 usage 信息
         if (data.usage) {
           this.usage = {
-            prompt_tokens: data.usage.input_tokens || 0,
-            completion_tokens: data.usage.output_tokens || 0,
-            total_tokens: (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0),
+            prompt_tokens: data.usage?.input_tokens || 0,
+            completion_tokens: data.usage?.output_tokens || 0,
+            total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
           };
         }
 
@@ -868,9 +876,9 @@ export class ClaudeToOpenAIChatEventTransform extends Transform {
 
       if (data?.usage) {
         this.usage = {
-          prompt_tokens: data.usage.input_tokens || 0,
-          completion_tokens: data.usage.output_tokens || 0,
-          total_tokens: (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0),
+          prompt_tokens: data.usage?.input_tokens || 0,
+          completion_tokens: data.usage?.output_tokens || 0,
+          total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
         };
       }
 
@@ -1303,9 +1311,9 @@ export class ChatCompletionsToResponsesEventTransform extends Transform {
 
     if (this.usage) {
       response.usage = {
-        input_tokens: this.usage.input_tokens,
-        output_tokens: this.usage.output_tokens,
-        total_tokens: this.usage.total_tokens,
+        input_tokens: this.usage?.input_tokens,
+        output_tokens: this.usage?.output_tokens,
+        total_tokens: this.usage?.total_tokens,
       };
     }
 
@@ -1608,9 +1616,9 @@ export class ChatCompletionsToResponsesEventTransform extends Transform {
     // 额外发送 usage 事件，兼容已有 usage 提取逻辑
     if (this.usage) {
       this.pushEvent('response.usage', {
-        input_tokens: this.usage.input_tokens,
-        output_tokens: this.usage.output_tokens,
-        total_tokens: this.usage.total_tokens,
+        input_tokens: this.usage?.input_tokens,
+        output_tokens: this.usage?.output_tokens,
+        total_tokens: this.usage?.total_tokens,
       });
     }
 
@@ -1804,9 +1812,9 @@ export class ClaudeToResponsesEventTransform extends Transform {
         // 处理 usage
         if (data.usage) {
           this.usage = {
-            input_tokens: data.usage.input_tokens || 0,
-            output_tokens: data.usage.output_tokens || 0,
-            total_tokens: (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0),
+            input_tokens: data.usage?.input_tokens || 0,
+            output_tokens: data.usage?.output_tokens || 0,
+            total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
           };
         }
         callback();
@@ -1823,9 +1831,9 @@ export class ClaudeToResponsesEventTransform extends Transform {
       // 处理 usage 字段（在顶层）
       if (data?.usage) {
         this.usage = {
-          input_tokens: data.usage.input_tokens || 0,
-          output_tokens: data.usage.output_tokens || 0,
-          total_tokens: (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0),
+          input_tokens: data.usage?.input_tokens || 0,
+          output_tokens: data.usage?.output_tokens || 0,
+          total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
         };
       }
 
@@ -1905,9 +1913,9 @@ export class ClaudeToResponsesEventTransform extends Transform {
     // 发送 usage（如果有）
     if (this.usage) {
       this.pushEvent('response.usage', {
-        input_tokens: this.usage.input_tokens,
-        output_tokens: this.usage.output_tokens,
-        total_tokens: this.usage.total_tokens,
+        input_tokens: this.usage?.input_tokens,
+        output_tokens: this.usage?.output_tokens,
+        total_tokens: this.usage?.total_tokens,
       });
     }
 
@@ -2103,9 +2111,9 @@ export class GeminiToResponsesEventTransform extends Transform {
     // 发送 usage（如果有）
     if (this.usage) {
       this.pushEvent('response.usage', {
-        input_tokens: this.usage.input_tokens,
-        output_tokens: this.usage.output_tokens,
-        total_tokens: this.usage.total_tokens,
+        input_tokens: this.usage?.input_tokens,
+        output_tokens: this.usage?.output_tokens,
+        total_tokens: this.usage?.total_tokens,
       });
     }
 
@@ -2583,9 +2591,9 @@ export class ResponsesToClaudeEventTransform extends Transform {
 
       if (eventType === 'response.usage' && data) {
         this.usage = {
-          input_tokens: data.input_tokens || 0,
-          output_tokens: data.output_tokens || 0,
-          cache_read_input_tokens: 0,
+          input_tokens: data?.input_tokens || 0,
+          output_tokens: data?.output_tokens || 0,
+          cache_read_input_tokens: data?.cache_read_input_tokens || 0,
         };
       }
 

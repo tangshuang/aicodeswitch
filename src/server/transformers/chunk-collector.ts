@@ -1,4 +1,5 @@
 import { Transform } from 'stream';
+import { StringDecoder } from 'string_decoder';
 
 /**
  * SSEEvent - 表示一个完整的SSE事件
@@ -31,6 +32,7 @@ function isClientDisconnectError(error: any): boolean {
 export class ChunkCollectorTransform extends Transform {
   private chunks: string[] = [];
   private errorEmitted = false;
+  private stringDecoder = new StringDecoder('utf8');
 
   constructor() {
     super({ writableObjectMode: true, readableObjectMode: true });
@@ -56,7 +58,8 @@ export class ChunkCollectorTransform extends Transform {
       if (typeof chunk === 'object' && chunk !== null && !Buffer.isBuffer(chunk)) {
         this.chunks.push(JSON.stringify(chunk));
       } else {
-        this.chunks.push(chunk.toString('utf8'));
+        // 使用 StringDecoder 正确处理多字节字符边界，避免中文乱码
+        this.chunks.push(this.stringDecoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
       }
 
       // 将chunk传递给下一个stream
@@ -65,6 +68,20 @@ export class ChunkCollectorTransform extends Transform {
       callback();
     } catch (error) {
       console.error('[ChunkCollectorTransform] Error in _transform:', error);
+      callback();
+    }
+  }
+
+  _flush(callback: (error?: Error | null) => void) {
+    try {
+      // 处理 StringDecoder 中剩余的字节
+      const remaining = this.stringDecoder.end();
+      if (remaining) {
+        this.chunks.push(remaining);
+      }
+      callback();
+    } catch (error) {
+      console.error('[ChunkCollectorTransform] Error in _flush:', error);
       callback();
     }
   }
@@ -97,6 +114,7 @@ export class SSEEventCollectorTransform extends Transform {
   };
   private events: SSEEvent[] = [];
   private errorEmitted = false;
+  private stringDecoder = new StringDecoder('utf8');
 
   constructor() {
     super({ writableObjectMode: true, readableObjectMode: true });
@@ -144,8 +162,8 @@ export class SSEEventCollectorTransform extends Transform {
         // 对象模式下保持原样透传，避免影响后续转换器读取 event/data 字段
         this.push(chunk);
       } else {
-        // Buffer/string 模式
-        this.buffer += chunk.toString('utf8');
+        // Buffer/string 模式 - 使用 StringDecoder 正确处理多字节字符边界
+        this.buffer += this.stringDecoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
         this.processBuffer();
         // 将chunk传递给下一个stream
         this.push(chunk);
@@ -159,6 +177,11 @@ export class SSEEventCollectorTransform extends Transform {
 
   _flush(callback: (error?: Error | null) => void) {
     try {
+      // 处理 StringDecoder 中剩余的字节
+      const remaining = this.stringDecoder.end();
+      if (remaining) {
+        this.buffer += remaining;
+      }
       // 处理剩余的buffer
       if (this.buffer.trim()) {
         this.processBuffer();
@@ -281,8 +304,8 @@ export class SSEEventCollectorTransform extends Transform {
         }
 
         // 4. 直接在顶级的usage字段
-        if (data.input_tokens !== undefined || data.output_tokens !== undefined ||
-            data.prompt_tokens !== undefined || data.completion_tokens !== undefined) {
+        if (data?.input_tokens !== undefined || data?.output_tokens !== undefined ||
+            data?.prompt_tokens !== undefined || data?.completion_tokens !== undefined) {
           return data;
         }
       } catch {
