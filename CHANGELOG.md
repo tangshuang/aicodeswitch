@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-04-01
+
+#### Performance
+* **重构会话日志索引**：新增 `session-log-index.json` 索引文件，记录会话与日志分片/位置的映射关系，查询会话日志时仅加载相关分片，避免全量扫描，大幅提升万条以上日志场景的性能
+* **优化 Claude Code 会话 ID 取值**：兼容新版 JSON 格式的 `metadata.user_id`，正确提取 `session_id`
+* **优化 Codex 会话标题取值**：支持 Responses API `input` 数组格式，过滤系统级内容提取有效用户输入
+
 ### 2026-03-30
 
 #### Bug Fixes

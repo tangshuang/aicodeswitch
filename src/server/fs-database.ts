@@ -31,6 +31,12 @@ interface LogShardIndex {
   count: number;
 }
 
+interface SessionLogRef {
+  filename: string;
+  index: number;
+  timestamp: number;
+}
+
 const VALID_CODEX_REASONING_EFFORTS: CodexReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
 const DEFAULT_CODEX_REASONING_EFFORT: CodexReasoningEffort = 'high';
 const DEFAULT_FAILOVER_RECOVERY_SECONDS = 30;
@@ -60,6 +66,12 @@ export class FileSystemDatabaseManager {
   private config: AppConfig | null = null;
   private sessions: Session[] = [];
   private logShardsIndex: LogShardIndex[] = [];
+  private sessionLogIndex: Map<string, SessionLogRef[]> = new Map();
+  private sessionLogIndexDirty = false;
+  private sessionLogIndexDirtyCount = 0;
+  private sessionLogIndexFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly SESSION_LOG_INDEX_FLUSH_DELAY = 3000;
+  private readonly SESSION_LOG_INDEX_FLUSH_THRESHOLD = 50;
   private errorLogs: ErrorLog[] = [];
   private blacklist: Map<string, ServiceBlacklistEntry> = new Map();
   private mcps: MCPServer[] = [];
@@ -87,6 +99,7 @@ export class FileSystemDatabaseManager {
   private get sessionsFile() { return path.join(this.dataPath, 'sessions.json'); }
   private get logsDir() { return path.join(this.dataPath, 'logs'); }
   private get logsIndexFile() { return path.join(this.dataPath, 'logs-index.json'); }
+  private get sessionLogIndexFile() { return path.join(this.dataPath, 'session-log-index.json'); }
   private get errorLogsFile() { return path.join(this.dataPath, 'error-logs.json'); }
   private get blacklistFile() { return path.join(this.dataPath, 'blacklist.json'); }
   private get statisticsFile() { return path.join(this.dataPath, 'statistics.json'); }
@@ -155,6 +168,9 @@ export class FileSystemDatabaseManager {
       this.loadStatistics(),
       this.loadMCPs(),
     ]);
+
+    // 会话日志索引依赖 logShardsIndex，必须在 loadLogsIndex 之后
+    await this.loadSessionLogIndex();
   }
 
   private async loadVendors() {
@@ -513,6 +529,96 @@ export class FileSystemDatabaseManager {
   }
 
   /**
+   * 加载会话日志索引，若不存在则从现有日志全量构建
+   */
+  private async loadSessionLogIndex(): Promise<void> {
+    try {
+      const data = await fs.readFile(this.sessionLogIndexFile, 'utf-8');
+      const parsed = JSON.parse(data);
+      this.sessionLogIndex = new Map(Object.entries(parsed));
+      console.log(`[Database] Session log index loaded: ${this.sessionLogIndex.size} sessions`);
+    } catch {
+      // 索引文件不存在，从现有日志全量构建
+      console.log('[Database] Session log index not found, building from existing logs...');
+      await this.buildSessionLogIndex();
+    }
+  }
+
+  /**
+   * 从所有现有日志分片全量构建会话日志索引（首次启动或迁移用）
+   */
+  private async buildSessionLogIndex(): Promise<void> {
+    this.sessionLogIndex.clear();
+    for (const shard of this.logShardsIndex) {
+      const shardLogs = await this.loadLogShard(shard.filename);
+      for (let i = 0; i < shardLogs.length; i++) {
+        const sessionId = this.extractSessionIdFromLog(shardLogs[i]);
+        if (sessionId) {
+          let refs = this.sessionLogIndex.get(sessionId);
+          if (!refs) {
+            refs = [];
+            this.sessionLogIndex.set(sessionId, refs);
+          }
+          refs.push({ filename: shard.filename, index: i, timestamp: shardLogs[i].timestamp });
+        }
+      }
+    }
+    if (this.sessionLogIndex.size > 0) {
+      await this.saveSessionLogIndexNow();
+      console.log(`[Database] Session log index built: ${this.sessionLogIndex.size} sessions indexed`);
+    }
+  }
+
+  /**
+   * 将会话日志索引写入磁盘
+   */
+  private async saveSessionLogIndexNow(): Promise<void> {
+    const obj: Record<string, SessionLogRef[]> = {};
+    for (const [key, refs] of this.sessionLogIndex) {
+      obj[key] = refs;
+    }
+    await fs.writeFile(this.sessionLogIndexFile, JSON.stringify(obj));
+  }
+
+  /**
+   * 标记索引脏数据，触发防抖写盘
+   */
+  private scheduleSessionLogIndexFlush(): void {
+    this.sessionLogIndexDirty = true;
+    this.sessionLogIndexDirtyCount++;
+
+    // 达到阈值立即刷盘
+    if (this.sessionLogIndexDirtyCount >= this.SESSION_LOG_INDEX_FLUSH_THRESHOLD) {
+      this.flushSessionLogIndex();
+      return;
+    }
+
+    // 防抖定时器
+    if (!this.sessionLogIndexFlushTimer) {
+      this.sessionLogIndexFlushTimer = setTimeout(() => {
+        this.flushSessionLogIndex();
+      }, this.SESSION_LOG_INDEX_FLUSH_DELAY);
+    }
+  }
+
+  /**
+   * 立即将索引刷盘（关闭时调用）
+   */
+  private flushSessionLogIndex(): void {
+    if (this.sessionLogIndexFlushTimer) {
+      clearTimeout(this.sessionLogIndexFlushTimer);
+      this.sessionLogIndexFlushTimer = null;
+    }
+    if (this.sessionLogIndexDirty) {
+      this.sessionLogIndexDirty = false;
+      this.sessionLogIndexDirtyCount = 0;
+      this.saveSessionLogIndexNow().catch(err => {
+        console.error('[Database] Failed to flush session log index:', err);
+      });
+    }
+  }
+
+  /**
    * 迁移旧的 logs.json 文件到新的分片格式
    */
   private async migrateOldLogsIfNeeded(): Promise<void> {
@@ -640,6 +746,18 @@ export class FileSystemDatabaseManager {
     this.logShardsIndex = this.logShardsIndex.filter(s => !toDelete.includes(s.filename));
     if (toDelete.length > 0) {
       await this.saveLogsIndex();
+
+      // 同步清理会话日志索引中被删除分片的条目
+      const deleteSet = new Set(toDelete);
+      for (const [sid, refs] of this.sessionLogIndex) {
+        const remaining = refs.filter(r => !deleteSet.has(r.filename));
+        if (remaining.length === 0) {
+          this.sessionLogIndex.delete(sid);
+        } else if (remaining.length < refs.length) {
+          this.sessionLogIndex.set(sid, remaining);
+        }
+      }
+      await this.saveSessionLogIndexNow();
     }
   }
 
@@ -1443,6 +1561,18 @@ export class FileSystemDatabaseManager {
 
     // 清除计数缓存
     this.logsCountCache = null;
+
+    // 更新会话日志索引
+    const sessionId = this.extractSessionIdFromLog(logWithId);
+    if (sessionId) {
+      let refs = this.sessionLogIndex.get(sessionId);
+      if (!refs) {
+        refs = [];
+        this.sessionLogIndex.set(sessionId, refs);
+      }
+      refs.push({ filename, index: shardLogs.length - 1, timestamp: logWithId.timestamp });
+      this.scheduleSessionLogIndexFlush();
+    }
   }
 
   async getLogs(limit: number = 100, offset: number = 0): Promise<RequestLog[]> {
@@ -2535,15 +2665,45 @@ export class FileSystemDatabaseManager {
   }
 
   async getLogsBySessionId(sessionId: string, limit: number = 100): Promise<RequestLog[]> {
-    const allLogs: RequestLog[] = [];
+    const refs = this.sessionLogIndex.get(sessionId);
 
-    // 遍历所有分片
+    // 有索引：仅加载相关分片，按 index 直接取值
+    if (refs && refs.length > 0) {
+      // 按 filename 分组，避免重复加载同一分片
+      const shardMap = new Map<string, number[]>();
+      for (const ref of refs) {
+        let indices = shardMap.get(ref.filename);
+        if (!indices) {
+          indices = [];
+          shardMap.set(ref.filename, indices);
+        }
+        indices.push(ref.index);
+      }
+
+      const logs: RequestLog[] = [];
+      for (const [filename, indices] of shardMap) {
+        try {
+          const shardLogs = await this.loadLogShard(filename);
+          for (const idx of indices) {
+            if (idx >= 0 && idx < shardLogs.length) {
+              logs.push(shardLogs[idx]);
+            }
+          }
+        } catch {
+          // 分片文件可能已被清理，跳过
+        }
+      }
+
+      return logs.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
+    }
+
+    // 无索引（兼容旧数据）：回退到全扫描
+    const allLogs: RequestLog[] = [];
     for (const shard of this.logShardsIndex) {
       const shardLogs = await this.loadLogShard(shard.filename);
       const filtered = shardLogs.filter(log => this.isLogBelongsToSession(log, sessionId));
       allLogs.push(...filtered);
     }
-
     return allLogs.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
   }
 
@@ -2584,17 +2744,53 @@ export class FileSystemDatabaseManager {
     return false;
   }
 
+  /**
+   * 从日志条目中提取 sessionId（用于索引）
+   * Codex: headers['session_id']
+   * Claude Code: body.metadata.user_id（兼容新旧格式）
+   */
+  private extractSessionIdFromLog(log: RequestLog): string | null {
+    // Codex: headers 中的 session_id
+    const headerSessionId = log.headers?.['session_id'];
+    if (typeof headerSessionId === 'string') return headerSessionId;
+
+    // Claude Code: body 中的 metadata.user_id
+    if (log.body) {
+      try {
+        const body = typeof log.body === 'string' ? JSON.parse(log.body) : log.body;
+        if (body.metadata?.user_id) {
+          const userId = body.metadata.user_id;
+          try {
+            const parsed = JSON.parse(userId);
+            if (parsed && typeof parsed === 'object' && parsed.session_id) {
+              return parsed.session_id;
+            }
+          } catch {
+            return userId;
+          }
+        }
+      } catch {
+        // 忽略解析错误
+      }
+    }
+    return null;
+  }
+
   async deleteSession(sessionId: string): Promise<boolean> {
     const index = this.sessions.findIndex(s => s.id === sessionId);
     if (index === -1) return false;
 
     this.sessions.splice(index, 1);
+    this.sessionLogIndex.delete(sessionId);
+    this.scheduleSessionLogIndexFlush();
     await this.saveSessions();
     return true;
   }
 
   async clearSessions(): Promise<void> {
     this.sessions = [];
+    this.sessionLogIndex.clear();
+    this.scheduleSessionLogIndexFlush();
     await this.saveSessions();
   }
 
@@ -2719,7 +2915,7 @@ export class FileSystemDatabaseManager {
 
   // Close method for compatibility (no-op for filesystem database)
   close(): void {
-    // 文件系统数据库不需要关闭连接
-    // 所有数据已经持久化到文件
+    // 刷盘会话日志索引
+    this.flushSessionLogIndex();
   }
 }
