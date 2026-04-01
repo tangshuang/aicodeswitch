@@ -2644,38 +2644,68 @@ export class ProxyServer {
       return existingSession.title;
     }
 
-    // 新会话，从消息内容提取标题
-    const messages = request.body?.messages;
-    if (Array.isArray(messages) && messages.length > 0) {
-      // 查找第一条 user 消息
-      const firstUserMessage = messages.find((msg: any) => msg.role === 'user');
-      if (firstUserMessage) {
-        const content = firstUserMessage.content;
-        let rawText = '';
+    // 1. Claude Code 格式：从 messages 数组提取
+    const rawText = this.extractTitleFromMessages(request.body?.messages)
+      || this.extractTitleFromInput(request.body?.input)
+      || null;
 
-        if (typeof content === 'string') {
-          rawText = content;
-        } else if (Array.isArray(content) && content.length > 0) {
-          // 处理结构化内容（如图片+文本）
-          // 从最后一个元素取值，通常最后的文本才是真正的用户输入
-          const lastBlock = content[content.length - 1];
-          if (lastBlock?.type === 'text' && lastBlock?.text) {
-            rawText = lastBlock.text;
-          } else {
-            // 如果最后一个不是 text 类型，尝试找到第一个 text 类型作为备用
-            const textBlock = content.find((block: any) => block?.type === 'text');
-            if (textBlock?.text) {
-              rawText = textBlock.text;
-            }
-          }
-        }
-
-        if (rawText) {
-          return this.formatSessionTitle(rawText);
-        }
-      }
+    if (rawText) {
+      return this.formatSessionTitle(rawText);
     }
     return undefined;
+  }
+
+  /**
+   * 从 messages 数组提取标题（Claude Code / OpenAI Chat 格式）
+   */
+  private extractTitleFromMessages(messages: any[]): string | null {
+    if (!Array.isArray(messages) || messages.length === 0) return null;
+    const firstUserMessage = messages.find((msg: any) => msg.role === 'user');
+    if (!firstUserMessage) return null;
+
+    const content = firstUserMessage.content;
+    if (typeof content === 'string') {
+      return content;
+    } else if (Array.isArray(content) && content.length > 0) {
+      const lastBlock = content[content.length - 1];
+      if (lastBlock?.type === 'text' && lastBlock?.text) {
+        return lastBlock.text;
+      }
+      const textBlock = content.find((block: any) => block?.type === 'text');
+      if (textBlock?.text) return textBlock.text;
+    }
+    return null;
+  }
+
+  /**
+   * 从 input 数组提取标题（Codex Responses API 格式）
+   * 忽略 developer 消息和系统级内容（AGENTS.md、<tag> 包裹的内容），
+   * 使用最后一条有效的用户输入作为标题
+   */
+  private extractTitleFromInput(input: any[]): string | null {
+    if (!Array.isArray(input) || input.length === 0) return null;
+
+    const userMessages = input.filter((item: any) => item.type === 'message' && item.role === 'user');
+    for (let i = userMessages.length - 1; i >= 0; i--) {
+      const msg = userMessages[i];
+      const content = msg.content;
+      if (!Array.isArray(content)) continue;
+      // 拼接所有 input_text，排除 AGENTS.md 和 <tag> 包裹的内容
+      const textParts: string[] = [];
+      for (const block of content) {
+        if (block.type === 'input_text' && typeof block.text === 'string') {
+          const text = block.text.trim();
+          if (text.startsWith('# AGENTS.md') || text.startsWith('<environment_context>') || /^<\w+>/.test(text)) {
+            continue;
+          }
+          textParts.push(text);
+        }
+      }
+      if (textParts.length > 0) {
+        return textParts.join(' ');
+      }
+    }
+    return null;
   }
 
   /**
