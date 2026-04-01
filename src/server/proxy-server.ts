@@ -3054,6 +3054,9 @@ export class ProxyServer {
     // 标准化 sourceType，将旧类型转换为新类型（向下兼容）
     const sourceType = normalizeSourceType(rawSourceType);
     const targetType = route.targetType;
+    const sessionId = this.defaultExtractSessionId(req, targetType) || '-';
+
+    console.log(`\x1b[32m[Request Start]\x1b[0m client=${targetType}, session=${sessionId}, rule=${rule.id}(${rule.contentType}), service=${service.name}, model=${rule.targetModel || req.body?.model || '-'}`);
     const failoverEnabled = options?.failoverEnabled === true;
     const forwardedToServiceName = options?.forwardedToServiceName;
     const useOriginalConfig = options?.useOriginalConfig === true;
@@ -3199,6 +3202,13 @@ export class ProxyServer {
     const finalizeLog = async (statusCode: number, error?: string) => {
       if (logged) return;
 
+      const isError = statusCode >= 400;
+      if (isError) {
+        console.log(`\x1b[31m[Request Error]\x1b[0m client=${targetType}, session=${sessionId}, rule=${rule.id}(${rule.contentType}), service=${service.name}, status=${statusCode}, time=${Date.now() - startTime}ms${error ? `, error=${error}` : ''}`);
+      } else {
+        console.log(`\x1b[33m[Request End]\x1b[0m client=${targetType}, session=${sessionId}, rule=${rule.id}(${rule.contentType}), service=${service.name}, status=${statusCode}, time=${Date.now() - startTime}ms`);
+      }
+
       // 检查是否启用日志记录（默认启用）
       const enableLogging = this.config?.enableLogging !== false; // 默认为 true
       if (!enableLogging) {
@@ -3251,8 +3261,7 @@ export class ProxyServer {
       });
 
       // Session 索引逻辑
-      const sessionId = this.defaultExtractSessionId(req, targetType);
-      if (sessionId) {
+      if (sessionId && sessionId !== '-') {
         // 正确计算当前请求的tokens：优先使用totalTokens，否则使用input+output
         const totalTokens = usageForLog?.totalTokens ||
                            ((usageForLog?.inputTokens || 0) + (usageForLog?.outputTokens || 0));
