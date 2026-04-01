@@ -2560,8 +2560,22 @@ export class FileSystemDatabaseManager {
       try {
         // body 可能是对象（已解析）或字符串（未解析）
         const body = typeof log.body === 'string' ? JSON.parse(log.body) : log.body;
-        if (body.metadata?.user_id === sessionId) {
-          return true;
+        if (body.metadata?.user_id) {
+          const userId = body.metadata.user_id;
+          // 兼容新旧格式：新版本为 JSON 字符串，旧版本为纯字符串
+          let extractedSessionId: string | null = null;
+          try {
+            const parsed = JSON.parse(userId);
+            if (parsed && typeof parsed === 'object' && parsed.session_id) {
+              extractedSessionId = parsed.session_id;
+            }
+          } catch {
+            // 不是 JSON，按旧版本纯字符串处理
+            extractedSessionId = userId;
+          }
+          if (extractedSessionId === sessionId) {
+            return true;
+          }
         }
       } catch {
         // 忽略解析错误

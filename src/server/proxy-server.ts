@@ -2598,7 +2598,8 @@ export class ProxyServer {
   private defaultExtractSessionId(request: Request, type: ToolType): string | null {
     if (type === 'claude-code') {
       // Claude Code 使用 metadata.user_id
-      return request.body?.metadata?.user_id || null;
+      const rawUserId = request.body?.metadata?.user_id;
+      return ProxyServer.extractSessionIdFromUserId(rawUserId);
     } else if (type === 'codex') {
       // Codex 使用 headers.session_id
       const sessionId = request.headers['session_id'];
@@ -2610,6 +2611,24 @@ export class ProxyServer {
       }
     }
     return null;
+  }
+
+  /**
+   * 从 metadata.user_id 中提取 session ID
+   * 新版本格式: JSON 字符串 {"device_id":"...","account_uuid":"...","session_id":"..."}
+   * 旧版本格式: 纯字符串 session ID
+   */
+  static extractSessionIdFromUserId(rawUserId: string | undefined | null): string | null {
+    if (!rawUserId || typeof rawUserId !== 'string') return null;
+    try {
+      const parsed = JSON.parse(rawUserId);
+      if (parsed && typeof parsed === 'object' && parsed.session_id) {
+        return parsed.session_id;
+      }
+    } catch {
+      // 不是 JSON，按旧版本纯字符串处理
+    }
+    return rawUserId;
   }
 
   /**
