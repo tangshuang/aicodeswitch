@@ -296,7 +296,13 @@ function VendorsPage() {
     }
 
     setShowVendorModal(false);
-    loadVendors();
+    const updatedVendors = await loadVendors();
+    if (selectedVendor) {
+      const updatedVendor = updatedVendors.find(v => v.id === selectedVendor.id);
+      if (updatedVendor) {
+        setSelectedVendor(updatedVendor);
+      }
+    }
   };
 
   const handleCreateService = () => {
