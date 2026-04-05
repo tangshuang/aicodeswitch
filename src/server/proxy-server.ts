@@ -3056,7 +3056,8 @@ export class ProxyServer {
     const targetType = route.targetType;
     const sessionId = this.defaultExtractSessionId(req, targetType) || '-';
 
-    console.log(`\x1b[32m[Request Start]\x1b[0m client=${targetType}, session=${sessionId}, rule=${rule.id}(${rule.contentType}), service=${service.name}, model=${rule.targetModel || req.body?.model || '-'}`);
+    const vendor = this.dbManager.getVendorByServiceId(service.id);
+    console.log(`\x1b[32m[Request Start]\x1b[0m client=${targetType}, session=${sessionId}, rule=${rule.id}(${rule.contentType}), vendor=${vendor?.name || '-'}, service=${service.name}, model=${rule.targetModel || req.body?.model || '-'}`);
     const failoverEnabled = options?.failoverEnabled === true;
     const forwardedToServiceName = options?.forwardedToServiceName;
     const useOriginalConfig = options?.useOriginalConfig === true;
@@ -3204,9 +3205,9 @@ export class ProxyServer {
 
       const isError = statusCode >= 400;
       if (isError) {
-        console.log(`\x1b[31m[Request Error]\x1b[0m client=${targetType}, session=${sessionId}, rule=${rule.id}(${rule.contentType}), service=${service.name}, status=${statusCode}, time=${Date.now() - startTime}ms${error ? `, error=${error}` : ''}`);
+        console.log(`\x1b[31m[Request Error]\x1b[0m client=${targetType}, session=${sessionId}, rule=${rule.id}(${rule.contentType}), vendor=${vendor?.name || '-'}, service=${service.name}, status=${statusCode}, time=${Date.now() - startTime}ms${error ? `, error=${error}` : ''}`);
       } else {
-        console.log(`\x1b[33m[Request End]\x1b[0m client=${targetType}, session=${sessionId}, rule=${rule.id}(${rule.contentType}), service=${service.name}, status=${statusCode}, time=${Date.now() - startTime}ms`);
+        console.log(`\x1b[33m[Request End]\x1b[0m client=${targetType}, session=${sessionId}, rule=${rule.id}(${rule.contentType}), vendor=${vendor?.name || '-'}, service=${service.name}, status=${statusCode}, time=${Date.now() - startTime}ms`);
       }
 
       // 检查是否启用日志记录（默认启用）
@@ -3217,9 +3218,9 @@ export class ProxyServer {
 
       logged = true;
 
-      // 获取供应商信息
+      // 供应商信息已在函数顶部获取
       const vendors = this.dbManager.getVendors();
-      const vendor = vendors.find(v => v.id === service.vendorId);
+      const vendorForLog = vendors.find(v => v.id === service.vendorId);
 
       // 从请求体中提取模型信息
       const requestModel = req.body?.model;
@@ -3249,7 +3250,7 @@ export class ProxyServer {
         targetServiceName: service.name,
         targetModel: rule.targetModel || requestModel,
         vendorId: service.vendorId,
-        vendorName: vendor?.name,
+        vendorName: vendorForLog?.name,
         requestModel,
         tags: tagsForLog,
         responseHeaders: responseHeadersForLog,
@@ -3274,7 +3275,7 @@ export class ProxyServer {
           firstRequestAt: startTime,
           lastRequestAt: Date.now(),
           vendorId: service.vendorId,
-          vendorName: vendor?.name,
+          vendorName: vendorForLog?.name,
           serviceId: service.id,
           serviceName: service.name,
           model: requestModel || rule.targetModel,
