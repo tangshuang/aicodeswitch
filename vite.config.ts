@@ -26,7 +26,6 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: `http://${env.HOST || '127.0.0.1'}:${env.PORT || 4567}`,
           changeOrigin: true,
-          // ws: true, // 后端未使用 WebSocket，禁用代理以避免 EPIPE 错误
         },
       },
     },

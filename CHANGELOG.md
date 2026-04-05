@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-04-01
+
+#### Performance
+* **重构会话日志索引**：新增 `session-log-index.json` 索引文件，记录会话与日志分片/位置的映射关系，查询会话日志时仅加载相关分片，避免全量扫描，大幅提升万条以上日志场景的性能
+* **优化 Claude Code 会话 ID 取值**：兼容新版 JSON 格式的 `metadata.user_id`，正确提取 `session_id`
+* **优化 Codex 会话标题取值**：支持 Responses API `input` 数组格式，过滤系统级内容提取有效用户输入
+
+### 2026-03-30
+
+#### Bug Fixes
+* **修复流式响应中文乱码的根本问题**
+  - 在 `SSEParserTransform` 中使用 `StringDecoder` 正确处理多字节字符边界
+  - 在 `ChunkCollectorTransform` 中使用 `StringDecoder` 确保日志记录不乱码
+  - 在 `SSEEventCollectorTransform` 中使用 `StringDecoder` 确保 SSE 事件解析正确
+  - 修复 `readStreamBody` 方法使用 Buffer 数组收集后一次性解码
+  - 修复 `version-check.ts` 中的流处理使用 Buffer 数组收集
+  - 使用 `StringDecoder` 处理 UTF-8 多字节字符被截断到不同 chunk 的情况
+
+### 2026-03-25
+
+#### Bug Fixes
+* **修复代理响应中文乱码问题**
+  - 修复 `readStreamBody` 方法中 `chunk.toString()` 未指定 UTF-8 编码的问题
+  - 修复所有 SSE 流式响应的 Content-Type 缺少 `; charset=utf-8` 声明
+  - 修复请求头和响应日志中 Content-Type 缺少 charset 声明的问题
+  - 确保中文字符在流式和非流式��应中正确传输
+
 ### 2026-03-18
 
 #### Bug Fixes

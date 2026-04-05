@@ -25,13 +25,13 @@ export default {
                 name: 'Coding Plan | Claude 标准接口',
                 sourceType: 'claude',
                 apiUrl: 'https://api.minimaxi.com/anthropic',
-                models: 'MiniMax-M2.5',
+                models: 'MiniMax-M2.5, MiniMax-M2.7',
             },
             {
                 name: 'Chat Completions 标准接口（支持Coding Plan的API Key）',
                 sourceType: 'openai-chat',
                 apiUrl: 'https://api.minimaxi.com/v1/chat/completions',
-                models: 'MiniMax-M2.5',
+                models: 'MiniMax-M2.5, MiniMax-M2.7',
             }
         ]
     },
@@ -43,8 +43,9 @@ export default {
                 name: 'Coding Plan | Claude 标准接口',
                 sourceType: 'claude',
                 apiUrl: 'https://open.bigmodel.cn/api/anthropic',
-                models: 'glm-5, glm-4.7, glm-4.5-air',
+                models: 'glm-5.1, glm-5, glm-4.7, glm-4.5-air',
                 modelLimits: {
+                    'glm-5.1': 131072,
                     'glm-5': 131072,
                     'glm-4.7': 131072,
                     'glm-4.5-air': 98304
@@ -54,8 +55,9 @@ export default {
                 name: 'Coding Plan | Chat Completions 标准接口',
                 sourceType: 'openai-chat',
                 apiUrl: 'https://open.bigmodel.cn/api/coding/paas/v4/chat/completions',
-                models: 'glm-5, glm-4.7, glm-4.5-air',
+                models: 'glm-5.1, glm-5, glm-4.7, glm-4.5-air',
                 modelLimits: {
+                    'glm-5.1': 131072,
                     'glm-5': 131072,
                     'glm-4.7': 131072,
                     'glm-4.5-air': 98304

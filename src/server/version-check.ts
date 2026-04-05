@@ -42,14 +42,15 @@ export const getLatestVersion = (): Promise<string> => {
     };
 
     const req = https.request(options, (res) => {
-      let data = '';
+      const chunks: Buffer[] = [];
 
       res.on('data', (chunk) => {
-        data += chunk;
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       });
 
       res.on('end', () => {
         try {
+          const data = Buffer.concat(chunks).toString('utf8');
           const packageInfo = JSON.parse(data);
           resolve(packageInfo['dist-tags'].latest);
         } catch (err) {

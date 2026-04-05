@@ -2477,7 +2477,7 @@ export class ProxyServer {
     }
 
     if (!headers['content-type']) {
-      headers['content-type'] = 'application/json';
+      headers['content-type'] = 'application/json; charset=utf-8';
     }
 
     // 添加 content-length（对于有请求体的方法）
@@ -2570,11 +2570,14 @@ export class ProxyServer {
 
   private async readStreamBody(stream: NodeJS.ReadableStream): Promise<string> {
     return new Promise((resolve, reject) => {
-      let data = '';
-      stream.on('data', (chunk) => {
-        data += chunk.toString();
+      const chunks: Buffer[] = [];
+      stream.on('data', (chunk: Buffer) => {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       });
-      stream.on('end', () => resolve(data));
+      stream.on('end', () => {
+        const fullBuffer = Buffer.concat(chunks);
+        resolve(fullBuffer.toString('utf8'));
+      });
       stream.on('error', reject);
     });
   }
@@ -2595,7 +2598,8 @@ export class ProxyServer {
   private defaultExtractSessionId(request: Request, type: ToolType): string | null {
     if (type === 'claude-code') {
       // Claude Code 使用 metadata.user_id
-      return request.body?.metadata?.user_id || null;
+      const rawUserId = request.body?.metadata?.user_id;
+      return ProxyServer.extractSessionIdFromUserId(rawUserId);
     } else if (type === 'codex') {
       // Codex 使用 headers.session_id
       const sessionId = request.headers['session_id'];
@@ -2607,6 +2611,24 @@ export class ProxyServer {
       }
     }
     return null;
+  }
+
+  /**
+   * 从 metadata.user_id 中提取 session ID
+   * 新版本格式: JSON 字符串 {"device_id":"...","account_uuid":"...","session_id":"..."}
+   * 旧版本格式: 纯字符串 session ID
+   */
+  static extractSessionIdFromUserId(rawUserId: string | undefined | null): string | null {
+    if (!rawUserId || typeof rawUserId !== 'string') return null;
+    try {
+      const parsed = JSON.parse(rawUserId);
+      if (parsed && typeof parsed === 'object' && parsed.session_id) {
+        return parsed.session_id;
+      }
+    } catch {
+      // 不是 JSON，按旧版本纯字符串处理
+    }
+    return rawUserId;
   }
 
   /**
@@ -2622,38 +2644,68 @@ export class ProxyServer {
       return existingSession.title;
     }
 
-    // 新会话，从消息内容提取标题
-    const messages = request.body?.messages;
-    if (Array.isArray(messages) && messages.length > 0) {
-      // 查找第一条 user 消息
-      const firstUserMessage = messages.find((msg: any) => msg.role === 'user');
-      if (firstUserMessage) {
-        const content = firstUserMessage.content;
-        let rawText = '';
+    // 1. Claude Code 格式：从 messages 数组提取
+    const rawText = this.extractTitleFromMessages(request.body?.messages)
+      || this.extractTitleFromInput(request.body?.input)
+      || null;
 
-        if (typeof content === 'string') {
-          rawText = content;
-        } else if (Array.isArray(content) && content.length > 0) {
-          // 处理结构化内容（如图片+文本）
-          // 从最后一个元素取值，通常最后的文本才是真正的用户输入
-          const lastBlock = content[content.length - 1];
-          if (lastBlock?.type === 'text' && lastBlock?.text) {
-            rawText = lastBlock.text;
-          } else {
-            // 如果最后一个不是 text 类型，尝试找到第一个 text 类型作为备用
-            const textBlock = content.find((block: any) => block?.type === 'text');
-            if (textBlock?.text) {
-              rawText = textBlock.text;
-            }
-          }
-        }
-
-        if (rawText) {
-          return this.formatSessionTitle(rawText);
-        }
-      }
+    if (rawText) {
+      return this.formatSessionTitle(rawText);
     }
     return undefined;
+  }
+
+  /**
+   * 从 messages 数组提取标题（Claude Code / OpenAI Chat 格式）
+   */
+  private extractTitleFromMessages(messages: any[]): string | null {
+    if (!Array.isArray(messages) || messages.length === 0) return null;
+    const firstUserMessage = messages.find((msg: any) => msg.role === 'user');
+    if (!firstUserMessage) return null;
+
+    const content = firstUserMessage.content;
+    if (typeof content === 'string') {
+      return content;
+    } else if (Array.isArray(content) && content.length > 0) {
+      const lastBlock = content[content.length - 1];
+      if (lastBlock?.type === 'text' && lastBlock?.text) {
+        return lastBlock.text;
+      }
+      const textBlock = content.find((block: any) => block?.type === 'text');
+      if (textBlock?.text) return textBlock.text;
+    }
+    return null;
+  }
+
+  /**
+   * 从 input 数组提取标题（Codex Responses API 格式）
+   * 忽略 developer 消息和系统级内容（AGENTS.md、<tag> 包裹的内容），
+   * 使用最后一条有效的用户输入作为标题
+   */
+  private extractTitleFromInput(input: any[]): string | null {
+    if (!Array.isArray(input) || input.length === 0) return null;
+
+    const userMessages = input.filter((item: any) => item.type === 'message' && item.role === 'user');
+    for (let i = userMessages.length - 1; i >= 0; i--) {
+      const msg = userMessages[i];
+      const content = msg.content;
+      if (!Array.isArray(content)) continue;
+      // 拼接所有 input_text，排除 AGENTS.md 和 <tag> 包裹的内容
+      const textParts: string[] = [];
+      for (const block of content) {
+        if (block.type === 'input_text' && typeof block.text === 'string') {
+          const text = block.text.trim();
+          if (text.startsWith('# AGENTS.md') || text.startsWith('<environment_context>') || /^<\w+>/.test(text)) {
+            continue;
+          }
+          textParts.push(text);
+        }
+      }
+      if (textParts.length > 0) {
+        return textParts.join(' ');
+      }
+    }
+    return null;
   }
 
   /**
@@ -2965,7 +3017,7 @@ export class ProxyServer {
     // Claude：responseData 可能是 usage 对象本身，也可能包含 usage 字段
     if (this.isClaudeSource(sourceType) || this.isClaudeChatSource(sourceType)) {
       // 如果 responseData 直接包含 input_tokens/output_tokens，说明它本身就是 usage 对象
-      if (typeof responseData.input_tokens === 'number' || typeof responseData.output_tokens === 'number') {
+      if (typeof responseData?.input_tokens === 'number' || typeof responseData?.output_tokens === 'number') {
         return extractTokenUsageFromClaudeUsage(responseData);
       }
       // 否则尝试从 usage 字段提取
@@ -2976,12 +3028,12 @@ export class ProxyServer {
     if (!usage) return undefined;
 
     // OpenAI 使用 prompt_tokens 和 completion_tokens
-    if (typeof usage.prompt_tokens === 'number' || typeof usage.completion_tokens === 'number') {
+    if (typeof usage?.prompt_tokens === 'number' || typeof usage?.completion_tokens === 'number') {
       return extractTokenUsageFromOpenAIUsage(usage);
     }
 
     // Claude 使用 input_tokens 和 output_tokens
-    if (typeof usage.input_tokens === 'number' || typeof usage.output_tokens === 'number') {
+    if (typeof usage?.input_tokens === 'number' || typeof usage?.output_tokens === 'number') {
       return extractTokenUsageFromClaudeUsage(usage);
     }
 
@@ -3002,6 +3054,10 @@ export class ProxyServer {
     // 标准化 sourceType，将旧类型转换为新类型（向下兼容）
     const sourceType = normalizeSourceType(rawSourceType);
     const targetType = route.targetType;
+    const sessionId = this.defaultExtractSessionId(req, targetType) || '-';
+
+    const vendor = this.dbManager.getVendorByServiceId(service.id);
+    console.log(`\x1b[32m[Request Start]\x1b[0m client=${targetType}, session=${sessionId}, rule=${rule.id}(${rule.contentType}), vendor=${vendor?.name || '-'}, service=${service.name}, model=${rule.targetModel || req.body?.model || '-'}`);
     const failoverEnabled = options?.failoverEnabled === true;
     const forwardedToServiceName = options?.forwardedToServiceName;
     const useOriginalConfig = options?.useOriginalConfig === true;
@@ -3147,6 +3203,13 @@ export class ProxyServer {
     const finalizeLog = async (statusCode: number, error?: string) => {
       if (logged) return;
 
+      const isError = statusCode >= 400;
+      if (isError) {
+        console.log(`\x1b[31m[Request Error]\x1b[0m client=${targetType}, session=${sessionId}, rule=${rule.id}(${rule.contentType}), vendor=${vendor?.name || '-'}, service=${service.name}, status=${statusCode}, time=${Date.now() - startTime}ms${error ? `, error=${error}` : ''}`);
+      } else {
+        console.log(`\x1b[33m[Request End]\x1b[0m client=${targetType}, session=${sessionId}, rule=${rule.id}(${rule.contentType}), vendor=${vendor?.name || '-'}, service=${service.name}, status=${statusCode}, time=${Date.now() - startTime}ms`);
+      }
+
       // 检查是否启用日志记录（默认启用）
       const enableLogging = this.config?.enableLogging !== false; // 默认为 true
       if (!enableLogging) {
@@ -3155,9 +3218,9 @@ export class ProxyServer {
 
       logged = true;
 
-      // 获取供应商信息
+      // 供应商信息已在函数顶部获取
       const vendors = this.dbManager.getVendors();
-      const vendor = vendors.find(v => v.id === service.vendorId);
+      const vendorForLog = vendors.find(v => v.id === service.vendorId);
 
       // 从请求体中提取模型信息
       const requestModel = req.body?.model;
@@ -3187,7 +3250,7 @@ export class ProxyServer {
         targetServiceName: service.name,
         targetModel: rule.targetModel || requestModel,
         vendorId: service.vendorId,
-        vendorName: vendor?.name,
+        vendorName: vendorForLog?.name,
         requestModel,
         tags: tagsForLog,
         responseHeaders: responseHeadersForLog,
@@ -3199,8 +3262,7 @@ export class ProxyServer {
       });
 
       // Session 索引逻辑
-      const sessionId = this.defaultExtractSessionId(req, targetType);
-      if (sessionId) {
+      if (sessionId && sessionId !== '-') {
         // 正确计算当前请求的tokens：优先使用totalTokens，否则使用input+output
         const totalTokens = usageForLog?.totalTokens ||
                            ((usageForLog?.inputTokens || 0) + (usageForLog?.outputTokens || 0));
@@ -3213,7 +3275,7 @@ export class ProxyServer {
           firstRequestAt: startTime,
           lastRequestAt: Date.now(),
           vendorId: service.vendorId,
-          vendorName: vendor?.name,
+          vendorName: vendorForLog?.name,
           serviceId: service.id,
           serviceName: service.name,
           model: requestModel || rule.targetModel,
@@ -3233,10 +3295,10 @@ export class ProxyServer {
         if (totalTokens > 0) {
           this.dbManager.incrementRuleTokenUsage(rule.id, totalTokens);
 
-          // 获取更新后的规则数据并广播
+          // 获取更新后的规则数据并更新状态
           const updatedRule = this.dbManager.getRule(rule.id);
           if (updatedRule) {
-            rulesStatusBroadcaster.broadcastUsageUpdate(
+            rulesStatusBroadcaster.updateRuleUsage(
               rule.id,
               updatedRule.totalTokensUsed || 0,
               updatedRule.totalRequestsUsed || 0
@@ -3256,10 +3318,10 @@ export class ProxyServer {
           // 更新频率限制跟踪
           this.recordRequest(rule.id);
 
-          // 获取更新后的规则数据并广播
+          // 获取更新后的规则数据并更新状态
           const updatedRule = this.dbManager.getRule(rule.id);
           if (updatedRule) {
-            rulesStatusBroadcaster.broadcastUsageUpdate(
+            rulesStatusBroadcaster.updateRuleUsage(
               rule.id,
               updatedRule.totalTokensUsed || 0,
               updatedRule.totalRequestsUsed || 0
@@ -3368,7 +3430,7 @@ export class ProxyServer {
         totalTokens: inputTokens,
       };
       responseHeadersForLog = {
-        'content-type': 'application/json',
+        'content-type': 'application/json; charset=utf-8',
       };
       responseBodyForLog = JSON.stringify(localTokenResponse);
       streamChunksForLog = undefined;
@@ -3528,7 +3590,7 @@ export class ProxyServer {
         const useLegacySpecialSSEBranches = false;
 
         if (useLegacySpecialSSEBranches && targetType === 'claude-code' && this.isOpenAIType(sourceType)) {
-          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
 
@@ -3646,7 +3708,7 @@ export class ProxyServer {
         }
 
         if (useLegacySpecialSSEBranches && targetType === 'codex' && this.isClaudeSource(sourceType)) {
-          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
 
@@ -3759,7 +3821,7 @@ export class ProxyServer {
 
         // Gemini / Gemini Chat -> Claude Code 流式转换
         if (useLegacySpecialSSEBranches && targetType === 'claude-code' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
-          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
 
@@ -3774,9 +3836,9 @@ export class ProxyServer {
             const usage = converter.getUsage();
             if (usage) {
               usageForLog = {
-                inputTokens: usage.input_tokens,
-                outputTokens: usage.output_tokens,
-                cacheReadInputTokens: usage.cache_read_input_tokens,
+                inputTokens: usage?.input_tokens || 0,
+                outputTokens: usage?.output_tokens || 0,
+                cacheReadInputTokens: usage?.cache_read_input_tokens || 0,
               };
             } else {
               const extractedUsage = eventCollector.extractUsage();
@@ -3863,7 +3925,7 @@ export class ProxyServer {
 
         // Gemini / Gemini Chat -> Codex 流式转换
         if (useLegacySpecialSSEBranches && targetType === 'codex' && (this.isGeminiSource(sourceType) || this.isGeminiChatSource(sourceType))) {
-          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
 
@@ -4197,7 +4259,7 @@ export class ProxyServer {
 
         if (streamRequested) {
           // 流式请求：使用 SSE 格式
-          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
           res.status(200);

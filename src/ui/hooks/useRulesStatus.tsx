@@ -15,22 +15,6 @@ interface RuleStatusData {
   timestamp: number;
 }
 
-// 单个规则状态更新消息
-interface RuleStatusMessage {
-  type: 'rule_status';
-  data: RuleStatusData;
-}
-
-// 全量规则状态同步消息
-interface AllRulesStatusMessage {
-  type: 'all_rules_status';
-  data: RuleStatusData[];
-  timestamp: number;
-}
-
-// WebSocket 消息类型联合
-type WSMessage = RuleStatusMessage | AllRulesStatusMessage;
-
 export interface RuleStatusState {
   [ruleId: string]: {
     status: RuleStatus;
@@ -43,247 +27,21 @@ export interface RuleStatusState {
 }
 
 interface RulesStatusContextValue {
-  connectionStatus: 'connecting' | 'connected' | 'disconnected';
   ruleStatuses: RuleStatusState;
   getRuleStatus: (ruleId: string) => RuleStatusState[string] | undefined;
   clearRuleStatus: (ruleId: string) => Promise<void>;
-  isConnected: boolean;
 }
 
 const RulesStatusContext = createContext<RulesStatusContextValue | null>(null);
 
-// 全局 WebSocket 连接管理
-let globalWsRef: WebSocket | null = null;
-let globalReconnectTimeoutRef: NodeJS.Timeout | null = null;
-let globalHeartbeatTimeoutRef: NodeJS.Timeout | null = null;
-let globalConnectionStatus: 'connecting' | 'connected' | 'disconnected' = 'disconnected';
-let globalRuleStatuses: RuleStatusState = {};
-let globalSubscribers: Set<(status: RuleStatusState) => void> = new Set();
-let globalStatusSubscribers: Set<(status: 'connecting' | 'connected' | 'disconnected') => void> = new Set();
-
-// 通知所有订阅者状态更新
-const notifyStatusSubscribers = () => {
-  globalStatusSubscribers.forEach((callback) => callback(globalConnectionStatus));
-};
-
-const notifyRuleSubscribers = () => {
-  globalSubscribers.forEach((callback) => callback(globalRuleStatuses));
-};
-
 // 清除指定规则的状态
 const clearRuleStatus = async (ruleId: string) => {
   try {
-    // 调用后端 API，后端会广播 idle 状态给所有客户端
     await api.clearRuleStatus(ruleId);
-    // 同时清除本地状态以确保即时响应
-    if (globalRuleStatuses[ruleId]) {
-      const { [ruleId]: _, ...rest } = globalRuleStatuses;
-      globalRuleStatuses = rest;
-      notifyRuleSubscribers();
-    }
   } catch (error) {
     console.error('[RulesStatus] 清除规则状态失败:', error);
     throw error;
   }
-};
-
-// 处理单个规则状态更新
-const handleSingleRuleStatus = (data: RuleStatusData) => {
-  globalRuleStatuses = {
-    ...globalRuleStatuses,
-    [data.ruleId]: {
-      status: data.status,
-      totalTokensUsed: data.totalTokensUsed,
-      totalRequestsUsed: data.totalRequestsUsed,
-      errorMessage: data.errorMessage,
-      errorType: data.errorType,
-      lastUpdate: data.timestamp,
-    },
-  };
-  notifyRuleSubscribers();
-};
-
-// 处理全量规则状态同步
-const handleAllRulesStatus = (data: RuleStatusData[]) => {
-  // 将数组转换为状态对象
-  const newStatuses: RuleStatusState = {};
-  data.forEach((ruleData) => {
-    newStatuses[ruleData.ruleId] = {
-      status: ruleData.status,
-      totalTokensUsed: ruleData.totalTokensUsed,
-      totalRequestsUsed: ruleData.totalRequestsUsed,
-      errorMessage: ruleData.errorMessage,
-      errorType: ruleData.errorType,
-      lastUpdate: ruleData.timestamp,
-    };
-  });
-
-  // 用全量状态替换本地状态
-  globalRuleStatuses = newStatuses;
-  notifyRuleSubscribers();
-};
-
-// 清理过期状态（超过15秒未更新的 in_use 转为 idle）
-const cleanupExpiredStatuses = () => {
-  const now = Date.now();
-  let hasChanges = false;
-
-  Object.keys(globalRuleStatuses).forEach((ruleId) => {
-    if (now - globalRuleStatuses[ruleId].lastUpdate > 15000) {
-      if (globalRuleStatuses[ruleId].status === 'in_use') {
-        globalRuleStatuses[ruleId] = {
-          ...globalRuleStatuses[ruleId],
-          status: 'idle',
-        };
-        hasChanges = true;
-      }
-    }
-  });
-
-  if (hasChanges) {
-    notifyRuleSubscribers();
-  }
-};
-
-let cleanupInterval: NodeJS.Timeout | null = null;
-
-const connect = () => {
-  if (globalWsRef?.readyState === WebSocket.OPEN) {
-    return;
-  }
-
-  globalConnectionStatus = 'connecting';
-  notifyStatusSubscribers();
-
-  // 构建 WebSocket URL
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = window.location.host;
-  const wsUrl = `${protocol}//${host}/api/rules/status`;
-
-  try {
-    const ws = new WebSocket(wsUrl);
-    globalWsRef = ws;
-
-    ws.onopen = () => {
-      console.log('[RulesStatus] WebSocket 连接已建立');
-      globalConnectionStatus = 'connected';
-      notifyStatusSubscribers();
-
-      // 清除重连定时器
-      if (globalReconnectTimeoutRef) {
-        clearTimeout(globalReconnectTimeoutRef);
-        globalReconnectTimeoutRef = null;
-      }
-
-      // 启动心跳检测
-      startHeartbeat();
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data) as WSMessage;
-
-        if (message.type === 'rule_status') {
-          // 单个规则状态更新
-          handleSingleRuleStatus(message.data);
-        } else if (message.type === 'all_rules_status') {
-          // 全量规则状态同步
-          handleAllRulesStatus(message.data);
-        }
-      } catch (error) {
-        console.error('[RulesStatus] 解析消息失败:', error);
-      }
-    };
-
-    ws.onclose = (event) => {
-      console.log('[RulesStatus] WebSocket 连接关闭:', event.code, event.reason);
-      globalConnectionStatus = 'disconnected';
-      notifyStatusSubscribers();
-      stopHeartbeat();
-
-      // 如果不是主动关闭，尝试重连
-      if (event.code !== 1000) {
-        reconnect();
-      }
-    };
-
-    ws.onerror = (error) => {
-      console.error('[RulesStatus] WebSocket 错误:', error);
-    };
-  } catch (error) {
-    console.error('[RulesStatus] 创建 WebSocket 失败:', error);
-    globalConnectionStatus = 'disconnected';
-    notifyStatusSubscribers();
-    reconnect();
-  }
-};
-
-const disconnect = () => {
-  if (globalReconnectTimeoutRef) {
-    clearTimeout(globalReconnectTimeoutRef);
-    globalReconnectTimeoutRef = null;
-  }
-
-  stopHeartbeat();
-
-  if (globalWsRef) {
-    globalWsRef.close(1000, '主动关闭');
-    globalWsRef = null;
-  }
-
-  globalConnectionStatus = 'disconnected';
-  notifyStatusSubscribers();
-};
-
-const reconnect = () => {
-  if (globalReconnectTimeoutRef) {
-    return; // 已经在重连中
-  }
-
-  console.log('[RulesStatus] 5秒后尝试重连...');
-  globalReconnectTimeoutRef = setTimeout(() => {
-    globalReconnectTimeoutRef = null;
-    connect();
-  }, 5000);
-};
-
-const startHeartbeat = () => {
-  stopHeartbeat();
-  globalHeartbeatTimeoutRef = setInterval(() => {
-    if (globalWsRef?.readyState === WebSocket.OPEN) {
-      globalWsRef.send(JSON.stringify({ type: 'ping' }));
-    } else {
-      stopHeartbeat();
-    }
-  }, 30000); // 每30秒发送一次心跳
-};
-
-const stopHeartbeat = () => {
-  if (globalHeartbeatTimeoutRef) {
-    clearInterval(globalHeartbeatTimeoutRef);
-    globalHeartbeatTimeoutRef = null;
-  }
-};
-
-// 初始化全局连接和清理定时器
-const initializeGlobalConnection = () => {
-  // 启动清理定时器
-  if (!cleanupInterval) {
-    cleanupInterval = setInterval(cleanupExpiredStatuses, 5000); // 每5秒检查一次
-  }
-
-  // 连接 WebSocket
-  connect();
-};
-
-// 清理全局资源
-const cleanupGlobalConnection = () => {
-  if (cleanupInterval) {
-    clearInterval(cleanupInterval);
-    cleanupInterval = null;
-  }
-
-  disconnect();
 };
 
 // Context Provider 组件
@@ -292,34 +50,39 @@ interface RulesStatusProviderProps {
 }
 
 export function RulesStatusProvider({ children }: RulesStatusProviderProps) {
-  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
   const [ruleStatuses, setRuleStatuses] = useState<RuleStatusState>({});
 
-  // 订阅全局状态更新
+  // 轮询获取规则状态
   useEffect(() => {
-    // 注册状态变化回调
-    const handleStatusChange = (status: 'connecting' | 'connected' | 'disconnected') => {
-      setConnectionStatus(status);
+    const fetchRuleStatuses = async () => {
+      try {
+        const statuses = await api.getRuleStatuses();
+        // 将数组转换为状态对象
+        const newStatuses: RuleStatusState = {};
+        statuses.forEach((status: RuleStatusData) => {
+          newStatuses[status.ruleId] = {
+            status: status.status,
+            totalTokensUsed: status.totalTokensUsed,
+            totalRequestsUsed: status.totalRequestsUsed,
+            errorMessage: status.errorMessage,
+            errorType: status.errorType,
+            lastUpdate: status.timestamp,
+          };
+        });
+        setRuleStatuses(newStatuses);
+      } catch (error) {
+        console.error('[RulesStatus] 获取规则状态失败:', error);
+      }
     };
 
-    const handleRuleChange = (statuses: RuleStatusState) => {
-      setRuleStatuses(statuses);
-    };
+    // 立即执行一次
+    fetchRuleStatuses();
 
-    globalStatusSubscribers.add(handleStatusChange);
-    globalSubscribers.add(handleRuleChange);
-
-    // 初始化全局连接
-    initializeGlobalConnection();
+    // 每1秒轮询一次
+    const intervalId = setInterval(fetchRuleStatuses, 1000);
 
     return () => {
-      globalStatusSubscribers.delete(handleStatusChange);
-      globalSubscribers.delete(handleRuleChange);
-
-      // 检查是否还有其他订阅者
-      if (globalStatusSubscribers.size === 0 && globalSubscribers.size === 0) {
-        cleanupGlobalConnection();
-      }
+      clearInterval(intervalId);
     };
   }, []);
 
@@ -328,11 +91,9 @@ export function RulesStatusProvider({ children }: RulesStatusProviderProps) {
   };
 
   const value: RulesStatusContextValue = {
-    connectionStatus,
     ruleStatuses,
     getRuleStatus,
     clearRuleStatus,
-    isConnected: connectionStatus === 'connected',
   };
 
   return (
@@ -349,11 +110,9 @@ export function useRulesStatus() {
   if (!context) {
     // 如果没有 Provider，返回默认值（向后兼容）
     return {
-      connectionStatus: 'disconnected' as const,
       ruleStatuses: {} as RuleStatusState,
       getRuleStatus: (_ruleId: string) => undefined,
       clearRuleStatus: async (_ruleId: string) => {},
-      isConnected: false,
     };
   }
 
