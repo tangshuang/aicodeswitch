@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-04-06
+
+#### Bug Fixes
+* **修复 AUTH 鉴权不生效问题**：`auth.ts` 中的 `AUTH_CODE` 在模块加载时即从 `process.env.AUTH` 读取，但 `dotenv.config()` 在 `main.ts` 中晚于 import 执行，导致 `AUTH_CODE` 始终为空字符串，鉴权永远不生效。改为延迟读取函数，确保运行时获取正确的环境变量值。
+
 ### 2026-04-01
 
 #### Performance
