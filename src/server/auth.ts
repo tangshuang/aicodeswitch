@@ -2,8 +2,16 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 
-const AUTH_CODE = process.env.AUTH || '';
-const JWT_SECRET = process.env.JWT_SECRET || (AUTH_CODE ? crypto.createHash('sha256').update(AUTH_CODE).digest('hex') : '');
+// 延迟读取 process.env.AUTH，避免模块加载时 dotenv 尚未执行导致值始终为空
+function getAuthCode(): string {
+  return process.env.AUTH || '';
+}
+
+function getJwtSecret(): string {
+  const authCode = getAuthCode();
+  return process.env.JWT_SECRET || (authCode ? crypto.createHash('sha256').update(authCode).digest('hex') : '');
+}
+
 const TOKEN_EXPIRY = '7d'; // 7天有效期
 
 interface JWTPayload {
@@ -14,7 +22,7 @@ interface JWTPayload {
  * 检查是否启用鉴权
  */
 export function isAuthEnabled(): boolean {
-  return AUTH_CODE.trim().length > 0;
+  return getAuthCode().trim().length > 0;
 }
 
 /**
@@ -24,7 +32,7 @@ export function verifyAuthCode(authCode: string): boolean {
   if (!isAuthEnabled()) {
     return true; // 未启用鉴权,直接通过
   }
-  return authCode === AUTH_CODE;
+  return authCode === getAuthCode();
 }
 
 /**
@@ -34,7 +42,7 @@ export function generateToken(): string {
   const payload: JWTPayload = {
     authenticated: true,
   };
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+  return jwt.sign(payload, getJwtSecret(), { expiresIn: TOKEN_EXPIRY });
 }
 
 /**
@@ -42,7 +50,7 @@ export function generateToken(): string {
  */
 export function verifyToken(token: string): boolean {
   try {
-    jwt.verify(token, JWT_SECRET) as JWTPayload;
+    jwt.verify(token, getJwtSecret()) as JWTPayload;
     return true;
   } catch (error) {
     return false;
