@@ -4190,6 +4190,58 @@ export class ProxyServer {
         return;
       }
 
+      // 特殊处理：count_tokens 请求无论如何都返回 200
+      const isCountTokensRequest = this.isCountTokensPath(req.path) || this.isCountTokensPath(req.originalUrl);
+      if (isCountTokensRequest) {
+        console.warn('[Proxy] count_tokens request failed, falling back to local estimation:', error.message);
+
+        // 使用本地估算返回结果
+        const inputTokens = this.estimateClaudeCountTokens(requestBody);
+        const localTokenResponse = { input_tokens: inputTokens };
+
+        usageForLog = {
+          inputTokens,
+          outputTokens: 0,
+          totalTokens: inputTokens,
+        };
+        responseHeadersForLog = {
+          'content-type': 'application/json; charset=utf-8',
+        };
+        responseBodyForLog = JSON.stringify(localTokenResponse);
+        streamChunksForLog = undefined;
+        relayedForLog = false;
+        extraTagsForLog.push('上游失败-本地计算Token');
+
+        // 记录错误日志（但不影响响应）
+        const vendors = this.dbManager.getVendors();
+        const vendor = vendors.find(v => v.id === service.vendorId);
+        await this.dbManager.addErrorLog({
+          timestamp: Date.now(),
+          method: req.method,
+          path: req.path,
+          statusCode: 200, // 实际返回 200
+          errorMessage: `count_tokens upstream failed, used local estimation: ${error.message}`,
+          errorStack: error.stack,
+          requestHeaders: this.normalizeHeaders(req.headers),
+          requestBody: req.body ? JSON.stringify(req.body) : undefined,
+          ruleId: rule.id,
+          targetType,
+          targetServiceId: service.id,
+          targetServiceName: service.name,
+          targetModel: rule.targetModel || req.body?.model,
+          vendorId: service.vendorId,
+          vendorName: vendor?.name,
+          requestModel: req.body?.model,
+          upstreamRequest: upstreamRequestForLog,
+          responseTime: Date.now() - startTime,
+        });
+
+        // 返回 200 状态码和本地估算结果
+        res.status(200).json(localTokenResponse);
+        await finalizeLog(200);
+        return;
+      }
+
       if (failoverEnabled && (error as FailoverProxyError)?.isFailoverCandidate) {
         throw error;
       }
