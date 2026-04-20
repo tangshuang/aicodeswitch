@@ -1006,6 +1006,21 @@ export class ProxyServer {
     return `；已自动转发给 ${forwardedToServiceName} 服务继续处理`;
   }
 
+  /**
+   * 解析规则的有效超时时间（毫秒）。
+   * 优先级：rule.timeout > config.ruleGlobalTimeout * 1000 > 300000（5分钟）
+   */
+  private resolveEffectiveTimeout(rule: any): number {
+    if (rule.timeout && rule.timeout > 0) {
+      return rule.timeout;
+    }
+    const config = this.dbManager.getConfig();
+    if (config.ruleGlobalTimeout && config.ruleGlobalTimeout > 0) {
+      return config.ruleGlobalTimeout * 1000;
+    }
+    return 300000;
+  }
+
   private createFailoverError(message: string, statusCode: number, originalError?: any): FailoverProxyError {
     const failoverError = new Error(message) as FailoverProxyError;
     failoverError.isFailoverCandidate = true;
@@ -3498,7 +3513,7 @@ export class ProxyServer {
         method: req.method as any,
         url: upstreamUrl,
         headers: this.buildUpstreamHeaders(req, service, sourceType, streamRequested, requestBody),
-        timeout: rule.timeout || 3000000, // 默认300秒
+        timeout: this.resolveEffectiveTimeout(rule),
         validateStatus: () => true,
         responseType: streamRequested ? 'stream' : 'json',
         signal: upstreamAbortController.signal,

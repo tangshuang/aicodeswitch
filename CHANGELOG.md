@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-04-20
+
+#### Features
+* **新增规则全局超时配置**：路由页新增"规则配置"卡片，支持设置全局超时时间（秒），覆盖未单独配置超时的规则；规则弹窗超时字段动态显示当前全局配置值；修正默认超时从50分钟为300秒（与UI提示一致）
+
 ### 2026-04-06
 
 #### Bug Fixes

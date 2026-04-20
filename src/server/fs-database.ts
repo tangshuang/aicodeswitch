@@ -892,6 +892,9 @@ export class FileSystemDatabaseManager {
       apiKey: current?.apiKey ?? '',
       enableFailover: current?.enableFailover ?? true,
       failoverRecoverySeconds: normalizeFailoverRecoverySeconds(current?.failoverRecoverySeconds),
+      ruleGlobalTimeout: typeof current?.ruleGlobalTimeout === 'number' && current.ruleGlobalTimeout > 0
+        ? current.ruleGlobalTimeout
+        : undefined,
       enableAgentTeams: current?.enableAgentTeams ?? false,
       enableBypassPermissionsSupport: current?.enableBypassPermissionsSupport ?? false,
       codexModelReasoningEffort: isCodexReasoningEffort(current?.codexModelReasoningEffort)
@@ -2007,6 +2010,9 @@ export class FileSystemDatabaseManager {
       merged.codexModelReasoningEffort = DEFAULT_CODEX_REASONING_EFFORT;
     }
     merged.failoverRecoverySeconds = normalizeFailoverRecoverySeconds(merged.failoverRecoverySeconds);
+    if (typeof merged.ruleGlobalTimeout !== 'number' || merged.ruleGlobalTimeout <= 0) {
+      merged.ruleGlobalTimeout = undefined;
+    }
 
     this.config = merged;
     await this.saveConfig();

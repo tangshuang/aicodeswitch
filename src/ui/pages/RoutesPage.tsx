@@ -113,6 +113,8 @@ export default function RoutesPage() {
   const [selectedResetInterval, setSelectedResetInterval] = useState<number | undefined>(undefined);
   const [selectedTokenResetBaseTime, setSelectedTokenResetBaseTime] = useState<Date | undefined>(undefined);
   const [selectedTimeout, setSelectedTimeout] = useState<number | undefined>(undefined);
+  const [ruleGlobalTimeout, setRuleGlobalTimeout] = useState<string>('');
+  const [isUpdatingGlobalTimeout, setIsUpdatingGlobalTimeout] = useState(false);
   const [selectedRequestCountLimit, setSelectedRequestCountLimit] = useState<number | undefined>(undefined);
   const [selectedRequestResetInterval, setSelectedRequestResetInterval] = useState<number | undefined>(undefined);
   const [selectedRequestResetBaseTime, setSelectedRequestResetBaseTime] = useState<Date | undefined>(undefined);
@@ -281,6 +283,11 @@ export default function RoutesPage() {
       setClaudeDefaultModelDirty(false);
       setCodexDefaultModelInput(data.codexDefaultModel || '');
       setCodexDefaultModelDirty(false);
+      setRuleGlobalTimeout(
+        typeof data.ruleGlobalTimeout === 'number' && data.ruleGlobalTimeout > 0
+          ? String(data.ruleGlobalTimeout)
+          : ''
+      );
     } catch (error) {
       console.error('Failed to load app config:', error);
     }
@@ -667,6 +674,27 @@ export default function RoutesPage() {
       toast.error('保存失败: ' + error.message);
     } finally {
       setIsUpdatingCodexDefaultModel(false);
+    }
+  };
+
+  const handleUpdateRuleGlobalTimeout = async () => {
+    try {
+      setIsUpdatingGlobalTimeout(true);
+      const current = appConfig || {};
+      const parsed = Number(ruleGlobalTimeout);
+      const value = Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+      await api.updateConfig({
+        ...current,
+        ruleGlobalTimeout: value,
+      });
+      toast.success(value
+        ? `规则全局超时时间已设置为 ${value} 秒`
+        : '规则全局超时时间已恢复为默认值（300秒）');
+      await loadAppConfig();
+    } catch (error: any) {
+      toast.error('更新失败: ' + error.message);
+    } finally {
+      setIsUpdatingGlobalTimeout(false);
     }
   };
 
@@ -1395,6 +1423,53 @@ export default function RoutesPage() {
         </div>
 
 
+      </div>
+
+      {/* 规则配置 */}
+      <div className="card" style={{ marginTop: '20px' }}>
+        <div className="toolbar">
+          <h3>规则配置</h3>
+        </div>
+        <div style={{ padding: '20px' }}>
+          <div
+            className="form-group"
+            style={{
+              marginBottom: '0',
+              maxWidth: '420px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+            }}
+          >
+            <label
+              htmlFor="rule-global-timeout"
+              style={{ marginBottom: 0, minWidth: '140px', whiteSpace: 'nowrap' }}
+            >
+              超时时间（秒）
+            </label>
+            <input
+              id="rule-global-timeout"
+              type="number"
+              value={ruleGlobalTimeout}
+              onChange={(e) => setRuleGlobalTimeout(e.target.value)}
+              min="1"
+              placeholder="默认300秒"
+              style={{ flex: 1, minWidth: 0 }}
+            />
+            <button
+              onClick={handleUpdateRuleGlobalTimeout}
+              disabled={isUpdatingGlobalTimeout}
+              className="btn btn-primary"
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              保存
+            </button>
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+            设置规则的全局超时时间。当单个规则未配置超时时间时，将使用此值作为超时上限。
+            不设置则默认为300秒（5分钟）。超时后会自动触发故障切换到下一个可用规则。
+          </div>
+        </div>
       </div>
 
       <div className="card" style={{ marginTop: '20px' }}>
@@ -2295,10 +2370,10 @@ export default function RoutesPage() {
                     value={selectedTimeout || ''}
                     onChange={(e) => setSelectedTimeout(e.target.value ? parseInt(e.target.value) : undefined)}
                     min="1"
-                    placeholder="默认300秒"
+                    placeholder={appConfig?.ruleGlobalTimeout ? `全局${appConfig.ruleGlobalTimeout}秒` : "默认300秒"}
                   />
                   <small style={{ color: '#666', fontSize: '12px', marginTop: '4px', display: 'block' }}>
-                    设置此规则的API请求超时时间。不设置则使用默认值300秒（5分钟）
+                    设置此规则的API请求超时时间。不设置则使用全局超时配置（当前为{appConfig?.ruleGlobalTimeout ? `${appConfig.ruleGlobalTimeout}秒` : '默认300秒'}），超时后自动触发故障切换
                   </small>
                 </div>
 
