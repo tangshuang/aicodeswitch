@@ -2621,6 +2621,13 @@ export class ProxyServer {
     }
   }
 
+  private isEmptyResponse(data: any): boolean {
+    if (data === null || data === undefined) return true;
+    if (typeof data === 'string' && data.trim() === '') return true;
+    if (typeof data === 'object' && !Array.isArray(data) && Object.keys(data).length === 0) return true;
+    return false;
+  }
+
   /**
    * 从请求中提取 session ID（默认方法）
    * Claude Code: metadata.user_id
@@ -4210,6 +4217,59 @@ export class ProxyServer {
 
       // 收集响应头
       responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
+
+      // 检测上游空响应（HTTP 200 但 body 为空）
+      if (this.isEmptyResponse(responseData)) {
+        const emptyErrorMsg = 'Upstream API returned an empty response (HTTP 200)';
+        console.warn(`[Proxy] ${emptyErrorMsg}`);
+        if (failoverEnabled) {
+          throw this.createFailoverError(emptyErrorMsg, 502);
+        }
+        responseBodyForLog = typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
+        const vendors = this.dbManager.getVendors();
+        const vendor = vendors.find(v => v.id === service.vendorId);
+        await this.dbManager.addErrorLog({
+          timestamp: Date.now(),
+          method: req.method,
+          path: req.path,
+          statusCode: 502,
+          errorMessage: emptyErrorMsg,
+          requestHeaders: this.normalizeHeaders(req.headers),
+          requestBody: req.body ? JSON.stringify(req.body) : undefined,
+          ruleId: rule.id,
+          targetType,
+          targetServiceId: service.id,
+          targetServiceName: service.name,
+          targetModel: rule.targetModel || req.body?.model,
+          vendorId: service.vendorId,
+          vendorName: vendor?.name,
+          requestModel: req.body?.model,
+          upstreamRequest: upstreamRequestForLog,
+          responseHeaders: responseHeadersForLog,
+          responseTime: Date.now() - startTime,
+        });
+        await finalizeLog(502, emptyErrorMsg);
+
+        if (route.targetType === 'claude-code') {
+          const claudeError = {
+            type: 'error',
+            error: { type: 'api_error', message: emptyErrorMsg }
+          };
+          if (streamRequested) {
+            res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            res.status(200);
+            res.write(`event: error\ndata: ${JSON.stringify(claudeError)}\n\n`);
+            res.end();
+          } else {
+            res.status(502).json(claudeError);
+          }
+        } else {
+          res.status(502).json({ error: emptyErrorMsg });
+        }
+        return;
+      }
 
       // 使用统一的响应转换方法
       const converted = this.transformResponseToTool(targetType, sourceType, responseData);
