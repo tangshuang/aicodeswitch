@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-04-22
+
+#### Bug Fixes
+* **修复错误日志缺失转发信息**：补全所有错误日志中的上下文字段，包括转发失败时的 ruleId/serviceId/vendorId、流式管道错误的完整路由信息和响应头、以及 responseTime 准确计算
+* **修复错误日志过大导致 RangeError: Invalid string length 崩溃**：对写入错误日志的大字段（requestBody、responseBody、upstreamRequest.body）增加 256KB 截断限制，同时为 saveErrorLogs 添加异常保护，避免序列化失败导致服务崩溃
+
 ### 2026-04-20
 
 #### Features
