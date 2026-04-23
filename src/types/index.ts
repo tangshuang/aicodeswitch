@@ -236,6 +236,7 @@ export interface AppConfig {
   apiKey?: string;
   enableFailover?: boolean;  // 是否启用智能故障切换,默认 true
   failoverRecoverySeconds?: number;  // 故障自动恢复时间（秒）,默认 10
+  ruleGlobalTimeout?: number;  // 规则全局超时时间（秒），覆盖未设置超时的规则，默认 300
   // 工具全局配置
   enableAgentTeams?: boolean;  // Claude Code Agent Teams（全局）
   enableBypassPermissionsSupport?: boolean;  // Claude Code bypassPermissions 支持（全局）

@@ -88,6 +88,7 @@ export class FileSystemDatabaseManager {
 
   // 日志分片配置
   private readonly MAX_SHARD_SIZE = 10 * 1024 * 1024; // 10MB
+  private readonly MAX_ERROR_LOG_FIELD_SIZE = 256 * 1024; // 256KB 单个字段最大长度
   private readonly LOG_RETENTION_DAYS = 30;
 
   // 文件路径
@@ -829,7 +830,13 @@ export class FileSystemDatabaseManager {
   }
 
   private async saveErrorLogs() {
-    await fs.writeFile(this.errorLogsFile, JSON.stringify(this.errorLogs, null, 2));
+    try {
+      await fs.writeFile(this.errorLogsFile, JSON.stringify(this.errorLogs, null, 2));
+    } catch (e) {
+      console.error('[DB] Failed to save error logs, clearing to prevent crash:', e);
+      this.errorLogs = [];
+      await fs.writeFile(this.errorLogsFile, '[]');
+    }
     this.errorLogsCountCache = null;
   }
 
@@ -892,6 +899,9 @@ export class FileSystemDatabaseManager {
       apiKey: current?.apiKey ?? '',
       enableFailover: current?.enableFailover ?? true,
       failoverRecoverySeconds: normalizeFailoverRecoverySeconds(current?.failoverRecoverySeconds),
+      ruleGlobalTimeout: typeof current?.ruleGlobalTimeout === 'number' && current.ruleGlobalTimeout > 0
+        ? current.ruleGlobalTimeout
+        : undefined,
       enableAgentTeams: current?.enableAgentTeams ?? false,
       enableBypassPermissionsSupport: current?.enableBypassPermissionsSupport ?? false,
       codexModelReasoningEffort: isCodexReasoningEffort(current?.codexModelReasoningEffort)
@@ -1750,10 +1760,27 @@ export class FileSystemDatabaseManager {
     return false;
   }
 
+  private truncateForErrorLog(value: any): string | undefined {
+    if (value === undefined || value === null) return undefined;
+    const str = typeof value === 'string' ? value : JSON.stringify(value);
+    if (!str || str.length <= this.MAX_ERROR_LOG_FIELD_SIZE) return str || undefined;
+    return str.substring(0, this.MAX_ERROR_LOG_FIELD_SIZE) + `\n...[truncated, original size: ${str.length} chars]`;
+  }
+
   // Error log operations
   async addErrorLog(log: Omit<ErrorLog, 'id'>): Promise<void> {
     const id = crypto.randomUUID();
-    this.errorLogs.push({ ...log, id });
+    const truncatedLog = {
+      ...log,
+      requestBody: this.truncateForErrorLog(log.requestBody),
+      responseBody: this.truncateForErrorLog(log.responseBody),
+      errorStack: this.truncateForErrorLog(log.errorStack),
+      upstreamRequest: log.upstreamRequest ? {
+        ...log.upstreamRequest,
+        body: this.truncateForErrorLog(log.upstreamRequest.body),
+      } : undefined,
+    };
+    this.errorLogs.push({ ...truncatedLog, id });
     await this.saveErrorLogs();
   }
 
@@ -2007,6 +2034,9 @@ export class FileSystemDatabaseManager {
       merged.codexModelReasoningEffort = DEFAULT_CODEX_REASONING_EFFORT;
     }
     merged.failoverRecoverySeconds = normalizeFailoverRecoverySeconds(merged.failoverRecoverySeconds);
+    if (typeof merged.ruleGlobalTimeout !== 'number' || merged.ruleGlobalTimeout <= 0) {
+      merged.ruleGlobalTimeout = undefined;
+    }
 
     this.config = merged;
     await this.saveConfig();

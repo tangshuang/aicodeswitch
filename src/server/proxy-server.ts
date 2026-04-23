@@ -385,20 +385,28 @@ export class ProxyServer {
         // 确定目标类型
         const targetType: ToolType = req.path.startsWith('/claude-code/') ? 'claude-code' : 'codex';
 
-        // 记录错误日志 - 包含请求详情
+        // 记录错误日志 - 包含请求详情和最后失败的服务信息
+        const _lastFailedVendor = lastFailedService ? this.dbManager.getVendorByServiceId(lastFailedService.id) : undefined;
         await this.dbManager.addErrorLog({
           timestamp: Date.now(),
           method: req.method,
           path: req.path,
           statusCode: 503,
-          errorMessage: 'All services failed',
+          errorMessage: lastError?.message || 'All services failed',
           errorStack: lastError?.stack,
           requestHeaders: this.normalizeHeaders(req.headers),
           requestBody: req.body ? JSON.stringify(req.body) : undefined,
           // 添加请求详情
           targetType,
           requestModel: req.body?.model,
-          responseTime: 0,
+          responseTime: Date.now() - requestStartAt,
+          // 添加最后失败的服务信息
+          ruleId: lastFailedRule?.id,
+          targetServiceId: lastFailedService?.id,
+          targetServiceName: lastFailedService?.name,
+          targetModel: lastFailedRule?.targetModel || req.body?.model,
+          vendorId: lastFailedService?.vendorId,
+          vendorName: _lastFailedVendor?.name,
         });
 
         // 根据路径判断目标类型并返回适当的错误格式
@@ -444,7 +452,7 @@ export class ProxyServer {
           // 添加请求详情
           targetType,
           requestModel: req.body?.model,
-          responseTime: 0,
+          responseTime: Date.now() - requestStartAt,
         });
 
         // 根据路径判断目标类型并返回适当的错误格式
@@ -704,20 +712,28 @@ export class ProxyServer {
           tags: this.buildRelayTags(hasRelayAttempt),
         });
 
-        // 记录错误日志 - 包含请求详情（使用函数参数 targetType）
+        // 记录错误日志 - 包含请求详情和最后失败的服务信息（使用函数参数 targetType）
+        const _lastFailedVendor2 = lastFailedService ? this.dbManager.getVendorByServiceId(lastFailedService.id) : undefined;
         await this.dbManager.addErrorLog({
           timestamp: Date.now(),
           method: req.method,
           path: req.path,
           statusCode: 503,
-          errorMessage: 'All services failed',
+          errorMessage: lastError?.message || 'All services failed',
           errorStack: lastError?.stack,
           requestHeaders: this.normalizeHeaders(req.headers),
           requestBody: req.body ? JSON.stringify(req.body) : undefined,
           // 添加请求详情
           targetType,
           requestModel: req.body?.model,
-          responseTime: 0,
+          responseTime: Date.now() - requestStartAt,
+          // 添加最后失败的服务信息
+          ruleId: lastFailedRule?.id,
+          targetServiceId: lastFailedService?.id,
+          targetServiceName: lastFailedService?.name,
+          targetModel: lastFailedRule?.targetModel || req.body?.model,
+          vendorId: lastFailedService?.vendorId,
+          vendorName: _lastFailedVendor2?.name,
         });
 
         // 根据路径判断目标类型并返回适当的错误格式
@@ -762,7 +778,7 @@ export class ProxyServer {
           // 添加请求详情
           targetType,
           requestModel: req.body?.model,
-          responseTime: 0,
+          responseTime: Date.now() - requestStartAt,
         });
         if (this.isResponseCommitted(res)) {
           return;
@@ -1004,6 +1020,21 @@ export class ProxyServer {
       return '';
     }
     return `；已自动转发给 ${forwardedToServiceName} 服务继续处理`;
+  }
+
+  /**
+   * 解析规则的有效超时时间（毫秒）。
+   * 优先级：rule.timeout > config.ruleGlobalTimeout * 1000 > 300000（5分钟）
+   */
+  private resolveEffectiveTimeout(rule: any): number {
+    if (rule.timeout && rule.timeout > 0) {
+      return rule.timeout;
+    }
+    const config = this.dbManager.getConfig();
+    if (config.ruleGlobalTimeout && config.ruleGlobalTimeout > 0) {
+      return config.ruleGlobalTimeout * 1000;
+    }
+    return 300000;
   }
 
   private createFailoverError(message: string, statusCode: number, originalError?: any): FailoverProxyError {
@@ -2590,6 +2621,13 @@ export class ProxyServer {
     }
   }
 
+  private isEmptyResponse(data: any): boolean {
+    if (data === null || data === undefined) return true;
+    if (typeof data === 'string' && data.trim() === '') return true;
+    if (typeof data === 'object' && !Array.isArray(data) && Object.keys(data).length === 0) return true;
+    return false;
+  }
+
   /**
    * 从请求中提取 session ID（默认方法）
    * Claude Code: metadata.user_id
@@ -3498,7 +3536,7 @@ export class ProxyServer {
         method: req.method as any,
         url: upstreamUrl,
         headers: this.buildUpstreamHeaders(req, service, sourceType, streamRequested, requestBody),
-        timeout: rule.timeout || 3000000, // 默认300秒
+        timeout: this.resolveEffectiveTimeout(rule),
         validateStatus: () => true,
         responseType: streamRequested ? 'stream' : 'json',
         signal: upstreamAbortController.signal,
@@ -3669,6 +3707,7 @@ export class ProxyServer {
                   requestHeaders: this.normalizeHeaders(req.headers),
                   requestBody: req.body ? JSON.stringify(req.body) : undefined,
                   upstreamRequest: upstreamRequestForLog,
+                  responseHeaders: responseHeadersForLog,
                   // 添加请求详情
                   ruleId: rule.id,
                   targetType,
@@ -3785,6 +3824,7 @@ export class ProxyServer {
                   requestHeaders: this.normalizeHeaders(req.headers),
                   requestBody: req.body ? JSON.stringify(req.body) : undefined,
                   upstreamRequest: upstreamRequestForLog,
+                  responseHeaders: responseHeadersForLog,
                   // 添加请求详情
                   ruleId: rule.id,
                   targetType,
@@ -3887,6 +3927,7 @@ export class ProxyServer {
                   requestHeaders: this.normalizeHeaders(req.headers),
                   requestBody: req.body ? JSON.stringify(req.body) : undefined,
                   upstreamRequest: upstreamRequestForLog,
+                  responseHeaders: responseHeadersForLog,
                   ruleId: rule.id,
                   targetType,
                   targetServiceId: service.id,
@@ -3991,6 +4032,7 @@ export class ProxyServer {
                   requestHeaders: this.normalizeHeaders(req.headers),
                   requestBody: req.body ? JSON.stringify(req.body) : undefined,
                   upstreamRequest: upstreamRequestForLog,
+                  responseHeaders: responseHeadersForLog,
                   ruleId: rule.id,
                   targetType,
                   targetServiceId: service.id,
@@ -4104,6 +4146,16 @@ export class ProxyServer {
                   requestHeaders: this.normalizeHeaders(req.headers),
                   requestBody: req.body ? JSON.stringify(req.body) : undefined,
                   upstreamRequest: upstreamRequestForLog,
+                  responseHeaders: responseHeadersForLog,
+                  ruleId: rule.id,
+                  targetType,
+                  targetServiceId: service.id,
+                  targetServiceName: service.name,
+                  targetModel: rule.targetModel || req.body?.model,
+                  vendorId: service.vendorId,
+                  vendorName: vendor?.name,
+                  requestModel: req.body?.model,
+                  responseTime: Date.now() - startTime,
                 });
               } catch (logError) {
                 console.error('[Proxy] Failed to log error:', logError);
@@ -4135,6 +4187,16 @@ export class ProxyServer {
                   requestHeaders: this.normalizeHeaders(req.headers),
                   requestBody: req.body ? JSON.stringify(req.body) : undefined,
                   upstreamRequest: upstreamRequestForLog,
+                  responseHeaders: responseHeadersForLog,
+                  ruleId: rule.id,
+                  targetType,
+                  targetServiceId: service.id,
+                  targetServiceName: service.name,
+                  targetModel: rule.targetModel || req.body?.model,
+                  vendorId: service.vendorId,
+                  vendorName: vendor?.name,
+                  requestModel: req.body?.model,
+                  responseTime: Date.now() - startTime,
                 });
               } catch (logError) {
                 console.error('[Proxy] Failed to log error:', logError);
@@ -4155,6 +4217,59 @@ export class ProxyServer {
 
       // 收集响应头
       responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
+
+      // 检测上游空响应（HTTP 200 但 body 为空）
+      if (this.isEmptyResponse(responseData)) {
+        const emptyErrorMsg = 'Upstream API returned an empty response (HTTP 200)';
+        console.warn(`[Proxy] ${emptyErrorMsg}`);
+        if (failoverEnabled) {
+          throw this.createFailoverError(emptyErrorMsg, 502);
+        }
+        responseBodyForLog = typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
+        const vendors = this.dbManager.getVendors();
+        const vendor = vendors.find(v => v.id === service.vendorId);
+        await this.dbManager.addErrorLog({
+          timestamp: Date.now(),
+          method: req.method,
+          path: req.path,
+          statusCode: 502,
+          errorMessage: emptyErrorMsg,
+          requestHeaders: this.normalizeHeaders(req.headers),
+          requestBody: req.body ? JSON.stringify(req.body) : undefined,
+          ruleId: rule.id,
+          targetType,
+          targetServiceId: service.id,
+          targetServiceName: service.name,
+          targetModel: rule.targetModel || req.body?.model,
+          vendorId: service.vendorId,
+          vendorName: vendor?.name,
+          requestModel: req.body?.model,
+          upstreamRequest: upstreamRequestForLog,
+          responseHeaders: responseHeadersForLog,
+          responseTime: Date.now() - startTime,
+        });
+        await finalizeLog(502, emptyErrorMsg);
+
+        if (route.targetType === 'claude-code') {
+          const claudeError = {
+            type: 'error',
+            error: { type: 'api_error', message: emptyErrorMsg }
+          };
+          if (streamRequested) {
+            res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            res.status(200);
+            res.write(`event: error\ndata: ${JSON.stringify(claudeError)}\n\n`);
+            res.end();
+          } else {
+            res.status(502).json(claudeError);
+          }
+        } else {
+          res.status(502).json({ error: emptyErrorMsg });
+        }
+        return;
+      }
 
       // 使用统一的响应转换方法
       const converted = this.transformResponseToTool(targetType, sourceType, responseData);
@@ -4187,6 +4302,58 @@ export class ProxyServer {
       if (this.isClientDisconnectError(error, res)) {
         console.warn('[Proxy] Client disconnected, skipping failover and blacklist');
         await finalizeLog(499, 'Client disconnected');
+        return;
+      }
+
+      // 特殊处理：count_tokens 请求无论如何都返回 200
+      const isCountTokensRequest = this.isCountTokensPath(req.path) || this.isCountTokensPath(req.originalUrl);
+      if (isCountTokensRequest) {
+        console.warn('[Proxy] count_tokens request failed, falling back to local estimation:', error.message);
+
+        // 使用本地估算返回结果
+        const inputTokens = this.estimateClaudeCountTokens(requestBody);
+        const localTokenResponse = { input_tokens: inputTokens };
+
+        usageForLog = {
+          inputTokens,
+          outputTokens: 0,
+          totalTokens: inputTokens,
+        };
+        responseHeadersForLog = {
+          'content-type': 'application/json; charset=utf-8',
+        };
+        responseBodyForLog = JSON.stringify(localTokenResponse);
+        streamChunksForLog = undefined;
+        relayedForLog = false;
+        extraTagsForLog.push('上游失败-本地计算Token');
+
+        // 记录错误日志（但不影响响应）
+        const vendors = this.dbManager.getVendors();
+        const vendor = vendors.find(v => v.id === service.vendorId);
+        await this.dbManager.addErrorLog({
+          timestamp: Date.now(),
+          method: req.method,
+          path: req.path,
+          statusCode: 200, // 实际返回 200
+          errorMessage: `count_tokens upstream failed, used local estimation: ${error.message}`,
+          errorStack: error.stack,
+          requestHeaders: this.normalizeHeaders(req.headers),
+          requestBody: req.body ? JSON.stringify(req.body) : undefined,
+          ruleId: rule.id,
+          targetType,
+          targetServiceId: service.id,
+          targetServiceName: service.name,
+          targetModel: rule.targetModel || req.body?.model,
+          vendorId: service.vendorId,
+          vendorName: vendor?.name,
+          requestModel: req.body?.model,
+          upstreamRequest: upstreamRequestForLog,
+          responseTime: Date.now() - startTime,
+        });
+
+        // 返回 200 状态码和本地估算结果
+        res.status(200).json(localTokenResponse);
+        await finalizeLog(200);
         return;
       }
 
@@ -4231,6 +4398,7 @@ export class ProxyServer {
         vendorName: vendor?.name,
         requestModel: req.body?.model,
         upstreamRequest: upstreamRequestForLog,
+        responseHeaders: responseHeadersForLog,
         responseTime: Date.now() - startTime,
       });
 
