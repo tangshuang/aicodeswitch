@@ -17,7 +17,7 @@ import {
   SSEParserTransform,
   SSESerializerTransform,
 } from './transformers/streaming';
-import { ChunkCollectorTransform, SSEEventCollectorTransform } from './transformers/chunk-collector';
+import { ChunkCollectorTransform, SSEEventCollectorTransform, type SSEEvent } from './transformers/chunk-collector';
 import { rulesStatusBroadcaster } from './rules-status-service';
 import {
   // 请求转换函数，将工具发起的请求，转化为API服务接口需要的请求数据结构
@@ -67,9 +67,15 @@ type ProxyRequestOptions = {
 
 type FailoverProxyError = Error & {
   isFailoverCandidate?: boolean;
+  statusCode?: number;
   response?: {
     status: number;
   };
+};
+
+type StreamFailureInfo = {
+  statusCode: number;
+  errorMessage: string;
 };
 
 type HighIqInferenceResult = {
@@ -188,10 +194,8 @@ export class ProxyServer {
           return res.status(404).json({ error: 'No matching route found and no original config available' });
         }
 
-        // 高智商请求判定：从消息结构推断是否启用，不再使用 !x 显式关闭语法
+        // 高智商请求判定：存在规则时从消息末尾往前搜索 [!]/[x] 标记
         const forcedContentType = await this.prepareHighIqRouting(req, route, route.targetType);
-
-        // 检查是否启用故障切换
         const enableFailover = this.config?.enableFailover !== false; // 默认为 true
 
         if (!enableFailover) {
@@ -317,7 +321,7 @@ export class ProxyServer {
               );
             } else {
               // HTTP错误，检查状态码
-              const statusCode = error.response?.status || 500;
+              const statusCode = this.getErrorStatusCode(error, 500);
               if (statusCode >= 400) {
                 await this.dbManager.addToBlacklist(
                   service.id,
@@ -518,7 +522,7 @@ export class ProxyServer {
           return res.status(404).json({ error: `No active route found for target type: ${targetType}` });
         }
 
-        // 高智商请求判定：从消息结构推断是否启用，不再使用 !x 显式关闭语法
+        // 高智商请求判定：存在规则时从消息末尾往前搜索 [!]/[x] 标记
         const forcedContentType = await this.prepareHighIqRouting(req, route, targetType);
 
         // 检查是否启用故障切换
@@ -647,7 +651,7 @@ export class ProxyServer {
               );
             } else {
               // HTTP错误，检查状态码
-              const statusCode = error.response?.status || 500;
+              const statusCode = this.getErrorStatusCode(error, 500);
               if (statusCode >= 400) {
                 await this.dbManager.addToBlacklist(
                   service.id,
@@ -1040,11 +1044,47 @@ export class ProxyServer {
   private createFailoverError(message: string, statusCode: number, originalError?: any): FailoverProxyError {
     const failoverError = new Error(message) as FailoverProxyError;
     failoverError.isFailoverCandidate = true;
+    failoverError.statusCode = statusCode;
     failoverError.response = { status: statusCode };
     if (originalError?.stack) {
       failoverError.stack = originalError.stack;
     }
     return failoverError;
+  }
+
+  private getErrorStatusCode(error: any, fallbackStatusCode = 500): number {
+    const statusCode = error?.response?.status ?? error?.statusCode ?? error?.status;
+    if (typeof statusCode === 'number' && Number.isFinite(statusCode)) {
+      return statusCode;
+    }
+    return fallbackStatusCode;
+  }
+
+  private detectStreamFailure(events: SSEEvent[]): StreamFailureInfo | null {
+    for (const event of events) {
+      const eventType = event.event?.trim();
+      if (!eventType) continue;
+
+      if (eventType !== 'response.failed' && eventType !== 'error') {
+        continue;
+      }
+
+      const parsed = event.data ? this.safeJsonParse(event.data) : null;
+      const errorObj = parsed?.response?.error || parsed?.error || parsed;
+      const errorCode = errorObj?.code;
+      const errorMessage = errorObj?.message
+        || parsed?.message
+        || `Upstream stream returned ${eventType}`;
+
+      const normalizedMessage = `Upstream stream returned ${eventType}: ${errorMessage}`;
+      const statusCode = errorCode === 'server_is_overloaded' ? 503 : 502;
+      return {
+        statusCode,
+        errorMessage: normalizedMessage,
+      };
+    }
+
+    return null;
   }
 
   private isDownstreamClosed(res: Response): boolean {
@@ -1641,7 +1681,7 @@ export class ProxyServer {
       },
       {
         type: 'high-iq',
-        match: (_req, body) => this.hasHighIqSignal(body),
+        match: (_req, body, _sessionId, routeId) => this.hasHighIqSignal(body, routeId),
       },
       {
         type: 'long-context',
@@ -1792,12 +1832,20 @@ export class ProxyServer {
     );
   }
 
-  private hasHighIqSignal(body: any): boolean {
+  private hasHighIqRuleForRoute(routeId: string): boolean {
+    const rules = this.getRulesByRouteId(routeId);
+    return rules?.some(rule => rule.contentType === 'high-iq' && !rule.isDisabled) ?? false;
+  }
+
+  private hasHighIqSignal(body: any, routeId?: string): boolean {
+    if (routeId && !this.hasHighIqRuleForRoute(routeId)) return false;
     return this.inferHighIqRouting(body, false).shouldUseHighIq;
   }
 
   private inferHighIqRouting(body: any, previousMode: boolean): HighIqInferenceResult {
     const messages = this.extractConversationMessages(body);
+
+    // 从消息列表末尾往前查找 [!] 或 [x] 标记，普通消息跳过继续搜索
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i];
       if (message?.role !== 'user') {
@@ -1809,6 +1857,14 @@ export class ProxyServer {
         continue;
       }
 
+      // [x] 优先：同一消息中 [x] 覆盖 [!]
+      if (signal.hasCancelPrefix) {
+        return {
+          shouldUseHighIq: false,
+          decisionSource: 'human',
+        };
+      }
+
       if (signal.hasHighIqPrefix) {
         return {
           shouldUseHighIq: true,
@@ -1816,12 +1872,10 @@ export class ProxyServer {
         };
       }
 
-      return {
-        shouldUseHighIq: false,
-        decisionSource: 'human',
-      };
+      // 普通消息（无 [!] 或 [x] 前缀），继续向前搜索
     }
 
+    // 未找到 [!] 或 [x] 标记，回退到 session 持久化状态
     if (previousMode) {
       return {
         shouldUseHighIq: true,
@@ -1836,6 +1890,11 @@ export class ProxyServer {
   }
 
   private async prepareHighIqRouting(req: Request, route: Route, targetType: ToolType): Promise<ContentType | undefined> {
+    // 无高智商规则时直接跳过，避免每次都检查消息前缀
+    if (!this.hasHighIqRuleForRoute(route.id)) {
+      return undefined;
+    }
+
     const sessionId = this.defaultExtractSessionId(req, targetType);
     const session = sessionId ? this.dbManager.getSession(sessionId) : null;
     const previousMode = session?.highIqMode === true;
@@ -1848,7 +1907,7 @@ export class ProxyServer {
           highIqRuleId: undefined,
           lastRequestAt: Date.now(),
         });
-        console.log(`[HIGH-IQ] Session ${sessionId} auto-disabled by latest human message`);
+        console.log(`[HIGH-IQ] Session ${sessionId} cancelled by [x] prefix`);
       }
       return undefined;
     }
@@ -1906,9 +1965,10 @@ export class ProxyServer {
     return [];
   }
 
-  private analyzeUserMessageForHighIq(message: any): { hasHumanText: boolean; hasHighIqPrefix: boolean } {
+  private analyzeUserMessageForHighIq(message: any): { hasHumanText: boolean; hasHighIqPrefix: boolean; hasCancelPrefix: boolean } {
     let hasHumanText = false;
     let hasHighIqPrefix = false;
+    let hasCancelPrefix = false;
 
     const scanText = (text: string, treatAsHuman: boolean) => {
       const trimmed = text.trim();
@@ -1921,12 +1981,15 @@ export class ProxyServer {
       if (treatAsHuman && trimmed.startsWith('[!]')) {
         hasHighIqPrefix = true;
       }
+      if (treatAsHuman && /^\[x]/i.test(trimmed)) {
+        hasCancelPrefix = true;
+      }
     };
 
     const content = message?.content;
     if (typeof content === 'string') {
       scanText(content, true);
-      return { hasHumanText, hasHighIqPrefix };
+      return { hasHumanText, hasHighIqPrefix, hasCancelPrefix };
     }
 
     const blocks = Array.isArray(content) ? content : [content];
@@ -1966,7 +2029,7 @@ export class ProxyServer {
       }
     }
 
-    return { hasHumanText, hasHighIqPrefix };
+    return { hasHumanText, hasHighIqPrefix, hasCancelPrefix };
   }
 
   /**
@@ -2463,7 +2526,7 @@ export class ProxyServer {
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(req.headers)) {
       // 排除原始认证头，防止与代理设置的认证头冲突
-      if (['host', 'content-length', 'authorization', 'x-api-key', 'x-anthropic-api-key', 'anthropic-api-key', 'x-goog-api-key'].includes(key.toLowerCase())) {
+      if (['host', 'content-length', 'authorization', 'x-api-key', 'x-anthropic-api-key', 'anthropic-api-key', 'x-goog-api-key', 'accept-encoding'].includes(key.toLowerCase())) {
         continue;
       }
       if (typeof value === 'string') {
@@ -2499,6 +2562,11 @@ export class ProxyServer {
 
     if (streamRequested && !headers.accept) {
       headers.accept = 'text/event-stream';
+    }
+
+    // 流式场景显式禁用压缩，避免上游返回压缩字节流导致下游出现乱码
+    if (streamRequested) {
+      headers['accept-encoding'] = 'identity';
     }
 
     if (!headers.connection) {
@@ -2618,6 +2686,17 @@ export class ProxyServer {
       return JSON.parse(raw);
     } catch {
       return null;
+    }
+  }
+
+  private cloneRequestBody<T>(data: T): T {
+    if (data === null || data === undefined) {
+      return data;
+    }
+    try {
+      return JSON.parse(JSON.stringify(data));
+    } catch {
+      return data;
     }
   }
 
@@ -3100,7 +3179,8 @@ export class ProxyServer {
     const forwardedToServiceName = options?.forwardedToServiceName;
     const useOriginalConfig = options?.useOriginalConfig === true;
     let relayedForLog = !useOriginalConfig;
-    let requestBody: any = req.body || {};
+    const originalToolRequestBody = this.cloneRequestBody(req.body || {});
+    let requestBody: any = this.cloneRequestBody(originalToolRequestBody) || {};
     let usageForLog: TokenUsage | undefined;
     let logged = false;
     const extraTagsForLog: string[] = [];
@@ -3498,8 +3578,9 @@ export class ProxyServer {
 
     try {
       // 使用统一的请求转换方法
-      const transformedRequestBody = this.transformRequestToUpstream(targetType, sourceType, requestBody, rule.targetModel as string);
-      requestBody = transformedRequestBody ?? requestBody ?? {};
+      const payloadForTransform = this.cloneRequestBody(originalToolRequestBody);
+      const transformedRequestBody = this.transformRequestToUpstream(targetType, sourceType, payloadForTransform, rule.targetModel as string);
+      requestBody = transformedRequestBody ?? this.cloneRequestBody(originalToolRequestBody) ?? {};
 
       // 应用 max_output_tokens 限制
       requestBody = this.applyMaxOutputTokensLimit(requestBody, service);
@@ -4101,111 +4182,120 @@ export class ProxyServer {
           } else if (extractedUsage) {
             usageForLog = this.extractTokenUsageFromResponse(extractedUsage, sourceType);
           }
-
-          void finalizeLog(res.statusCode);
         };
-
-        // 在下游 chunk 收集器完成后执行，确保拿到真正下发给客户端的完整文本
-        downstreamChunkCollector.on('finish', () => {
-          finalizeChunks();
-        });
-
-        // 备用：如果eventCollector的finish没有触发，监听res的finish
-        res.on('finish', () => {
-          if (!streamChunksForLog) {
-            finalizeChunks();
-          }
-        });
 
         // 监听 res 的错误事件
         res.on('error', (err) => {
           console.error('[Proxy] Response stream error:', err);
         });
 
-        // 构建 pipeline，根据是否需要转换选择不同的处理链
-        if (converter) {
+        const runStreamPipeline = async () => {
           ensureResponseWritable();
-          pipeline(response.data, parser, eventCollector, converter, serializer, downstreamChunkCollector, res, async (error) => {
-            if (error) {
-              if (this.isClientDisconnectError(error, res)) {
-                console.warn('[Proxy] Default stream pipeline closed because client disconnected');
-                await finalizeLog(499, 'Client disconnected');
+          return await new Promise<void>((resolve, reject) => {
+            if (converter) {
+              pipeline(response.data, parser, eventCollector, converter, serializer, downstreamChunkCollector, res, (error) => {
+                if (error) {
+                  reject(error);
+                  return;
+                }
+                resolve();
+              });
+              return;
+            }
+
+            pipeline(response.data, parser, eventCollector, serializer, downstreamChunkCollector, res, (error) => {
+              if (error) {
+                reject(error);
                 return;
               }
-              console.error('[Proxy] Pipeline error (default stream with converter):', error);
-
-              // 记录到错误日志
-              try {
-                await this.dbManager.addErrorLog({
-                  timestamp: Date.now(),
-                  method: req.method,
-                  path: req.path,
-                  statusCode: 500,
-                  errorMessage: error.message || 'Stream processing error',
-                  errorStack: error.stack,
-                  requestHeaders: this.normalizeHeaders(req.headers),
-                  requestBody: req.body ? JSON.stringify(req.body) : undefined,
-                  upstreamRequest: upstreamRequestForLog,
-                  responseHeaders: responseHeadersForLog,
-                  ruleId: rule.id,
-                  targetType,
-                  targetServiceId: service.id,
-                  targetServiceName: service.name,
-                  targetModel: rule.targetModel || req.body?.model,
-                  vendorId: service.vendorId,
-                  vendorName: vendor?.name,
-                  requestModel: req.body?.model,
-                  responseTime: Date.now() - startTime,
-                });
-              } catch (logError) {
-                console.error('[Proxy] Failed to log error:', logError);
-              }
-
-              await finalizeLog(500, error.message);
-            }
+              resolve();
+            });
           });
-        } else {
-          ensureResponseWritable();
-          pipeline(response.data, parser, eventCollector, serializer, downstreamChunkCollector, res, async (error) => {
-            if (error) {
-              if (this.isClientDisconnectError(error, res)) {
-                console.warn('[Proxy] Default stream pipeline closed because client disconnected');
-                await finalizeLog(499, 'Client disconnected');
-                return;
-              }
-              console.error('[Proxy] Pipeline error (default stream):', error);
+        };
 
-              // 记录到错误日志
-              try {
-                await this.dbManager.addErrorLog({
-                  timestamp: Date.now(),
-                  method: req.method,
-                  path: req.path,
-                  statusCode: 500,
-                  errorMessage: error.message || 'Stream processing error',
-                  errorStack: error.stack,
-                  requestHeaders: this.normalizeHeaders(req.headers),
-                  requestBody: req.body ? JSON.stringify(req.body) : undefined,
-                  upstreamRequest: upstreamRequestForLog,
-                  responseHeaders: responseHeadersForLog,
-                  ruleId: rule.id,
-                  targetType,
-                  targetServiceId: service.id,
-                  targetServiceName: service.name,
-                  targetModel: rule.targetModel || req.body?.model,
-                  vendorId: service.vendorId,
-                  vendorName: vendor?.name,
-                  requestModel: req.body?.model,
-                  responseTime: Date.now() - startTime,
-                });
-              } catch (logError) {
-                console.error('[Proxy] Failed to log error:', logError);
-              }
+        try {
+          await runStreamPipeline();
+        } catch (error: any) {
+          if (this.isClientDisconnectError(error, res)) {
+            console.warn('[Proxy] Default stream pipeline closed because client disconnected');
+            await finalizeLog(499, 'Client disconnected');
+            return;
+          }
+          console.error('[Proxy] Pipeline error (default stream):', error);
 
-              await finalizeLog(500, error.message);
-            }
-          });
+          // 记录到错误日志
+          try {
+            await this.dbManager.addErrorLog({
+              timestamp: Date.now(),
+              method: req.method,
+              path: req.path,
+              statusCode: 500,
+              errorMessage: error.message || 'Stream processing error',
+              errorStack: error.stack,
+              requestHeaders: this.normalizeHeaders(req.headers),
+              requestBody: req.body ? JSON.stringify(req.body) : undefined,
+              upstreamRequest: upstreamRequestForLog,
+              responseHeaders: responseHeadersForLog,
+              ruleId: rule.id,
+              targetType,
+              targetServiceId: service.id,
+              targetServiceName: service.name,
+              targetModel: rule.targetModel || req.body?.model,
+              vendorId: service.vendorId,
+              vendorName: vendor?.name,
+              requestModel: req.body?.model,
+              responseTime: Date.now() - startTime,
+            });
+          } catch (logError) {
+            console.error('[Proxy] Failed to log error:', logError);
+          }
+
+          await finalizeLog(500, error.message);
+          if (failoverEnabled && !this.isResponseCommitted(res)) {
+            throw this.createFailoverError(error.message || 'Stream processing error', 500, error);
+          }
+          return;
         }
+
+        finalizeChunks();
+
+        // 关键修复：识别 stream 内部的 response.failed / error 事件，归类为错误并触发 failover 交接
+        const streamFailure = this.detectStreamFailure(eventCollector.getEvents());
+        if (streamFailure) {
+          try {
+            await this.dbManager.addErrorLog({
+              timestamp: Date.now(),
+              method: req.method,
+              path: req.path,
+              statusCode: streamFailure.statusCode,
+              errorMessage: streamFailure.errorMessage,
+              requestHeaders: this.normalizeHeaders(req.headers),
+              requestBody: req.body ? JSON.stringify(req.body) : undefined,
+              upstreamRequest: upstreamRequestForLog,
+              responseHeaders: responseHeadersForLog,
+              responseBody: responseBodyForLog,
+              ruleId: rule.id,
+              targetType,
+              targetServiceId: service.id,
+              targetServiceName: service.name,
+              targetModel: rule.targetModel || req.body?.model,
+              vendorId: service.vendorId,
+              vendorName: vendor?.name,
+              requestModel: req.body?.model,
+              responseTime: Date.now() - startTime,
+            });
+          } catch (logError) {
+            console.error('[Proxy] Failed to log stream failure:', logError);
+          }
+
+          await finalizeLog(streamFailure.statusCode, streamFailure.errorMessage);
+          if (failoverEnabled && !this.isResponseCommitted(res)) {
+            throw this.createFailoverError(streamFailure.errorMessage, streamFailure.statusCode);
+          }
+          return;
+        }
+
+        await finalizeLog(res.statusCode);
         return;
       }
 
@@ -4368,6 +4458,7 @@ export class ProxyServer {
                         error.message?.toLowerCase().includes('timeout') ||
                         (error.errno && error.errno === 'ETIMEDOUT');
 
+      const statusCode = isTimeout ? 504 : this.getErrorStatusCode(error, 500);
       const baseErrorMessage = isTimeout
         ? 'Request timeout - the upstream API took too long to respond'
         : (error.message || 'Internal server error');
@@ -4383,7 +4474,7 @@ export class ProxyServer {
         timestamp: Date.now(),
         method: req.method,
         path: req.path,
-        statusCode: isTimeout ? 504 : 500,
+        statusCode,
         errorMessage: errorMessage,
         errorStack: error.stack,
         requestHeaders: this.normalizeHeaders(req.headers),
@@ -4402,10 +4493,10 @@ export class ProxyServer {
         responseTime: Date.now() - startTime,
       });
 
-      await finalizeLog(isTimeout ? 504 : 500, errorMessage);
+      await finalizeLog(statusCode, errorMessage);
 
       if (failoverEnabled) {
-        throw this.createFailoverError(errorMessage, isTimeout ? 504 : 500, error);
+        throw this.createFailoverError(errorMessage, statusCode, error);
       }
 
       if (this.isResponseCommitted(res)) {
@@ -4438,11 +4529,11 @@ export class ProxyServer {
           res.end();
         } else {
           // 非流式请求：返回 JSON 格式
-          res.status(500).json(claudeError);
+          res.status(statusCode).json(claudeError);
         }
       } else {
         // 对于 Codex，返回 JSON 格式的错误响应
-        res.status(500).json({ error: errorMessage });
+        res.status(statusCode).json({ error: errorMessage });
       }
     } finally {
       req.off('aborted', onRequestAborted);

@@ -295,10 +295,14 @@ aicos version            # Show current version information
 
 - **Content Type Detection**:
   - `high-iq`: High intelligence mode (persistent across conversation)
+    - Only checks for `[!]`/`[x]` prefixes when a high-iq rule exists for the route
     - Use `[!]` prefix to enable: "[!] 重构A模块"
+    - Use `[x]` prefix to explicitly cancel: "[x] 返回普通模式"
+    - Searches backwards from the end of the message list for `[!]` or `[x]`
+    - Regular messages (no prefix) are skipped during search; the most recent `[!]` or `[x]` determines the mode
+    - `[x]` takes priority over `[!]` (cancels high-IQ even if earlier `[!]` exists)
     - Once enabled, the entire conversation uses the high-IQ model
-    - State persists in session until rule becomes unavailable
-    - System automatically infers whether to continue using high-IQ based on conversation context
+    - State persists in session until explicitly cancelled with `[x]` or rule becomes unavailable
     - Automatically detects rule availability and gracefully degrades when rule is unavailable
   - `image-understanding`: Requests with image content
     - 支持使用 MCP 工具处理图像理解请求

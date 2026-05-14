@@ -2,10 +2,30 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-04-23
+
+#### Bug Fixes
+* **修复流式 `response.failed` 被误记为成功日志、且未触发 fallback 交接**
+  - 在默认流式链路中新增对 SSE 事件的失败识别：捕获 `event: response.failed` 与 `event: error`
+  - 将该类 stream 内部失败统一写入错误日志（`addErrorLog`），不再仅因“拼装文本为空”而丢失错误归类
+  - `server_is_overloaded` 映射为 `503`，其他流内失败映射为 `502`
+  - 当启用 failover 且下游响应尚未提交时，将流内失败提升为 failover 候选错误，交由规则切换逻辑处理
+  - 将默认流式 pipeline 改为 `await` 形式，确保同一请求生命周期内可感知并处理流式异常结果
+* **修复部分 200 流式响应乱码问题**
+  - 默认流式转发时移除上游 `accept-encoding` 透传，并强制设置 `accept-encoding: identity`
+  - 避免上游返回压缩 SSE 字节流被文本链路直接透传导致乱码（如 `�/�X...`）
+* **修复规则 fallback 交接时继承“已改写请求体”问题**
+  - 在每次 `proxyRequest` 中保留编程工具原始请求体快照
+  - 每次规则尝试都从原始快照重新构建上游请求（模型与参数），不复用上一跳转换后的请求对象
+
 ### 2026-04-22
+
+#### Features
+* **升级高智商模式（high-iq）激活机制**：仅在存在高智商规则时才进行消息前缀检查；从消息列表末尾往前搜索 [!] 和 [x] 标记，普通消息跳过；新增 [x] 前缀用于显式关闭高智商通道，[x] 优先级高于 [!]
 
 #### Bug Fixes
 * **修复上游返回空响应（HTTP 200）导致编程工具报错**：增加空响应检测，当上游服务商返回 HTTP 200 但 body 为空时，返回 502 错误而非转发空响应；支持 failover 自动切换到下一个服务
+* **修复空响应错误状态码透传不完整导致 fallback 不稳定问题**：统一从错误对象读取 `response.status/statusCode`，并在 failover 错误中显式携带 `statusCode`，确保 `Upstream API returned an empty response (HTTP 200)` 这类 502 错误稳定触发规则切换到下一条
 * **修复错误日志缺失转发信息**：补全所有错误日志中的上下文字段，包括转发失败时的 ruleId/serviceId/vendorId、流式管道错误的完整路由信息和响应头、以及 responseTime 准确计算
 * **修复错误日志过大导致 RangeError: Invalid string length 崩溃**：对写入错误日志的大字段（requestBody、responseBody、upstreamRequest.body）增加 256KB 截断限制，同时为 saveErrorLogs 添加异常保护，避免序列化失败导致服务崩溃
 
