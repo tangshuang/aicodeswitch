@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-05-15
+
+#### Bug Fixes
+* **上游返回空响应（HTTP 200）时透传 200 而非返回 502**
+* **上游返回空 SSE 流（HTTP 200 但无事件数据）时优雅关闭，避免客户端 Content block not found 报错**
+
 ### 2026-04-23
 
 #### Bug Fixes

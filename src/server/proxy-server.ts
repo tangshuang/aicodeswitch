@@ -4259,8 +4259,20 @@ export class ProxyServer {
 
         finalizeChunks();
 
+        // 检测空流：上游返回 SSE Content-Type 但没有发送任何事件数据
+        const collectedEvents = eventCollector.getEvents();
+        if (collectedEvents.length === 0) {
+          const emptyStreamMsg = 'Upstream API returned an empty stream (HTTP 200, no SSE events)';
+          console.warn(`[Proxy] ${emptyStreamMsg}`);
+          await finalizeLog(200, emptyStreamMsg);
+          if (!res.writableEnded) {
+            res.end();
+          }
+          return;
+        }
+
         // 关键修复：识别 stream 内部的 response.failed / error 事件，归类为错误并触发 failover 交接
-        const streamFailure = this.detectStreamFailure(eventCollector.getEvents());
+        const streamFailure = this.detectStreamFailure(collectedEvents);
         if (streamFailure) {
           try {
             await this.dbManager.addErrorLog({
@@ -4308,56 +4320,13 @@ export class ProxyServer {
       // 收集响应头
       responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
 
-      // 检测上游空响应（HTTP 200 但 body 为空）
+      // 检测上游空响应（HTTP 200 但 body 为空）— 透传 200
       if (this.isEmptyResponse(responseData)) {
-        const emptyErrorMsg = 'Upstream API returned an empty response (HTTP 200)';
-        console.warn(`[Proxy] ${emptyErrorMsg}`);
-        if (failoverEnabled) {
-          throw this.createFailoverError(emptyErrorMsg, 502);
-        }
+        const emptyInfoMsg = 'Upstream API returned an empty response (HTTP 200), passing through';
+        console.warn(`[Proxy] ${emptyInfoMsg}`);
         responseBodyForLog = typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
-        const vendors = this.dbManager.getVendors();
-        const vendor = vendors.find(v => v.id === service.vendorId);
-        await this.dbManager.addErrorLog({
-          timestamp: Date.now(),
-          method: req.method,
-          path: req.path,
-          statusCode: 502,
-          errorMessage: emptyErrorMsg,
-          requestHeaders: this.normalizeHeaders(req.headers),
-          requestBody: req.body ? JSON.stringify(req.body) : undefined,
-          ruleId: rule.id,
-          targetType,
-          targetServiceId: service.id,
-          targetServiceName: service.name,
-          targetModel: rule.targetModel || req.body?.model,
-          vendorId: service.vendorId,
-          vendorName: vendor?.name,
-          requestModel: req.body?.model,
-          upstreamRequest: upstreamRequestForLog,
-          responseHeaders: responseHeadersForLog,
-          responseTime: Date.now() - startTime,
-        });
-        await finalizeLog(502, emptyErrorMsg);
-
-        if (route.targetType === 'claude-code') {
-          const claudeError = {
-            type: 'error',
-            error: { type: 'api_error', message: emptyErrorMsg }
-          };
-          if (streamRequested) {
-            res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-            res.setHeader('Cache-Control', 'no-cache');
-            res.setHeader('Connection', 'keep-alive');
-            res.status(200);
-            res.write(`event: error\ndata: ${JSON.stringify(claudeError)}\n\n`);
-            res.end();
-          } else {
-            res.status(502).json(claudeError);
-          }
-        } else {
-          res.status(502).json({ error: emptyErrorMsg });
-        }
+        await finalizeLog(200, emptyInfoMsg);
+        res.status(200).end();
         return;
       }
 
