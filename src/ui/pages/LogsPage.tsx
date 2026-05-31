@@ -709,6 +709,116 @@ function LogsPage() {
   };
 
   /**
+   * 从日志中提取响应文本内容
+   */
+  const extractResponseText = (log: RequestLog): string => {
+    // 尝试从 stream 响应中提取
+    const sourceText = log.downstreamResponseBody;
+    if (typeof sourceText === 'string' &&
+        (sourceText.includes('event:') || sourceText.includes('data:'))) {
+      const events = parseSSEChunks(sourceText);
+      const { text, thinking } = assembleStreamText(events);
+      const parts: string[] = [];
+      if (thinking) {
+        parts.push(`<details><summary>思考过程</summary>\n\n${thinking}\n\n</details>`);
+      }
+      if (text) {
+        parts.push(text);
+      }
+      return parts.join('\n\n');
+    }
+
+    // 尝试从 responseBody 中提取
+    if (log.responseBody) {
+      try {
+        const parsed = typeof log.responseBody === 'string'
+          ? JSON.parse(log.responseBody)
+          : log.responseBody;
+        if (parsed.content) {
+          if (Array.isArray(parsed.content)) {
+            const parts: string[] = [];
+            for (const block of parsed.content) {
+              if (block.type === 'text' && block.text) parts.push(block.text);
+              else if (block.type === 'thinking' && block.thinking) {
+                parts.push(`<details><summary>思考过程</summary>\n\n${block.thinking}\n\n</details>`);
+              }
+            }
+            return parts.join('\n\n');
+          }
+          if (typeof parsed.content === 'string') return parsed.content;
+        }
+        // OpenAI 格式
+        if (parsed.choices?.[0]?.message?.content) {
+          return parsed.choices[0].message.content;
+        }
+      } catch { /* ignore */ }
+    }
+
+    return '';
+  };
+
+  /**
+   * 将当前会话导出为 JSON 文件
+   */
+  const exportSessionAsJson = () => {
+    if (!selectedSession) return;
+
+    const s = selectedSession;
+    const logs = selectedSessionLogs.map((log, index) => {
+      const messages = log.body?.messages || [];
+      const responseText = extractResponseText(log);
+      return {
+        index: index + 1,
+        timestamp: dayjs(log.timestamp).format('YYYY-MM-DD HH:mm:ss'),
+        statusCode: log.statusCode || null,
+        responseTime: log.responseTime || null,
+        requestModel: log.requestModel || null,
+        targetModel: log.targetModel || null,
+        vendorName: log.vendorName || null,
+        serviceName: log.targetServiceName || null,
+        contentType: log.contentType || null,
+        tags: log.tags || [],
+        usage: log.usage || null,
+        messages,
+        response: responseText || null,
+      };
+    });
+
+    const data = {
+      session: {
+        id: s.id,
+        title: s.title || null,
+        targetType: s.targetType,
+        targetTypeName: TARGET_TYPE[s.targetType] || s.targetType,
+        requestCount: s.requestCount,
+        totalTokens: s.totalTokens,
+        model: s.model || null,
+        vendorName: s.vendorName || null,
+        serviceName: s.serviceName || null,
+        firstRequestAt: dayjs(s.firstRequestAt).format('YYYY-MM-DD HH:mm:ss'),
+        lastRequestAt: dayjs(s.lastRequestAt).format('YYYY-MM-DD HH:mm:ss'),
+        duration: formatDuration(s.firstRequestAt, s.lastRequestAt),
+        highIqMode: s.highIqMode || false,
+      },
+      logs,
+      exportedAt: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+    };
+
+    const content = JSON.stringify(data, null, 2);
+    const blob = new Blob([content], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const safeTitle = (s.title || s.id.slice(0, 8)).replace(/[\\/:*?"<>|]/g, '_');
+    a.download = `${safeTitle}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success('导出成功');
+  };
+
+  /**
    * 格式化错误日志为 Markdown
    */
   const formatErrorLogAsMarkdown = (log: ErrorLog): string => {
@@ -1852,6 +1962,8 @@ function LogsPage() {
                 )}
               </div>
               <div className="modal-footer">
+                <button className="btn btn-primary" onClick={exportSessionAsJson}
+                  disabled={selectedSessionLogs.length === 0}>导出</button>
                 <button className="btn btn-secondary" onClick={() => {
                   setSelectedSession(null);
                   setSelectedSessionLogs([]);

@@ -151,6 +151,24 @@ export default {
             },
         ]
     },
+    deepseek: {
+        name: 'DeepSeek',
+        description: 'DeepSeek 官方 API https://platform.deepseek.com',
+        services: [
+            {
+                name: 'Claude 标准接口',
+                sourceType: 'claude',
+                apiUrl: 'https://api.deepseek.com/anthropic',
+                models: 'deepseek-v4-flash, deepseek-v4-pro',
+            },
+            {
+                name: 'DeepSeek Reasoning Chat 接口',
+                sourceType: 'deepseek-reasoning-chat',
+                apiUrl: 'https://api.deepseek.com/v1/chat/completions',
+                models: 'deepseek-v4-flash, deepseek-v4-pro',
+            },
+        ],
+    },
     openai: {
         name: 'OpenAI',
         description: 'OpenAI 官方 API https://platform.openai.com',

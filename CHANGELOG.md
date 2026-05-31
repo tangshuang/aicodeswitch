@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 2026-06-01
+
+#### Features
+* **一键配置供应商新增 DeepSeek 官方**，支持 Chat Completions、Claude 标准接口和 Reasoning Chat 三种服务类型，包含 deepseek-v4-flash 和 deepseek-v4-pro 模型
+* **会话详情弹窗新增导出功能**，支持将当前会话以 JSON 格式导出为文件，包含会话元信息、对话消息和响应内容
+
 ### 2026-05-31
 
 #### Features
