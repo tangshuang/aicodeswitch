@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file. See [standa
 
 ### 2026-06-01
 
+#### Bug Fixes
+* **补充 Codex compact 对话识别**：新增 `/v1/responses/compact` 路径检测逻辑，`compact` 内容类型判定现在同时支持 Claude Code 指令型 compact 与 Codex Responses compact 请求
+
 #### Features
 * **一键配置供应商新增 DeepSeek 官方**，支持 Chat Completions、Claude 标准接口和 Reasoning Chat 三种服务类型，包含 deepseek-v4-flash 和 deepseek-v4-pro 模型
 * **会话详情弹窗新增导出功能**，支持将当前会话以 JSON 格式导出为文件，包含会话元信息、对话消息和响应内容

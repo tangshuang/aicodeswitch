@@ -51,7 +51,7 @@ import {
 } from './mcp-image-handler';
 import { normalizeSourceType } from './type-migration';
 import { readOriginalConfig } from './original-config-reader';
-import { isLastMessageCompact } from './utils';
+import { isCodexCompactRequest, isLastMessageCompact } from './utils';
 
 type ContentTypeDetector = {
   type: ContentType;
@@ -1678,7 +1678,10 @@ export class ProxyServer {
     return [
       {
         type: 'compact',
-        match: (_req, body) => {
+        match: (req, body) => {
+          if (isCodexCompactRequest(req.path) || isCodexCompactRequest(req.originalUrl)) {
+            return true;
+          }
           const messages = this.extractConversationMessages(body);
           return isLastMessageCompact(messages);
         },

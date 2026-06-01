@@ -66,3 +66,20 @@ export function isLastMessageCompact(messages: any[]): boolean {
   }
   return isCompactRequest(messages[messages.length - 1]);
 }
+
+/**
+ * 检测请求是否为 Codex 的 compact（压缩）请求
+ *
+ * Codex 基于 OpenAI Responses API，compact 操作走独立端点：
+ * - POST /v1/responses/compact
+ *
+ * 注意：这与普通 /v1/responses 请求中携带 compaction item（继续对话）不同，
+ * 这里仅识别“发起压缩”这个动作本身。
+ */
+export function isCodexCompactRequest(path?: string): boolean {
+  if (!path || typeof path !== 'string') {
+    return false;
+  }
+  const normalizedPath = path.split('?')[0];
+  return /\/v1\/responses\/compact\/?$/.test(normalizedPath);
+}
