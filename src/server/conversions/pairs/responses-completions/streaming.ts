@@ -19,14 +19,17 @@ export class CompletionsToResponsesConverter implements StreamConverter {
   private model = '';
   private reasoningStarted = false;
   private textStarted = false;
+  private reasoningOutputIndex = -1;
+  private messageOutputIndex = -1;
   private currentToolCalls = new Map<
     number,
-    { id: string; name: string; argumentsText: string }
+    { id: string; name: string; argumentsText: string; outputIndex: number }
   >();
   private pendingReasoningText = '';
   private accumulatedText = '';
   private finalized = false;
   private output: any[] = [];
+  private nextOutputIndex = 0;
   private usage: any = null;
   private finishReason: string | null = null;
 
@@ -73,13 +76,14 @@ export class CompletionsToResponsesConverter implements StreamConverter {
         this.pendingReasoningText += delta.reasoning_content;
 
         if (!this.reasoningStarted) {
+          this.reasoningOutputIndex = this.nextOutputIndex++;
           const rsId = generateCallId().replace('call_', 'rs_');
           events.push(this.makeSSE('response.output_item.added', {
-            output_index: this.output.length,
+            output_index: this.reasoningOutputIndex,
             item: { type: 'reasoning', id: rsId },
           }));
           events.push(this.makeSSE('response.reasoning_summary_part.added', {
-            output_index: this.output.length,
+            output_index: this.reasoningOutputIndex,
             summary_index: 0,
             part: { type: 'summary_text' },
           }));
@@ -87,6 +91,7 @@ export class CompletionsToResponsesConverter implements StreamConverter {
         }
 
         events.push(this.makeSSE('response.reasoning.delta', {
+          output_index: this.reasoningOutputIndex,
           delta: delta.reasoning_content,
         }));
       }
@@ -96,13 +101,13 @@ export class CompletionsToResponsesConverter implements StreamConverter {
         this.accumulatedText += delta.content;
 
         if (!this.textStarted) {
-          const msgIdx = this.output.length;
+          this.messageOutputIndex = this.nextOutputIndex++;
           events.push(this.makeSSE('response.output_item.added', {
-            output_index: msgIdx,
+            output_index: this.messageOutputIndex,
             item: { type: 'message', status: 'in_progress', role: 'assistant', content: [] },
           }));
           events.push(this.makeSSE('response.content_part.added', {
-            output_index: msgIdx,
+            output_index: this.messageOutputIndex,
             content_index: 0,
             part: { type: 'output_text', text: '', annotations: [] },
           }));
@@ -110,6 +115,8 @@ export class CompletionsToResponsesConverter implements StreamConverter {
         }
 
         events.push(this.makeSSE('response.output_text.delta', {
+          output_index: this.messageOutputIndex,
+          content_index: 0,
           delta: delta.content,
         }));
       }
@@ -124,14 +131,16 @@ export class CompletionsToResponsesConverter implements StreamConverter {
             // New tool call
             const tcId = tc.id || generateCallId();
             const tcName = tc.function?.name || '';
+            const tcOutputIndex = this.nextOutputIndex++;
             this.currentToolCalls.set(toolIdx, {
               id: tcId,
               name: tcName,
               argumentsText: '',
+              outputIndex: tcOutputIndex,
             });
 
             events.push(this.makeSSE('response.output_item.added', {
-              output_index: this.output.length,
+              output_index: tcOutputIndex,
               item: {
                 type: 'function_call',
                 status: 'in_progress',
@@ -145,14 +154,14 @@ export class CompletionsToResponsesConverter implements StreamConverter {
           // Arguments fragment
           const argsFragment = normalizeToolArgumentsFragment(tc.function?.arguments);
           if (argsFragment) {
-            if (existing) {
-              existing.argumentsText += argsFragment;
-            } else {
-              const current = this.currentToolCalls.get(toolIdx);
-              if (current) current.argumentsText += argsFragment;
+            const current = this.currentToolCalls.get(toolIdx);
+            if (current) {
+              current.argumentsText += argsFragment;
             }
 
             events.push(this.makeSSE('response.function_call_arguments.delta', {
+              output_index: current?.outputIndex ?? this.output.length,
+              call_id: current?.id,
               delta: argsFragment,
             }));
           }
@@ -184,11 +193,14 @@ export class CompletionsToResponsesConverter implements StreamConverter {
     // Finalize reasoning
     if (this.reasoningStarted) {
       events.push(this.makeSSE('response.reasoning.done', {
+        output_index: this.reasoningOutputIndex,
         summary: [{ type: 'summary_text', text: this.pendingReasoningText }],
       }));
-      events.push(this.makeSSE('response.reasoning_summary_part.done', {}));
+      events.push(this.makeSSE('response.reasoning_summary_part.done', {
+        output_index: this.reasoningOutputIndex,
+      }));
       events.push(this.makeSSE('response.output_item.done', {
-        output_index: this.output.length,
+        output_index: this.reasoningOutputIndex,
         item: { type: 'reasoning' },
       }));
       this.output.push({
@@ -201,9 +213,13 @@ export class CompletionsToResponsesConverter implements StreamConverter {
     // Finalize text
     if (this.textStarted) {
       events.push(this.makeSSE('response.output_text.done', {
+        output_index: this.messageOutputIndex,
+        content_index: 0,
         text: '',
       }));
       events.push(this.makeSSE('response.content_part.done', {
+        output_index: this.messageOutputIndex,
+        content_index: 0,
         part: { type: 'output_text', text: '', annotations: [] },
       }));
       this.output.push({
@@ -213,7 +229,7 @@ export class CompletionsToResponsesConverter implements StreamConverter {
         content: [{ type: 'output_text', text: this.accumulatedText }],
       });
       events.push(this.makeSSE('response.output_item.done', {
-        output_index: this.output.length - 1,
+        output_index: this.messageOutputIndex,
         item: { type: 'message', status: 'completed', role: 'assistant' },
       }));
     }
@@ -221,15 +237,17 @@ export class CompletionsToResponsesConverter implements StreamConverter {
     // Finalize tool calls
     for (const [, tc] of this.currentToolCalls) {
       events.push(this.makeSSE('response.function_call_arguments.done', {
+        output_index: tc.outputIndex,
         call_id: tc.id,
       }));
       events.push(this.makeSSE('response.output_item.done', {
-        output_index: this.output.length,
+        output_index: tc.outputIndex,
         item: {
           type: 'function_call',
           status: 'completed',
           call_id: tc.id,
           name: tc.name,
+          arguments: tc.argumentsText,
         },
       }));
       this.output.push({
@@ -237,6 +255,7 @@ export class CompletionsToResponsesConverter implements StreamConverter {
         status: 'completed',
         call_id: tc.id,
         name: tc.name,
+        arguments: tc.argumentsText,
       });
     }
 

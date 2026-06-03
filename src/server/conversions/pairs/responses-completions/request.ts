@@ -205,7 +205,7 @@ function flushPendingAssistant(
 function responsesToCompletionsToolChoice(toolChoice: any): any {
   if (typeof toolChoice === 'string') {
     switch (toolChoice) {
-      case 'required': return 'any';
+      case 'required': return 'required';
       case 'auto': return 'auto';
       case 'none': return 'none';
       default: return 'auto';

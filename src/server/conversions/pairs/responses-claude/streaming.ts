@@ -23,6 +23,7 @@ export class ClaudeToResponsesConverter implements StreamConverter {
   private output: any[] = [];
   private currentToolCallId: string | null = null;
   private currentToolName: string | null = null;
+  private currentToolArguments = '';
   private reasoningText = '';
   private pendingStopReason: string | null = null;
 
@@ -60,12 +61,13 @@ export class ClaudeToResponsesConverter implements StreamConverter {
           if (block?.type === 'thinking') {
             // Close text if open
             this.closeText(events);
+            const rsIdx = this.output.length;
             events.push(this.makeSSE('response.output_item.added', {
-              output_index: this.output.length,
+              output_index: rsIdx,
               item: { type: 'reasoning', id: `rs_${generateCallId().slice(5)}` },
             }));
             events.push(this.makeSSE('response.reasoning_summary_part.added', {
-              output_index: this.output.length,
+              output_index: rsIdx,
               summary_index: 0,
               part: { type: 'summary_text' },
             }));
@@ -91,6 +93,7 @@ export class ClaudeToResponsesConverter implements StreamConverter {
             this.closeThinking(events);
             this.currentToolCallId = block.id;
             this.currentToolName = block.name;
+            this.currentToolArguments = '';
             const toolIdx = this.output.length;
             events.push(this.makeSSE('response.output_item.added', {
               output_index: toolIdx,
@@ -113,6 +116,7 @@ export class ClaudeToResponsesConverter implements StreamConverter {
             if (text) {
               this.reasoningText += text;
               events.push(this.makeSSE('response.reasoning.delta', {
+                output_index: this.output.length,
                 delta: text,
               }));
             }
@@ -120,13 +124,18 @@ export class ClaudeToResponsesConverter implements StreamConverter {
             const text = delta.text || '';
             if (text) {
               events.push(this.makeSSE('response.output_text.delta', {
+                output_index: this.textMessageOutputIndex(),
+                content_index: 0,
                 delta: text,
               }));
             }
           } else if (delta?.type === 'input_json_delta') {
             const partialJson = delta.partial_json || '';
             if (partialJson) {
+              this.currentToolArguments += partialJson;
               events.push(this.makeSSE('response.function_call_arguments.delta', {
+                output_index: this.output.length,
+                call_id: this.currentToolCallId,
                 delta: partialJson,
               }));
             }
@@ -137,16 +146,19 @@ export class ClaudeToResponsesConverter implements StreamConverter {
         case 'content_block_stop': {
           // If this was a tool_use block, emit function_call_arguments.done and output_item.done
           if (this.currentToolCallId !== null) {
+            const tcIdx = this.output.length;
             events.push(this.makeSSE('response.function_call_arguments.done', {
+              output_index: tcIdx,
               call_id: this.currentToolCallId,
             }));
             events.push(this.makeSSE('response.output_item.done', {
-              output_index: this.output.length,
+              output_index: tcIdx,
               item: {
                 type: 'function_call',
                 status: 'completed',
                 call_id: this.currentToolCallId,
                 name: this.currentToolName || '',
+                arguments: this.currentToolArguments,
               },
             }));
             this.output.push({
@@ -154,9 +166,11 @@ export class ClaudeToResponsesConverter implements StreamConverter {
               status: 'completed',
               call_id: this.currentToolCallId,
               name: this.currentToolName,
+              arguments: this.currentToolArguments,
             });
             this.currentToolCallId = null;
             this.currentToolName = null;
+            this.currentToolArguments = '';
           }
           break;
         }
@@ -187,31 +201,50 @@ export class ClaudeToResponsesConverter implements StreamConverter {
     return events;
   }
 
+  /**
+   * Get the output index of the text message.
+   * The text message is at the last output index that hasn't been pushed yet.
+   */
+  private textMessageOutputIndex(): number {
+    // During streaming, text output hasn't been pushed yet.
+    // Its index is determined by what's already been pushed + whether it's after reasoning.
+    return this.thinkingStarted ? this.output.length : this.output.length;
+  }
+
   private closeText(events: SSEEvent[]): void {
     if (this.textStarted) {
+      const msgIdx = this.output.length;
       events.push(this.makeSSE('response.output_text.done', {
+        output_index: msgIdx,
+        content_index: 0,
         text: '',
       }));
       events.push(this.makeSSE('response.content_part.done', {
+        output_index: msgIdx,
+        content_index: 0,
         part: { type: 'output_text', text: '', annotations: [] },
       }));
+      this.output.push({ type: 'message', status: 'completed', role: 'assistant' });
       events.push(this.makeSSE('response.output_item.done', {
-        output_index: this.output.length,
+        output_index: this.output.length - 1,
         item: { type: 'message', status: 'completed', role: 'assistant' },
       }));
-      this.output.push({ type: 'message', status: 'completed', role: 'assistant' });
       this.textStarted = false;
     }
   }
 
   private closeThinking(events: SSEEvent[]): void {
     if (this.thinkingStarted) {
+      const rsIdx = this.output.length;
       events.push(this.makeSSE('response.reasoning.done', {
+        output_index: rsIdx,
         summary: [{ type: 'summary_text', text: this.reasoningText }],
       }));
-      events.push(this.makeSSE('response.reasoning_summary_part.done', {}));
+      events.push(this.makeSSE('response.reasoning_summary_part.done', {
+        output_index: rsIdx,
+      }));
       events.push(this.makeSSE('response.output_item.done', {
-        output_index: this.output.length,
+        output_index: rsIdx,
         item: { type: 'reasoning' },
       }));
       this.output.push({ type: 'reasoning' });
@@ -250,6 +283,7 @@ export class ClaudeToResponsesConverter implements StreamConverter {
     }
 
     events.push(this.makeSSE('response.completed', { response: responseObj }));
+    events.push({ data: '[DONE]', event: '' });
   }
 
   private makeSSE(eventName: string, data: any): SSEEvent {
