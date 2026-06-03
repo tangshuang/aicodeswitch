@@ -22,6 +22,8 @@ import type {
   CodexReasoningEffort,
   ClaudeEffortLevel,
   ApiPathBinding,
+  ToolName,
+  ToolBindings,
 } from '../types';
 import { migrateSourceType, isLegacySourceType, normalizeSourceType } from './type-migration';
 
@@ -90,6 +92,10 @@ export class FileSystemDatabaseManager {
   private mcps: MCPServer[] = [];
   private apiPathBindingsData: ApiPathBinding[] = [];
   private apiPathModelsData = '';
+  private toolBindings: ToolBindings = {
+    'claude-code': { tool: 'claude-code', routeId: null },
+    'codex': { tool: 'codex', routeId: null },
+  };
 
   // 持久化统计数据
   private statistics: Statistics = this.createEmptyStatistics();
@@ -123,6 +129,7 @@ export class FileSystemDatabaseManager {
   private get blacklistFile() { return path.join(this.dataPath, 'blacklist.json'); }
   private get statisticsFile() { return path.join(this.dataPath, 'statistics.json'); }
   private get mcpFile() { return path.join(this.dataPath, 'mcps.json'); }
+  private get toolBindingsFile() { return path.join(this.dataPath, 'tool-bindings.json'); }
   private get apiPathBindingsFile() { return path.join(this.dataPath, 'api-path-bindings.json'); }
 
   // 创建空的统计数据结构
@@ -188,6 +195,7 @@ export class FileSystemDatabaseManager {
       this.loadStatistics(),
       this.loadMCPs(),
       this.loadApiPathBindings(),
+      this.loadToolBindings(),
     ]);
 
     // 会话日志索引依赖 logShardsIndex，必须在 loadLogsIndex 之后
@@ -449,6 +457,28 @@ export class FileSystemDatabaseManager {
 
   private async saveRules() {
     await this.saveRoutesData();
+  }
+
+  private async loadToolBindings(): Promise<void> {
+    try {
+      const data = await fs.readFile(this.toolBindingsFile, 'utf-8');
+      const parsed = JSON.parse(data);
+      // Merge with defaults to handle new tools
+      this.toolBindings = {
+        'claude-code': parsed['claude-code'] || { tool: 'claude-code', routeId: null },
+        'codex': parsed['codex'] || { tool: 'codex', routeId: null },
+      };
+    } catch {
+      // File doesn't exist yet, use defaults
+      this.toolBindings = {
+        'claude-code': { tool: 'claude-code', routeId: null },
+        'codex': { tool: 'codex', routeId: null },
+      };
+    }
+  }
+
+  private async saveToolBindings(): Promise<void> {
+    await fs.writeFile(this.toolBindingsFile, JSON.stringify(this.toolBindings, null, 2));
   }
 
   /**
@@ -1054,6 +1084,12 @@ export class FileSystemDatabaseManager {
   }
 
   private async migrateRouteToolSettingsToGlobalConfig(): Promise<void> {
+    const rawRoutes = this.routes as any[];
+
+    // ---------------------------------------------------------------------------
+    // Step 1: Migrate legacy route-level tool settings (enableAgentTeams, etc.)
+    //         to global AppConfig — only if AppConfig doesn't already have them.
+    // ---------------------------------------------------------------------------
     const hasGlobalToolConfig =
       !!this.config &&
       (
@@ -1062,19 +1098,18 @@ export class FileSystemDatabaseManager {
         Object.prototype.hasOwnProperty.call(this.config, 'codexModelReasoningEffort')
       );
 
-    const getPreferredRoute = (targetType: TargetType) => {
-      const activeRoute = this.routes.find(route => route.targetType === targetType && route.isActive);
-      if (activeRoute) {
-        return activeRoute;
-      }
-      return this.routes.find(route => route.targetType === targetType);
-    };
-
-    let configUpdated = false;
     if (!hasGlobalToolConfig) {
+      const getPreferredRoute = (targetType: TargetType): any | undefined => {
+        // Prefer isActive=true route, fall back to first match
+        const active = rawRoutes.find(r => r.targetType === targetType && r.isActive === true);
+        if (active) return active;
+        return rawRoutes.find(r => r.targetType === targetType);
+      };
+
       const preferredClaudeRoute = getPreferredRoute('claude-code');
       const preferredCodexRoute = getPreferredRoute('codex');
       const nextConfig: AppConfig = { ...(this.config || {}) };
+      let configUpdated = false;
 
       if (typeof preferredClaudeRoute?.enableAgentTeams === 'boolean') {
         nextConfig.enableAgentTeams = preferredClaudeRoute.enableAgentTeams;
@@ -1092,33 +1127,84 @@ export class FileSystemDatabaseManager {
       if (configUpdated) {
         this.config = nextConfig;
         await this.saveConfig();
-        console.log('[ConfigMigration] Migrated route-level tool settings to global app config');
+        console.log('[Migration] Migrated route-level tool settings to global AppConfig');
       }
     }
 
-    // 清理路由中的旧字段，避免后续重复歧义
-    let routesUpdated = false;
-    this.routes = this.routes.map((route) => {
-      const hasLegacyFields =
-        Object.prototype.hasOwnProperty.call(route, 'enableAgentTeams') ||
-        Object.prototype.hasOwnProperty.call(route, 'enableBypassPermissionsSupport') ||
-        Object.prototype.hasOwnProperty.call(route, 'codexModelReasoningEffort');
+    // ---------------------------------------------------------------------------
+    // Step 2: Migrate route.targetType + route.isActive → tool-bindings
+    //
+    // This step is the core migration for the Route Activation UX Refactor.
+    // It reads the old Route.isActive and Route.targetType fields from routes.json
+    // and writes equivalent entries into tool-bindings.json.
+    //
+    // Idempotency:
+    //   - If tool-bindings.json already has a non-null routeId for a tool, and
+    //     the routes no longer carry isActive/targetType (already migrated), this
+    //     step is a no-op.
+    //   - If routes still carry the old fields (first run after upgrade), they
+    //     are migrated and then cleaned.
+    // ---------------------------------------------------------------------------
+    const hasLegacyRouteFields = rawRoutes.some(r =>
+      Object.prototype.hasOwnProperty.call(r, 'isActive') ||
+      Object.prototype.hasOwnProperty.call(r, 'targetType')
+    );
 
-      if (!hasLegacyFields) {
-        return route;
+    if (hasLegacyRouteFields) {
+      let toolBindingsUpdated = false;
+
+      for (const route of rawRoutes) {
+        // Only migrate routes that are explicitly active and have a targetType
+        if (route.isActive === true && route.targetType) {
+          const tool = route.targetType as ToolName;
+          if (tool === 'claude-code' || tool === 'codex') {
+            // Only write if tool-bindings doesn't already have a binding
+            // (avoid overwriting user's newer tool-binding choices)
+            if (!this.toolBindings[tool]?.routeId) {
+              this.toolBindings[tool] = { tool, routeId: route.id };
+              toolBindingsUpdated = true;
+              console.log(`[Migration] Binding tool '${tool}' → route '${route.id}' (${route.name || 'unnamed'})`);
+            }
+          }
+        }
       }
 
-      routesUpdated = true;
-      const cleanedRoute = { ...route };
-      delete (cleanedRoute as Partial<Route>).enableAgentTeams;
-      delete (cleanedRoute as Partial<Route>).enableBypassPermissionsSupport;
-      delete (cleanedRoute as Partial<Route>).codexModelReasoningEffort;
-      return cleanedRoute;
-    });
+      if (toolBindingsUpdated) {
+        await this.saveToolBindings();
+        console.log('[Migration] Saved migrated tool-bindings to tool-bindings.json');
+      }
 
-    if (routesUpdated) {
-      await this.saveRoutes();
-      console.log('[ConfigMigration] Removed deprecated route-level tool settings');
+      // Clean legacy fields from all route objects
+      let routesUpdated = false;
+      this.routes = rawRoutes.map((route: any) => {
+        const hasLegacy =
+          Object.prototype.hasOwnProperty.call(route, 'targetType') ||
+          Object.prototype.hasOwnProperty.call(route, 'isActive') ||
+          Object.prototype.hasOwnProperty.call(route, 'enableAgentTeams') ||
+          Object.prototype.hasOwnProperty.call(route, 'enableBypassPermissionsSupport') ||
+          Object.prototype.hasOwnProperty.call(route, 'codexModelReasoningEffort');
+
+        if (!hasLegacy) return route;
+
+        routesUpdated = true;
+        const {
+          targetType,
+          isActive,
+          enableAgentTeams,
+          enableBypassPermissionsSupport,
+          codexModelReasoningEffort,
+          ...cleanedRoute
+        } = route;
+        return cleanedRoute as Route;
+      });
+
+      if (routesUpdated) {
+        await this.saveRoutes();
+        console.log('[Migration] Cleaned legacy fields (targetType, isActive, deprecated tool settings) from routes.json');
+      }
+    } else {
+      // No legacy fields found — either already migrated or fresh install
+      console.log('[Migration] No legacy route fields found, skipping tool-bindings migration');
     }
   }
 
@@ -1398,7 +1484,7 @@ export class FileSystemDatabaseManager {
   async createRoute(route: Omit<Route, 'id' | 'createdAt' | 'updatedAt'>): Promise<Route> {
     const id = crypto.randomUUID();
     const now = Date.now();
-    const newRoute: Route = { ...route, id, createdAt: now, updatedAt: now };
+    const newRoute: Route = { name: route.name, description: route.description, id, createdAt: now, updatedAt: now };
     this.routes.push(newRoute);
     await this.saveRoutes();
     return newRoute;
@@ -1423,6 +1509,11 @@ export class FileSystemDatabaseManager {
     const index = this.routes.findIndex(r => r.id === id);
     if (index === -1) return false;
 
+    // 检查该路由是否被工具绑定
+    if (this.isRouteBound(id)) {
+      return false;
+    }
+
     // 删除关联的规则
     this.rules = this.rules.filter(r => r.routeId !== id);
     await this.saveRules();
@@ -1432,42 +1523,52 @@ export class FileSystemDatabaseManager {
     return true;
   }
 
-  async activateRoute(id: string): Promise<boolean> {
-    const route = this.routes.find(r => r.id === id);
+  getRoute(id: string): Route | undefined {
+    return this.routes.find(r => r.id === id);
+  }
+
+  // ToolBindings operations
+  getToolBindings(): ToolBindings {
+    return this.toolBindings;
+  }
+
+  getActiveRouteIdForTool(tool: ToolName): string | null {
+    return this.toolBindings[tool]?.routeId ?? null;
+  }
+
+  async activateToolRoute(tool: ToolName, routeId: string): Promise<boolean> {
+    const route = this.routes.find(r => r.id === routeId);
     if (!route) return false;
-
-    // 停用同类型的其他路由
-    for (const r of this.routes) {
-      if (r.targetType === route.targetType) {
-        r.isActive = r.id === id;
-      }
-    }
-
-    await this.saveRoutes();
+    this.toolBindings[tool] = { tool, routeId };
+    await this.saveToolBindings();
     return true;
   }
 
-  async deactivateRoute(id: string): Promise<boolean> {
-    const route = this.routes.find(r => r.id === id);
-    if (!route) return false;
-
-    route.isActive = false;
-    await this.saveRoutes();
+  async deactivateToolRoute(tool: ToolName): Promise<boolean> {
+    this.toolBindings[tool] = { tool, routeId: null };
+    await this.saveToolBindings();
     return true;
   }
 
-  async deactivateAllRoutes(): Promise<number> {
+  async deactivateAllToolRoutes(): Promise<number> {
     let count = 0;
-    for (const route of this.routes) {
-      if (route.isActive) {
-        route.isActive = false;
+    for (const tool of Object.keys(this.toolBindings) as ToolName[]) {
+      if (this.toolBindings[tool].routeId) {
+        this.toolBindings[tool] = { tool, routeId: null };
         count++;
       }
     }
     if (count > 0) {
-      await this.saveRoutes();
+      await this.saveToolBindings();
     }
     return count;
+  }
+
+  isRouteBound(routeId: string): boolean {
+    for (const tool of Object.keys(this.toolBindings) as ToolName[]) {
+      if (this.toolBindings[tool].routeId === routeId) return true;
+    }
+    return false;
   }
 
   // Rule operations
@@ -2286,12 +2387,7 @@ export class FileSystemDatabaseManager {
     if (!route.name || typeof route.name !== 'string') {
       return { valid: false, error: `路由[${index}](${route.id}) 缺少有效的 name 字段` };
     }
-    if (!route.targetType || !['claude-code', 'codex'].includes(route.targetType)) {
-      return { valid: false, error: `路由[${index}](${route.id}) 的 targetType 必须是 'claude-code' 或 'codex'` };
-    }
-    if (typeof route.isActive !== 'boolean') {
-      return { valid: false, error: `路由[${index}](${route.id}) 的 isActive 必须是布尔值` };
-    }
+    // targetType and isActive are no longer part of Route (migrated to tool-bindings)
     return { valid: true };
   }
 

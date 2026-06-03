@@ -1379,7 +1379,6 @@ table th {
   font-size: 13px !important;
   color: var(--text-muted) !important;
   line-height: 1.6;
-  padding-left: 42px;
 }
 
 .api-binding-list {
@@ -1544,4 +1543,103 @@ table th {
   .api-binding-control {
     flex: 1 1 100%;
   }
+}
+
+/* ===== Tool Route Binding (Claude Code / Codex) ===== */
+.tool-binding-block {
+  margin-bottom: 20px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  transition: all 0.25s ease;
+}
+
+.tool-binding-block:hover {
+  border-color: var(--accent-secondary);
+  box-shadow: 0 2px 8px var(--shadow-secondary);
+}
+
+.tool-binding-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+
+.tool-binding-label-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  color: #fff;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.tool-binding-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tool-binding-row select {
+  flex: 1;
+  min-width: 200px;
+  padding: 9px 32px 9px 12px;
+  border: 1.5px solid var(--border-primary);
+  border-radius: 10px;
+  font-size: 13px;
+  font-family: 'Nunito', sans-serif;
+  background-color: var(--bg-card);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23065F46' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px;
+  color: var(--text-primary);
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+
+[data-theme="dark"] .tool-binding-row select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236EE7B7' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+}
+
+.tool-binding-row select:hover {
+  border-color: var(--accent-secondary);
+}
+
+.tool-binding-row select:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--shadow-secondary);
+}
+
+.tool-binding-row select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tool-binding-deactivate-btn {
+  padding: 8px 18px !important;
+  font-size: 13px !important;
+  border-radius: 10px !important;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tool-binding-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 10px;
+  line-height: 1.6;
 }

@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ApiPathBinding } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ApiPathBinding, ToolName, ToolBindings } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -23,8 +23,9 @@ interface BackendAPI {
   createRoute: (group: Omit<Route, 'id' | 'createdAt' | 'updatedAt'>) => Promise<Route>;
   updateRoute: (id: string, group: Partial<Route>) => Promise<boolean>;
   deleteRoute: (id: string) => Promise<boolean>;
-  activateRoute: (id: string) => Promise<boolean>;
-  deactivateRoute: (id: string) => Promise<boolean>;
+  getToolBindings: () => Promise<ToolBindings>;
+  activateToolRoute: (tool: ToolName, routeId: string) => Promise<{ success: boolean }>;
+  deactivateToolRoute: (tool: ToolName) => Promise<{ success: boolean }>;
 
   getRules: (routeId?: string) => Promise<Rule[]>;
   createRule: (route: Omit<Rule, 'id' | 'createdAt' | 'updatedAt'>) => Promise<Rule>;
@@ -240,8 +241,9 @@ export const api: BackendAPI = {
   createRoute: (group) => requestJson(buildUrl('/api/routes'), { method: 'POST', body: JSON.stringify(group) }),
   updateRoute: (id, group) => requestJson(buildUrl(`/api/routes/${id}`), { method: 'PUT', body: JSON.stringify(group) }),
   deleteRoute: (id) => requestJson(buildUrl(`/api/routes/${id}`), { method: 'DELETE' }),
-  activateRoute: (id) => requestJson(buildUrl(`/api/routes/${id}/activate`), { method: 'POST' }),
-  deactivateRoute: (id) => requestJson(buildUrl(`/api/routes/${id}/deactivate`), { method: 'POST' }),
+  getToolBindings: () => requestJson(buildUrl('/api/tool-bindings')),
+  activateToolRoute: (tool: ToolName, routeId: string) => requestJson(buildUrl('/api/tool-bindings/activate'), { method: 'POST', body: JSON.stringify({ tool, routeId }) }),
+  deactivateToolRoute: (tool: ToolName) => requestJson(buildUrl('/api/tool-bindings/deactivate'), { method: 'POST', body: JSON.stringify({ tool }) }),
 
   getRules: (routeId) => requestJson(buildUrl('/api/rules', routeId ? { routeId } : undefined)),
   createRule: (route) => requestJson(buildUrl('/api/rules'), { method: 'POST', body: JSON.stringify(route) }),

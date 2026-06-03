@@ -1,7 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '../api/client';
-import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry, MCPServer, ToolInstallationStatus, CodexReasoningEffort, ClaudeEffortLevel, AppConfig, ApiPathBinding } from '../../types';
-import { useFlipAnimation } from '../hooks/useFlipAnimation';
+import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry, MCPServer, ToolInstallationStatus, CodexReasoningEffort, ClaudeEffortLevel, AppConfig, ApiPathBinding, ToolName, ToolBindings } from '../../types';
 import { useConfirm } from '../components/Confirm';
 import { toast } from '../components/Toast';
 import { useRulesStatus } from '../hooks/useRulesStatus';
@@ -39,11 +38,6 @@ const CONTENT_TYPE_ICONS: Record<string, string> = {
   'image-understanding': '🖼️',
   'model-mapping': '🔄',
 };
-
-const TARGET_TYPE_OPTIONS = [
-  { value: 'claude-code', label: 'Claude Code' },
-  { value: 'codex', label: 'Codex' },
-];
 
 const CODEX_REASONING_EFFORT_OPTIONS: Array<{ value: CodexReasoningEffort; label: string }> = [
   { value: 'low', label: 'Low' },
@@ -102,7 +96,6 @@ export default function RoutesPage() {
   const [mcps, setMCPs] = useState<MCPServer[]>([]);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   const [apiPathBindings, setApiPathBindings] = useState<ApiPathBinding[]>([]);
-  const [isSavingBindings, setIsSavingBindings] = useState(false);
   const [apiPathModels, setApiPathModels] = useState('');
   const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
   const [showRouteModal, setShowRouteModal] = useState(false);
@@ -147,7 +140,6 @@ export default function RoutesPage() {
   const [claudeVersionCheck, setClaudeVersionCheck] = useState<ToolInstallationStatus | null>(null);
 
   // 配置操作loading状态
-  const [isConfiguringRoute, setIsConfiguringRoute] = useState<string | null>(null);
   const [isUpdatingCodexReasoning, setIsUpdatingCodexReasoning] = useState(false);
   const [isUpdatingClaudeEffort, setIsUpdatingClaudeEffort] = useState(false);
   const [claudeDefaultModelInput, setClaudeDefaultModelInput] = useState<string>('');
@@ -159,11 +151,6 @@ export default function RoutesPage() {
   const [codexDefaultModelInput, setCodexDefaultModelInput] = useState<string>('');
   const [codexDefaultModelDirty, setCodexDefaultModelDirty] = useState(false);
   const [isUpdatingCodexDefaultModel, setIsUpdatingCodexDefaultModel] = useState(false);
-
-  // FLIP动画相关
-  const { recordPositions, applyAnimation } = useFlipAnimation();
-  const routeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const activatingRouteIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     loadRoutes();
@@ -186,39 +173,27 @@ export default function RoutesPage() {
     }
   };
 
-  const handleSaveBindings = async () => {
-    setIsSavingBindings(true);
+  const saveBindings = async (bindings: ApiPathBinding[], models: string) => {
     try {
-      const result = await api.updateApiPathBindings(apiPathBindings, apiPathModels);
+      const result = await api.updateApiPathBindings(bindings, models);
       setApiPathBindings(result.bindings);
       toast.success('路由映射已保存');
     } catch (error: any) {
       toast.error(error.message || '保存失败');
-    } finally {
-      setIsSavingBindings(false);
     }
   };
 
   const handleBindingChange = (apiPath: string, routeId: string | null) => {
-    setApiPathBindings(prev =>
-      prev.map(b => b.apiPath === apiPath ? { ...b, routeId } : b)
-    );
+    const updated = apiPathBindings.map(b => b.apiPath === apiPath ? { ...b, routeId } : b);
+    setApiPathBindings(updated);
+    saveBindings(updated, apiPathModels);
   };
 
-  // 添加页面刷新保护
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (isConfiguringRoute) {
-        e.preventDefault();
-        // 现代浏览器会忽略自定义消息，显示标准确认对话框
-        // 为了兼容性，仍然设置 returnValue（但会被浏览器忽略）
-        e.returnValue = '';
-      }
-    };
+  const handleModelsBlur = () => {
+    saveBindings(apiPathBindings, apiPathModels);
+  };
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [isConfiguringRoute]);
+
 
   useEffect(() => {
     if (selectedRoute) {
@@ -238,15 +213,9 @@ export default function RoutesPage() {
 
   const loadRoutes = async () => {
     const data = await api.getRoutes();
-    // 将已激活的路由排在前面
-    const sortedData = data.sort((a, b) => {
-      if (a.isActive && !b.isActive) return -1;
-      if (!a.isActive && b.isActive) return 1;
-      return 0;
-    });
-    setRoutes(sortedData);
-    if (sortedData.length > 0 && !selectedRoute) {
-      setSelectedRoute(sortedData[0]);
+    setRoutes(data);
+    if (data.length > 0 && !selectedRoute) {
+      setSelectedRoute(data[0]);
     }
   };
 
@@ -315,6 +284,9 @@ export default function RoutesPage() {
     setMCPs(data);
   };
 
+  const [toolBindings, setToolBindings] = useState<ToolBindings | null>(null);
+  const [isConfiguringBinding, setIsConfiguringBinding] = useState<ToolName | null>(null);
+
   const loadAppConfig = async () => {
     try {
       const data = await api.getConfig();
@@ -335,55 +307,52 @@ export default function RoutesPage() {
     }
   };
 
-  const handleActivateRoute = async (id: string) => {
-    setIsConfiguringRoute(id);
-
+  const loadToolBindings = async () => {
     try {
-      // 仅激活路由（配置写入由服务生命周期统一处理）
-      const routeElement = routeRefs.current.get(id);
-      if (routeElement) {
-        recordPositions(id, routeElement);
-      }
+      const data = await api.getToolBindings();
+      setToolBindings(data);
+    } catch (error) {
+      console.error('Failed to load tool bindings:', error);
+    }
+  };
 
-      activatingRouteIdRef.current = id;
-      await api.activateRoute(id);
-      await loadRoutes();
-
-      // 在下一帧应用动画（Invert和Play阶段）
-      if (routeElement) {
-        setTimeout(() => {
-          const newRouteElement = routeRefs.current.get(id);
-          if (newRouteElement) {
-            applyAnimation(id, newRouteElement, 250);
-          }
-          activatingRouteIdRef.current = null;
-        }, 0);
+  const handleActivateToolRoute = async (tool: ToolName, routeId: string) => {
+    setIsConfiguringBinding(tool);
+    try {
+      const result = await api.activateToolRoute(tool, routeId);
+      if (result.success) {
+        await loadToolBindings();
+        await loadRoutes();
+        toast.success('路由已激活');
       } else {
-        activatingRouteIdRef.current = null;
+        toast.error('激活失败');
       }
     } catch (error: any) {
-      console.error('激活路由失败:', error);
-      activatingRouteIdRef.current = null;
-      toast.error(`路由激活失败: ${error.message || '未知错误'}`);
+      toast.error(`激活失败: ${error.message || '未知错误'}`);
     } finally {
-      setIsConfiguringRoute(null);
+      setIsConfiguringBinding(null);
     }
   };
 
-  const handleDeactivateRoute = async (id: string) => {
-    setIsConfiguringRoute(id);
-
+  const handleDeactivateToolRoute = async (tool: ToolName) => {
+    setIsConfiguringBinding(tool);
     try {
-      // 仅停用路由（配置恢复由服务生命周期统一处理）
-      await api.deactivateRoute(id);
-      await loadRoutes();
+      const result = await api.deactivateToolRoute(tool);
+      if (result.success) {
+        await loadToolBindings();
+        await loadRoutes();
+        toast.success('路由已停用');
+      } else {
+        toast.error('停用失败');
+      }
     } catch (error: any) {
-      console.error('停用路由失败:', error);
-      toast.error(`路由停用失败: ${error.message || '未知错误'}`);
+      toast.error(`停用失败: ${error.message || '未知错误'}`);
     } finally {
-      setIsConfiguringRoute(null);
+      setIsConfiguringBinding(null);
     }
   };
+
+
 
   const handleSaveRoute = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -391,8 +360,6 @@ export default function RoutesPage() {
     const route = {
       name: formData.get('name') as string,
       description: formData.get('description') as string,
-      targetType: formData.get('targetType') as 'claude-code' | 'codex',
-      isActive: false,
     };
 
     if (editingRoute) {
@@ -415,13 +382,17 @@ export default function RoutesPage() {
     });
 
     if (confirmed) {
-      await api.deleteRoute(id);
-      loadRoutes();
-      if (selectedRoute && selectedRoute.id === id) {
-        setSelectedRoute(null);
-        setRules([]);
+      try {
+        await api.deleteRoute(id);
+        loadRoutes();
+        if (selectedRoute && selectedRoute.id === id) {
+          setSelectedRoute(null);
+          setRules([]);
+        }
+        toast.success('路由已删除');
+      } catch (error: any) {
+        toast.error(error.message || '删除失败');
       }
-      toast.success('路由已删除');
     }
   };
 
@@ -1024,7 +995,6 @@ export default function RoutesPage() {
         {/* API 路径路由映射 */}
         <div className="card api-binding-card" style={{ marginBottom: 20 }}>
           <div className="api-binding-header">
-            <span className="api-binding-header-icon">⚡</span>
             <h3>API 路径路由映射</h3>
           </div>
           <p className="api-binding-desc">
@@ -1047,6 +1017,7 @@ export default function RoutesPage() {
                         type="text"
                         value={apiPathModels}
                         onChange={(e) => setApiPathModels(e.target.value)}
+                        onBlur={handleModelsBlur}
                         placeholder="自定义模型列表，英文逗号分隔，留空使用默认列表"
                       />
                     ) : (
@@ -1067,15 +1038,6 @@ export default function RoutesPage() {
               );
             })}
           </div>
-          <div className="api-binding-footer">
-            <button
-              className="btn btn-primary api-binding-save-btn"
-              onClick={handleSaveBindings}
-              disabled={isSavingBindings}
-            >
-              {isSavingBindings ? '⟳ 保存中...' : '✓ 保存映射'}
-            </button>
-          </div>
         </div>
 
         <div style={{ display: 'flex', gap: '20px' }}>
@@ -1091,13 +1053,7 @@ export default function RoutesPage() {
                 {routes.map((route) => (
                   <div
                     key={route.id}
-                    ref={(el) => {
-                      if (el) {
-                        routeRefs.current.set(route.id, el);
-                      } else {
-                        routeRefs.current.delete(route.id);
-                      }
-                    }}
+
                     onClick={() => setSelectedRoute(route)}
                     style={{
                       padding: '12px',
@@ -1112,44 +1068,13 @@ export default function RoutesPage() {
                     }}
                   >
                     <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ fontWeight: 500 }}>{route.name}</div>
-                        {route.isActive && <span className={`badge ${route.targetType === 'claude-code' ? 'badge-claude-code' : 'badge-codex'}`}
-                          style={{
-                            position: 'absolute',
-                            top: -16,
-                            right: -8
-                          }}>{TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label} 已激活</span>}
-                      </div>
-                      <div style={{ fontSize: '12px', color: 'var(--text-route-muted)', marginTop: '2px' }}>
-                        客户端工具: {TARGET_TYPE_OPTIONS.find(opt => opt.value === route.targetType)?.label}
-                      </div>
+                      <div style={{ fontWeight: 500 }}>{route.name}</div>
+                      {route.description && (
+                        <div style={{ fontSize: '12px', color: 'var(--text-route-muted)', marginTop: '2px' }}>
+                          {route.description}
+                        </div>
+                      )}
                       <div className="action-buttons" style={{ marginTop: '8px' }}>
-                        {!route.isActive ? (
-                          <button
-                            className="btn btn-success"
-                            style={{ padding: '4px 8px', fontSize: '12px' }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleActivateRoute(route.id);
-                            }}
-                            disabled={isConfiguringRoute !== null}
-                          >
-                            {isConfiguringRoute === route.id ? '处理中...' : '激活'}
-                          </button>
-                        ) : (
-                          <button
-                            className="btn btn-warning"
-                            style={{ padding: '4px 8px', fontSize: '12px' }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeactivateRoute(route.id);
-                            }}
-                            disabled={isConfiguringRoute !== null}
-                          >
-                            {isConfiguringRoute === route.id ? '处理中...' : '停用'}
-                          </button>
-                        )}
                         <button
                           className="btn btn-secondary"
                           style={{ padding: '4px 8px', fontSize: '12px' }}
@@ -1166,7 +1091,6 @@ export default function RoutesPage() {
                             e.stopPropagation();
                             handleDeleteRoute(route.id);
                           }}
-                          disabled={route.isActive}
                         >删除</button>
                       </div>
                     </div>
@@ -1568,7 +1492,7 @@ export default function RoutesPage() {
       </div>
 
       {/* 规则配置 */}
-      <div className="card" style={{ marginTop: '20px' }}>
+      <div className="card">
         <div className="toolbar">
           <h3>规则配置</h3>
         </div>
@@ -1619,6 +1543,45 @@ export default function RoutesPage() {
           <h3>Claude Code 全局配置</h3>
         </div>
         <div style={{ padding: '20px' }}>
+          <div className="tool-binding-block">
+            <div className="tool-binding-label">
+              <span className="tool-binding-label-icon">⚡</span>
+              激活路由
+            </div>
+            <div className="tool-binding-row">
+              <select
+                id="claude-route-binding"
+                value={toolBindings?.['claude-code']?.routeId || ''}
+                onChange={(e) => {
+                  const routeId = e.target.value || null;
+                  if (routeId) {
+                    handleActivateToolRoute('claude-code', routeId);
+                  }
+                }}
+                disabled={isConfiguringBinding === 'claude-code'}
+              >
+                <option value="">选择要激活的路由...</option>
+                {routes.map(r => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}{toolBindings?.['claude-code']?.routeId === r.id ? ' (已激活)' : ''}
+                  </option>
+                ))}
+              </select>
+              {toolBindings?.['claude-code']?.routeId && (
+                <button
+                  className="btn btn-warning tool-binding-deactivate-btn"
+                  onClick={() => handleDeactivateToolRoute('claude-code')}
+                  disabled={isConfiguringBinding === 'claude-code'}
+                >
+                  {isConfiguringBinding === 'claude-code' ? '处理中...' : '停用'}
+                </button>
+              )}
+            </div>
+            <div className="tool-binding-desc">
+              选择一条路由用于 Claude Code 代理请求。激活后，/claude-code/ 路径的请求将使用该路由的规则。
+            </div>
+          </div>
+
           {!isAgentTeamsSupported() && claudeVersionCheck?.claudeCode?.version && (
             <div style={{
               backgroundColor: 'var(--bg-warning, #fff3cd)',
@@ -1811,6 +1774,44 @@ export default function RoutesPage() {
           <h3>Codex 全局配置</h3>
         </div>
         <div style={{ padding: '20px' }}>
+          <div className="tool-binding-block">
+            <div className="tool-binding-label">
+              <span className="tool-binding-label-icon">⚡</span>
+              激活路由
+            </div>
+            <div className="tool-binding-row">
+              <select
+                id="codex-route-binding"
+                value={toolBindings?.['codex']?.routeId || ''}
+                onChange={(e) => {
+                  const routeId = e.target.value || null;
+                  if (routeId) {
+                    handleActivateToolRoute('codex', routeId);
+                  }
+                }}
+                disabled={isConfiguringBinding === 'codex'}
+              >
+                <option value="">选择要激活的路由...</option>
+                {routes.map(r => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}{toolBindings?.['codex']?.routeId === r.id ? ' (已激活)' : ''}
+                  </option>
+                ))}
+              </select>
+              {toolBindings?.['codex']?.routeId && (
+                <button
+                  className="btn btn-warning tool-binding-deactivate-btn"
+                  onClick={() => handleDeactivateToolRoute('codex')}
+                  disabled={isConfiguringBinding === 'codex'}
+                >
+                  {isConfiguringBinding === 'codex' ? '处理中...' : '停用'}
+                </button>
+              )}
+            </div>
+            <div className="tool-binding-desc">
+              选择一条路由用于 Codex 代理请求。激活后，/codex/ 路径的请求将使用该路由的规则。
+            </div>
+          </div>
           <div
             className="form-group"
             style={{
@@ -1986,14 +1987,7 @@ export default function RoutesPage() {
                   <label>描述</label>
                   <textarea name="description" rows={3} defaultValue={editingRoute ? editingRoute.description : ''} />
                 </div>
-                <div className="form-group">
-                  <label>客户端工具</label>
-                  <select name="targetType" defaultValue={editingRoute ? editingRoute.targetType : 'claude-code'} required>
-                    {TARGET_TYPE_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                </div>
+
 
                 <div className="modal-footer">
                   <button type="button" className="btn btn-secondary" onClick={() => setShowRouteModal(false)}>取消</button>

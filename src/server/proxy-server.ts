@@ -18,7 +18,7 @@ import {
 } from './conversions/index';
 import type { Format } from './conversions/types';
 import { StreamConverterAdapter } from './conversions/stream-converter-adapter';
-import type { AppConfig, Rule, APIService, Route, SourceType, ToolType, TokenUsage, ContentType, RequestLog, ApiPath, ApiPathBinding } from '../types';
+import type { AppConfig, Rule, APIService, Route, SourceType, ToolType, ToolName, TokenUsage, ContentType, RequestLog, ApiPath, ApiPathBinding } from '../types';
 import { AuthType } from '../types';
 import {
   isRuleUsingMCP,
@@ -217,6 +217,13 @@ export class ProxyServer {
     return undefined;
   }
 
+  private inferToolFromRequest(req: Request): ToolName {
+    const path = req.path || '';
+    if (path.startsWith('/claude-code')) return 'claude-code';
+    if (path.startsWith('/codex')) return 'codex';
+    return 'claude-code';
+  }
+
   private buildRelayTags(relayed: boolean, useOriginalConfig: boolean = false): string[] {
     const tags = [relayed ? '通过中转' : '未通过中转'];
     if (useOriginalConfig) {
@@ -294,7 +301,7 @@ export class ProxyServer {
 
       // 加载绑定的路由
       const allRoutes = this.dbManager.getRoutes();
-      const route = allRoutes.find((r: Route) => r.id === binding.routeId && r.isActive);
+      const route = allRoutes.find((r: Route) => r.id === binding.routeId);
       if (!route) {
         return res.status(404).json({ error: { message: 'Bound route not found or inactive' } });
       }
@@ -339,7 +346,7 @@ export class ProxyServer {
         }
 
         // 高智商请求判定：存在规则时从消息末尾往前搜索 [!]/[x] 标记
-        const forcedContentType = await this.prepareHighIqRouting(req, route, route.targetType);
+        const forcedContentType = await this.prepareHighIqRouting(req, route, this.inferTargetTypeFromPath(req.path) || 'claude-code');
         const enableFailover = this.config?.enableFailover !== false; // 默认为 true
 
         if (!enableFailover) {
@@ -355,7 +362,7 @@ export class ProxyServer {
             await this.logToolRequest(req, {
               statusCode: 404,
               responseTime: Date.now() - requestStartAt,
-              targetType: route.targetType,
+              targetType: this.inferTargetTypeFromPath(req.path) || 'claude-code',
               error: 'No matching rule found',
               tags: this.buildRelayTags(false),
             });
@@ -367,7 +374,7 @@ export class ProxyServer {
             await this.logToolRequest(req, {
               statusCode: 500,
               responseTime: Date.now() - requestStartAt,
-              targetType: route.targetType,
+              targetType: this.inferTargetTypeFromPath(req.path) || 'claude-code',
               error: 'Target service not configured',
               tags: this.buildRelayTags(false),
             });
@@ -391,7 +398,7 @@ export class ProxyServer {
           await this.logToolRequest(req, {
             statusCode: 404,
             responseTime: Date.now() - requestStartAt,
-            targetType: route.targetType,
+            targetType: this.inferTargetTypeFromPath(req.path) || 'claude-code',
             error: 'No matching rule found',
             tags: this.buildRelayTags(false),
           });
@@ -525,7 +532,7 @@ export class ProxyServer {
         await this.logToolRequest(req, {
           statusCode: 503,
           responseTime: Date.now() - requestStartAt,
-          targetType: route.targetType,
+          targetType: this.inferTargetTypeFromPath(req.path) || 'claude-code',
           error: lastError?.message || 'All services failed',
           tags: this.buildRelayTags(hasRelayAttempt),
         });
@@ -632,7 +639,7 @@ export class ProxyServer {
     this.app.use('/codex', this.createFixedRouteHandler('codex'));
   }
 
-  private createFixedRouteHandler(targetType: 'claude-code' | 'codex') {
+  private createFixedRouteHandler(targetType: ToolName) {
     return async (req: Request, res: Response) => {
       const requestStartAt = Date.now();
       let hasRelayAttempt = false;
@@ -940,9 +947,7 @@ export class ProxyServer {
    * 从数据库实时获取所有活跃路由
    * @returns 活跃路由列表
    */
-  private getActiveRoutes(): Route[] {
-    return this.dbManager.getRoutes().filter(route => route.isActive);
-  }
+
 
   /**
    * 从数据库实时获取指定路由的规则
@@ -959,21 +964,19 @@ export class ProxyServer {
   }
 
   private findMatchingRoute(req: Request): Route | undefined {
-    // 根据请求路径确定目标类型
-    let targetType: ToolType | undefined;
+    let tool: ToolName | undefined;
     if (req.path.startsWith('/claude-code/')) {
-      targetType = 'claude-code';
+      tool = 'claude-code';
     } else if (req.path.startsWith('/codex/')) {
-      targetType = 'codex';
+      tool = 'codex';
     }
 
-    if (!targetType) {
-      return undefined;
-    }
+    if (!tool) return undefined;
 
-    // 返回匹配目标类型且处于活跃状态的路由
-    const activeRoutes = this.getActiveRoutes();
-    return activeRoutes.find(route => route.targetType === targetType && route.isActive);
+    const routeId = this.dbManager.getActiveRouteIdForTool(tool);
+    if (!routeId) return undefined;
+
+    return this.dbManager.getRoute(routeId);
   }
 
   /**
@@ -1028,8 +1031,6 @@ export class ProxyServer {
       const tempRoute: Route = {
         id: 'fallback-route',
         name: 'Fallback to Original Config',
-        targetType: targetType,
-        isActive: true,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -1139,9 +1140,10 @@ export class ProxyServer {
     return undefined;
   }
 
-  private findRouteByTargetType(targetType: 'claude-code' | 'codex'): Route | undefined {
-    const activeRoutes = this.getActiveRoutes();
-    return activeRoutes.find(route => route.targetType === targetType && route.isActive);
+  private findRouteByTargetType(tool: ToolName): Route | undefined {
+    const routeId = this.dbManager.getActiveRouteIdForTool(tool);
+    if (!routeId) return undefined;
+    return this.dbManager.getRoute(routeId);
   }
 
   private async findNextAvailableServiceName(allRules: Rule[], startIndex: number, routeId: string): Promise<string | undefined> {
@@ -1481,8 +1483,7 @@ export class ProxyServer {
 
     const body = req.body;
     const requestModel = body?.model;
-    const route = this.dbManager.getRoutes().find(r => r.id === routeId);
-    const contentType = forcedContentType || this.determineContentType(req, route?.targetType || 'claude-code', routeId);
+    const contentType = forcedContentType || this.determineContentType(req, this.inferTargetTypeFromPath(req.path) || 'claude-code', routeId);
 
     // 高智商规则优先于 model-mapping，确保 !!/推断命中时不会被模型映射覆盖
     if (contentType === 'high-iq') {
@@ -1642,8 +1643,7 @@ export class ProxyServer {
     const body = req.body;
     const requestModel = body?.model;
     const candidates: Rule[] = [];
-    const route = this.dbManager.getRoutes().find(r => r.id === routeId);
-    const contentType = forcedContentType || this.determineContentType(req, route?.targetType || 'claude-code', routeId);
+    const contentType = forcedContentType || this.determineContentType(req, this.inferTargetTypeFromPath(req.path) || 'claude-code', routeId);
     const prioritizeContentType = contentType === 'high-iq';
 
     const modelMappingRules = requestModel
@@ -3235,7 +3235,7 @@ export class ProxyServer {
     const rawSourceType = service.sourceType || 'openai-chat';
     // 标准化 sourceType，将旧类型转换为新类型（向下兼容）
     const sourceType = normalizeSourceType(rawSourceType);
-    const targetType = route.targetType;
+    const targetType = this.inferToolFromRequest(req);
     const sessionId = this.defaultExtractSessionId(req, targetType) || '-';
 
     const vendor = this.dbManager.getVendorByServiceId(service.id);
@@ -3696,9 +3696,9 @@ export class ProxyServer {
 
       // Build the full URL by appending the request path to the service API URL
       let pathToRequest = req.path;
-      if (route.targetType === 'claude-code' && req.path.startsWith('/claude-code')) {
+      if (targetType === 'claude-code' && req.path.startsWith('/claude-code')) {
         pathToRequest = req.path.slice('/claude-code'.length);
-      } else if (route.targetType === 'codex' && req.path.startsWith('/codex')) {
+      } else if (targetType === 'codex' && req.path.startsWith('/codex')) {
         pathToRequest = req.path.slice('/codex'.length);
       }
 
@@ -3706,7 +3706,7 @@ export class ProxyServer {
       const model = rule.targetModel || requestBody?.model;
       const apiUrl = this.resolveEffectiveApiUrl(service);
       const upstreamUrl = this.mapRequestPathToUpstreamUrl(
-        route.targetType,
+        targetType,
         sourceType,
         pathToRequest,
         apiUrl,
@@ -4151,7 +4151,7 @@ export class ProxyServer {
       // 根据请求类型返回适当格式的错误响应
       const streamRequested = this.isStreamRequested(req, req.body || {}, targetType, sourceType);
 
-      if (route.targetType === 'claude-code') {
+      if (targetType === 'claude-code') {
         // 对于 Claude Code，返回符合 Claude API 标准的错误响应
         const claudeError = {
           type: 'error',
@@ -4192,14 +4192,14 @@ export class ProxyServer {
     // 修改数据库后无需调用此方法，配置会自动生效
 
     const allRoutes = this.dbManager.getRoutes();
-    const activeRoutes = allRoutes.filter((g) => g.isActive);
+    const allRoutesList = allRoutes;
     const allServices = this.dbManager.getAPIServices();
 
     // 保留缓存以备将来可能的性能优化需求
-    this.routes! = activeRoutes;
+    this.routes! = allRoutesList;
     if (this.rules) {
       this.rules.clear();
-      for (const route of activeRoutes) {
+      for (const route of allRoutesList) {
         const routeRules = this.dbManager.getRules(route.id);
         const sortedRules = [...routeRules].sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0));
         this.rules.set(route.id, sortedRules);
@@ -4213,7 +4213,7 @@ export class ProxyServer {
       });
     }
 
-    console.log(`Initialized with ${activeRoutes.length} active routes and ${allServices.length} services (all config read from database in real-time)`);
+    console.log(`Initialized with ${allRoutesList.length} routes and ${allServices.length} services (all config read from database in real-time)`);
   }
 
   async updateConfig(config: AppConfig) {

@@ -13,10 +13,21 @@ export interface Vendor {
 
 /** 供应商API接口的数据结构标准类型 */
 export type SourceType = 'openai-chat' | 'openai' | 'claude-chat' | 'claude' | 'gemini' | 'gemini-chat';
-/** 路由的目标对象类型，目前，仅支持claude-code和codex */
+/** 工具名称（用于工具绑定，独立于路由） */
+export type ToolName = 'claude-code' | 'codex';
+/** 路由的目标对象类型，保留用于日志、统计等向后兼容场景 */
 export type ToolType = 'claude-code' | 'codex';
 /** TargetType 是 ToolType 的别名，用于向后兼容 */
 export type TargetType = ToolType;
+
+/** 单个工具的路由激活配置 */
+export interface ToolBinding {
+  tool: ToolName;
+  routeId: string | null;
+}
+
+/** 所有工具的路由激活配置集合 */
+export type ToolBindings = Record<ToolName, ToolBinding>;
 /** Codex 推理强度配置 */
 export type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 
@@ -119,14 +130,6 @@ export interface Route {
   id: string;
   name: string;
   description?: string;
-  targetType: ToolType;
-  isActive: boolean;
-  /** @deprecated 已迁移为全局配置 AppConfig.enableAgentTeams */
-  enableAgentTeams?: boolean;
-  /** @deprecated 已迁移为全局配置 AppConfig.enableBypassPermissionsSupport */
-  enableBypassPermissionsSupport?: boolean;
-  /** @deprecated 已迁移为全局配置 AppConfig.codexModelReasoningEffort */
-  codexModelReasoningEffort?: CodexReasoningEffort;
   createdAt: number;
   updatedAt: number;
 }
