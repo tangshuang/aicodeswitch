@@ -2783,8 +2783,8 @@ export class ProxyServer {
       const rawUserId = request.body?.metadata?.user_id;
       return ProxyServer.extractSessionIdFromUserId(rawUserId);
     } else if (type === 'codex') {
-      // Codex 使用 headers.session_id
-      const sessionId = request.headers['session_id'];
+      // Codex 使用 headers 中的 session-id 或 session_id（兼容新旧版本）
+      const sessionId = request.headers['session-id'] || request.headers['session_id'];
       if (typeof sessionId === 'string') {
         return sessionId;
       }

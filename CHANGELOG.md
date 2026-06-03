@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file. See [standa
 * **迁移 proxy-server 从 transformers/ 到 conversions/ 统一格式转换系统**：将请求转换、响应转换、流式转换、token 用量提取全部迁移到 `conversions/` 模块，删除 `transformers/transformers.ts`（~2000 行）和 `streaming.ts` 中 9 个未使用的 Transform 类（~2800 行），移除 4 个已废弃的 legacy SSE 分支（~440 行）
 
 #### Bug Fixes
+* **Codex session 为空**：修复 `defaultExtractSessionId` 仅检查 `session_id`（下划线）而未检查 `session-id`（连字符）的问题，与数据库层保持一致，兼容两种 header 命名
+
 * **Claude Code compact 响应残留 thinking/tool 块**：对 `compact` 类型的 Claude Code 请求新增请求体归一化，发送到上游前主动移除 `thinking`、`tools`、`tool_choice`、`mcp_servers`，避免 compact 摘要阶段继续触发推理或工具调用；同时在流式/非流式 Claude 响应下发前过滤 `thinking` 与 `tool_use` block，只保留纯文本摘要，修复 compact 成功后客户端仍继续弹出多条错误恢复请求的问题
 * **Claude Code Compact 请求 server_tool_use 未配对 tool_result**：修复 compact 消息清理逻辑仅检查 `tool_use` 类型而遗漏 `server_tool_use`（Claude Code 内置工具如 webReader）的 bug，导致 DeepSeek 等第三方 Claude 兼容 API 返回 400 错误；同步更新 `sanitizeClaudeMessagesForCompact`、`flattenClaudeToolBlocksForCompact`、`countUnpairedClaudeToolUses`、`collectClaudeToolUseDiagnostics` 四个函数，统一通过 `isToolUseBlock()` 辅助函数识别两种工具调用类型
 * **Claude Code Compact 请求 tool_use/tool_result 未配对**：增强 compact 消息清理逻辑；除补齐”下一条 user 消息缺失的 `tool_result`”外，新增”下一条消息不是 user 时自动插入合成 user(tool_result) 消息”，兼容 `user.content` 为字符串的场景，并将 `tool_result` 从携带 compact 文本的 user 消息中拆分为独立的下一条消息；同时在请求发送到上游前对最终 `requestBody.messages` 再执行一次兜底清理，避免中间转换/覆盖步骤重新引入未配对消息，减少 DeepSeek/Claude 标准接口 400（`tool_use` 未紧邻 `tool_result`）
