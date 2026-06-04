@@ -303,7 +303,7 @@ function VendorsPage() {
       description: formData.get('description') as string,
       apiKey: (formData.get('apiKey') as string) || '',
       apiBaseUrl: (formData.get('apiBaseUrl') as string) || '',
-      authType: (formData.get('authType') as string) || undefined,
+      authType: (formData.get('authType') as AuthType) || undefined,
       sortOrder: parseInt(formData.get('sortOrder') as string) || 0
     };
 
