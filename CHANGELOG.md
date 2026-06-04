@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-06-04: 新增编程套餐限制功能
+
+### 新增
+- API 服务配置新增「启用编程套餐限制」选项（`enableCodingPlan`），启用后仅允许编程工具（Claude Code / Codex / Cursor 等）发起的请求通过，普通对话请求返回 403
+- 新增 `coding-plan.ts` 编程工具检测工具，从 AICodingBus 移植 `isCodingToolRequest` 逻辑，支持三层检测：HTTP Headers（User-Agent / 特征 Header）、Claude Messages / OpenAI Responses / OpenAI Chat Completions / Gemini 格式的请求体特征
+
+### 变更
+- `proxyRequest` 和 `proxyRequestForApiPath` 两个代理入口在请求转发前增加编程套餐检查
+
 ## 2026-06-04: 启动优化 - 延迟日志分片维护
 
 ### 变更

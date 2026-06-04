@@ -5,6 +5,7 @@ export interface Vendor {
   description?: string;
   apiKey?: string;
   apiBaseUrl?: string;  // 供应商默认 API Base URL
+  authType?: AuthType;  // 供应商默认 API 认证方式
   sortOrder?: number;
   services: APIService[];  // 供应商的 API 服务列表
   createdAt: number;
@@ -106,6 +107,7 @@ export interface APIService {
   supportedModels?: string[];
   modelLimits?: Record<string, number>; // 模型名 -> 最大输出tokens映射
   enableProxy?: boolean; // 是否启用代理
+  enableCodingPlan?: boolean; // 是否启用编程套餐限制。启用后仅允许编程工具（Claude Code / Codex / Cursor 等）发起的请求通过。
   isDowngradeCompatibility?: boolean; // 是否开启降级兼容。开启后同格式 passthrough 会清理私有扩展字段/工具类型，
                                        // 确保与非原始提供商（如火山方舟/豆包）的兼容性。默认 false（不清理）。
 

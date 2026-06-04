@@ -145,6 +145,8 @@ function VendorsPage() {
   const [isDowngradeCompatibility, setIsDowngradeCompatibility] = useState(false);
   // 当前选择的认证方式（用于动态显示认证方式提示）
   const [currentAuthType, setCurrentAuthType] = useState<AuthType>(AuthType.AUTH_TOKEN);
+  // 供应商弹窗中的认证方式（用于动态显示提示文案）
+  const [vendorAuthType, setVendorAuthType] = useState<string>('');
   const [inheritVendorApiKey, setInheritVendorApiKey] = useState(true);
   const [inheritVendorApiBaseUrl, setInheritVendorApiBaseUrl] = useState(true);
 
@@ -238,6 +240,7 @@ function VendorsPage() {
 
   const handleCreateVendor = () => {
     setEditingVendor(null);
+    setVendorAuthType('');
     setShowVendorModal(true);
   };
 
@@ -247,6 +250,7 @@ function VendorsPage() {
 
   const handleEditVendor = (vendor: Vendor) => {
     setEditingVendor(vendor);
+    setVendorAuthType(vendor.authType || '');
     setShowVendorModal(true);
   };
 
@@ -299,6 +303,7 @@ function VendorsPage() {
       description: formData.get('description') as string,
       apiKey: (formData.get('apiKey') as string) || '',
       apiBaseUrl: (formData.get('apiBaseUrl') as string) || '',
+      authType: (formData.get('authType') as string) || undefined,
       sortOrder: parseInt(formData.get('sortOrder') as string) || 0
     };
 
@@ -337,9 +342,9 @@ function VendorsPage() {
     setRequestResetInterval(undefined);
     setRequestResetBaseTime(undefined);
     setCurrentSourceType('openai-chat');
-    setCurrentAuthType(AuthType.AUTH_TOKEN);
-    setInheritVendorApiKey(true);
-    setInheritVendorApiBaseUrl(true);
+    setCurrentAuthType(selectedVendor?.authType || AuthType.AUTH_TOKEN);
+    setInheritVendorApiKey(!!selectedVendor?.apiKey);
+    setInheritVendorApiBaseUrl(!!selectedVendor?.apiBaseUrl);
     setIsDowngradeCompatibility(false);
     setShowServiceModal(true);
   };
@@ -485,6 +490,8 @@ function VendorsPage() {
       supportedModels: finalModels.length > 0 ? finalModels : undefined,
       modelLimits: Object.keys(finalModelLimits).length > 0 ? finalModelLimits : undefined,
       enableProxy: formData.get('enableProxy') === 'on',
+      // 编程套餐限制
+      enableCodingPlan: formData.get('enableCodingPlan') === 'on',
       // 降级兼容
       isDowngradeCompatibility: currentSourceType === 'openai' ? isDowngradeCompatibility : undefined,
       // Token超量配置
@@ -808,6 +815,24 @@ function VendorsPage() {
                 <input type="password" name="apiKey" defaultValue={editingVendor ? (editingVendor.apiKey || '') : ''} placeholder="可选：供应商默认API密钥" />
               </div>
               <div className="form-group">
+                <label>API认证方式 <small>新增服务时默认使用此方式</small></label>
+                <select
+                  name="authType"
+                  defaultValue={editingVendor?.authType || ''}
+                  onChange={(e) => setVendorAuthType(e.target.value)}
+                >
+                  <option value="" disabled>无</option>
+                  {Object.keys(AUTH_TYPE).map((type) => (
+                    <option key={type} value={type}>{AUTH_TYPE[type as keyof typeof AUTH_TYPE]}</option>
+                  ))}
+                </select>
+                {vendorAuthType && AUTH_TYPE_MESSAGE[vendorAuthType as AuthType] && (
+                  <small style={{ display: 'block', marginTop: '4px', color: 'var(--text-muted)' }}>
+                    {AUTH_TYPE_MESSAGE[vendorAuthType as AuthType]}
+                  </small>
+                )}
+              </div>
+              <div className="form-group">
                 <label>API Base URL</label>
                 <input type="text" name="apiBaseUrl" defaultValue={editingVendor ? (editingVendor.apiBaseUrl || '') : ''} placeholder="可选：供应商默认API Base URL" />
               </div>
@@ -916,7 +941,7 @@ function VendorsPage() {
                 <select
                   ref={authTypeSelectRef}
                   name="authType"
-                  defaultValue={editingService ? editingService.authType || AuthType.AUTH_TOKEN : AuthType.AUTH_TOKEN}
+                  defaultValue={editingService ? editingService.authType || AuthType.AUTH_TOKEN : currentAuthType}
                   onChange={(e) => setCurrentAuthType(e.target.value as AuthType)}
                 >
                   {Object.keys(AUTH_TYPE).map((type) => (
@@ -1271,6 +1296,21 @@ function VendorsPage() {
                 </label>
                 <small style={{ display: 'block', marginTop: '6px', color: '#666', fontSize: '12px', marginLeft: '24px' }}>
                   勾选后，此 API 服务的请求将通过设置的代理转发。请在"设置"页面配置代理。
+                </small>
+              </div>
+
+              <div className="form-group">
+                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    name="enableCodingPlan"
+                    defaultChecked={editingService ? !!editingService.enableCodingPlan : true}
+                    style={{ marginRight: '8px', cursor: 'pointer', width: '16px', height: '16px' }}
+                  />
+                  <span>启用编程套餐限制</span>
+                </label>
+                <small style={{ display: 'block', marginTop: '6px', color: '#666', fontSize: '12px', marginLeft: '24px' }}>
+                  启用后，此 API 服务仅允许编程工具（如 Claude Code、Codex、Cursor 等）发起的请求通过，普通对话请求将被拒绝。
                 </small>
               </div>
 

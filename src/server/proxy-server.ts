@@ -38,6 +38,7 @@ import {
   normalizeClaudeCompactRequestBody,
   stripClaudeCompactResponseContent,
 } from './conversions/compact';
+import { isCodingToolRequest } from './coding-plan';
 
 type ContentTypeDetector = {
   type: ContentType;
@@ -3251,6 +3252,10 @@ export class ProxyServer {
     let logged = false;
     const extraTagsForLog: string[] = [];
 
+    // 编程套餐限制检查
+    const clientFormat: Format = targetType === 'codex' ? 'responses' : 'claude';
+    if (!this.checkCodingPlan(req, res, service, clientFormat)) return;
+
     // Compact 请求消息清理：确保 tool_use/tool_result 配对完整
     if (rule.contentType === 'compact' && targetType === 'claude-code') {
       if (Array.isArray(originalToolRequestBody?.messages)) {
@@ -4397,6 +4402,9 @@ export class ProxyServer {
     let relayedForLog = true;
     void downstreamResponseBodyForLog; void streamChunksForLog; void responseHeadersForLog; void upstreamRequestForLog;
 
+    // 编程套餐限制检查
+    if (!this.checkCodingPlan(req, res, service, clientFormat)) return;
+
     // Compact 处理（针对 claude 格式的 compact）
     if (rule.contentType === 'compact' && clientFormat === 'claude') {
       if (Array.isArray(requestBody?.messages)) {
@@ -4755,6 +4763,24 @@ export class ProxyServer {
       default:
         return apiUrl;
     }
+  }
+
+  /**
+   * 编程套餐限制检查
+   * 当服务启用了 enableCodingPlan 时，仅允许编程工具发起的请求通过。
+   * @returns true 表示通过检查（可以继续），false 表示已被拒绝（已写入响应）
+   */
+  private checkCodingPlan(req: Request, res: Response, service: APIService, clientFormat: Format): boolean {
+    if (!service.enableCodingPlan) return true; // 未启用，直接通过
+
+    const headers = req.headers as Record<string, string | undefined>;
+    const codingCheck = isCodingToolRequest(req.body, clientFormat, headers);
+    if (codingCheck.isCoding) return true; // 是编程工具请求，通过
+
+    // 非编程工具请求，拒绝
+    console.warn(`\x1b[33m[CodingPlan]\x1b[0m Rejected non-coding request: service=${service.name}, reason=${codingCheck.reason}`);
+    this.sendFormatError(res, clientFormat, 403, '此 API 服务仅允许编程工具调用（如 Claude Code、Codex、Cursor 等）');
+    return false;
   }
 
   /**
