@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-06-05: 修复 Codex → Claude thinking 历史丢失问题
+
+### 修复
+- 修复 Responses API → Claude Messages 转换时 `reasoning` 条目被跳过导致 thinking 内容丢失的问题
+- 现在正确将 `reasoning` 条目的 `summary` 转换为 Claude `thinking` 块并合并到对应的 assistant 消息中
+- 新增安全网：Claude 上游目标启用 thinking 模式时，自动为包含 `tool_use` 但缺少 `thinking` 块的 assistant 消息补充占位 thinking 块
+
 ## 2026-06-04: 新增编程套餐限制功能
 
 ### 新增

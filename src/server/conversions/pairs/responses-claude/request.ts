@@ -22,6 +22,9 @@ export function responsesToClaude(body: any): any {
   }
 
   // --- Input -> messages ---
+  // Track pending thinking blocks from reasoning items to merge into next assistant message
+  let pendingThinking: any[] = [];
+
   if (body.input) {
     for (const item of body.input) {
       if (item.type === 'message') {
@@ -32,6 +35,11 @@ export function responsesToClaude(body: any): any {
           }
         } else if (item.role === 'assistant' || item.role === 'developer') {
           const content = extractMessageContent(item, 'output_text');
+          // Prepend pending thinking blocks from preceding reasoning items
+          if (pendingThinking.length > 0) {
+            content.unshift(...pendingThinking);
+            pendingThinking = [];
+          }
           if (content.length > 0) {
             messages.push({ role: item.role === 'developer' ? 'user' : 'assistant', content });
           }
@@ -43,15 +51,19 @@ export function responsesToClaude(body: any): any {
         } catch {
           parsedInput = item.arguments;
         }
-        messages.push({
-          role: 'assistant',
-          content: [{
-            type: 'tool_use',
-            id: item.call_id,
-            name: item.name,
-            input: parsedInput,
-          }],
+        const content: any[] = [];
+        // Prepend pending thinking blocks from preceding reasoning items
+        if (pendingThinking.length > 0) {
+          content.push(...pendingThinking);
+          pendingThinking = [];
+        }
+        content.push({
+          type: 'tool_use',
+          id: item.call_id,
+          name: item.name,
+          input: parsedInput,
         });
+        messages.push({ role: 'assistant', content });
       } else if (item.type === 'function_call_output') {
         messages.push({
           role: 'user',
@@ -62,10 +74,25 @@ export function responsesToClaude(body: any): any {
           }],
         });
       } else if (item.type === 'reasoning') {
-        // Skip reasoning items in messages (effort is extracted for thinking config below)
+        // Convert reasoning summary to Claude thinking block and attach to next assistant message
+        if (item.summary && Array.isArray(item.summary)) {
+          const thinkingText = item.summary
+            .filter((s: any) => s.type === 'summary_text')
+            .map((s: any) => s.text || '')
+            .join('');
+          if (thinkingText) {
+            pendingThinking.push({ type: 'thinking', thinking: thinkingText });
+          }
+        }
         continue;
       }
     }
+  }
+
+  // If there are orphaned thinking blocks (reasoning at end with no following assistant message),
+  // create a standalone assistant message to hold them
+  if (pendingThinking.length > 0) {
+    messages.push({ role: 'assistant', content: pendingThinking });
   }
 
   // --- Build result ---
