@@ -4,6 +4,7 @@ import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntr
 import { useConfirm } from '../components/Confirm';
 import { toast } from '../components/Toast';
 import { useRulesStatus } from '../hooks/useRulesStatus';
+import QuickSetupModal from '../components/QuickSetupModal';
 
 const CONTENT_TYPE_OPTIONS = [
   { value: 'compact', label: '压缩对话', icon: '📦' },
@@ -137,6 +138,9 @@ export default function RoutesPage() {
 
   // Claude Code 版本检查状态
   const [claudeVersionCheck, setClaudeVersionCheck] = useState<ToolInstallationStatus | null>(null);
+
+  // 一键配置弹窗状态
+  const [showQuickSetupModal, setShowQuickSetupModal] = useState(false);
 
   // 配置操作loading状态
   const [isUpdatingCodexReasoning, setIsUpdatingCodexReasoning] = useState(false);
@@ -968,9 +972,14 @@ export default function RoutesPage() {
 
   return (
     <div className='routes-page'>
-      <div className="page-header">
-        <h1>路由管理</h1>
-        <p>管理API路由和路由配置</p>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <h1>路由管理</h1>
+          <p>管理API路由和路由配置</p>
+        </div>
+        <button className="btn btn-primary" onClick={() => setShowQuickSetupModal(true)} style={{ whiteSpace: 'nowrap' }}>
+          一键配置
+        </button>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -2525,6 +2534,18 @@ export default function RoutesPage() {
           </div>
         </div>
       )}
+
+      <QuickSetupModal
+        show={showQuickSetupModal}
+        onClose={() => setShowQuickSetupModal(false)}
+        onComplete={() => {
+          loadRoutes();
+          loadVendors();
+          loadAllServices();
+          loadToolBindings();
+          loadApiPathBindings();
+        }}
+      />
     </div>
   );
 }

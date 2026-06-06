@@ -16,6 +16,7 @@ import { ConfirmProvider } from './components/Confirm';
 import ToolsInstallModal from './components/ToolsInstallModal';
 import NotificationBar from './components/NotificationBar';
 import NavItemWithTooltip from './components/Tooltip';
+import QuickSetupModal from './components/QuickSetupModal';
 import type { ToolInstallationStatus } from '../types';
 import './styles/App.css';
 import logoImage from './assets/logo.png';
@@ -28,6 +29,7 @@ function AppContent() {
   const [theme, setTheme] = useState('light');
   const [showVendorModal, setShowVendorModal] = useState(false);
   const [hasCheckedVendors, setHasCheckedVendors] = useState(false);
+  const [showQuickSetupModal, setShowQuickSetupModal] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // 版本更新相关状态
@@ -506,12 +508,19 @@ function AppContent() {
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowVendorModal(false)}>稍后</button>
-                <button type="button" className="btn btn-primary" onClick={handleVendorModalConfirm}>前往供应商管理</button>
+                <button type="button" className="btn btn-primary" onClick={() => { setShowVendorModal(false); setShowQuickSetupModal(true); }}>一键配置</button>
+                <button type="button" className="btn btn-secondary" onClick={handleVendorModalConfirm}>前往供应商管理</button>
               </div>
             </div>
           </div>
         </div>
       )}
+
+      <QuickSetupModal
+        show={showQuickSetupModal}
+        onClose={() => setShowQuickSetupModal(false)}
+        onComplete={() => setHasCheckedVendors(true)}
+      />
 
       {showUpgradeModal && (
         <div className="modal-overlay">

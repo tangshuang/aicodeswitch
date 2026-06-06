@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-06-06: 新增 Agnes 提供商及 chat_template_kwargs thinking 规则
+
+### 新增
+- 新增 `chat_template_kwargs` thinking 参数规则，支持通过 `chat_template_kwargs.enable_thinking` 控制推理模型的思考模式
+- 新增 Agnes 提供商配置，模型匹配 `agnes` 前缀，使用 `chat_template_kwargs` 格式注入 thinking 参数
+
+## 2026-06-06: 新增一键配置功能
+
+### 新增
+- 新增「一键配置」功能，仅需选择供应商、目标即可自动完成全部配置
+- 供应商去重：同名供应商不重复创建，仅补充缺失的 API 服务
+- API Key 智能展示：已有供应商且已配置 Key 时隐藏输入框
+- 路由名自动附加目标后缀（如 `[Codex]`、`[Claude Code]`、`[API]`）
+- 目标导向服务选取：Claude Code 优先 Claude 服务、Codex 优先 Responses/Chat Completions、API 按通用优先级
+- 弹窗新增「目标」单选项：Codex、Claude Code、所有 API，仅激活所选目标（强制覆盖）
+- 无供应商提示弹窗和路由管理页面右上角均可触发一键配置
+- 默认不启用编程套餐限制，提供最宽松配置
+
 ## 2026-06-05: 修复 Codex → Claude thinking 历史丢失问题
 
 ### 修复

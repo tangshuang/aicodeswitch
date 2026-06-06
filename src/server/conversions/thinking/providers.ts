@@ -14,6 +14,7 @@ const PROVIDER_CONFIGS: Array<{ patterns: string[]; config: ReasoningConfig }> =
   { patterns: ['openrouter'], config: { supportsThinking: false, supportsEffort: true, thinkingParam: 'none', effortParam: 'reasoning.effort', effortValueMode: 'openrouter', outputFormat: 'reasoning' } },
   { patterns: ['siliconflow'], config: { supportsThinking: true, supportsEffort: false, thinkingParam: 'enable_thinking', effortParam: 'none', effortValueMode: 'passthrough', outputFormat: 'reasoning_content' } },
   { patterns: ['stepfun', 'step'], config: { supportsThinking: true, supportsEffort: false, thinkingParam: 'none', effortParam: 'reasoning_effort', effortValueMode: 'low_high', outputFormat: 'reasoning' } },
+  { patterns: ['agnes'], config: { supportsThinking: true, supportsEffort: false, thinkingParam: 'chat_template_kwargs', effortParam: 'none', effortValueMode: 'passthrough', outputFormat: 'reasoning_content' } },
 ];
 
 const DEFAULT_CONFIG: ReasoningConfig = {
@@ -51,6 +52,9 @@ export function applyReasoningConfig(body: any, config: ReasoningConfig, effort:
         break;
       case 'reasoning_split':
         result.reasoning_split = true;
+        break;
+      case 'chat_template_kwargs':
+        result.chat_template_kwargs = { ...result.chat_template_kwargs, enable_thinking: true };
         break;
     }
   }
