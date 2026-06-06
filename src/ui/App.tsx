@@ -506,10 +506,12 @@ function AppContent() {
                   请先添加至少一个供应商，然后再配置路由规则。
                 </p>
               </div>
-              <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowVendorModal(false)}>稍后</button>
-                <button type="button" className="btn btn-primary" onClick={() => { setShowVendorModal(false); setShowQuickSetupModal(true); }}>一键配置</button>
-                <button type="button" className="btn btn-secondary" onClick={handleVendorModalConfirm}>前往供应商管理</button>
+              <div className="modal-footer" style={{ justifyContent: 'space-between' }}>
+                <button type="button" className="btn" style={{ background: 'linear-gradient(135deg, #8B5CF6, #7C3AED)', color: 'white', position: 'relative', overflow: 'hidden' }} onClick={() => { setShowVendorModal(false); setShowQuickSetupModal(true); }}>一键配置</button>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowVendorModal(false)}>稍后</button>
+                  <button type="button" className="btn btn-secondary" onClick={handleVendorModalConfirm}>前往供应商管理</button>
+                </div>
               </div>
             </div>
           </div>

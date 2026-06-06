@@ -268,6 +268,10 @@ export default function QuickSetupModal({ show, onClose, onComplete }: QuickSetu
       toast.success('一键配置完成！路由已激活，可以开始使用');
       onComplete?.();
       handleClose();
+      // 刷新页面以确保显示最新的路由和供应商数据
+      setTimeout(() => {
+        window.location.reload();
+      }, 300);
     } catch (error) {
       console.error('一键配置失败:', error);
       toast.error(`配置失败: ${error instanceof Error ? error.message : '未知错误'}`);
@@ -420,29 +424,6 @@ export default function QuickSetupModal({ show, onClose, onComplete }: QuickSetu
                   );
                 })}
               </div>
-            </div>
-
-            {/* 操作说明 */}
-            <div style={{
-              padding: '12px 16px',
-              background: 'var(--bg-secondary)',
-              borderRadius: '8px',
-              marginBottom: '16px',
-              fontSize: '13px',
-              lineHeight: '1.6',
-              color: 'var(--text-secondary)',
-            }}>
-              <p style={{ margin: 0 }}>
-                将自动完成以下操作：
-              </p>
-              <ul style={{ margin: '8px 0 0', paddingLeft: '20px' }}>
-                {existingVendor
-                  ? <li>补充供应商缺失的 API 服务</li>
-                  : <li>创建供应商及全部 API 服务</li>
-                }
-                <li>创建路由「{currentConfig ? currentConfig.name : '…'}{TARGET_SUFFIX[target]}」并配置默认规则</li>
-                <li>激活路由到选定的目标（覆盖已有绑定）</li>
-              </ul>
             </div>
 
             <div className="modal-footer">
