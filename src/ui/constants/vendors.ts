@@ -4,6 +4,7 @@ type VendorConfig = {
     [vendorKey: string]: {
         name: string;
         description: string;
+        tags?: string[];
         link?: string;
         services: {
             name: string;
@@ -19,8 +20,9 @@ type VendorConfig = {
 
 export default {
     aicodingbus: {
-        name: 'AICodingBus [官方推荐]',
+        name: 'AICodingBus',
         description: 'AICodingBus 是一个Token共享平台，用户可以在平台上分享和交换Token。',
+        tags: ['官方推荐'],
         link: 'https://aicodingbus.24x7.to/',
         services: [
             {
@@ -303,5 +305,21 @@ export default {
             }
         ],
         sortedGroup: 3,
+    },
+    agnes: {
+        name: 'Agnes',
+        description: '优秀的模型厂商，拥有多种模型，提供免费 API 使用',
+        tags: ['永久免费'],
+        link: 'https://platform.agnes-ai.com',
+        services: [
+            {
+                name: 'Chat Completions 标准接口（免费）',
+                sourceType: 'openai-chat',
+                apiUrl: 'https://apihub.agnes-ai.com/v1/chat/completions',
+                models: 'agnes-2.0-flash, agnes-1.5-flash',
+                authType: AuthType.AUTH_TOKEN,
+            },
+        ],
+        sortedGroup: -1,
     },
 } as VendorConfig;

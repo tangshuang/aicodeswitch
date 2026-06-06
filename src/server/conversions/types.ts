@@ -28,7 +28,7 @@ export interface StreamConverter {
 export interface ReasoningConfig {
   supportsThinking: boolean;
   supportsEffort: boolean;
-  /** Request body parameter name for enabling thinking: 'thinking' | 'enable_thinking' | 'reasoning_split' | 'none' */
+  /** Request body parameter name for enabling thinking: 'thinking' | 'enable_thinking' | 'reasoning_split' | 'chat_template_kwargs' | 'none' */
   thinkingParam: string;
   /** Request body parameter name for effort: 'reasoning_effort' | 'reasoning.effort' | 'none' */
   effortParam: string;

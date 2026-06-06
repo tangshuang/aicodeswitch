@@ -318,6 +318,12 @@ export function buildTargetBody(options: Pick<TransformRequestOptions, 'fromForm
     }
   }
 
+  // --- Safety net for Claude upstream: ensure thinking blocks alongside tool_use ---
+  // When thinking mode is enabled, Claude requires thinking blocks in assistant messages with tool_use
+  if (toFormat === 'claude' && result.thinking && result.messages) {
+    result.messages = fixThinkingHistory(result.messages, 'claude');
+  }
+
   return result;
 }
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api } from '../api/client';
 import type { Vendor, APIService, SourceType } from '../../types';
@@ -8,6 +8,7 @@ import { SOURCE_TYPE, SOURCE_TYPE_MESSAGE, AUTH_TYPE, AUTH_TYPE_MESSAGE } from '
 import { useRecomandVendors } from '../hooks/docs';
 import { useConfirm } from '../components/Confirm';
 import { toast } from '../components/Toast';
+import VendorSelector from '../components/VendorSelector';
 
 /**
  * 将 Date 对象转换为 datetime-local input 所需的格式
@@ -178,29 +179,6 @@ function VendorsPage() {
 
   const recommendMd = useRecomandVendors();
 
-  const constantVendors = useMemo(() => {
-    const vendorKeys = Object.keys(vendorsConfig);
-    const sortedGroupValues = [...new Set(vendorKeys.map(key => vendorsConfig[key].sortedGroup || 0))].sort((a, b) => a - b);
-    const sortedGroups = sortedGroupValues.map((group) => {
-      const groupItems = vendorKeys.filter((key) => {
-        if (group === 0) {
-          return !vendorsConfig[key].sortedGroup;
-        }
-        return vendorsConfig[key].sortedGroup === group;
-      }).map(key => ({ ...vendorsConfig[key], key }));
-      return groupItems;
-    });
-
-    const results: any[] = [];
-    sortedGroups.forEach((group, i) => {
-      if (i > 0) {
-        results.push(null);
-      }
-      results.push(...group);
-    });
-    return results;
-  }, []);
-
   useEffect(() => {
     loadVendors();
   }, []);
@@ -303,7 +281,7 @@ function VendorsPage() {
       description: formData.get('description') as string,
       apiKey: (formData.get('apiKey') as string) || '',
       apiBaseUrl: (formData.get('apiBaseUrl') as string) || '',
-      authType: (formData.get('authType') as string) || undefined,
+      authType: (formData.get('authType') as AuthType) || undefined,
       sortOrder: parseInt(formData.get('sortOrder') as string) || 0
     };
 
@@ -622,6 +600,7 @@ function VendorsPage() {
           authType: serviceConfig.authType,
           supportedModels: serviceConfig.models ? serviceConfig.models.split(',').map(m => m.trim()) : undefined,
           modelLimits: serviceConfig.modelLimits || {},
+          enableCodingPlan: true,  // 一键配置强制启用编程套餐限制
         };
 
         console.log(`[一键配置] 创建服务 ${index + 1}/${services.length}:`, {
@@ -1411,13 +1390,10 @@ function VendorsPage() {
             <form onSubmit={handleQuickSetupSubmit}>
               <div className="form-group">
                 <label>供应商</label>
-                <select
-                  name="vendorKey"
+                <VendorSelector
                   value={quickSetupVendorKey}
-                  onChange={(e) => {
-                    const key = e.target.value;
+                  onChange={(key) => {
                     setQuickSetupVendorKey(key);
-                    // 自动选择所有可用的服务（使用索引）
                     if (key) {
                       const vendorConfig = vendorsConfig[key as keyof typeof vendorsConfig];
                       if (vendorConfig && vendorConfig.services.length > 0) {
@@ -1427,13 +1403,8 @@ function VendorsPage() {
                       setQuickSetupSelectedIndices([]);
                     }
                   }}
-                  required
-                >
-                  <option value="" disabled>请选择供应商</option>
-                  {constantVendors.map((vendor: any) => vendor ? (
-                    <option key={vendor.key} value={vendor.key}>{vendor.name}</option>
-                  ) : (<option value="" disabled>--</option>))}
-                </select>
+                  existingVendors={vendors}
+                />
               </div>
               {vendorsConfig[quickSetupVendorKey]?.description ? (
                 <div style={{fontSize:'.8em',marginBottom:16,marginTop:-16}}>
