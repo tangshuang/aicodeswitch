@@ -15,11 +15,13 @@
  */
 
 import type { TransformResult, StreamConverter, TransformRequestOptions, TransformResponseOptions, StreamConverterOptions } from './types.js';
-export type { Format, TransformResult, StreamConverter, SSEEvent, TransformRequestOptions, TransformResponseOptions, StreamConverterOptions, ReasoningConfig } from './types.js';
+export type { Format, TransformResult, StreamConverter, SSEEvent, TransformRequestOptions, TransformResponseOptions, StreamConverterOptions, ReasoningConfig, ServerToolConfig } from './types.js';
 
 export { detectRequestFormat, sourceTypeToFormat } from './detector.js';
 export { getReasoningConfig } from './thinking/providers.js';
 import { applyReasoningConfig } from './thinking/providers.js';
+export { getServerToolSupport } from './server-tool/providers.js';
+import { convertServerToolUseToToolUse } from './server-tool/mapper.js';
 
 // --- Compact API ---
 export {
@@ -232,8 +234,15 @@ export function createStreamConverter(options: StreamConverterOptions): StreamCo
  * Transform a request body from one format to another,
  * with provider-driven post-processing for completions targets.
  */
-export function buildTargetBody(options: Pick<TransformRequestOptions, 'fromFormat' | 'toFormat' | 'body' | 'sanitizeBody' | 'providerConfig'>): any {
-  const { fromFormat, toFormat, body, sanitizeBody, providerConfig } = options;
+export function buildTargetBody(options: Pick<TransformRequestOptions, 'fromFormat' | 'toFormat' | 'body' | 'sanitizeBody' | 'providerConfig' | 'serverToolConfig'>): any {
+  const { fromFormat, toFormat, sanitizeBody, providerConfig, serverToolConfig } = options;
+
+  // Pre-processing: convert server_tool_use → tool_use when upstream doesn't support it.
+  // Must happen before format conversion so all pair transformers handle the blocks correctly.
+  let processedBody = options.body;
+  if (fromFormat === 'claude' && !serverToolConfig?.supportsServerToolUse) {
+    processedBody = convertServerToolUseToToolUse(processedBody);
+  }
 
   // Dispatch to the correct conversion pair
   const key = `${fromFormat}->${toFormat}`;
@@ -243,59 +252,59 @@ export function buildTargetBody(options: Pick<TransformRequestOptions, 'fromForm
   switch (key) {
     // --- claude → * ---
     case 'claude->completions':
-      result = claudeToCompletions(body);
+      result = claudeToCompletions(processedBody);
       break;
     case 'claude->responses':
-      result = claudeToResponses(body);
+      result = claudeToResponses(processedBody);
       break;
     case 'claude->gemini':
-      result = claudeToGemini(body);
+      result = claudeToGemini(processedBody);
       break;
 
     // --- responses → * ---
     case 'responses->completions':
-      result = responsesToCompletions(body);
+      result = responsesToCompletions(processedBody);
       break;
     case 'responses->claude':
-      result = responsesToClaude(body);
+      result = responsesToClaude(processedBody);
       break;
     case 'responses->gemini':
-      result = responsesToGeminiRequest(body);
+      result = responsesToGeminiRequest(processedBody);
       break;
     case 'responses->responses': {
       if (sanitizeBody) {
         // Responses 格式降级兼容：委托给 responses-responses pair 处理
-        result = downgradeResponsesRequest(body);
+        result = downgradeResponsesRequest(processedBody);
       } else {
-        result = body;
+        result = processedBody;
       }
       break;
     }
 
     // --- completions → * ---
     case 'completions->claude':
-      result = completionsToClaude(body);
+      result = completionsToClaude(processedBody);
       break;
     case 'completions->responses':
-      result = completionsToResponses(body);
+      result = completionsToResponses(processedBody);
       break;
     case 'completions->gemini':
-      result = completionsToGemini(body);
+      result = completionsToGemini(processedBody);
       break;
 
     // --- gemini → * ---
     case 'gemini->claude':
-      result = geminiToClaude(body);
+      result = geminiToClaude(processedBody);
       break;
     case 'gemini->completions':
-      result = geminiToCompletions(body);
+      result = geminiToCompletions(processedBody);
       break;
     case 'gemini->responses':
-      result = geminiToResponsesRequest(body);
+      result = geminiToResponsesRequest(processedBody);
       break;
 
     default:
-      result = body;
+      result = processedBody;
   }
 
   // --- Provider-driven post-processing for completions targets ---
@@ -313,7 +322,7 @@ export function buildTargetBody(options: Pick<TransformRequestOptions, 'fromForm
 
     // 注入 thinking 参数（如 thinking: { type: 'enabled' }）和 effort 参数
     if (providerConfig.supportsThinking || providerConfig.supportsEffort) {
-      const effort = body.thinking ? claudeThinkingToReasoningEffort(body.thinking) : null;
+      const effort = processedBody.thinking ? claudeThinkingToReasoningEffort(processedBody.thinking) : null;
       result = applyReasoningConfig(result, providerConfig, effort);
     }
   }

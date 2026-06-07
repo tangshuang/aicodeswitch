@@ -38,12 +38,18 @@ export interface ReasoningConfig {
   outputFormat: string;
 }
 
+/** Per-provider server_tool_use support configuration */
+export interface ServerToolConfig {
+  supportsServerToolUse: boolean;
+}
+
 /** Options for request transformation */
 export interface TransformRequestOptions {
   fromFormat: Format;
   toFormat: Format;
   body: any;
   providerConfig?: ReasoningConfig;
+  serverToolConfig?: ServerToolConfig;
   /**
    * 是否对请求体执行清理（过滤非标准字段/工具类型）。
    * - `true`: 清理 OpenAI 私有扩展，确保与非原始提供商兼容

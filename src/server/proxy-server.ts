@@ -15,6 +15,7 @@ import {
   createStreamConverter,
   sourceTypeToFormat,
   getReasoningConfig,
+  getServerToolSupport,
 } from './conversions/index';
 import type { Format } from './conversions/types';
 import { StreamConverterAdapter } from './conversions/stream-converter-adapter';
@@ -3088,11 +3089,11 @@ export class ProxyServer {
    * @param targetModel 目标模型名称（可选）
    * @returns 转换后往服务商API接口的数据
    */
-  private transformRequestToUpstream(tool: ToolType, source: SourceType, payloadData: any, targetModel: string, providerConfig?: any): any {
+  private transformRequestToUpstream(tool: ToolType, source: SourceType, payloadData: any, targetModel: string, providerConfig?: any, serverToolConfig?: any): any {
     const clientFormat: Format = tool === 'codex' ? 'responses' : 'claude';
     const upstreamFormat = sourceTypeToFormat(source);
 
-    const result = convertRequest({ fromFormat: clientFormat, toFormat: upstreamFormat, body: payloadData, providerConfig });
+    const result = convertRequest({ fromFormat: clientFormat, toFormat: upstreamFormat, body: payloadData, providerConfig, serverToolConfig });
     const body = result.body;
 
     // 模型覆盖：OpenAI 模型族保持原样，其余覆盖为 targetModel
@@ -3675,7 +3676,8 @@ export class ProxyServer {
       const effectiveApiUrl = this.resolveEffectiveApiUrl(service);
       const effectiveModel = rule.targetModel || requestBody?.model;
       const providerConfig = getReasoningConfig(service.name || '', effectiveApiUrl || '', effectiveModel || '');
-      const transformedRequestBody = this.transformRequestToUpstream(targetType, sourceType, payloadForTransform, rule.targetModel as string, providerConfig);
+      const serverToolConfig = getServerToolSupport(service.name || '', effectiveApiUrl || '');
+      const transformedRequestBody = this.transformRequestToUpstream(targetType, sourceType, payloadForTransform, rule.targetModel as string, providerConfig, serverToolConfig);
       requestBody = transformedRequestBody ?? this.cloneRequestBody(originalToolRequestBody) ?? {};
 
       // 对最终即将发送到上游的 Claude compact 请求再做一次兜底清理，
@@ -4445,8 +4447,9 @@ export class ProxyServer {
     const effectiveApiUrl = this.resolveEffectiveApiUrl(service);
     const effectiveModel = rule.targetModel || requestBody?.model;
     const providerConfig = getReasoningConfig(service.name || '', effectiveApiUrl || '', effectiveModel || '');
+    const serverToolConfig = getServerToolSupport(service.name || '', effectiveApiUrl || '');
 
-    const transformedRequestBody = this.transformRequestByFormat(clientFormat, sourceType, payloadForTransform, rule.targetModel as string, providerConfig);
+    const transformedRequestBody = this.transformRequestByFormat(clientFormat, sourceType, payloadForTransform, rule.targetModel as string, providerConfig, serverToolConfig);
     requestBody = transformedRequestBody ?? this.cloneRequestBody(requestBody) ?? {};
 
     // Compact final sanitize
@@ -4667,9 +4670,9 @@ export class ProxyServer {
   /**
    * 使用显式 clientFormat 进行请求转换（取代 tool → format 的硬编码映射）
    */
-  private transformRequestByFormat(clientFormat: Format, source: SourceType, payloadData: any, targetModel: string, providerConfig?: any): any {
+  private transformRequestByFormat(clientFormat: Format, source: SourceType, payloadData: any, targetModel: string, providerConfig?: any, serverToolConfig?: any): any {
     const upstreamFormat = sourceTypeToFormat(source);
-    const result = convertRequest({ fromFormat: clientFormat, toFormat: upstreamFormat, body: payloadData, providerConfig });
+    const result = convertRequest({ fromFormat: clientFormat, toFormat: upstreamFormat, body: payloadData, providerConfig, serverToolConfig });
     const body = result.body;
     if (targetModel) {
       const isOpenAIModel = /^gpt-|o[123]/i.test(targetModel);
