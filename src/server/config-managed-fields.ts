@@ -39,6 +39,7 @@ export const CODEX_CONFIG_MANAGED_FIELDS: ManagedFieldPath[] = [
   { path: ['requires_openai_auth'] },
   { path: ['enableRouteSelection'] },
   { path: ['model_providers', 'aicodeswitch'], isSection: true },
+  { path: ['mcp_servers'], isSection: true, optional: true },
 ];
 
 /**

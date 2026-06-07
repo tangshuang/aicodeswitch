@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-06-07: 实现 Codex MCP 配置写入
+
+### 新增
+- 实现 Codex 目标的 MCP 配置写入功能，将 MCP 服务器以 `[mcp_servers.<name>]` TOML 格式写入 `~/.codex/config.toml`
+- 支持 stdio、http、sse 三种 MCP 传输类型
+- 实现 Codex MCP 配置移除功能（删除 MCP 时自动清理 config.toml）
+- MCP targets 变更时自动同步配置到对应工具（PUT /api/mcps/:id）
+- 服务启动时自动同步 MCP 配置到已激活的工具
+- 将 `mcp_servers` 加入 Codex config.toml 管理字段，确保配置合并时正确处理
+
 ## 2026-06-06: 新增 Agnes 提供商及 chat_template_kwargs thinking 规则
 
 ### 新增

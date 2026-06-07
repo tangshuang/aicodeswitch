@@ -467,6 +467,7 @@ aicos version            # Show current version information
   - `requires_openai_auth`
   - `enableRouteSelection`
   - `[model_providers.aicodeswitch]` 整个 section
+  - `[mcp_servers]` 整个 section（可选）
 - Codex `auth.json`：
   - `OPENAI_API_KEY`
 - 保留字段：
@@ -487,7 +488,7 @@ aicos version            # Show current version information
   - `/api/routes/deactivate-all` 仅停用路由，不执行配置恢复
   - 配置恢复统一由服务终止信号触发
 - MCP 例外说明：
-  - MCP 同步仍会在相关路由/MCP 操作时更新 `.claude.json` 的 `mcpServers`
+  - MCP 同步仍会在相关路由/MCP 操作时更新 `.claude.json` 的 `mcpServers` 和 `~/.codex/config.toml` 的 `[mcp_servers]`
   - 该行为属于 MCP 配置同步，不属于代理主配置生命周期写入逻辑
 
 **相关模块**
@@ -526,8 +527,11 @@ aicos version            # Show current version information
 - Configures MCPs to target tools (Claude Code, Codex)
 - **MCP Configuration Sync**: When a route is activated, MCP tools are automatically written to the target tool's global configuration file
   - For Claude Code: Writes to `~/.claude.json` under `mcpServers`
-  - For Codex: Configuration support planned
+  - For Codex: Writes to `~/.codex/config.toml` under `[mcp_servers.<name>]` TOML sections
+    - stdio: `command` + `args` + `[mcp_servers.name.env]`
+    - http/sse: `url` + optional `headers`
   - MCPs are only written when there are active routes with enabled targets
+  - MCP config is also synced on server startup for all activated tools
 
 ### Logging
 - Request logs: Detailed API call records with token usage
