@@ -1169,7 +1169,7 @@ const listInstalledSkills = (): InstalledSkill[] => {
   return Array.from(result.values()).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
 };
 
-const registerRoutes = (dbManager: FileSystemDatabaseManager, proxyServer: ProxyServer) => {
+const registerRoutes = async (dbManager: FileSystemDatabaseManager, proxyServer: ProxyServer) => {
   updateProxyConfig(dbManager.getConfig());
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
@@ -2457,7 +2457,26 @@ ${instruction}
   }));
 
   app.put('/api/mcps/:id', asyncHandler(async (req, res) => {
-    const result = await dbManager.updateMCP(req.params.id, req.body);
+    const updateData = req.body;
+    const oldMcp = dbManager.getMCP(req.params.id);
+    const result = await dbManager.updateMCP(req.params.id, updateData);
+
+    // 如果targets发生变化，同步MCP配置到对应工具
+    if (updateData.targets !== undefined) {
+      const newTargets: TargetType[] = updateData.targets;
+      const oldTargets = oldMcp?.targets || [];
+
+      // 需要同步的所有target（新增的 + 移除的都需要处理）
+      const allAffectedTargets = new Set([...newTargets, ...oldTargets]);
+
+      for (const target of allAffectedTargets) {
+        const activeRouteId = dbManager.getActiveRouteIdForTool(target);
+        if (activeRouteId) {
+          await writeMCPConfig(target);
+        }
+      }
+    }
+
     res.json(result);
   }));
 
@@ -2530,10 +2549,90 @@ ${instruction}
         fs.writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2));
         return true;
       } else if (targetType === 'codex') {
-        // Codex使用TOML格式，我们暂时不直接写入
-        // 需要后续处理Codex的MCP配置格式
-        // TODO: 实现 Codex MCP 配置写入
-        console.log('[MCP] Codex MCP配置写入暂未实现');
+        // Codex使用TOML格式的 config.toml，MCP配置格式为 [mcp_servers.<name>]
+        const codexDir = path.join(homeDir, '.codex');
+        const codexConfigPath = path.join(codexDir, 'config.toml');
+
+        if (!fs.existsSync(codexDir)) {
+          fs.mkdirSync(codexDir, { recursive: true });
+        }
+
+        // 读取当前 config.toml
+        let currentConfig: Record<string, any> = {};
+        if (fs.existsSync(codexConfigPath)) {
+          try {
+            currentConfig = parseToml(fs.readFileSync(codexConfigPath, 'utf-8'));
+          } catch (error) {
+            console.warn('[MCP] Failed to parse Codex config.toml:', error);
+          }
+        }
+
+        // 清除已有的代理写入的 mcp_servers 条目（通过metadata追踪）
+        const mcpMetaPath = path.join(codexDir, '.aicodeswitch_mcp_servers.json');
+        let previousMcpIds: string[] = [];
+        if (fs.existsSync(mcpMetaPath)) {
+          try {
+            previousMcpIds = JSON.parse(fs.readFileSync(mcpMetaPath, 'utf8'));
+            for (const id of previousMcpIds) {
+              if (currentConfig.mcp_servers && currentConfig.mcp_servers[id]) {
+                delete currentConfig.mcp_servers[id];
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        // 确保mcp_servers对象存在
+        if (!currentConfig.mcp_servers) {
+          currentConfig.mcp_servers = {};
+        }
+
+        // 写入所有启用的MCP
+        const writtenMcpIds: string[] = [];
+        for (const mcp of mcps) {
+          const mcpConfig: Record<string, any> = {};
+
+          if (mcp.type === 'stdio') {
+            mcpConfig.command = mcp.command || '';
+            if (mcp.args && mcp.args.length > 0) {
+              mcpConfig.args = mcp.args;
+            }
+            // stdio 类型的环境变量写在 [mcp_servers.name.env] 子表中
+            if (mcp.env && Object.keys(mcp.env).length > 0) {
+              mcpConfig.env = { ...mcp.env };
+            }
+          } else if (mcp.type === 'http') {
+            // Codex 使用 Streamable HTTP 传输，url 字段
+            mcpConfig.url = mcp.url || '';
+            // HTTP 类型可选的 headers
+            if (mcp.headers && Object.keys(mcp.headers).length > 0) {
+              mcpConfig.headers = { ...mcp.headers };
+            }
+          } else if (mcp.type === 'sse') {
+            // SSE 传输也使用 url 字段
+            mcpConfig.url = mcp.url || '';
+            if (mcp.headers && Object.keys(mcp.headers).length > 0) {
+              mcpConfig.headers = { ...mcp.headers };
+            }
+          }
+
+          currentConfig.mcp_servers[mcp.id] = mcpConfig;
+          writtenMcpIds.push(mcp.id);
+        }
+
+        // 如果mcp_servers为空对象，删除该键
+        if (Object.keys(currentConfig.mcp_servers).length === 0) {
+          delete currentConfig.mcp_servers;
+        }
+
+        // 写回 config.toml
+        atomicWriteFile(codexConfigPath, stringifyToml(currentConfig));
+
+        // 保存已写入的MCP ID列表，用于后续清理
+        fs.writeFileSync(mcpMetaPath, JSON.stringify(writtenMcpIds, null, 2));
+
+        console.log(`[MCP] Codex MCP config written: ${writtenMcpIds.length} server(s)`);
         return true;
       }
 
@@ -2563,6 +2662,50 @@ ${instruction}
         }
 
         return true;
+      } else if (targetType === 'codex') {
+        // 从 Codex config.toml 中移除指定的 MCP 条目
+        const homeDir = os.homedir();
+        const codexDir = path.join(homeDir, '.codex');
+        const codexConfigPath = path.join(codexDir, 'config.toml');
+
+        if (!fs.existsSync(codexConfigPath)) {
+          return true;
+        }
+
+        let currentConfig: Record<string, any> = {};
+        try {
+          currentConfig = parseToml(fs.readFileSync(codexConfigPath, 'utf-8'));
+        } catch (error) {
+          console.warn('[MCP] Failed to parse Codex config.toml for removal:', error);
+          return false;
+        }
+
+        if (currentConfig.mcp_servers && currentConfig.mcp_servers[mcpId]) {
+          delete currentConfig.mcp_servers[mcpId];
+
+          // 如果mcp_servers为空对象，删除该键
+          if (Object.keys(currentConfig.mcp_servers).length === 0) {
+            delete currentConfig.mcp_servers;
+          }
+
+          atomicWriteFile(codexConfigPath, stringifyToml(currentConfig));
+
+          // 更新metadata
+          const mcpMetaPath = path.join(codexDir, '.aicodeswitch_mcp_servers.json');
+          if (fs.existsSync(mcpMetaPath)) {
+            try {
+              const previousIds: string[] = JSON.parse(fs.readFileSync(mcpMetaPath, 'utf8'));
+              const updatedIds = previousIds.filter(id => id !== mcpId);
+              fs.writeFileSync(mcpMetaPath, JSON.stringify(updatedIds, null, 2));
+            } catch {
+              // ignore
+            }
+          }
+
+          console.log(`[MCP] Removed MCP ${mcpId} from Codex config`);
+        }
+
+        return true;
       }
 
       return false;
@@ -2571,6 +2714,28 @@ ${instruction}
       return false;
     }
   };
+
+  // 服务启动时同步MCP配置到已激活的工具
+  const allMcps = dbManager.getMCPs();
+  const targetsToSync = new Set<TargetType>();
+  for (const mcp of allMcps) {
+    if (mcp.targets) {
+      for (const target of mcp.targets) {
+        targetsToSync.add(target);
+      }
+    }
+  }
+  for (const target of targetsToSync) {
+    const activeRouteId = dbManager.getActiveRouteIdForTool(target);
+    if (activeRouteId) {
+      try {
+        await writeMCPConfig(target);
+        console.log(`[Startup MCP Sync] MCP config synced for ${target}`);
+      } catch (error) {
+        console.error(`[Startup MCP Sync] Failed to sync MCP config for ${target}:`, error);
+      }
+    }
+  }
 
 };
 
@@ -2596,7 +2761,7 @@ const start = async () => {
   proxyServer.initialize();
 
   // Register admin routes first
-  registerRoutes(dbManager, proxyServer);
+  await registerRoutes(dbManager, proxyServer);
   await proxyServer.registerProxyRoutes();
 
   app.use(express.static(path.resolve(__dirname, '../ui')));

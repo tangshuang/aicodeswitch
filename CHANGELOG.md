@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-06-08: 修复 DeepSeek Anthropic 端点多轮对话 thinking 块兼容问题
+
+### 修复
+- 修复使用 DeepSeek Anthropic 兼容端点（sourceType: claude）时，多轮对话返回 400 错误的问题
+- 根因：Claude Code 将历史 thinking 压缩为 `redacted_thinking` 块，DeepSeek 不识别该类型
+- 新增 `convertRedactedThinkingForProvider` 函数，在转发前将 `redacted_thinking` 转换为 `thinking` 块
+
+## 2026-06-07: 新增请求体 JSON 安全性清理
+
+### 新增
+- 新增请求体安全性清理模块 `body-sanitizer.ts`，在转发前自动修复请求体中的潜在问题
+- 清除字符串中的非法 C0 控制字符（保留 TAB/LF/CR）
+- 修复 Responses API `function_call.arguments` 中的无效 JSON 字符串
+- 移除对象树中的 `undefined` 值，防止序列化时 content-length 不匹配
+- 防循环引用和最大递归深度保护
+
+## 2026-06-07: 实现 Codex MCP 配置写入
+
+### 新增
+- 实现 Codex 目标的 MCP 配置写入功能，将 MCP 服务器以 `[mcp_servers.<name>]` TOML 格式写入 `~/.codex/config.toml`
+- 支持 stdio、http、sse 三种 MCP 传输类型
+- 实现 Codex MCP 配置移除功能（删除 MCP 时自动清理 config.toml）
+- MCP targets 变更时自动同步配置到对应工具（PUT /api/mcps/:id）
+- 服务启动时自动同步 MCP 配置到已激活的工具
+- 将 `mcp_servers` 加入 Codex config.toml 管理字段，确保配置合并时正确处理
+
 ## 2026-06-06: 新增 Agnes 提供商及 chat_template_kwargs thinking 规则
 
 ### 新增
