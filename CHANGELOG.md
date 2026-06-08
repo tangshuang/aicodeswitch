@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-06-08: 修复 DeepSeek Anthropic 端点多轮对话 thinking 块兼容问题
+
+### 修复
+- 修复使用 DeepSeek Anthropic 兼容端点（sourceType: claude）时，多轮对话返回 400 错误的问题
+- 根因：Claude Code 将历史 thinking 压缩为 `redacted_thinking` 块，DeepSeek 不识别该类型
+- 新增 `convertRedactedThinkingForProvider` 函数，在转发前将 `redacted_thinking` 转换为 `thinking` 块
+
 ## 2026-06-07: 新增请求体 JSON 安全性清理
 
 ### 新增

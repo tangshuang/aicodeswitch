@@ -101,7 +101,7 @@ import { responsesToGeminiResponse } from './pairs/gemini-responses/response.js'
 import { ResponsesToGeminiConverter } from './pairs/gemini-responses/streaming.js';
 
 // --- Provider-driven post-processing ---
-import { fixThinkingHistory } from './thinking/mapper.js';
+import { fixThinkingHistory, convertRedactedThinkingForProvider } from './thinking/mapper.js';
 import { claudeThinkingToReasoningEffort } from './thinking/effort.js';
 
 // ============================================================
@@ -329,6 +329,12 @@ export function buildTargetBody(options: Pick<TransformRequestOptions, 'fromForm
       const effort = processedBody.thinking ? claudeThinkingToReasoningEffort(processedBody.thinking) : null;
       result = applyReasoningConfig(result, providerConfig, effort);
     }
+  }
+
+  // --- Provider-driven: convert redacted_thinking → thinking for providers that don't support redacted_thinking ---
+  // DeepSeek 等 provider 的 Anthropic 端点不识别 redacted_thinking，需要转换为 thinking 块
+  if (toFormat === 'claude' && providerConfig?.supportsThinking && result.messages) {
+    result.messages = convertRedactedThinkingForProvider(result.messages);
   }
 
   // --- Safety net for Claude upstream: ensure thinking blocks alongside tool_use ---
