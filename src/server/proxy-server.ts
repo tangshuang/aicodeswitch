@@ -1163,7 +1163,9 @@ export class ProxyServer {
       );
       if (isBlacklisted) continue;
 
-      return service.name;
+      const vendors = this.dbManager.getVendors();
+      const vendor = vendors.find(v => v.id === service.vendorId);
+      return vendor ? `${vendor.name}-${service.name}` : service.name;
     }
 
     return undefined;
@@ -1173,7 +1175,7 @@ export class ProxyServer {
     if (!forwardedToServiceName) {
       return '';
     }
-    return `；已自动转发给 ${forwardedToServiceName} 服务继续处理`;
+    return `；已自动转发给「${forwardedToServiceName}」服务继续处理`;
   }
 
   /**

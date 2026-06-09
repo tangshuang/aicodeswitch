@@ -24,6 +24,7 @@ release
 .trae/
 .opencode/
 /.shared/
+/logs/
 
 # OS
 .DS_Store

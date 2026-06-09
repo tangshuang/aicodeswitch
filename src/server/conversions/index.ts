@@ -102,6 +102,7 @@ import { ResponsesToGeminiConverter } from './pairs/gemini-responses/streaming.j
 
 // --- Provider-driven post-processing ---
 import { fixThinkingHistory, convertRedactedThinkingForProvider } from './thinking/mapper.js';
+import { ensureToolResultIds } from './utils/tool-result.js';
 import { claudeThinkingToReasoningEffort } from './thinking/effort.js';
 
 // ============================================================
@@ -341,6 +342,14 @@ export function buildTargetBody(options: Pick<TransformRequestOptions, 'fromForm
   // When thinking mode is enabled, Claude requires thinking blocks in assistant messages with tool_use
   if (toFormat === 'claude' && result.thinking && result.messages) {
     result.messages = fixThinkingHistory(result.messages, 'claude');
+  }
+
+  // --- Ensure tool_result blocks have id for Claude-compatible providers ---
+  // Some providers (e.g. GLM) require an id field on tool_result content blocks,
+  // but standard Claude API tool_result blocks only have tool_use_id without id.
+  if (toFormat === 'claude' && result.messages) {
+    const { messages: patchedMessages } = ensureToolResultIds(result.messages);
+    result.messages = patchedMessages;
   }
 
   return result;

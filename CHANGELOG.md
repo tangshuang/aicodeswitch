@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-06-09: 修复 GLM Claude 兼容端点 tool_result 缺少 id 字段导致 500 错误
+
+### 修复
+- 修复使用 GLM Claude 兼容端点时，包含 tool_result 的请求返回 500 错误的问题
+- 根因：GLM 的 Anthropic 兼容端点要求 `tool_result` 内容块必须包含 `id` 字段，但标准 Claude API 的 `tool_result` 块仅有 `tool_use_id` 而无 `id`
+- 新增 `ensureToolResultIds` 函数（`conversions/utils/tool-result.ts`），在转发到 claude 格式目标时自动为缺少 `id` 的 `tool_result` 块补上标识
+- `tool_result.id` 使用 `tool_use_id` 的值，确保与对应 `tool_use` 块的 `id` 一致
+
 ## 2026-06-08: 修复 DeepSeek Anthropic 端点多轮对话 thinking 块兼容问题
 
 ### 修复
