@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-06-10: 日志详情弹窗组件化重构
+
+### 优化
+- 将日志详情弹窗从 LogsPage 提炼为公共组件 `LogDetailModal`，支持 RequestLog 和 ErrorLog 两种类型
+- 将 SSE 解析、日志格式化等工具函数提取到 `src/ui/utils/log-utils.ts`，消除 LogsPage 与 SessionsPage 之间的代码重复
+- 修复会话详情页"详情"按钮无法弹出日志详情的问题，现在使用与日志管理页相同的富格式弹窗
+
 ## 2026-06-10: AccessKey 接入密钥共享功能
 
 ### 新增

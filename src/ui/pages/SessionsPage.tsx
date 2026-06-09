@@ -7,133 +7,10 @@ import { Pagination } from '../components/Pagination';
 import { toast } from '../components/Toast';
 import { SessionMigrationModal } from '../components/SessionMigrationModal';
 import { SessionRouteBindingModal } from '../components/SessionRouteBindingModal';
+import LogDetailModal from '../components/LogDetailModal';
+import { parseSSEChunks, assembleStreamText } from '../utils/log-utils';
 
 dayjs.extend(relativeTime);
-
-/**
- * 解析SSE事件行
- */
-interface ParsedSSEEvent {
-  event?: string;
-  data?: any;
-  raw: string;
-}
-
-function parseSSEChunks(sourceText: string): ParsedSSEEvent[] {
-  const chunks = sourceText.split('\n').map(item => item.trim()).join('\n')
-    .split('\n\n').filter(s => s.trim());
-  const events: ParsedSSEEvent[] = [];
-
-  for (const chunk of chunks) {
-    let event: string = '';
-    let dataLines: string[] = [];
-    let dataInsert = 0;
-    const lines = chunk.split('\n');
-    lines.forEach((line) => {
-      if (/^[a-z]+:/.test(line)) {
-        const at = line.indexOf(':');
-        const type = line.slice(0, at).trim();
-        const content = line.slice(at + 1).trim();
-        if (type === 'event') {
-          event = content;
-        }
-        else if (type === 'data') {
-          dataLines.push(content);
-          dataInsert = 1;
-        }
-        else if (dataLines.length) {
-          dataInsert = -1;
-        }
-      }
-      else if (dataInsert === 1) {
-        dataLines.push(line);
-      }
-    });
-
-    const dataText = dataLines.length > 0
-      ? dataLines.join('\n').trim()
-      : undefined;
-    let data;
-    if (dataText) {
-      try {
-        data = JSON.parse(dataText);
-      } catch {
-        data = dataText;
-      }
-    }
-
-    events.push({
-      event,
-      data,
-      raw: chunk
-    });
-  }
-
-  return events;
-}
-
-/**
- * 从解析的SSE事件中组装完整文本
- */
-function assembleStreamText(events: ParsedSSEEvent[]): { text: string; thinking: string } {
-  let text = '';
-  let thinking = '';
-  let inThinkingBlock = false;
-  let inTextBlock = false;
-  let reasoningAccumulated = false;
-
-  for (const event of events) {
-    const data = event.data;
-    if (!data) continue;
-
-    if (event.event === 'content_block_start' && data.content_block) {
-      const blockType = data.content_block.type;
-      if (blockType === 'thinking') inThinkingBlock = true;
-      else if (blockType === 'text') inTextBlock = true;
-      continue;
-    }
-
-    if (event.event === 'content_block_stop') {
-      inThinkingBlock = false;
-      inTextBlock = false;
-      continue;
-    }
-
-    if (event.event === 'content_block_delta' && data.delta) {
-      if (data.delta.type === 'text_delta' && inTextBlock) text += data.delta.text || '';
-      else if (data.delta.type === 'thinking_delta' && inThinkingBlock) thinking += data.delta.thinking || '';
-      continue;
-    }
-
-    if (event.event === 'response.reasoning_text.delta' && data.delta !== undefined) {
-      thinking += data.delta || '';
-      reasoningAccumulated = true;
-      continue;
-    }
-
-    if (event.event === 'response.content_part.done' && data.part) {
-      const part = data.part;
-      if (part.type === 'reasoning_text' && part.text && !reasoningAccumulated) thinking = part.text;
-      else if (part.type === 'output_text' && part.text) text += part.text;
-      continue;
-    }
-
-    if (!event.event && data.choices) {
-      const delta = data.choices?.[0]?.delta;
-      if (delta) {
-        if (typeof delta.content === 'string') text += delta.content;
-        if (delta.thinking && typeof delta.thinking.content === 'string') thinking += delta.thinking.content;
-      }
-      continue;
-    }
-
-    if (data.reasoning_content || data.thinking) {
-      thinking += data.reasoning_content || data.thinking || '';
-    }
-  }
-
-  return { text, thinking };
-}
 
 interface ChatMessageItem {
   role: 'user' | 'assistant';
@@ -610,6 +487,7 @@ function SessionsPage() {
   const [countdown, setCountdown] = useState(10);
   const [migrationSession, setMigrationSession] = useState<Session | null>(null);
   const [routeBindingSession, setRouteBindingSession] = useState<Session | null>(null);
+  const [detailLog, setDetailLog] = useState<RequestLog | null>(null);
 
   useEffect(() => {
     loadSessions();
@@ -1123,8 +1001,7 @@ function SessionsPage() {
                               </td>
                               <td>
                                 <button className="btn btn-sm btn-secondary" onClick={() => {
-                                  // 打开请求详情 — 复用简单弹窗
-                                  alert(`请求详情\n\n路径: ${log.path}\n状态: ${log.statusCode}\n响应时间: ${log.responseTime}ms\n模型: ${log.targetModel || log.requestModel}`);
+                                  setDetailLog(log);
                                 }}>详情</button>
                               </td>
                             </tr>
@@ -1177,6 +1054,11 @@ function SessionsPage() {
             loadSessions();
           }}
         />
+      )}
+
+      {/* Log Detail Modal */}
+      {detailLog && (
+        <LogDetailModal log={detailLog} onClose={() => setDetailLog(null)} />
       )}
     </div>
   );
