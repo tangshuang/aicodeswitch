@@ -5,6 +5,8 @@ import { useConfirm } from '../components/Confirm';
 import { toast } from '../components/Toast';
 import { useRulesStatus } from '../hooks/useRulesStatus';
 import QuickSetupModal from '../components/QuickSetupModal';
+import openaiIcon from '../assets/openai.webp';
+import claudeIcon from '../assets/claude.webp';
 
 const CONTENT_TYPE_OPTIONS = [
   { value: 'compact', label: '压缩对话', icon: '📦' },
@@ -1050,28 +1052,101 @@ export default function RoutesPage() {
                   >
                     <div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div style={{ fontWeight: 500 }}>{route.name}</div>
-                        {boundSessionCounts[route.id] > 0 && (
-                          <span
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleShowBoundSessions(route.id);
-                            }}
-                            style={{
-                              fontSize: '11px',
-                              color: 'var(--text-route-muted)',
-                              cursor: 'pointer',
-                              flexShrink: 0,
-                              padding: '2px 8px',
-                              borderRadius: '10px',
-                              backgroundColor: 'var(--bg-secondary)',
-                              whiteSpace: 'nowrap',
-                            }}
-                            title="点击查看绑定会话"
-                          >
-                            📎 {boundSessionCounts[route.id]} 个会话
-                          </span>
-                        )}
+                        <div style={{ fontWeight: 500, flex: 1, minWidth: 0 }}>{route.name}</div>
+                        <div style={{ display: 'flex', gap: '3px', alignItems: 'center', flexShrink: 0, marginLeft: '8px' }}>
+                          {/* 会话绑定数量图标 */}
+                          {boundSessionCounts[route.id] > 0 && (
+                            <div style={{ position: 'relative' }}>
+                              <div
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleShowBoundSessions(route.id);
+                                }}
+                                style={{
+                                  width: '18px',
+                                  height: '18px',
+                                  borderRadius: '50%',
+                                  border: '2px solid var(--color-primary, #2980b9)',
+                                  boxSizing: 'border-box',
+                                  backgroundColor: 'transparent',
+                                  color: 'var(--color-primary, #2980b9)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontSize: '10px',
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {boundSessionCounts[route.id] > 99 ? '99+' : boundSessionCounts[route.id]}
+                              </div>
+                              <span className="route-icon-popover">
+                                {boundSessionCounts[route.id]} 个会话绑定此路由，点击查看
+                              </span>
+                            </div>
+                          )}
+                          {/* Codex 绑定图标 */}
+                          <div style={{ position: 'relative' }}>
+                            <img
+                              src={openaiIcon}
+                              alt="Codex"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isConfiguringBinding) return;
+                                if (toolBindings?.['codex']?.routeId === route.id) {
+                                  handleDeactivateToolRoute('codex');
+                                } else {
+                                  handleActivateToolRoute('codex', route.id);
+                                }
+                              }}
+                              style={{
+                                width: '18px',
+                                height: '18px',
+                                borderRadius: '50%',
+                                cursor: isConfiguringBinding ? 'wait' : 'pointer',
+                                opacity: toolBindings?.['codex']?.routeId === route.id ? 1 : 0.1,
+                                transition: 'opacity 0.2s ease',
+                                objectFit: 'cover',
+                                flexShrink: 0,
+                                display: 'block',
+                              }}
+                            />
+                            <span className="route-icon-popover">
+                              {toolBindings?.['codex']?.routeId === route.id ? 'Codex 已绑定此路由，点击解绑' : '点击将 Codex 绑定到此路由'}
+                            </span>
+                          </div>
+                          {/* Claude Code 绑定图标 */}
+                          <div style={{ position: 'relative' }}>
+                            <img
+                              src={claudeIcon}
+                              alt="Claude Code"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isConfiguringBinding) return;
+                                if (toolBindings?.['claude-code']?.routeId === route.id) {
+                                  handleDeactivateToolRoute('claude-code');
+                                } else {
+                                  handleActivateToolRoute('claude-code', route.id);
+                                }
+                              }}
+                              style={{
+                                width: '18px',
+                                height: '18px',
+                                borderRadius: '50%',
+                                cursor: isConfiguringBinding ? 'wait' : 'pointer',
+                                opacity: toolBindings?.['claude-code']?.routeId === route.id ? 1 : 0.1,
+                                transition: 'opacity 0.2s ease',
+                                objectFit: 'cover',
+                                flexShrink: 0,
+                                display: 'block',
+                              }}
+                            />
+                            <span className="route-icon-popover">
+                              {toolBindings?.['claude-code']?.routeId === route.id ? 'Claude Code 已绑定此路由，点击解绑' : '点击将 Claude Code 绑定到此路由'}
+                            </span>
+                          </div>
+                        </div>
                       </div>
                       {route.description && (
                         <div style={{ fontSize: '12px', color: 'var(--text-route-muted)', marginTop: '2px' }}>
