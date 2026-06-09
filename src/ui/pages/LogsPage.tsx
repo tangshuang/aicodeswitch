@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api/client';
-import type { RequestLog, ErrorLog, Vendor, APIService, Session } from '../../types';
+import type { RequestLog, ErrorLog, Vendor, APIService } from '../../types';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import JSONViewer from '../components/JSONViewer';
@@ -263,10 +263,9 @@ function assembleResponseBody(log: RequestLog): any | null {
   return null;
 }
 
-type LogTab = 'request' | 'error' | 'sessions';
+type LogTab = 'request' | 'error';
 
 const LOG_MODAL_Z_INDEX = 1000000;
-const LOG_MODAL_TOP_Z_INDEX = LOG_MODAL_Z_INDEX + 1;
 
 function LogsPage() {
   const { confirm } = useConfirm();
@@ -277,15 +276,6 @@ function LogsPage() {
   const [selectedErrorLog, setSelectedErrorLog] = useState<ErrorLog | null>(null);
   const [chunksExpanded, setChunksExpanded] = useState<boolean>(false);
   const [assembledTextExpanded, setAssembledTextExpanded] = useState<boolean>(true);
-
-  // Sessions 相关状态
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [selectedSession, setSelectedSession] = useState<Session | null>(null);
-  const [selectedSessionLogs, setSelectedSessionLogs] = useState<RequestLog[]>([]);
-  const [sessionsTotal, setSessionsTotal] = useState(0);
-  const [sessionsPage, setSessionsPage] = useState(1);
-  const [sessionsPageSize, setSessionsPageSize] = useState(20);
-  const [logsLoading, setLogsLoading] = useState(false);
 
   // 分页状态
   const [requestLogsPage, setRequestLogsPage] = useState(1);
@@ -314,11 +304,11 @@ function LogsPage() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [errorSearchQuery, setErrorSearchQuery] = useState<string>('');
 
-  const logDetailZIndex = selectedSession ? LOG_MODAL_TOP_Z_INDEX : LOG_MODAL_Z_INDEX;
+  const logDetailZIndex = LOG_MODAL_Z_INDEX;
 
   useEffect(() => {
     loadLogs();
-  }, [activeTab, requestLogsPage, requestLogsPageSize, errorLogsPage, errorLogsPageSize, sessionsPage, sessionsPageSize, searchQuery, errorSearchQuery]);
+  }, [activeTab, requestLogsPage, requestLogsPageSize, errorLogsPage, errorLogsPageSize, searchQuery, errorSearchQuery]);
 
   useEffect(() => {
     loadVendorsAndServices();
@@ -353,7 +343,7 @@ function LogsPage() {
       if (intervalId) clearInterval(intervalId);
       if (countdownId) clearInterval(countdownId);
     };
-  }, [autoRefresh, activeTab, requestLogsPage, requestLogsPageSize, errorLogsPage, errorLogsPageSize, sessionsPage, sessionsPageSize]);
+  }, [autoRefresh, activeTab, requestLogsPage, requestLogsPageSize, errorLogsPage, errorLogsPageSize]);
 
   const loadLogs = async () => {
     setLoading(true);
@@ -382,14 +372,6 @@ function LogsPage() {
         ]);
         setErrorLogs(data);
         setErrorLogsTotal(countResult.count);
-      } else if (activeTab === 'sessions') {
-        const offset = (sessionsPage - 1) * sessionsPageSize;
-        const [data, countResult] = await Promise.all([
-          api.getSessions(sessionsPageSize, offset),
-          api.getSessionsCount()
-        ]);
-        setSessions(data);
-        setSessionsTotal(countResult.count);
       }
     } catch (error) {
       console.error('Failed to load logs:', error);
@@ -413,21 +395,19 @@ function LogsPage() {
 
   const loadAllCounts = async () => {
     try {
-      const [requestCount, errorCount, sessionsCount] = await Promise.all([
+      const [requestCount, errorCount] = await Promise.all([
         api.getLogsCount(),
-        api.getErrorLogsCount(),
-        api.getSessionsCount()
+        api.getErrorLogsCount()
       ]);
       setRequestLogsTotal(requestCount.count);
       setErrorLogsTotal(errorCount.count);
-      setSessionsTotal(sessionsCount.count);
     } catch (error) {
       console.error('Failed to load counts:', error);
     }
   };
 
   const handleClearAllLogs = async () => {
-    const warningMessage = `确定要清空所有日志吗?\n\n⚠️ 警告:\n1. 此操作将永久删除所有请求日志、错误日志和会话记录\n2. 相关的统计数据也会被清空\n3. 此操作不可撤销\n\n是否继续?`;
+    const warningMessage = `确定要清空所有日志吗?\n\n⚠️ 警告:\n1. 此操作将永久删除所有请求日志和错误日志\n2. 相关的统计数据也会被清空\n3. 此操作不可撤销\n\n是否继续?`;
 
     const confirmed = await confirm({
       message: warningMessage,
@@ -442,8 +422,7 @@ function LogsPage() {
         // 并发清空所有类型的日志
         await Promise.all([
           api.clearLogs(),
-          api.clearErrorLogs(),
-          api.clearSessions()
+          api.clearErrorLogs()
         ]);
 
         // 重置所有状态
@@ -456,12 +435,6 @@ function LogsPage() {
         setSelectedErrorLog(null);
         setErrorLogsPage(1);
         setErrorLogsTotal(0);
-
-        setSessions([]);
-        setSelectedSession(null);
-        setSelectedSessionLogs([]);
-        setSessionsPage(1);
-        setSessionsTotal(0);
 
         toast.success('所有日志已清空');
       } catch (error) {
@@ -530,49 +503,6 @@ function LogsPage() {
   const handleErrorLogsPageSizeChange = (size: number) => {
     setErrorLogsPageSize(size);
     setErrorLogsPage(1);
-  };
-
-  // Sessions 相关函数
-  const handleSessionsPageChange = (page: number) => {
-    setSessionsPage(page);
-  };
-
-  const handleSessionsPageSizeChange = (size: number) => {
-    setSessionsPageSize(size);
-    setSessionsPage(1);
-  };
-
-  const handleSessionClick = async (session: Session) => {
-    setSelectedSession(session);
-    setLogsLoading(true);
-    try {
-      const logs = await api.getSessionLogs(session.id, 100);
-      setSelectedSessionLogs(logs);
-    } catch (error) {
-      console.error('Failed to load session logs:', error);
-    } finally {
-      setLogsLoading(false);
-    }
-  };
-
-  const formatDuration = (startTime: number, endTime: number) => {
-    const duration = endTime - startTime;
-    if (duration < 60000) {
-      return `${Math.floor(duration / 1000)}秒`;
-    } else if (duration < 3600000) {
-      return `${Math.floor(duration / 60000)}分钟`;
-    } else {
-      return `${Math.floor(duration / 3600000)}小时`;
-    }
-  };
-
-  const getTargetTypeBadge = (targetType: string) => {
-    if (targetType === 'claude-code') {
-      return <span className="badge badge-claude-code">Claude Code</span>;
-    } else if (targetType === 'codex') {
-      return <span className="badge badge-codex">Codex</span>;
-    }
-    return <span className="badge">{targetType}</span>;
   };
 
   /**
@@ -709,116 +639,6 @@ function LogsPage() {
   };
 
   /**
-   * 从日志中提取响应文本内容
-   */
-  const extractResponseText = (log: RequestLog): string => {
-    // 尝试从 stream 响应中提取
-    const sourceText = log.downstreamResponseBody;
-    if (typeof sourceText === 'string' &&
-        (sourceText.includes('event:') || sourceText.includes('data:'))) {
-      const events = parseSSEChunks(sourceText);
-      const { text, thinking } = assembleStreamText(events);
-      const parts: string[] = [];
-      if (thinking) {
-        parts.push(`<details><summary>思考过程</summary>\n\n${thinking}\n\n</details>`);
-      }
-      if (text) {
-        parts.push(text);
-      }
-      return parts.join('\n\n');
-    }
-
-    // 尝试从 responseBody 中提取
-    if (log.responseBody) {
-      try {
-        const parsed = typeof log.responseBody === 'string'
-          ? JSON.parse(log.responseBody)
-          : log.responseBody;
-        if (parsed.content) {
-          if (Array.isArray(parsed.content)) {
-            const parts: string[] = [];
-            for (const block of parsed.content) {
-              if (block.type === 'text' && block.text) parts.push(block.text);
-              else if (block.type === 'thinking' && block.thinking) {
-                parts.push(`<details><summary>思考过程</summary>\n\n${block.thinking}\n\n</details>`);
-              }
-            }
-            return parts.join('\n\n');
-          }
-          if (typeof parsed.content === 'string') return parsed.content;
-        }
-        // OpenAI 格式
-        if (parsed.choices?.[0]?.message?.content) {
-          return parsed.choices[0].message.content;
-        }
-      } catch { /* ignore */ }
-    }
-
-    return '';
-  };
-
-  /**
-   * 将当前会话导出为 JSON 文件
-   */
-  const exportSessionAsJson = () => {
-    if (!selectedSession) return;
-
-    const s = selectedSession;
-    const logs = selectedSessionLogs.map((log, index) => {
-      const messages = log.body?.messages || [];
-      const responseText = extractResponseText(log);
-      return {
-        index: index + 1,
-        timestamp: dayjs(log.timestamp).format('YYYY-MM-DD HH:mm:ss'),
-        statusCode: log.statusCode || null,
-        responseTime: log.responseTime || null,
-        requestModel: log.requestModel || null,
-        targetModel: log.targetModel || null,
-        vendorName: log.vendorName || null,
-        serviceName: log.targetServiceName || null,
-        contentType: log.contentType || null,
-        tags: log.tags || [],
-        usage: log.usage || null,
-        messages,
-        response: responseText || null,
-      };
-    });
-
-    const data = {
-      session: {
-        id: s.id,
-        title: s.title || null,
-        targetType: s.targetType,
-        targetTypeName: TARGET_TYPE[s.targetType] || s.targetType,
-        requestCount: s.requestCount,
-        totalTokens: s.totalTokens,
-        model: s.model || null,
-        vendorName: s.vendorName || null,
-        serviceName: s.serviceName || null,
-        firstRequestAt: dayjs(s.firstRequestAt).format('YYYY-MM-DD HH:mm:ss'),
-        lastRequestAt: dayjs(s.lastRequestAt).format('YYYY-MM-DD HH:mm:ss'),
-        duration: formatDuration(s.firstRequestAt, s.lastRequestAt),
-        highIqMode: s.highIqMode || false,
-      },
-      logs,
-      exportedAt: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-    };
-
-    const content = JSON.stringify(data, null, 2);
-    const blob = new Blob([content], { type: 'application/json;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const safeTitle = (s.title || s.id.slice(0, 8)).replace(/[\\/:*?"<>|]/g, '_');
-    a.download = `${safeTitle}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    toast.success('导出成功');
-  };
-
-  /**
    * 格式化错误日志为 Markdown
    */
   const formatErrorLogAsMarkdown = (log: ErrorLog): string => {
@@ -910,59 +730,6 @@ function LogsPage() {
     }
 
     return lines.join('\n');
-  };
-
-  const renderSessions = () => {
-    if (sessions.length === 0) {
-      return <div className="empty-state"><p>暂无会话记录</p></div>;
-    }
-
-    return (
-      <table>
-        <thead>
-          <tr>
-            <th>标题</th>
-            <th>客户端类型</th>
-            <th>请求数</th>
-            <th>Tokens</th>
-            <th>首次请求</th>
-            <th>最后请求</th>
-            <th>时长</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sessions.map((session) => (
-            <tr
-              key={session.id}
-              onClick={() => handleSessionClick(session)}
-              style={{ cursor: 'pointer', backgroundColor: selectedSession?.id === session.id ? 'var(--bg-selected)' : undefined }}
-            >
-              <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {session.title || session.id.slice(0, 8)}
-              </td>
-              <td>{getTargetTypeBadge(session.targetType)}</td>
-              <td>{session.requestCount}</td>
-              <td>{session.totalTokens.toLocaleString()}</td>
-              <td>{dayjs(session.firstRequestAt).format('MM-DD HH:mm')}</td>
-              <td>{dayjs(session.lastRequestAt).format('MM-DD HH:mm')}</td>
-              <td>{formatDuration(session.firstRequestAt, session.lastRequestAt)}</td>
-              <td>
-                <button
-                  className="btn btn-sm btn-secondary"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleSessionClick(session);
-                  }}
-                >
-                  查看
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    );
   };
 
   const renderRequestLogs = () => {
@@ -1124,20 +891,6 @@ function LogsPage() {
             >
               错误日志 ({errorLogsTotal})
             </button>
-            <button
-              onClick={() => setActiveTab('sessions')}
-              style={{
-                padding: '12px 24px',
-                border: 'none',
-                background: activeTab === 'sessions' ? '#9b59b6' : 'transparent',
-                color: activeTab === 'sessions' ? 'white' : '#7f8c8d',
-                cursor: 'pointer',
-                borderBottom: activeTab === 'sessions' ? '2px solid #8e44ad' : '2px solid transparent',
-                fontWeight: activeTab === 'sessions' ? 'bold' : 'normal',
-              }}
-            >
-              会话 ({sessionsTotal})
-            </button>
           </div>
         </div>
 
@@ -1145,7 +898,6 @@ function LogsPage() {
           <h3>
             {activeTab === 'error' && '错误日志列表'}
             {activeTab === 'request' && '请求日志列表'}
-            {activeTab === 'sessions' && '会话列表'}
           </h3>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
             {/* 内容搜索框 */}
@@ -1279,7 +1031,7 @@ function LogsPage() {
             border: '1px solid var(--border-primary)'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <label style={{ fontWeight: 'bold', minWidth: '80px', color: 'var(--text-primary)' }}>来源类型:</label>
+              <label style={{ fontWeight: 'bold', color: 'var(--text-primary)' }}>来源类型:</label>
               <select
                 value={filterTargetType}
                 onChange={(e) => setFilterTargetType(e.target.value)}
@@ -1298,7 +1050,7 @@ function LogsPage() {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <label style={{ fontWeight: 'bold', minWidth: '80px', color: 'var(--text-primary)' }}>供应商:</label>
+              <label style={{ fontWeight: 'bold', color: 'var(--text-primary)' }}>供应商:</label>
               <select
                 value={filterVendorId}
                 onChange={(e) => handleVendorChange(e.target.value)}
@@ -1319,7 +1071,7 @@ function LogsPage() {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <label style={{ fontWeight: 'bold', minWidth: '80px', color: 'var(--text-primary)' }}>API服务:</label>
+              <label style={{ fontWeight: 'bold', color: 'var(--text-primary)' }}>API服务:</label>
               <select
                 value={filterServiceId}
                 onChange={(e) => handleServiceChange(e.target.value)}
@@ -1343,7 +1095,7 @@ function LogsPage() {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <label style={{ fontWeight: 'bold', minWidth: '80px', color: 'var(--text-primary)' }}>模型:</label>
+              <label style={{ fontWeight: 'bold', color: 'var(--text-primary)' }}>模型:</label>
               <select
                 value={filterModel}
                 onChange={(e) => setFilterModel(e.target.value)}
@@ -1423,24 +1175,6 @@ function LogsPage() {
                 pageSize={errorLogsPageSize}
                 onPageChange={handleErrorLogsPageChange}
                 onPageSizeChange={handleErrorLogsPageSizeChange}
-              />
-            )}
-          </>
-        )}
-        {activeTab === 'sessions' && (
-          <>
-            {loading ? (
-              <div className="empty-state"><p>加载中...</p></div>
-            ) : (
-              renderSessions()
-            )}
-            {!loading && (
-              <Pagination
-                currentPage={sessionsPage}
-                totalItems={sessionsTotal}
-                pageSize={sessionsPageSize}
-                onPageChange={handleSessionsPageChange}
-                onPageSizeChange={handleSessionsPageSizeChange}
               />
             )}
           </>
@@ -1858,121 +1592,6 @@ function LogsPage() {
         </div>
       )}
 
-      {selectedSession && (
-        <div className="modal-overlay">
-          <button
-            type="button"
-            className="modal-close-btn"
-            onClick={() => {
-              setSelectedSession(null);
-              setSelectedSessionLogs([]);
-            }}
-            aria-label="关闭"
-          >
-            ×
-          </button>
-          <div className="modal" style={{ width: '900px', maxWidth: '90vw' }}>
-            <div className="modal-container">
-              <div className="modal-header">
-                <h2>会话详情</h2>
-              </div>
-              <div>
-                <div className="form-group">
-                  <label>会话ID</label>
-                  <input type="text" value={selectedSession.id} readOnly />
-                </div>
-                <div className="form-group">
-                  <label>标题</label>
-                  <input type="text" value={selectedSession.title || '(无标题)'} readOnly />
-                </div>
-                <div className="form-group">
-                  <label>客户端类型</label>
-                  <input type="text" value={selectedSession.targetType === 'claude-code' ? 'Claude Code' : 'Codex'} readOnly />
-                </div>
-                <div style={{ display: 'flex', gap: '15px' }}>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label>请求数</label>
-                    <input type="text" value={selectedSession.requestCount.toString()} readOnly />
-                  </div>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label>Tokens</label>
-                    <input type="text" value={selectedSession.totalTokens.toLocaleString()} readOnly />
-                  </div>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label>时长</label>
-                    <input type="text" value={formatDuration(selectedSession.firstRequestAt, selectedSession.lastRequestAt)} readOnly />
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: '15px' }}>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label>首次请求</label>
-                    <input type="text" value={dayjs(selectedSession.firstRequestAt).format('YYYY-MM-DD HH:mm:ss')} readOnly />
-                  </div>
-                  <div className="form-group" style={{ flex: 1 }}>
-                    <label>最后请求</label>
-                    <input type="text" value={dayjs(selectedSession.lastRequestAt).format('YYYY-MM-DD HH:mm:ss')} readOnly />
-                  </div>
-                </div>
-
-                <h3 style={{ marginTop: '20px', marginBottom: '10px' }}>会话日志 ({selectedSessionLogs.length})</h3>
-                {logsLoading ? (
-                  <div style={{ textAlign: 'center', padding: '20px' }}>加载中...</div>
-                ) : selectedSessionLogs.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: '#7f8c8d' }}>暂无日志</div>
-                ) : (
-                  <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
-                    <table style={{ fontSize: '14px' }}>
-                      <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-card)' }}>
-                        <tr>
-                          <th>时间</th>
-                          <th>状态</th>
-                          <th>响应时间</th>
-                          <th>Tokens</th>
-                          <th>操作</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedSessionLogs.map((log) => (
-                          <tr key={log.id}>
-                            <td>{dayjs(log.timestamp).format('HH:mm:ss')}</td>
-                            <td>
-                              <span className={`badge ${getStatusBadge(log.statusCode)}`}>
-                                {log.statusCode || 'Error'}
-                              </span>
-                            </td>
-                            <td>{log.responseTime ? `${log.responseTime}ms` : '-'}</td>
-                            <td>
-                              {log.usage ? (
-                                <span>{log.usage.totalTokens || log.usage.inputTokens + log.usage.outputTokens}</span>
-                              ) : '-'}
-                            </td>
-                            <td>
-                              <button
-                                className="btn btn-sm btn-secondary"
-                                onClick={() => setSelectedRequestLog(log)}
-                              >
-                                详情
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-              <div className="modal-footer">
-                <button className="btn btn-primary" onClick={exportSessionAsJson}
-                  disabled={selectedSessionLogs.length === 0}>导出</button>
-                <button className="btn btn-secondary" onClick={() => {
-                  setSelectedSession(null);
-                  setSelectedSessionLogs([]);
-                }}>关闭</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

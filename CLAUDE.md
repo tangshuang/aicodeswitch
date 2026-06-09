@@ -563,6 +563,12 @@ aicos version            # Show current version information
     - Intelligently truncates at word boundaries (max 100 chars)
     - Adds "..." for truncated titles
   - Records first request time, last request time, request count, and total tokens per session
+  - **Session Route Binding**: Sessions can be bound to a specific route, overriding the global tool-level route binding
+    - When a session is bound to a route, all subsequent requests for that session use the bound route
+    - Route selection priority: session-level binding > global tool binding (ToolBindings) > fallback to original config
+    - Binding is stored as `routeId`/`routeName` fields on the Session object
+    - Route deletion cascades: automatically clears all session bindings for the deleted route
+    - UI: "路由" button in SessionsPage opens route selection modal; RoutesPage shows bound session count per route card
 
 ### Usage Limits Auto-Sync
 - **Service-Level Limits**: API services can have token and request count limits configured

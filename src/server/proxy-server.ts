@@ -41,6 +41,7 @@ import {
   stripClaudeCompactResponseContent,
 } from './conversions/compact';
 import { isCodingToolRequest } from './coding-plan';
+import { applyCodingPlanHeaders } from './coding-plan-headers';
 
 type ContentTypeDetector = {
   type: ContentType;
@@ -303,15 +304,32 @@ export class ProxyServer {
         return;
       }
 
-      // 加载绑定的路由
+      // 推断客户端格式
+      const clientFormat = apiPathToClientFormat(apiPath)!;
+
+      // 加载绑定的路由（默认从 API 路径绑定获取）
       const allRoutes = this.dbManager.getRoutes();
-      const route = allRoutes.find((r: Route) => r.id === binding.routeId);
+      let route = allRoutes.find((r: Route) => r.id === binding.routeId);
+
+      // 会话级路由覆盖：优先检查会话是否绑定了特定路由
+      const sessionId = this.extractSessionIdForFormat(req, clientFormat);
+      if (sessionId) {
+        const session = this.dbManager.getSession(sessionId);
+        if (session?.routeId) {
+          const boundRoute = allRoutes.find((r: Route) => r.id === session.routeId);
+          if (boundRoute) {
+            console.log(`[SESSION-ROUTE] API path ${apiPath} session ${sessionId} using bound route: ${boundRoute.name}`);
+            route = boundRoute;
+          } else {
+            console.log(`[SESSION-ROUTE] Bound route ${session.routeId} not found for session ${sessionId}, clearing binding`);
+            this.dbManager.unbindSessionRoute(sessionId).catch(console.error);
+          }
+        }
+      }
+
       if (!route) {
         return res.status(404).json({ error: { message: `Bound route '${binding.routeId}' not found or inactive. Please check Route Mapping settings.` } });
       }
-
-      // 推断客户端格式
-      const clientFormat = apiPathToClientFormat(apiPath)!;
 
       // 复用完整的代理请求处理
       await this.handleApiPathProxyRequest(req, res, route, clientFormat, apiPath);
@@ -977,6 +995,24 @@ export class ProxyServer {
 
     if (!tool) return undefined;
 
+    // 优先检查会话级路由绑定
+    const sessionId = this.defaultExtractSessionId(req, tool);
+    if (sessionId) {
+      const session = this.dbManager.getSession(sessionId);
+      if (session?.routeId) {
+        const boundRoute = this.dbManager.getRoute(session.routeId);
+        if (boundRoute) {
+          console.log(`[SESSION-ROUTE] Session ${sessionId} using bound route: ${boundRoute.name} (${boundRoute.id})`);
+          return boundRoute;
+        } else {
+          // 路由已被删除，自动清除绑定
+          console.log(`[SESSION-ROUTE] Bound route ${session.routeId} not found for session ${sessionId}, clearing binding`);
+          this.dbManager.unbindSessionRoute(sessionId).catch(console.error);
+        }
+      }
+    }
+
+    // 回退到全局工具绑定
     const routeId = this.dbManager.getActiveRouteIdForTool(tool);
     if (!routeId) return undefined;
 
@@ -1163,7 +1199,9 @@ export class ProxyServer {
       );
       if (isBlacklisted) continue;
 
-      return service.name;
+      const vendors = this.dbManager.getVendors();
+      const vendor = vendors.find(v => v.id === service.vendorId);
+      return vendor ? `${vendor.name}-${service.name}` : service.name;
     }
 
     return undefined;
@@ -1173,7 +1211,7 @@ export class ProxyServer {
     if (!forwardedToServiceName) {
       return '';
     }
-    return `；已自动转发给 ${forwardedToServiceName} 服务继续处理`;
+    return `；已自动转发给「${forwardedToServiceName}」服务继续处理`;
   }
 
   /**
@@ -2737,6 +2775,11 @@ export class ProxyServer {
       headers['content-length'] = Buffer.byteLength(bodyStr, 'utf8').toString();
     }
 
+    // 编程套餐 Headers 覆盖：当服务启用了编程套餐时，替换为编程工具的标准 Headers
+    if (service.enableCodingPlan) {
+      applyCodingPlanHeaders(headers, sourceType);
+    }
+
     return headers;
   }
 
@@ -2917,6 +2960,21 @@ export class ProxyServer {
   }
 
   /**
+   * 根据客户端格式提取 session ID（用于标准 API 路径的会话级路由覆盖）
+   */
+  private extractSessionIdForFormat(request: Request, format: Format): string | null {
+    if (format === 'claude') {
+      const rawUserId = request.body?.metadata?.user_id;
+      return ProxyServer.extractSessionIdFromUserId(rawUserId);
+    }
+    // 对于 completions/responses/gemini 格式，尝试从 headers 中提取
+    const sessionId = request.headers['session-id'] || request.headers['session_id'];
+    if (typeof sessionId === 'string') return sessionId;
+    if (Array.isArray(sessionId)) return sessionId[0] || null;
+    return null;
+  }
+
+  /**
    * 提取会话标题（默认方法）
    * 对于新会话，尝试从第一条消息的内容中提取标题
    * 优化：使用第一条用户消息的完整内容，并智能截取
@@ -3002,6 +3060,7 @@ export class ProxyServer {
   private formatSessionTitle(text: string): string {
     // 去除多余空白和换行符，替换为单个空格
     let formatted = text
+      .replace(/<\/?session>/g, '')  // 移除 <session></session> 标签
       .replace(/\s+/g, ' ')  // 多个空白字符替换为单个空格
       .replace(/[\r\n]+/g, ' ')  // 换行符替换为空格
       .trim();
@@ -3825,7 +3884,9 @@ export class ProxyServer {
         const parser = new SSEParserTransform();
         const eventCollector = new SSEEventCollectorTransform();
         const serializer = new SSESerializerTransform();
-        const downstreamChunkCollector = new ChunkCollectorTransform();
+        const downstreamChunkCollector = new ChunkCollectorTransform(() => {
+          rulesStatusBroadcaster.refreshRuleInUse(route.id, rule.id);
+        });
         const compactResponseSanitizer = rule.contentType === 'compact' && targetType === 'claude-code'
           ? new ClaudeCompactResponseSanitizer()
           : null;
@@ -4580,7 +4641,9 @@ export class ProxyServer {
         const parser = new SSEParserTransform();
         const eventCollector = new SSEEventCollectorTransform();
         const serializer = new SSESerializerTransform();
-        const downstreamChunkCollector = new ChunkCollectorTransform();
+        const downstreamChunkCollector = new ChunkCollectorTransform(() => {
+          rulesStatusBroadcaster.refreshRuleInUse(route.id, rule.id);
+        });
         responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
 
         const { converter, extractUsage } = this.transformSSEByFormat(clientFormat, sourceType);

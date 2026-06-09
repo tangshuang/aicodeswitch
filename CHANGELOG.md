@@ -1,5 +1,118 @@
 # Changelog
 
+## 2026-06-09: 会话路由绑定功能
+
+### 新增
+- 新增会话路由绑定功能，允许将会话绑定到指定路由，实现会话级别的差异化路由策略
+- 新增 `src/ui/components/SessionRouteBindingModal.tsx`：路由绑定弹窗组件，支持选择路由进行绑定和解绑
+- 新增 3 个 API 端点：`PUT /api/sessions/:id/bind-route`（绑定路由）、`DELETE /api/sessions/:id/bind-route`（解绑路由）、`GET /api/routes/:id/bound-sessions`（查询路由绑定会话）
+- 会话管理页操作栏新增「路由」按钮，已绑定时显示路由名（绿色），未绑定时显示"路由"（蓝色）
+- 路由管理页路由卡片新增绑定会话数量标签（📎 N 个会话），点击后弹窗展示绑定会话列表
+- 代理路由选择优先级：会话级绑定 > 全局工具绑定 > 原始配置兜底
+
+### 修改
+- `src/types/index.ts`：Session 接口新增 `routeId?` 和 `routeName?` 可选字段
+- `src/server/fs-database.ts`：新增 `bindSessionRoute()`、`unbindSessionRoute()`、`getBoundSessions()` 方法；`deleteRoute()` 增加级联清理绑定逻辑；`upsertSession()` 保留已有路由绑定
+- `src/server/proxy-server.ts`：`findMatchingRoute()` 和标准 API 路径中间件增加会话级路由覆盖逻辑；新增 `extractSessionIdForFormat()` 辅助方法
+- `src/server/main.ts`：新增会话路由绑定相关 API 端点
+- `src/ui/api/client.ts`：新增 `bindSessionRoute()`、`unbindSessionRoute()`、`getBoundSessions()` 三个 API 方法
+- `src/ui/pages/SessionsPage.tsx`：新增路由按钮和 SessionRouteBindingModal 集成
+- `src/ui/pages/RoutesPage.tsx`：路由卡片新增绑定会话数量标签和弹窗查看
+
+## 2026-06-09: 会话迁移功能
+
+### 新增
+- 新增会话迁移功能，支持在 Claude Code 和 Codex 之间（及同工具内）迁移对话上下文
+- 新增 `src/server/session-migration.ts`：迁移核心服务，包含 SSE 解析、内容提取、Prompt 生成、Token 估算
+- 新增 `src/server/session-launcher.ts`：CLI 启动器，支持跨平台终端窗口启动（macOS/Linux/Windows）及临时文件管理
+- 新增 `src/ui/components/SessionMigrationModal.tsx`：迁移弹窗组件，支持预览、编辑、CLI 启动和剪贴板复制三种交付方式
+- 新增 3 个 API 端点：`POST /api/sessions/:id/migration-preview`（预览）、`POST /api/sessions/:id/migrate`（执行迁移）、`POST /api/sessions/:id/migrate-launch`（CLI 启动）
+- 迁移弹窗采用卡片式布局：左侧固定来源工具 → 箭头 → 右侧两个可选项（支持同工具迁移）
+- 自动推断项目目录（从 `~/.claude/sessions/` 读取 cwd），CLI 启动时自动 cd 到正确目录
+- 工具调用摘要化：将 Bash/Read/Write/Edit 等工具调用转为自然语言描述
+- 支持 Claude/OpenAI/Responses/Gemini/DeepSeek 五种格式的 SSE 流式响应文本提取
+- 服务启动时自动清理旧的迁移临时文件（`/tmp/aicodeswitch-migration-*`）
+
+### 修改
+- `src/types/index.ts`：新增 MigrationOptions、MigrationRound、MigrationContent、MigrationPreview、MigrationResult、LaunchResult 类型
+- `src/ui/pages/SessionsPage.tsx`：会话列表操作列新增「迁移」按钮
+- `src/ui/api/client.ts`：新增 migrationPreview、migrateSession、migrateLaunch 三个 API 方法
+- `src/ui/styles/App.css`：新增迁移弹窗样式（卡片选择、来源徽章、深色模式）
+
+## 2026-06-09: 编程套餐 Headers 覆盖功能
+
+### 新增
+- 新增编程套餐 Headers 覆盖模块 (`coding-plan-headers.ts`)，当 API 服务启用编程套餐限制 (`enableCodingPlan`) 时，自动将发送到上游的请求 Headers 覆盖为对应编程工具的标准 Headers
+- Claude 源 (`claude`/`claude-chat`) 使用 Claude Code 标准 Headers（含 x-stainless-*、anthropic-beta 等）
+- 其他源 (`openai`/`openai-chat`/`gemini`/`gemini-chat`) 使用 Codex 标准 Headers（含 x-codex-*、originator 等）
+
+## 2026-06-09: 修复 Streaming/Thinking 过程中规则状态未保持使用中
+
+### 修复
+- 修复 streaming 响应（包括 thinking 思考过程）超过 10 秒后规则状态错误变为空闲的问题
+- 新增 `refreshRuleInUse` 方法，仅在状态已为 `in_use` 时轻量刷新不活动定时器
+- 在 `ChunkCollectorTransform` 中增加节流回调（每 5 秒），streaming 期间持续刷新定时器保持使用中状态
+
+## 2026-06-09: 会话对话视图去重与导出优化
+
+### 修复
+- 修复对话视图中 assistant 消息重复显示的问题（请求体历史中的消息与响应体提取的消息内容相同）
+- 新增基于内容比较的去重逻辑：内容相同的 assistant 消息保留有 token 消耗信息的那条，无重复的独立消息不受影响
+
+### 变更
+- 对话模式下导出按钮改为导出对话数据（messages 数组），日志模式下仍导出完整日志数据
+
+## 2026-06-09: 会话页面新增搜索、筛选和自动刷新功能
+
+### 新增
+- 会话列表新增搜索框，支持按标题或 ID 模糊搜索
+- 新增来源类型筛选下拉框（Claude Code / Codex）
+- 新增自动刷新开关（10 秒间隔）和手动刷新按钮
+- 新增清除筛选按钮，一键重置所有筛选条件
+
+## 2026-06-09: 会话管理迁为独立页面
+
+### 变更
+- 会话管理从日志页面的 `sessions` tab 迁出为独立页面 `/sessions`，侧边栏增加专属菜单入口
+- 移除 LogsPage 中所有 session 相关代码（state、函数、弹窗、模块级组件）
+- 修复 SessionsPage 中 `setSessionsTotal` 类型错误和 `Pagination` 组件 `totalItems` 属性名
+
+## 2026-06-09: 会话对话视图深度优化 — 工具调用链可视化、消息折叠、交互增强
+
+### 新增
+- 对话视图完整展示工具调用链：左侧显示模型的工具调用（含参数），右侧显示工具执行结果，通过工具名+短 ID 精确对应
+- 长消息自动折叠/展开（超过 10 行），工具消息强制可折叠，工具调用消息收起时仅显示 header
+- 会话详情弹窗刷新按钮，支持重新拉取最新日志
+- 对话视图底部向下箭头按钮，一键滚动到最新消息
+- 新增 `--bg-primary-solid` CSS 变量，解决渐变色无法作为 gradient color stop 的问题
+- 深色模式工具消息使用半透明白色背景，与普通消息明确区分
+
+### 优化
+- 采用增量对比算法提取对话消息，确保首条用户消息到最新回复完整展示
+- 收起消息时智能判断是否需要滚动：仅在 top bar 不可见时才执行 scrollIntoView
+- 会话日志获取上限从 100 提升至 10000，避免长会话消息丢失
+- 日志列表同样按时间升序排列，与对话视图顺序一致
+- 深色模式下用户消息、助手消息气泡背景色加深，提升可辨识度
+
+## 2026-06-09: 会话详情弹窗优化 — 聊天视图、固定头尾、标题清理
+
+### 新增
+- 会话详情弹窗新增「对话」视图，以聊天气泡形式展示完整对话历史（含用户消息和助手回复）
+- 支持在「日志」和「对话」两种视图间一键切换
+- 聊天视图支持显示思考内容（可折叠）和消息元信息（时间、模型、tokens）
+
+### 优化
+- 会话详情弹窗标题和底部按钮改为固定布局，仅中间内容区域可滚动
+- 清理会话标题中残留的 `<session>` / `</session>` 标签（服务端 + 前端双重处理）
+
+## 2026-06-09: 修复 GLM Claude 兼容端点 tool_result 缺少 id 字段导致 500 错误
+
+### 修复
+- 修复使用 GLM Claude 兼容端点时，包含 tool_result 的请求返回 500 错误的问题
+- 根因：GLM 的 Anthropic 兼容端点要求 `tool_result` 内容块必须包含 `id` 字段，但标准 Claude API 的 `tool_result` 块仅有 `tool_use_id` 而无 `id`
+- 新增 `ensureToolResultIds` 函数（`conversions/utils/tool-result.ts`），在转发到 claude 格式目标时自动为缺少 `id` 的 `tool_result` 块补上标识
+- `tool_result.id` 使用 `tool_use_id` 的值，确保与对应 `tool_use` 块的 `id` 一致
+
 ## 2026-06-08: 修复 DeepSeek Anthropic 端点多轮对话 thinking 块兼容问题
 
 ### 修复

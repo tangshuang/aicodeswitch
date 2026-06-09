@@ -37,9 +37,13 @@ export class ChunkCollectorTransform extends Transform {
   private chunks: string[] = [];
   private errorEmitted = false;
   private stringDecoder = new StringDecoder('utf8');
+  private lastRefreshTime = 0;
+  private refreshCallback?: () => void;
+  private readonly REFRESH_INTERVAL = 5000; // 每5秒最多刷新一次
 
-  constructor() {
+  constructor(refreshCallback?: () => void) {
     super({ writableObjectMode: true, readableObjectMode: true });
+    this.refreshCallback = refreshCallback;
 
     this.on('error', (err) => {
       if (isClientDisconnectError(err)) {
@@ -68,6 +72,15 @@ export class ChunkCollectorTransform extends Transform {
 
       // 将chunk传递给下一个stream
       this.push(chunk);
+
+      // 节流刷新规则使用状态（仅在有数据流过时触发）
+      if (this.refreshCallback) {
+        const now = Date.now();
+        if (now - this.lastRefreshTime >= this.REFRESH_INTERVAL) {
+          this.lastRefreshTime = now;
+          this.refreshCallback();
+        }
+      }
 
       callback();
     } catch (error) {

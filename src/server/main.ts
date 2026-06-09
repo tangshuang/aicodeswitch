@@ -53,6 +53,8 @@ import {
   CODEX_AUTH_MANAGED_FIELDS
 } from './config-managed-fields';
 import { SKILLSMP_API_KEY } from './config';
+import { extractSessionContent, previewMigration, migrateSession } from './session-migration';
+import { writePromptToTempFile, cleanupTempFile, launchTargetWithFallback, cleanupOldTempFiles, resolveProjectDir } from './session-launcher';
 
 const appDir = path.join(os.homedir(), '.aicodeswitch');
 const legacyDataDir = path.join(appDir, 'data');
@@ -2322,6 +2324,188 @@ ${instruction}
     })
   );
 
+  // ─── Session Route Binding API ───
+
+  app.put(
+    '/api/sessions/:id/bind-route',
+    asyncHandler(async (req, res) => {
+      const sessionId = req.params.id;
+      const { routeId } = req.body || {};
+
+      if (!routeId) {
+        res.status(400).json({ success: false, error: 'routeId is required' });
+        return;
+      }
+
+      const session = dbManager.getSession(sessionId);
+      if (!session) {
+        res.status(404).json({ success: false, error: 'Session not found' });
+        return;
+      }
+
+      const updatedSession = await dbManager.bindSessionRoute(sessionId, routeId);
+      if (!updatedSession) {
+        res.status(400).json({ success: false, error: 'Route not found' });
+        return;
+      }
+
+      res.json({ success: true, session: updatedSession });
+    })
+  );
+
+  app.delete(
+    '/api/sessions/:id/bind-route',
+    asyncHandler(async (req, res) => {
+      const sessionId = req.params.id;
+
+      const session = dbManager.getSession(sessionId);
+      if (!session) {
+        res.status(404).json({ success: false, error: 'Session not found' });
+        return;
+      }
+
+      const result = await dbManager.unbindSessionRoute(sessionId);
+      res.json({ success: result });
+    })
+  );
+
+  app.get(
+    '/api/routes/:id/bound-sessions',
+    asyncHandler(async (req, res) => {
+      const routeId = req.params.id;
+      const route = dbManager.getRoute(routeId);
+      if (!route) {
+        res.status(404).json({ error: 'Route not found' });
+        return;
+      }
+
+      const sessions = dbManager.getBoundSessions(routeId);
+      res.json({
+        routeId,
+        sessions: sessions.map(s => ({
+          id: s.id,
+          title: s.title,
+          targetType: s.targetType,
+          requestCount: s.requestCount,
+          totalTokens: s.totalTokens,
+          lastRequestAt: s.lastRequestAt,
+        })),
+      });
+    })
+  );
+
+  // ─── Session Migration API ───
+
+  app.post(
+    '/api/sessions/:id/migration-preview',
+    asyncHandler(async (req, res) => {
+      const sessionId = req.params.id;
+      const { targetTool, includeThinking, includeToolCalls, maxRounds } = req.body || {};
+
+      if (!targetTool || !['claude-code', 'codex'].includes(targetTool)) {
+        res.status(400).json({ error: 'Invalid targetTool. Must be "claude-code" or "codex".' });
+        return;
+      }
+
+      try {
+        const content = await extractSessionContent(dbManager, sessionId, {
+          sourceSessionId: sessionId,
+          targetTool,
+          includeThinking: includeThinking === true,
+          includeToolCalls: includeToolCalls !== false,
+          maxRounds: typeof maxRounds === 'number' ? maxRounds : 0,
+        });
+
+        const preview = previewMigration(content, targetTool);
+        res.json(preview);
+      } catch (err: any) {
+        if (err.message?.includes('not found')) {
+          res.status(404).json({ error: err.message });
+        } else {
+          res.status(500).json({ error: err.message || 'Migration preview failed' });
+        }
+      }
+    })
+  );
+
+  app.post(
+    '/api/sessions/:id/migrate',
+    asyncHandler(async (req, res) => {
+      const sessionId = req.params.id;
+      const { targetTool, includeThinking, includeToolCalls, maxRounds, editedPrompt } = req.body || {};
+
+      if (!targetTool || !['claude-code', 'codex'].includes(targetTool)) {
+        res.status(400).json({ error: 'Invalid targetTool. Must be "claude-code" or "codex".' });
+        return;
+      }
+
+      try {
+        const content = await extractSessionContent(dbManager, sessionId, {
+          sourceSessionId: sessionId,
+          targetTool,
+          includeThinking: includeThinking === true,
+          includeToolCalls: includeToolCalls !== false,
+          maxRounds: typeof maxRounds === 'number' ? maxRounds : 0,
+        });
+
+        const result = migrateSession(content, targetTool, editedPrompt);
+        res.json(result);
+      } catch (err: any) {
+        if (err.message?.includes('not found')) {
+          res.status(404).json({ error: err.message });
+        } else {
+          res.status(500).json({ error: err.message || 'Migration failed' });
+        }
+      }
+    })
+  );
+
+  app.post(
+    '/api/sessions/:id/migrate-launch',
+    asyncHandler(async (req, res) => {
+      const sessionId = req.params.id;
+      const { targetTool, includeThinking, includeToolCalls, maxRounds } = req.body || {};
+
+      if (!targetTool || !['claude-code', 'codex'].includes(targetTool)) {
+        res.status(400).json({ error: 'Invalid targetTool. Must be "claude-code" or "codex".' });
+        return;
+      }
+
+      try {
+        // First extract content and generate prompt
+        const content = await extractSessionContent(dbManager, sessionId, {
+          sourceSessionId: sessionId,
+          targetTool,
+          includeThinking: includeThinking === true,
+          includeToolCalls: includeToolCalls !== false,
+          maxRounds: typeof maxRounds === 'number' ? maxRounds : 0,
+        });
+
+        const { prompt } = migrateSession(content, targetTool);
+
+        // Resolve the project directory from session metadata
+        const projectDir = resolveProjectDir(sessionId, content.sourceTool);
+
+        // Write prompt to temp file
+        const tempFilePath = writePromptToTempFile(prompt, sessionId);
+
+        // Try to launch the target tool with the resolved project directory
+        const result = await launchTargetWithFallback(targetTool, tempFilePath, prompt, projectDir || undefined);
+
+        // Schedule cleanup
+        cleanupTempFile(tempFilePath);
+
+        res.json(result);
+      } catch (err: any) {
+        if (err.message?.includes('not found')) {
+          res.status(404).json({ error: err.message });
+        } else {
+          res.status(500).json({ error: err.message || 'Launch migration failed' });
+        }
+      }
+    })
+  );
+
   app.get('/api/docs/recommend-vendors', asyncHandler(async (_req, res) => {
     const resp = await fetch('https://unpkg.com/aicodeswitch/docs/vendors-recommand.md');
     if (!resp.ok) {
@@ -2755,6 +2939,11 @@ const start = async () => {
   } catch (error) {
     console.error('[Server] Tool config sync failed:', error);
   }
+
+  // 清理旧的迁移临时文件
+  try {
+    cleanupOldTempFiles();
+  } catch { /* ignore */ }
 
   const proxyServer = new ProxyServer(dbManager, app);
   // Initialize proxy server and register proxy routes last

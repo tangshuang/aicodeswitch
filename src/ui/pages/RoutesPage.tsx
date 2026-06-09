@@ -5,6 +5,8 @@ import { useConfirm } from '../components/Confirm';
 import { toast } from '../components/Toast';
 import { useRulesStatus } from '../hooks/useRulesStatus';
 import QuickSetupModal from '../components/QuickSetupModal';
+import openaiIcon from '../assets/openai.webp';
+import claudeIcon from '../assets/claude.webp';
 
 const CONTENT_TYPE_OPTIONS = [
   { value: 'compact', label: '压缩对话', icon: '📦' },
@@ -152,6 +154,12 @@ export default function RoutesPage() {
   const [codexDefaultModelInput, setCodexDefaultModelInput] = useState<string>('');
   const [codexDefaultModelDirty, setCodexDefaultModelDirty] = useState(false);
 
+  // 路由绑定会话相关状态
+  const [boundSessionCounts, setBoundSessionCounts] = useState<Record<string, number>>({});
+  const [showBoundSessionsRouteId, setShowBoundSessionsRouteId] = useState<string | null>(null);
+  const [boundSessions, setBoundSessions] = useState<Array<{ id: string; title?: string; targetType: string; requestCount: number; totalTokens: number; lastRequestAt: number }>>([]);
+  const [boundSessionsLoading, setBoundSessionsLoading] = useState(false);
+
   useEffect(() => {
     loadRoutes();
     loadVendors();
@@ -218,6 +226,38 @@ export default function RoutesPage() {
     if (data.length > 0 && !selectedRoute) {
       setSelectedRoute(data[0]);
     }
+    // 加载每个路由的绑定会话数
+    const counts: Record<string, number> = {};
+    for (const route of data) {
+      try {
+        const result = await api.getBoundSessions(route.id);
+        counts[route.id] = result.sessions.length;
+      } catch {
+        counts[route.id] = 0;
+      }
+    }
+    setBoundSessionCounts(counts);
+  };
+
+  // 打开绑定会话弹窗
+  const handleShowBoundSessions = async (routeId: string) => {
+    setShowBoundSessionsRouteId(routeId);
+    setBoundSessionsLoading(true);
+    setBoundSessions([]);
+    try {
+      const result = await api.getBoundSessions(routeId);
+      setBoundSessions(result.sessions);
+    } catch {
+      setBoundSessions([]);
+    } finally {
+      setBoundSessionsLoading(false);
+    }
+  };
+
+  // 关闭绑定会话弹窗
+  const handleCloseBoundSessions = () => {
+    setShowBoundSessionsRouteId(null);
+    setBoundSessions([]);
   };
 
   // 检查Claude Code版本
@@ -1011,7 +1051,103 @@ export default function RoutesPage() {
                     }}
                   >
                     <div>
-                      <div style={{ fontWeight: 500 }}>{route.name}</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ fontWeight: 500, flex: 1, minWidth: 0 }}>{route.name}</div>
+                        <div style={{ display: 'flex', gap: '3px', alignItems: 'center', flexShrink: 0, marginLeft: '8px' }}>
+                          {/* 会话绑定数量图标 */}
+                          {boundSessionCounts[route.id] > 0 && (
+                            <div style={{ position: 'relative' }}>
+                              <div
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleShowBoundSessions(route.id);
+                                }}
+                                style={{
+                                  width: '18px',
+                                  height: '18px',
+                                  borderRadius: '50%',
+                                  border: '2px solid var(--color-primary, #2980b9)',
+                                  boxSizing: 'border-box',
+                                  backgroundColor: 'transparent',
+                                  color: 'var(--color-primary, #2980b9)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontSize: '10px',
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {boundSessionCounts[route.id] > 99 ? '99+' : boundSessionCounts[route.id]}
+                              </div>
+                              <span className="route-icon-popover">
+                                {boundSessionCounts[route.id]} 个会话绑定此路由，点击查看
+                              </span>
+                            </div>
+                          )}
+                          {/* Codex 绑定图标 */}
+                          <div style={{ position: 'relative' }}>
+                            <img
+                              src={openaiIcon}
+                              alt="Codex"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isConfiguringBinding) return;
+                                if (toolBindings?.['codex']?.routeId === route.id) {
+                                  handleDeactivateToolRoute('codex');
+                                } else {
+                                  handleActivateToolRoute('codex', route.id);
+                                }
+                              }}
+                              style={{
+                                width: '18px',
+                                height: '18px',
+                                borderRadius: '50%',
+                                cursor: isConfiguringBinding ? 'wait' : 'pointer',
+                                opacity: toolBindings?.['codex']?.routeId === route.id ? 1 : 0.1,
+                                transition: 'opacity 0.2s ease',
+                                objectFit: 'cover',
+                                flexShrink: 0,
+                                display: 'block',
+                              }}
+                            />
+                            <span className="route-icon-popover">
+                              {toolBindings?.['codex']?.routeId === route.id ? 'Codex 已绑定此路由，点击解绑' : '点击将 Codex 绑定到此路由'}
+                            </span>
+                          </div>
+                          {/* Claude Code 绑定图标 */}
+                          <div style={{ position: 'relative' }}>
+                            <img
+                              src={claudeIcon}
+                              alt="Claude Code"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isConfiguringBinding) return;
+                                if (toolBindings?.['claude-code']?.routeId === route.id) {
+                                  handleDeactivateToolRoute('claude-code');
+                                } else {
+                                  handleActivateToolRoute('claude-code', route.id);
+                                }
+                              }}
+                              style={{
+                                width: '18px',
+                                height: '18px',
+                                borderRadius: '50%',
+                                cursor: isConfiguringBinding ? 'wait' : 'pointer',
+                                opacity: toolBindings?.['claude-code']?.routeId === route.id ? 1 : 0.1,
+                                transition: 'opacity 0.2s ease',
+                                objectFit: 'cover',
+                                flexShrink: 0,
+                                display: 'block',
+                              }}
+                            />
+                            <span className="route-icon-popover">
+                              {toolBindings?.['claude-code']?.routeId === route.id ? 'Claude Code 已绑定此路由，点击解绑' : '点击将 Claude Code 绑定到此路由'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
                       {route.description && (
                         <div style={{ fontSize: '12px', color: 'var(--text-route-muted)', marginTop: '2px' }}>
                           {route.description}
@@ -2546,6 +2682,72 @@ export default function RoutesPage() {
           loadApiPathBindings();
         }}
       />
+
+      {/* 绑定会话弹窗 */}
+      {showBoundSessionsRouteId && (
+        <div className="modal-overlay">
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={handleCloseBoundSessions}
+            aria-label="关闭"
+          >×</button>
+          <div className="modal" style={{ width: '500px', maxWidth: '90vw' }}>
+            <div className="modal-header">
+              <h2>绑定会话 - {routes.find(r => r.id === showBoundSessionsRouteId)?.name || showBoundSessionsRouteId}</h2>
+            </div>
+            <div className="modal-body-scrollable" style={{ padding: '20px' }}>
+              {boundSessionsLoading ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-tertiary)' }}>
+                  加载中...
+                </div>
+              ) : boundSessions.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-tertiary)' }}>
+                  <p>暂无绑定会话</p>
+                </div>
+              ) : (
+                <div style={{ marginBottom: '12px', fontSize: '13px', color: 'var(--text-tertiary)' }}>
+                  以下 {boundSessions.length} 个会话绑定了此路由：
+                </div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {boundSessions.slice(0, 50).map((s) => (
+                  <div
+                    key={s.id}
+                    style={{
+                      padding: '10px 14px',
+                      backgroundColor: 'var(--bg-secondary)',
+                      borderRadius: '6px',
+                    }}
+                  >
+                    <div style={{ fontWeight: 500, fontSize: '14px', marginBottom: '4px' }}>
+                      {s.title?.replace(/<\/?session>/g, '').trim() || s.id.slice(0, 8)}
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', display: 'flex', gap: '12px', alignItems: 'center' }}>
+                      <span className={`badge ${s.targetType === 'claude-code' ? 'badge-claude-code' : 'badge-codex'}`} style={{ fontSize: '11px' }}>
+                        {s.targetType === 'claude-code' ? 'Claude Code' : 'Codex'}
+                      </span>
+                      <span>{s.requestCount} 次请求</span>
+                      <span>{s.totalTokens.toLocaleString()} tokens</span>
+                    </div>
+                  </div>
+                ))}
+                {boundSessions.length > 50 && (
+                  <div style={{ textAlign: 'center', fontSize: '12px', color: 'var(--text-tertiary)', padding: '8px' }}>
+                    等共 {boundSessions.length} 个会话
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <div style={{ flex: 1 }} />
+              <button className="btn btn-secondary" onClick={handleCloseBoundSessions}>
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

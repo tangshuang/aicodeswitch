@@ -9,6 +9,7 @@
   --error-color: #DC2626;
   /* Light Mode Colors - Tech Dark Green Theme */
   --bg-primary: linear-gradient(135deg, #F7FEE7 0%, #F0FDF4 100%);
+  --bg-primary-solid: #F3FCEF;
   --bg-secondary: rgba(255, 255, 255, 0.95);
   --bg-sidebar: linear-gradient(135deg, #0F5132 0%, #065F46 100%);
   --bg-card: rgba(255, 255, 255, 0.98);
@@ -64,6 +65,7 @@
 [data-theme="dark"] {
   /* Dark Mode Colors - Tech Dark Green Cyberpunk Theme */
   --bg-primary: linear-gradient(135deg, #0A1A0F 0%, #0F2415 100%);
+  --bg-primary-solid: #0C1F12;
   --bg-secondary: rgba(15, 36, 21, 0.9);
   --bg-sidebar: linear-gradient(135deg, #0F5132 0%, #065F46 100%);
   --bg-card: rgba(25, 51, 31, 0.95);

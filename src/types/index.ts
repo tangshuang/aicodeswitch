@@ -348,6 +348,8 @@ export interface Session {
   highIqMode?: boolean;    // 是否启用高智商模式
   highIqRuleId?: string;   // 使用的高智商规则ID
   highIqEnabledAt?: number;// 启用高智商模式的时间戳
+  routeId?: string;        // 绑定的路由ID（可选，未绑定为 undefined）
+  routeName?: string;      // 绑定的路由名称（冗余字段，用于 UI 快速显示）
 }
 
 /** 统计数据 */
@@ -495,6 +497,61 @@ export interface ConfigFileState {
   backupHash?: string;
   hasUnmanagedChanges?: boolean;
   managedFieldsChanged?: boolean;
+}
+
+/** 会话迁移相关类型 */
+
+export interface MigrationOptions {
+  sourceSessionId: string;
+  targetTool: ToolType;
+  includeThinking?: boolean;
+  includeToolCalls?: boolean;
+  maxRounds?: number;
+}
+
+export interface MigrationRound {
+  index: number;
+  userMessage: string;
+  assistantResponse: string;
+  toolCallSummaries: string[];
+  thinking?: string;
+  timestamp: number;
+}
+
+export interface MigrationContent {
+  sessionId: string;
+  sessionTitle: string;
+  sourceTool: ToolType;
+  rounds: MigrationRound[];
+  totalRounds: number;
+  extractedRounds: number;
+}
+
+export interface MigrationPreview {
+  content: MigrationContent;
+  generatedPrompt: string;
+  estimatedTokens: number;
+  warnings: string[];
+}
+
+export interface MigrationResult {
+  success: boolean;
+  prompt: string;
+  format: 'markdown';
+  estimatedTokens: number;
+  warnings: string[];
+}
+
+export interface LaunchResult {
+  success: boolean;
+  method: 'cli-launch' | 'fallback';
+  pid?: number;
+  command?: string;
+  promptFilePath?: string;
+  reason?: string;
+  prompt?: string;
+  estimatedTokens?: number;
+  fallbackSuggestions?: string[];
 }
 
 /** 标准 API 路径枚举 */

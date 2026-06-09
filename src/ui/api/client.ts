@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ApiPathBinding, ToolName, ToolBindings } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -145,6 +145,16 @@ interface BackendAPI {
   createMCP: (mcp: MCPInstallRequest) => Promise<MCPServer>;
   updateMCP: (id: string, mcp: Partial<MCPServer>) => Promise<boolean>;
   deleteMCP: (id: string) => Promise<boolean>;
+
+  // Session Route Binding
+  bindSessionRoute: (sessionId: string, routeId: string) => Promise<{ success: boolean; session?: Session; error?: string }>;
+  unbindSessionRoute: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+  getBoundSessions: (routeId: string) => Promise<{ routeId: string; sessions: Array<{ id: string; title?: string; targetType: string; requestCount: number; totalTokens: number; lastRequestAt: number }> }>;
+
+  // Session Migration
+  migrationPreview: (sessionId: string, options: Partial<MigrationOptions>) => Promise<MigrationPreview>;
+  migrateSession: (sessionId: string, options: Partial<MigrationOptions> & { editedPrompt?: string }) => Promise<MigrationResult>;
+  migrateLaunch: (sessionId: string, options: Partial<MigrationOptions>) => Promise<LaunchResult>;
 
   // API 路径路由映射
   getApiPathBindings: () => Promise<{ bindings: ApiPathBinding[]; models: string }>;
@@ -398,6 +408,37 @@ export const api: BackendAPI = {
   deleteMCP: (id: string) => requestJson<boolean>(buildUrl(`/api/mcps/${id}`), {
     method: 'DELETE'
   }),
+
+  // Session Route Binding
+  bindSessionRoute: (sessionId: string, routeId: string) =>
+    requestJson<{ success: boolean; session?: Session; error?: string }>(buildUrl(`/api/sessions/${sessionId}/bind-route`), {
+      method: 'PUT',
+      body: JSON.stringify({ routeId }),
+    }),
+  unbindSessionRoute: (sessionId: string) =>
+    requestJson<{ success: boolean; error?: string }>(buildUrl(`/api/sessions/${sessionId}/bind-route`), {
+      method: 'DELETE',
+    }),
+  getBoundSessions: (routeId: string) =>
+    requestJson(buildUrl(`/api/routes/${routeId}/bound-sessions`)),
+
+  // Session Migration
+  migrationPreview: (sessionId: string, options: Partial<MigrationOptions>) =>
+    requestJson<MigrationPreview>(buildUrl(`/api/sessions/${sessionId}/migration-preview`), {
+      method: 'POST',
+      body: JSON.stringify(options),
+    }),
+  migrateSession: (sessionId: string, options: Partial<MigrationOptions> & { editedPrompt?: string }) =>
+    requestJson<MigrationResult>(buildUrl(`/api/sessions/${sessionId}/migrate`), {
+      method: 'POST',
+      body: JSON.stringify(options),
+    }),
+  migrateLaunch: (sessionId: string, options: Partial<MigrationOptions>) =>
+    requestJson<LaunchResult>(buildUrl(`/api/sessions/${sessionId}/migrate-launch`), {
+      method: 'POST',
+      body: JSON.stringify(options),
+    }),
+
   // API 路径路由映射
   getApiPathBindings: () => requestJson(buildUrl('/api/api-path-bindings')),
   updateApiPathBindings: (bindings: ApiPathBinding[], models?: string) =>

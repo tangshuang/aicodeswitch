@@ -279,6 +279,25 @@ export class RulesStatusBroadcaster {
   }
 
   /**
+   * 刷新规则使用中的不活动定时器（轻量级，仅重置定时器，不修改状态）
+   * 用于 streaming 过程中持续保持 in_use 状态
+   */
+  refreshRuleInUse(routeId: string, ruleId: string) {
+    const currentStatus = this.ruleStates.get(ruleId);
+    // 仅当状态已经是 in_use 时才刷新定时器
+    if (currentStatus?.status !== 'in_use') return;
+
+    const timeoutKey = `${routeId}:${ruleId}`;
+    this.clearRuleTimeout(timeoutKey);
+
+    const timeout = setTimeout(() => {
+      this.markRuleIdle(routeId, ruleId);
+    }, this.INACTIVITY_TIMEOUT);
+
+    this.ruleTimeouts.set(timeoutKey, timeout);
+  }
+
+  /**
    * 更新规则使用量
    */
   updateRuleUsage(ruleId: string, totalTokensUsed: number, totalRequestsUsed: number) {
