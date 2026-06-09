@@ -2104,19 +2104,18 @@ table th {
   color: #fff !important;
 }
 
-/* ── Migration Tool Cards (目标工具选择) ── */
+/* ── Migration Tool Cards (迁移方向选择) ── */
 
 .migration-tool-cards {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: flex-start;
-  gap: 16px;
+  gap: 12px;
 }
 
 .migration-tool-card {
   position: relative;
   flex: 1;
-  max-width: 260px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2126,32 +2125,35 @@ table th {
   border-radius: 12px;
   background: var(--bg-primary);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
   font-family: inherit;
   color: var(--text-primary);
 }
 
-.migration-tool-card:hover:not(:disabled) {
+.migration-tool-card:hover {
   border-color: var(--accent-color, #6c5ce7);
   background: var(--bg-secondary, #f5f6fa);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
 .migration-tool-card.active {
   border-color: var(--accent-color, #6c5ce7);
   background: linear-gradient(135deg, rgba(108, 92, 231, 0.04), rgba(0, 184, 148, 0.04));
-  box-shadow: 0 0 0 3px rgba(108, 92, 231, 0.12);
-}
-
-.migration-tool-card:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  box-shadow: 0 0 0 3px rgba(108, 92, 231, 0.10);
 }
 
 .migration-tool-card.is-source {
+  cursor: default;
   border-style: dashed;
-  border-color: var(--border-tertiary);
+  border-color: var(--border-primary);
+  background: var(--bg-secondary, #f5f6fa);
+}
+
+.migration-tool-card.is-source:hover {
+  transform: none;
+  box-shadow: none;
+  border-color: var(--border-primary);
   background: var(--bg-secondary, #f5f6fa);
 }
 
@@ -2164,17 +2166,21 @@ table th {
   justify-content: center;
   background: var(--bg-secondary, #f5f6fa);
   color: var(--accent-color, #6c5ce7);
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
 }
 
 .migration-tool-card.active .migration-tool-card-icon {
   background: rgba(108, 92, 231, 0.1);
-  color: var(--accent-color, #6c5ce7);
+}
+
+.migration-tool-card.is-source .migration-tool-card-icon {
+  opacity: 0.7;
 }
 
 .migration-tool-card-name {
   font-size: 16px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .migration-tool-card-desc {
@@ -2198,15 +2204,29 @@ table th {
 
 .migration-arrow {
   flex-shrink: 0;
-  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  color: var(--accent-color, #6c5ce7);
   opacity: 0.5;
-  transition: opacity 0.2s ease;
 }
 
-.migration-tool-card.active ~ .migration-arrow,
-.migration-tool-cards:has(.migration-tool-card:nth-child(3).active) .migration-arrow {
-  opacity: 1;
-  color: var(--accent-color, #6c5ce7);
+/* ── 预览前空状态提示 ── */
+
+.migration-empty-hint {
+  margin-top: 16px;
+  padding: 20px 24px;
+  border: 1px dashed var(--border-primary);
+  border-radius: 10px;
+  background: var(--bg-secondary, #f5f6fa);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--text-tertiary);
+}
+
+.migration-empty-hint svg {
+  flex-shrink: 0;
+  opacity: 0.4;
 }
 
 .migration-options label {
@@ -2261,7 +2281,7 @@ table th {
   background: var(--bg-primary, #1a1a2e);
 }
 
-[data-theme="dark"] .migration-tool-card:hover:not(:disabled) {
+[data-theme="dark"] .migration-tool-card:hover {
   border-color: var(--accent-color, #a29bfe);
   background: var(--bg-secondary, #1e1e2e);
 }
@@ -2271,13 +2291,27 @@ table th {
   background: linear-gradient(135deg, rgba(162, 155, 254, 0.06), rgba(0, 206, 201, 0.06));
 }
 
+[data-theme="dark"] .migration-tool-card.is-source {
+  border-color: var(--border-primary, #3a3a5c);
+  background: var(--bg-secondary, #1e1e2e);
+}
+
+[data-theme="dark"] .migration-tool-card.is-source:hover {
+  border-color: var(--border-primary, #3a3a5c);
+  background: var(--bg-secondary, #1e1e2e);
+}
+
 [data-theme="dark"] .migration-tool-card-icon {
   background: var(--bg-secondary, #1e1e2e);
   color: var(--accent-color, #a29bfe);
 }
 
+[data-theme="dark"] .migration-tool-card.active .migration-tool-card-icon {
+  background: rgba(162, 155, 254, 0.1);
+}
+
 [data-theme="dark"] .migration-arrow {
-  color: var(--text-tertiary, #666);
+  color: var(--accent-color, #a29bfe);
 }
 
 [data-theme="dark"] .migration-prompt-textarea {

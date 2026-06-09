@@ -140,79 +140,74 @@ export function SessionMigrationModal({ session, onClose }: Props) {
             </div>
           </div>
 
-          {/* Target Tool Selection — 卡片式迁移方向 */}
+          {/* Target Tool Selection — 来源 → 目标 */}
           <div style={{ marginTop: '20px' }}>
             <label style={{ display: 'block', marginBottom: '12px', fontWeight: 500, color: 'var(--text-secondary)', fontSize: '13px' }}>
-              选择迁移目标
+              迁移方向
             </label>
             <div className="migration-tool-cards">
-              {/* Claude Code 卡片 */}
+              {/* 左侧：来源工具（固定，不可点击） */}
+              <div className="migration-tool-card is-source" style={{ cursor: 'default' }}>
+                <div className="migration-tool-card-icon">
+                  {session.targetType === 'claude-code' ? (
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Z"/>
+                      <path d="M8.5 8.5h7v7h-7z"/>
+                      <path d="M5 12h2"/><path d="M17 12h2"/><path d="M12 5v2"/><path d="M12 17v2"/>
+                    </svg>
+                  ) : (
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Z"/>
+                      <path d="M12 6v4l3 2"/><path d="M9 18h6"/><path d="M9 14h3"/>
+                    </svg>
+                  )}
+                </div>
+                <div className="migration-tool-card-name">{sourceLabel}</div>
+                <span className="migration-tool-card-badge">来源</span>
+              </div>
+
+              {/* 箭头（固定向右） */}
+              <div className="migration-arrow">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 12h14"/>
+                  <path d="m12 5 7 7-7 7"/>
+                </svg>
+              </div>
+
+              {/* 右侧：两个可选项并排大卡片 */}
               <button
                 type="button"
-                className={`migration-tool-card${targetTool === 'claude-code' ? ' active' : ''}${session.targetType === 'claude-code' ? ' is-source' : ''}`}
-                onClick={() => { if (session.targetType !== 'claude-code') { setTargetTool('claude-code'); setLaunchResult(null); } }}
-                disabled={session.targetType === 'claude-code'}
+                className={`migration-tool-card${targetTool === 'claude-code' ? ' active' : ''}`}
+                onClick={() => { setTargetTool('claude-code'); setLaunchResult(null); }}
               >
                 <div className="migration-tool-card-icon">
                   <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Z"/>
                     <path d="M8.5 8.5h7v7h-7z"/>
-                    <path d="M5 12h2"/>
-                    <path d="M17 12h2"/>
-                    <path d="M12 5v2"/>
-                    <path d="M12 17v2"/>
+                    <path d="M5 12h2"/><path d="M17 12h2"/><path d="M12 5v2"/><path d="M12 17v2"/>
                   </svg>
                 </div>
                 <div className="migration-tool-card-name">Claude Code</div>
                 <div className="migration-tool-card-desc">
-                  {session.targetType === 'claude-code' ? '当前来源工具' : 'Anthropic 编程助手'}
+                  {session.targetType === 'claude-code' && targetTool === 'claude-code' ? '同工具新会话' : 'Anthropic 编程助手'}
                 </div>
-                {session.targetType === 'claude-code' && (
-                  <span className="migration-tool-card-badge">来源</span>
-                )}
               </button>
 
-              {/* 迁移方向箭头 — 根据源工具决定方向 */}
-              <div className="migration-arrow">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  {session.targetType === 'codex' ? (
-                    // Codex(右) → Claude Code(左)：向左箭头
-                    <>
-                      <path d="M19 12H5"/>
-                      <path d="m12 5-7 7 7 7"/>
-                    </>
-                  ) : (
-                    // Claude Code(左) → Codex(右)：向右箭头
-                    <>
-                      <path d="M5 12h14"/>
-                      <path d="m12 5 7 7-7 7"/>
-                    </>
-                  )}
-                </svg>
-              </div>
-
-              {/* Codex 卡片 */}
               <button
                 type="button"
-                className={`migration-tool-card${targetTool === 'codex' ? ' active' : ''}${session.targetType === 'codex' ? ' is-source' : ''}`}
-                onClick={() => { if (session.targetType !== 'codex') { setTargetTool('codex'); setLaunchResult(null); } }}
-                disabled={session.targetType === 'codex'}
+                className={`migration-tool-card${targetTool === 'codex' ? ' active' : ''}`}
+                onClick={() => { setTargetTool('codex'); setLaunchResult(null); }}
               >
                 <div className="migration-tool-card-icon">
                   <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Z"/>
-                    <path d="M12 6v4l3 2"/>
-                    <path d="M9 18h6"/>
-                    <path d="M9 14h3"/>
+                    <path d="M12 6v4l3 2"/><path d="M9 18h6"/><path d="M9 14h3"/>
                   </svg>
                 </div>
                 <div className="migration-tool-card-name">Codex</div>
                 <div className="migration-tool-card-desc">
-                  {session.targetType === 'codex' ? '当前来源工具' : 'OpenAI 编程助手'}
+                  {session.targetType === 'codex' && targetTool === 'codex' ? '同工具新会话' : 'OpenAI 编程助手'}
                 </div>
-                {session.targetType === 'codex' && (
-                  <span className="migration-tool-card-badge">来源</span>
-                )}
               </button>
             </div>
           </div>
@@ -268,6 +263,20 @@ export function SessionMigrationModal({ session, onClose }: Props) {
               {loading ? '加载中...' : '预览迁移内容'}
             </button>
           </div>
+
+          {/* Empty State — 未预览时的提示 */}
+          {!preview && !loading && (
+            <div className="migration-empty-hint">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9"/>
+                <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4Z"/>
+              </svg>
+              <div>
+                <div style={{ fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '4px' }}>请先预览迁移内容</div>
+                <div style={{ fontSize: '13px', color: 'var(--text-tertiary)' }}>点击上方「预览迁移内容」按钮，确认迁移 Prompt 后即可启动目标工具或复制到剪贴板</div>
+              </div>
+            </div>
+          )}
 
           {/* Preview Content */}
           {preview && (

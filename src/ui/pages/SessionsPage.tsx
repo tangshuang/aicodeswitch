@@ -6,6 +6,7 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import { Pagination } from '../components/Pagination';
 import { toast } from '../components/Toast';
 import { SessionMigrationModal } from '../components/SessionMigrationModal';
+import { SessionRouteBindingModal } from '../components/SessionRouteBindingModal';
 
 dayjs.extend(relativeTime);
 
@@ -608,6 +609,7 @@ function SessionsPage() {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [countdown, setCountdown] = useState(10);
   const [migrationSession, setMigrationSession] = useState<Session | null>(null);
+  const [routeBindingSession, setRouteBindingSession] = useState<Session | null>(null);
 
   useEffect(() => {
     loadSessions();
@@ -976,6 +978,21 @@ function SessionsPage() {
                           onClick={(e) => { e.stopPropagation(); setMigrationSession(session); }}
                           title="迁移到另一个工具"
                         >迁移</button>
+                        <button
+                          className="btn btn-sm"
+                          style={{
+                            backgroundColor: session.routeId ? '#27ae60' : '#2980b9',
+                            color: 'white',
+                            border: 'none',
+                            minWidth: session.routeId ? undefined : undefined,
+                          }}
+                          onClick={(e) => { e.stopPropagation(); setRouteBindingSession(session); }}
+                          title={session.routeId ? `已绑定: ${session.routeName || session.routeId}` : '绑定路由'}
+                        >
+                          {session.routeName
+                            ? (session.routeName.length > 8 ? session.routeName.slice(0, 8) + '…' : session.routeName)
+                            : '路由'}
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -1148,6 +1165,17 @@ function SessionsPage() {
         <SessionMigrationModal
           session={migrationSession}
           onClose={() => setMigrationSession(null)}
+        />
+      )}
+
+      {/* Route Binding Modal */}
+      {routeBindingSession && (
+        <SessionRouteBindingModal
+          session={routeBindingSession}
+          onClose={() => setRouteBindingSession(null)}
+          onBound={() => {
+            loadSessions();
+          }}
         />
       )}
     </div>

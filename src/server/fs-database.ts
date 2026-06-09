@@ -1569,6 +1569,20 @@ export class FileSystemDatabaseManager {
 
     this.routes.splice(index, 1);
     await this.saveRoutes();
+
+    // 级联清理：清除绑定到该路由的会话的绑定关系
+    let sessionChanged = false;
+    for (const session of this.sessions) {
+      if (session.routeId === id) {
+        session.routeId = undefined;
+        session.routeName = undefined;
+        sessionChanged = true;
+      }
+    }
+    if (sessionChanged) {
+      await this.saveSessions();
+    }
+
     return true;
   }
 
@@ -2987,6 +3001,8 @@ export class FileSystemDatabaseManager {
       highIqMode?: boolean;
       highIqRuleId?: string;
       highIqEnabledAt?: number;
+      routeId?: string;
+      routeName?: string;
     }
   ): Promise<boolean> {
     const session = this.sessions.find(s => s.id === sessionId);
@@ -3170,6 +3186,9 @@ export class FileSystemDatabaseManager {
       if (session.highIqMode !== undefined) existing.highIqMode = session.highIqMode;
       if (Object.prototype.hasOwnProperty.call(session, 'highIqRuleId')) existing.highIqRuleId = session.highIqRuleId;
       if (Object.prototype.hasOwnProperty.call(session, 'highIqEnabledAt')) existing.highIqEnabledAt = session.highIqEnabledAt;
+      // 保留已有的路由绑定（不传入时不覆盖）
+      if (session.routeId !== undefined) existing.routeId = session.routeId;
+      if (session.routeName !== undefined) existing.routeName = session.routeName;
     } else {
       // 创建新 session
       this.sessions.push({
@@ -3188,11 +3207,51 @@ export class FileSystemDatabaseManager {
         highIqMode: session.highIqMode,
         highIqRuleId: session.highIqRuleId,
         highIqEnabledAt: session.highIqEnabledAt,
+        routeId: session.routeId,
+        routeName: session.routeName,
       });
     }
 
     // 异步保存（不阻塞）
     this.saveSessions().catch(console.error);
+  }
+
+  /**
+   * 绑定会话到路由
+   */
+  async bindSessionRoute(sessionId: string, routeId: string): Promise<Session | null> {
+    const session = this.sessions.find(s => s.id === sessionId);
+    if (!session) return null;
+
+    const route = this.routes.find(r => r.id === routeId);
+    if (!route) return null;
+
+    session.routeId = routeId;
+    session.routeName = route.name;
+    await this.saveSessions();
+    return session;
+  }
+
+  /**
+   * 解绑会话路由
+   */
+  async unbindSessionRoute(sessionId: string): Promise<boolean> {
+    const session = this.sessions.find(s => s.id === sessionId);
+    if (!session) return false;
+
+    session.routeId = undefined;
+    session.routeName = undefined;
+    await this.saveSessions();
+    return true;
+  }
+
+  /**
+   * 获取绑定到指定路由的所有会话
+   */
+  getBoundSessions(routeId: string): Session[] {
+    return this.sessions
+      .filter(s => s.routeId === routeId)
+      .sort((a, b) => b.lastRequestAt - a.lastRequestAt);
   }
 
   // 新增方法：获取规则黑名单状态

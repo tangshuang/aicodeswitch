@@ -146,6 +146,11 @@ interface BackendAPI {
   updateMCP: (id: string, mcp: Partial<MCPServer>) => Promise<boolean>;
   deleteMCP: (id: string) => Promise<boolean>;
 
+  // Session Route Binding
+  bindSessionRoute: (sessionId: string, routeId: string) => Promise<{ success: boolean; session?: Session; error?: string }>;
+  unbindSessionRoute: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+  getBoundSessions: (routeId: string) => Promise<{ routeId: string; sessions: Array<{ id: string; title?: string; targetType: string; requestCount: number; totalTokens: number; lastRequestAt: number }> }>;
+
   // Session Migration
   migrationPreview: (sessionId: string, options: Partial<MigrationOptions>) => Promise<MigrationPreview>;
   migrateSession: (sessionId: string, options: Partial<MigrationOptions> & { editedPrompt?: string }) => Promise<MigrationResult>;
@@ -403,6 +408,19 @@ export const api: BackendAPI = {
   deleteMCP: (id: string) => requestJson<boolean>(buildUrl(`/api/mcps/${id}`), {
     method: 'DELETE'
   }),
+
+  // Session Route Binding
+  bindSessionRoute: (sessionId: string, routeId: string) =>
+    requestJson<{ success: boolean; session?: Session; error?: string }>(buildUrl(`/api/sessions/${sessionId}/bind-route`), {
+      method: 'PUT',
+      body: JSON.stringify({ routeId }),
+    }),
+  unbindSessionRoute: (sessionId: string) =>
+    requestJson<{ success: boolean; error?: string }>(buildUrl(`/api/sessions/${sessionId}/bind-route`), {
+      method: 'DELETE',
+    }),
+  getBoundSessions: (routeId: string) =>
+    requestJson(buildUrl(`/api/routes/${routeId}/bound-sessions`)),
 
   // Session Migration
   migrationPreview: (sessionId: string, options: Partial<MigrationOptions>) =>

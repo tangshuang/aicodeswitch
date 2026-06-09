@@ -304,15 +304,32 @@ export class ProxyServer {
         return;
       }
 
-      // 加载绑定的路由
+      // 推断客户端格式
+      const clientFormat = apiPathToClientFormat(apiPath)!;
+
+      // 加载绑定的路由（默认从 API 路径绑定获取）
       const allRoutes = this.dbManager.getRoutes();
-      const route = allRoutes.find((r: Route) => r.id === binding.routeId);
+      let route = allRoutes.find((r: Route) => r.id === binding.routeId);
+
+      // 会话级路由覆盖：优先检查会话是否绑定了特定路由
+      const sessionId = this.extractSessionIdForFormat(req, clientFormat);
+      if (sessionId) {
+        const session = this.dbManager.getSession(sessionId);
+        if (session?.routeId) {
+          const boundRoute = allRoutes.find((r: Route) => r.id === session.routeId);
+          if (boundRoute) {
+            console.log(`[SESSION-ROUTE] API path ${apiPath} session ${sessionId} using bound route: ${boundRoute.name}`);
+            route = boundRoute;
+          } else {
+            console.log(`[SESSION-ROUTE] Bound route ${session.routeId} not found for session ${sessionId}, clearing binding`);
+            this.dbManager.unbindSessionRoute(sessionId).catch(console.error);
+          }
+        }
+      }
+
       if (!route) {
         return res.status(404).json({ error: { message: `Bound route '${binding.routeId}' not found or inactive. Please check Route Mapping settings.` } });
       }
-
-      // 推断客户端格式
-      const clientFormat = apiPathToClientFormat(apiPath)!;
 
       // 复用完整的代理请求处理
       await this.handleApiPathProxyRequest(req, res, route, clientFormat, apiPath);
@@ -978,6 +995,24 @@ export class ProxyServer {
 
     if (!tool) return undefined;
 
+    // 优先检查会话级路由绑定
+    const sessionId = this.defaultExtractSessionId(req, tool);
+    if (sessionId) {
+      const session = this.dbManager.getSession(sessionId);
+      if (session?.routeId) {
+        const boundRoute = this.dbManager.getRoute(session.routeId);
+        if (boundRoute) {
+          console.log(`[SESSION-ROUTE] Session ${sessionId} using bound route: ${boundRoute.name} (${boundRoute.id})`);
+          return boundRoute;
+        } else {
+          // 路由已被删除，自动清除绑定
+          console.log(`[SESSION-ROUTE] Bound route ${session.routeId} not found for session ${sessionId}, clearing binding`);
+          this.dbManager.unbindSessionRoute(sessionId).catch(console.error);
+        }
+      }
+    }
+
+    // 回退到全局工具绑定
     const routeId = this.dbManager.getActiveRouteIdForTool(tool);
     if (!routeId) return undefined;
 
@@ -2922,6 +2957,21 @@ export class ProxyServer {
       // 不是 JSON，按旧版本纯字符串处理
     }
     return rawUserId;
+  }
+
+  /**
+   * 根据客户端格式提取 session ID（用于标准 API 路径的会话级路由覆盖）
+   */
+  private extractSessionIdForFormat(request: Request, format: Format): string | null {
+    if (format === 'claude') {
+      const rawUserId = request.body?.metadata?.user_id;
+      return ProxyServer.extractSessionIdFromUserId(rawUserId);
+    }
+    // 对于 completions/responses/gemini 格式，尝试从 headers 中提取
+    const sessionId = request.headers['session-id'] || request.headers['session_id'];
+    if (typeof sessionId === 'string') return sessionId;
+    if (Array.isArray(sessionId)) return sessionId[0] || null;
+    return null;
   }
 
   /**

@@ -2324,6 +2324,76 @@ ${instruction}
     })
   );
 
+  // ─── Session Route Binding API ───
+
+  app.put(
+    '/api/sessions/:id/bind-route',
+    asyncHandler(async (req, res) => {
+      const sessionId = req.params.id;
+      const { routeId } = req.body || {};
+
+      if (!routeId) {
+        res.status(400).json({ success: false, error: 'routeId is required' });
+        return;
+      }
+
+      const session = dbManager.getSession(sessionId);
+      if (!session) {
+        res.status(404).json({ success: false, error: 'Session not found' });
+        return;
+      }
+
+      const updatedSession = await dbManager.bindSessionRoute(sessionId, routeId);
+      if (!updatedSession) {
+        res.status(400).json({ success: false, error: 'Route not found' });
+        return;
+      }
+
+      res.json({ success: true, session: updatedSession });
+    })
+  );
+
+  app.delete(
+    '/api/sessions/:id/bind-route',
+    asyncHandler(async (req, res) => {
+      const sessionId = req.params.id;
+
+      const session = dbManager.getSession(sessionId);
+      if (!session) {
+        res.status(404).json({ success: false, error: 'Session not found' });
+        return;
+      }
+
+      const result = await dbManager.unbindSessionRoute(sessionId);
+      res.json({ success: result });
+    })
+  );
+
+  app.get(
+    '/api/routes/:id/bound-sessions',
+    asyncHandler(async (req, res) => {
+      const routeId = req.params.id;
+      const route = dbManager.getRoute(routeId);
+      if (!route) {
+        res.status(404).json({ error: 'Route not found' });
+        return;
+      }
+
+      const sessions = dbManager.getBoundSessions(routeId);
+      res.json({
+        routeId,
+        sessions: sessions.map(s => ({
+          id: s.id,
+          title: s.title,
+          targetType: s.targetType,
+          requestCount: s.requestCount,
+          totalTokens: s.totalTokens,
+          lastRequestAt: s.lastRequestAt,
+        })),
+      });
+    })
+  );
+
   // ─── Session Migration API ───
 
   app.post(

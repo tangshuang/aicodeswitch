@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026-06-09: 会话路由绑定功能
+
+### 新增
+- 新增会话路由绑定功能，允许将会话绑定到指定路由，实现会话级别的差异化路由策略
+- 新增 `src/ui/components/SessionRouteBindingModal.tsx`：路由绑定弹窗组件，支持选择路由进行绑定和解绑
+- 新增 3 个 API 端点：`PUT /api/sessions/:id/bind-route`（绑定路由）、`DELETE /api/sessions/:id/bind-route`（解绑路由）、`GET /api/routes/:id/bound-sessions`（查询路由绑定会话）
+- 会话管理页操作栏新增「路由」按钮，已绑定时显示路由名（绿色），未绑定时显示"路由"（蓝色）
+- 路由管理页路由卡片新增绑定会话数量标签（📎 N 个会话），点击后弹窗展示绑定会话列表
+- 代理路由选择优先级：会话级绑定 > 全局工具绑定 > 原始配置兜底
+
+### 修改
+- `src/types/index.ts`：Session 接口新增 `routeId?` 和 `routeName?` 可选字段
+- `src/server/fs-database.ts`：新增 `bindSessionRoute()`、`unbindSessionRoute()`、`getBoundSessions()` 方法；`deleteRoute()` 增加级联清理绑定逻辑；`upsertSession()` 保留已有路由绑定
+- `src/server/proxy-server.ts`：`findMatchingRoute()` 和标准 API 路径中间件增加会话级路由覆盖逻辑；新增 `extractSessionIdForFormat()` 辅助方法
+- `src/server/main.ts`：新增会话路由绑定相关 API 端点
+- `src/ui/api/client.ts`：新增 `bindSessionRoute()`、`unbindSessionRoute()`、`getBoundSessions()` 三个 API 方法
+- `src/ui/pages/SessionsPage.tsx`：新增路由按钮和 SessionRouteBindingModal 集成
+- `src/ui/pages/RoutesPage.tsx`：路由卡片新增绑定会话数量标签和弹窗查看
+
+## 2026-06-09: 会话迁移功能
+
+### 新增
+- 新增会话迁移功能，支持在 Claude Code 和 Codex 之间（及同工具内）迁移对话上下文
+- 新增 `src/server/session-migration.ts`：迁移核心服务，包含 SSE 解析、内容提取、Prompt 生成、Token 估算
+- 新增 `src/server/session-launcher.ts`：CLI 启动器，支持跨平台终端窗口启动（macOS/Linux/Windows）及临时文件管理
+- 新增 `src/ui/components/SessionMigrationModal.tsx`：迁移弹窗组件，支持预览、编辑、CLI 启动和剪贴板复制三种交付方式
+- 新增 3 个 API 端点：`POST /api/sessions/:id/migration-preview`（预览）、`POST /api/sessions/:id/migrate`（执行迁移）、`POST /api/sessions/:id/migrate-launch`（CLI 启动）
+- 迁移弹窗采用卡片式布局：左侧固定来源工具 → 箭头 → 右侧两个可选项（支持同工具迁移）
+- 自动推断项目目录（从 `~/.claude/sessions/` 读取 cwd），CLI 启动时自动 cd 到正确目录
+- 工具调用摘要化：将 Bash/Read/Write/Edit 等工具调用转为自然语言描述
+- 支持 Claude/OpenAI/Responses/Gemini/DeepSeek 五种格式的 SSE 流式响应文本提取
+- 服务启动时自动清理旧的迁移临时文件（`/tmp/aicodeswitch-migration-*`）
+
+### 修改
+- `src/types/index.ts`：新增 MigrationOptions、MigrationRound、MigrationContent、MigrationPreview、MigrationResult、LaunchResult 类型
+- `src/ui/pages/SessionsPage.tsx`：会话列表操作列新增「迁移」按钮
+- `src/ui/api/client.ts`：新增 migrationPreview、migrateSession、migrateLaunch 三个 API 方法
+- `src/ui/styles/App.css`：新增迁移弹窗样式（卡片选择、来源徽章、深色模式）
+
 ## 2026-06-09: 编程套餐 Headers 覆盖功能
 
 ### 新增

@@ -348,6 +348,8 @@ export interface Session {
   highIqMode?: boolean;    // 是否启用高智商模式
   highIqRuleId?: string;   // 使用的高智商规则ID
   highIqEnabledAt?: number;// 启用高智商模式的时间戳
+  routeId?: string;        // 绑定的路由ID（可选，未绑定为 undefined）
+  routeName?: string;      // 绑定的路由名称（冗余字段，用于 UI 快速显示）
 }
 
 /** 统计数据 */
