@@ -41,6 +41,7 @@ import {
   stripClaudeCompactResponseContent,
 } from './conversions/compact';
 import { isCodingToolRequest } from './coding-plan';
+import { applyCodingPlanHeaders } from './coding-plan-headers';
 
 type ContentTypeDetector = {
   type: ContentType;
@@ -2737,6 +2738,11 @@ export class ProxyServer {
     if (requestBody && ['POST', 'PUT', 'PATCH'].includes(req.method.toUpperCase())) {
       const bodyStr = JSON.stringify(requestBody);
       headers['content-length'] = Buffer.byteLength(bodyStr, 'utf8').toString();
+    }
+
+    // 编程套餐 Headers 覆盖：当服务启用了编程套餐时，替换为编程工具的标准 Headers
+    if (service.enableCodingPlan) {
+      applyCodingPlanHeaders(headers, sourceType);
     }
 
     return headers;

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-06-09: 编程套餐 Headers 覆盖功能
+
+### 新增
+- 新增编程套餐 Headers 覆盖模块 (`coding-plan-headers.ts`)，当 API 服务启用编程套餐限制 (`enableCodingPlan`) 时，自动将发送到上游的请求 Headers 覆盖为对应编程工具的标准 Headers
+- Claude 源 (`claude`/`claude-chat`) 使用 Claude Code 标准 Headers（含 x-stainless-*、anthropic-beta 等）
+- 其他源 (`openai`/`openai-chat`/`gemini`/`gemini-chat`) 使用 Codex 标准 Headers（含 x-codex-*、originator 等）
+
 ## 2026-06-09: 修复 Streaming/Thinking 过程中规则状态未保持使用中
 
 ### 修复
