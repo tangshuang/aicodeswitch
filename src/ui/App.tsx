@@ -5,6 +5,7 @@ import { api } from './api/client';
 import VendorsPage from './pages/VendorsPage';
 import RouteGroupsPage from './pages/RoutesPage';
 import LogsPage from './pages/LogsPage';
+import SessionsPage from './pages/SessionsPage';
 import SettingsPage from './pages/SettingsPage';
 import WriteConfigPage from './pages/WriteConfigPage';
 import UsagePage from './pages/UsagePage';
@@ -414,6 +415,11 @@ function AppContent() {
             </NavItemWithTooltip>
           </li>
           <li>
+            <NavItemWithTooltip text="会话" showTooltip={sidebarCollapsed}>
+              <NavLink to="/sessions"><span className="nav-icon">💬</span><span className="nav-text">会话</span></NavLink>
+            </NavItemWithTooltip>
+          </li>
+          <li>
             <NavItemWithTooltip text="日志" showTooltip={sidebarCollapsed}>
               <NavLink to="/logs"><span className="nav-icon">🪵</span><span className="nav-text">日志</span></NavLink>
             </NavItemWithTooltip>
@@ -476,6 +482,7 @@ function AppContent() {
             <Route path="/vendors" element={<VendorsPage />} />
             <Route path="/skills" element={<SkillsPage />} />
             <Route path="/mcp" element={<MCPPage />} />
+            <Route path="/sessions" element={<SessionsPage />} />
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/write-config" element={<WriteConfigPage />} />
             <Route path="/settings" element={<SettingsPage />} />
