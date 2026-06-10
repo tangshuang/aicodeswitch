@@ -1,6 +1,19 @@
 # Changelog
 
-## 2026-06-10: 修复 AUTH 401 错误导致 Claude Code 挂起
+## 2026-06-10: 策略路由支持"按系统默认" + 配置重试次数
+
+### 新增
+- 策略路由绑定新增"按系统默认"选项（`routeId: 'system'`），作为默认值
+  - 选择后 AccessKey 请求使用系统路由管理中配置的默认路由规则
+  - 支持所有 3 个代理入口（标准 API 路径、动态代理中间件、固定路由处理器）
+- Claude Code 配置写入增加 `env.CLAUDE_CODE_MAX_RETRIES: 3`
+- Codex 配置写入增加 `stream_max_retries = 3` 和 `stream_retry_backoff = "fixed"`
+
+### 变更
+- 策略编辑表单路由默认选项从"选择路由..."改为"按系统默认"
+- 策略卡片和密钥详情页展示"系统默认"标签（蓝色）
+
+## 2026-06-10: 修复 AUTH 错误导致 Claude Code 挂起
 
 ### 修复
 - 修复 AUTH 启用后，Claude Code 收到 401 错误但持续请求不停止的问题

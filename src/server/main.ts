@@ -231,7 +231,8 @@ const writeClaudeConfig = async (
       ANTHROPIC_API_KEY: "",
       ANTHROPIC_BASE_URL: `http://${host}:${port}/claude-code`,
       API_TIMEOUT_MS: "3000000",
-      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
+      CLAUDE_CODE_MAX_RETRIES: 3
     };
 
     // 如果启用Agent Teams功能，添加对应的环境变量
@@ -419,7 +420,9 @@ const writeCodexConfig = async (
         aicodeswitch: {
           name: "aicodeswitch",
           base_url: `http://${host}:${process.env.PORT ? parseInt(process.env.PORT, 10) : 4567}/codex`,
-          wire_api: "responses"
+          wire_api: "responses",
+          stream_max_retries: 3,
+          stream_retry_backoff: "fixed"
         }
       }
     };

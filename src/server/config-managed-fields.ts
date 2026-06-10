@@ -8,6 +8,7 @@ export const CLAUDE_SETTINGS_MANAGED_FIELDS: ManagedFieldPath[] = [
   { path: ['env', 'ANTHROPIC_BASE_URL'] },
   { path: ['env', 'API_TIMEOUT_MS'] },
   { path: ['env', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC'] },
+  { path: ['env', 'CLAUDE_CODE_MAX_RETRIES'] },
   { path: ['env', 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'], optional: true },
   { path: ['env', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE'], optional: true },
   { path: ['env', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'], optional: true },

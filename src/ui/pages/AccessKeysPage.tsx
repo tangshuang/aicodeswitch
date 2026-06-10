@@ -30,7 +30,7 @@ export default function AccessKeysPage() {
   const [showPolicyEditor, setShowPolicyEditor] = useState(false);
   const [formName, setFormName] = useState('');
   const [formDesc, setFormDesc] = useState('');
-  const [formRouteId, setFormRouteId] = useState('');
+  const [formRouteId, setFormRouteId] = useState('system');
   const [formDailyToken, setFormDailyToken] = useState('');
   const [formMonthlyToken, setFormMonthlyToken] = useState('');
   const [formDailyReq, setFormDailyReq] = useState('');
@@ -189,7 +189,7 @@ export default function AccessKeysPage() {
   const openPolicyEditor = (policy?: Policy) => {
     if (policy) {
       setEditingPolicy(policy);
-      setFormName(policy.name); setFormDesc(policy.description || ''); setFormRouteId(policy.routeId || '');
+      setFormName(policy.name); setFormDesc(policy.description || ''); setFormRouteId(policy.routeId || 'system');
       setFormDailyToken(policy.dailyTokenLimit?.toString() || '');
       setFormMonthlyToken(policy.monthlyTokenLimit?.toString() || '');
       setFormDailyReq(policy.dailyRequestLimit?.toString() || '');
@@ -239,7 +239,7 @@ export default function AccessKeysPage() {
   const handleSavePolicy = async () => {
     if (!formName.trim()) { toast.error('请输入策略名称'); return; }
     const data: any = {
-      name: formName.trim(), description: formDesc || undefined, routeId: formRouteId || undefined,
+      name: formName.trim(), description: formDesc || undefined, routeId: formRouteId === 'system' ? 'system' : (formRouteId || undefined),
       dailyTokenLimit: formDailyToken ? Number(formDailyToken) : undefined,
       monthlyTokenLimit: formMonthlyToken ? Number(formMonthlyToken) : undefined,
       dailyRequestLimit: formDailyReq ? Number(formDailyReq) : undefined,
@@ -490,7 +490,7 @@ export default function AccessKeysPage() {
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: '16px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                          <span>🔗 路由: {getRouteName(policy.routeId) || <span style={{ color: 'var(--text-tertiary)' }}>未绑定</span>}</span>
+                          <span>🔗 路由: {policy.routeId === 'system' ? <span style={{ color: 'var(--accent-color, #4a90d9)' }}>系统默认</span> : (getRouteName(policy.routeId) || <span style={{ color: 'var(--text-tertiary)' }}>未绑定</span>)}</span>
                           <span>🔑 Key: {policy.keyCount || 0}</span>
                           <span>📊 配额: {formatQuota(policy)}</span>
                         </div>
@@ -631,7 +631,7 @@ export default function AccessKeysPage() {
               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '14px' }}>路由绑定</label>
               <select value={formRouteId} onChange={e => setFormRouteId(e.target.value)}
                 style={{ ...inputStyle, width: '100%', padding: '10px 14px', fontSize: '14px', borderRadius: '8px', cursor: 'pointer' }}>
-                <option value="">选择路由...</option>
+                <option value="system">按系统默认</option>
                 {routes.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
               </select>
             </div>

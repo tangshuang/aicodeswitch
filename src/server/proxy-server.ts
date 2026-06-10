@@ -242,14 +242,45 @@ export class ProxyServer {
   }
 
   /** 构建 AccessKey 相关的错误响应（匹配错误码格式） */
-  private sendAccessKeyError(res: Response, error: { type: string; code: string; message: string; httpStatus: number }): void {
-    res.status(error.httpStatus).json({
-      error: {
-        type: error.type,
-        code: error.code,
-        message: error.message,
-      }
-    });
+  private sendAccessKeyError(res: Response, error: { type: string; code: string; message: string; httpStatus: number }, isClaudeFormat: boolean = false): void {
+    res.setHeader('request-id', `req_ak_${Date.now()}`);
+    res.setHeader('connection', 'close');
+    if (isClaudeFormat) {
+      // Claude API 格式
+      res.status(error.httpStatus).json({
+        type: 'error',
+        error: {
+          type: error.type,
+          message: error.message,
+        }
+      });
+    } else {
+      // OpenAI 格式
+      res.status(error.httpStatus).json({
+        error: {
+          type: error.type,
+          code: error.code,
+          message: error.message,
+        }
+      });
+    }
+  }
+
+  /**
+   * 发送 AUTH 鉴权失败响应。
+   * 使用 511（Network Authentication Required）避免客户端将认证失败误判为官方 API 错误而持续重试。
+   * @param isClaudeFormat 是否使用 Claude API 错误格式（vs OpenAI 格式）
+   */
+  private sendAuthError(res: Response, isClaudeFormat: boolean): void {
+    const message = 'Authentication required. Please provide a valid AccessKey.';
+    res.setHeader('request-id', `req_ak_${Date.now()}`);
+    res.setHeader('connection', 'close');
+
+    if (isClaudeFormat) {
+      res.status(511).json({ type: 'error', error: { type: 'api_error', message } });
+    } else {
+      res.status(511).json({ error: { type: 'api_error', code: 'system_error', message } });
+    }
   }
 
 
@@ -341,7 +372,8 @@ export class ProxyServer {
           }
         } else if (isAuthEnabled()) {
           // AUTH 已启用 → 仅允许 AccessKey 认证
-          res.status(401).json({ error: { type: 'authentication_error', code: 'INVALID_API_KEY', message: 'Authentication required. Please provide a valid AccessKey.' } });
+          console.log(`\x1b[31m[AUTH] 511\x1b[0m ${req.method} ${req.path} — 未提供有效的 AccessKey`);
+          this.sendAuthError(res, false);
           return;
         }
         res.json(buildModelsResponse(this.dbManager.getApiPathModels()));
@@ -357,13 +389,14 @@ export class ProxyServer {
         const result = this.accessKeyModule.keyResolver.resolve(apiKeyValue);
         if (!result || 'error' in result) {
           const err = result ? (result as any).error : { type: 'authentication_error', code: 'INVALID_API_KEY', message: '无效的 API Key', httpStatus: 401 };
-          this.sendAccessKeyError(res, err);
+          this.sendAccessKeyError(res, err, apiPathToClientFormat(apiPath) === 'claude');
           return;
         }
         accessKeyCtx = result;
       } else if (isAuthEnabled()) {
         // AUTH 已启用 → 仅允许 AccessKey 认证
-        res.status(401).json({ error: { type: 'authentication_error', code: 'INVALID_API_KEY', message: 'Authentication required. Please provide a valid AccessKey.' } });
+        console.log(`\x1b[31m[AUTH] 511\x1b[0m ${req.method} ${req.path} — 未提供有效的 AccessKey`);
+        this.sendAuthError(res, apiPathToClientFormat(apiPath) === 'claude');
         return;
       }
 
@@ -376,12 +409,23 @@ export class ProxyServer {
 
       if (accessKeyCtx) {
         // AccessKey 请求：从策略的 routeId 获取路由
-        if (accessKeyCtx.policy.routeId) {
-          route = allRoutes.find((r: Route) => r.id === accessKeyCtx.policy.routeId);
-        }
-        if (!route) {
-          this.sendAccessKeyError(res, { type: 'permission_error', code: 'NO_ROUTE_CONFIGURED', message: '策略未绑定路由', httpStatus: 403 });
-          return;
+        const policyRouteId = accessKeyCtx.policy.routeId;
+        if (policyRouteId && policyRouteId !== 'system') {
+          // 策略绑定了具体路由
+          route = allRoutes.find((r: Route) => r.id === policyRouteId);
+          if (!route) {
+            this.sendAccessKeyError(res, { type: 'permission_error', code: 'NO_ROUTE_CONFIGURED', message: '策略绑定的路由不存在', httpStatus: 403 }, clientFormat === 'claude');
+            return;
+          }
+        } else {
+          // routeId 为空或 'system'：按系统默认路由
+          const bindings = this.dbManager.getApiPathBindings();
+          const binding = bindings.find((b: ApiPathBinding) => b.apiPath === apiPath);
+          if (!binding || !binding.routeId) {
+            res.status(404).json({ error: { message: `API path ${apiPath} is not bound to any route. Please configure it in Route Mapping settings.` } });
+            return;
+          }
+          route = allRoutes.find((r: Route) => r.id === binding.routeId);
         }
       } else {
         // 正常请求：从 API 路径绑定获取路由
@@ -433,21 +477,23 @@ export class ProxyServer {
         const result = this.accessKeyModule.keyResolver.resolve(apiKeyValue);
         if (!result || 'error' in result) {
           const err = result ? (result as any).error : { type: 'authentication_error', code: 'INVALID_API_KEY', message: '无效的 API Key', httpStatus: 401 };
-          this.sendAccessKeyError(res, err);
+          this.sendAccessKeyError(res, err, req.path.startsWith('/claude-code/'));
           return;
         }
         // 配额检查
         const usage = await this.accessKeyModule.usageTracker.getUsage(result.accessKey.id);
         const quotaResult = this.accessKeyModule.quotaChecker.checkQuota(result.policy, usage, result.accessKey.id, req.body?.model);
         if (quotaResult) {
-          this.sendAccessKeyError(res, { type: 'rate_limit_error', code: quotaResult.error, message: quotaResult.message, httpStatus: quotaResult.httpStatus });
+          this.sendAccessKeyError(res, { type: 'rate_limit_error', code: quotaResult.error, message: quotaResult.message, httpStatus: quotaResult.httpStatus }, req.path.startsWith('/claude-code/'));
           return;
         }
         this.accessKeyModule.quotaChecker.onRequestStart(result.accessKey.id, result.policy);
         (req as any)._accessKeyCtx = result;
       } else if (isAuthEnabled()) {
         // AUTH 已启用 → 仅允许 AccessKey 认证
-        return res.status(401).json({ error: 'Authentication required. Please provide a valid AccessKey.' });
+        console.log(`\x1b[31m[AUTH] 511\x1b[0m ${req.method} ${req.path} — 未提供有效的 AccessKey`);
+        this.sendAuthError(res, req.path.startsWith('/claude-code/'));
+        return;
       }
 
       const requestStartAt = Date.now();
@@ -459,14 +505,16 @@ export class ProxyServer {
         // AccessKey 请求：从策略的 routeId 获取路由；否则从工具绑定获取
         const accessKeyCtx = (req as any)._accessKeyCtx as { accessKey: AccessKey; policy: Policy } | undefined;
         let route: Route | undefined;
-        if (accessKeyCtx?.policy.routeId) {
+        if (accessKeyCtx?.policy.routeId && accessKeyCtx.policy.routeId !== 'system') {
+          // 策略绑定了具体路由
           route = this.dbManager.getRoutes().find((r: Route) => r.id === accessKeyCtx.policy.routeId);
           if (!route) {
             this.accessKeyModule!.quotaChecker.onRequestEnd(accessKeyCtx.accessKey.id);
-            this.sendAccessKeyError(res, { type: 'permission_error', code: 'NO_ROUTE_CONFIGURED', message: '策略未绑定路由', httpStatus: 403 });
+            this.sendAccessKeyError(res, { type: 'permission_error', code: 'NO_ROUTE_CONFIGURED', message: '策略绑定的路由不存在', httpStatus: 403 }, req.path.startsWith('/claude-code/'));
             return;
           }
         } else {
+          // routeId 为空或 'system'：按系统默认路由
           route = this.findMatchingRoute(req);
         }
 
@@ -806,7 +854,7 @@ export class ProxyServer {
           const result = this.accessKeyModule.keyResolver.resolve(apiKeyValue);
           if (!result || 'error' in result) {
             const err = result ? (result as any).error : { type: 'authentication_error', code: 'INVALID_API_KEY', message: '无效的 API Key', httpStatus: 401 };
-            this.sendAccessKeyError(res, err);
+            this.sendAccessKeyError(res, err, targetType === 'claude-code');
             return;
           }
           accessKeyCtx = result;
@@ -816,21 +864,23 @@ export class ProxyServer {
           const usage = await this.accessKeyModule.usageTracker.getUsage(accessKeyCtx.accessKey.id);
           const quotaResult = this.accessKeyModule.quotaChecker.checkQuota(accessKeyCtx.policy, usage, accessKeyCtx.accessKey.id, model);
           if (quotaResult) {
-            this.sendAccessKeyError(res, { type: 'rate_limit_error', code: quotaResult.error, message: quotaResult.message, httpStatus: quotaResult.httpStatus });
+            this.sendAccessKeyError(res, { type: 'rate_limit_error', code: quotaResult.error, message: quotaResult.message, httpStatus: quotaResult.httpStatus }, targetType === 'claude-code');
             return;
           }
           // 并发 +1
           this.accessKeyModule.quotaChecker.onRequestStart(accessKeyCtx.accessKey.id, accessKeyCtx.policy);
         } else if (isAuthEnabled()) {
           // AUTH 已启用 → 仅允许 AccessKey 认证
+          console.log(`\x1b[31m[AUTH] 511\x1b[0m ${req.method} ${req.path} — 未提供有效的 AccessKey (targetType: ${targetType})`);
           await this.logToolRequest(req, {
-            statusCode: 401,
+            statusCode: 511,
             responseTime: Date.now() - requestStartAt,
             targetType,
             error: 'Authentication required',
             tags: this.buildRelayTags(false),
           });
-          return res.status(401).json({ error: 'Authentication required. Please provide a valid AccessKey.' });
+          this.sendAuthError(res, targetType === 'claude-code');
+          return;
         }
 
         // 注入 AccessKey 上下文到请求对象，供 proxyRequest 内部的 finalizeLog 使用
@@ -841,14 +891,19 @@ export class ProxyServer {
         // 确定路由：AccessKey 请求从策略获取，否则从工具绑定获取
         let route: Route | undefined;
         if (accessKeyCtx) {
-          if (accessKeyCtx!.policy.routeId) {
+          const policyRouteId = accessKeyCtx!.policy.routeId;
+          if (policyRouteId && policyRouteId !== 'system') {
+            // 策略绑定了具体路由
             const allRoutes = this.dbManager.getRoutes();
-            route = allRoutes.find((r: Route) => r.id === accessKeyCtx!.policy.routeId);
-          }
-          if (!route) {
-            this.accessKeyModule!.quotaChecker.onRequestEnd(accessKeyCtx.accessKey.id);
-            this.sendAccessKeyError(res, { type: 'permission_error', code: 'NO_ROUTE_CONFIGURED', message: '策略未绑定路由', httpStatus: 403 });
-            return;
+            route = allRoutes.find((r: Route) => r.id === policyRouteId);
+            if (!route) {
+              this.accessKeyModule!.quotaChecker.onRequestEnd(accessKeyCtx.accessKey.id);
+              this.sendAccessKeyError(res, { type: 'permission_error', code: 'NO_ROUTE_CONFIGURED', message: '策略绑定的路由不存在', httpStatus: 403 }, targetType === 'claude-code');
+              return;
+            }
+          } else {
+            // routeId 为空或 'system'：按系统默认路由
+            route = this.findRouteByTargetType(targetType);
           }
         } else {
           route = this.findRouteByTargetType(targetType);
@@ -4580,18 +4635,14 @@ export class ProxyServer {
     if (!accessKeyCtx) {
       if (isAuthEnabled()) {
         // AUTH 已启用 → 仅允许 AccessKey 认证
+        console.log(`\x1b[31m[AUTH] 511\x1b[0m ${req.method} ${req.path} — 未提供有效的 AccessKey (apiPath: ${apiPath})`);
         await this.logToolRequest(req, {
-          statusCode: 401,
+          statusCode: 511,
           responseTime: Date.now() - requestStartAt,
           error: 'Authentication required',
           tags: this.buildRelayTags(false),
         });
-        // 根据客户端格式返回错误
-        if (clientFormat === 'claude') {
-          res.status(401).json({ type: 'error', error: { type: 'authentication_error', message: 'Authentication required. Please provide a valid AccessKey.' } });
-        } else {
-          res.status(401).json({ error: { message: 'Authentication required. Please provide a valid AccessKey.' } });
-        }
+        this.sendAuthError(res, clientFormat === 'claude');
         return;
       }
     }
@@ -4600,7 +4651,7 @@ export class ProxyServer {
       const usage = await this.accessKeyModule!.usageTracker.getUsage(accessKeyCtx.accessKey.id);
       const quotaResult = this.accessKeyModule!.quotaChecker.checkQuota(accessKeyCtx.policy, usage, accessKeyCtx.accessKey.id, model);
       if (quotaResult) {
-        this.sendAccessKeyError(res, { type: 'rate_limit_error', code: quotaResult.error, message: quotaResult.message, httpStatus: quotaResult.httpStatus });
+        this.sendAccessKeyError(res, { type: 'rate_limit_error', code: quotaResult.error, message: quotaResult.message, httpStatus: quotaResult.httpStatus }, clientFormat === 'claude');
         return;
       }
       // 并发 +1
