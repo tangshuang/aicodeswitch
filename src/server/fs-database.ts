@@ -2778,6 +2778,15 @@ export class FileSystemDatabaseManager {
 
   // Statistics operations
   /**
+   * 从 AccessKey 请求同步全局统计数据（不写入日志，仅更新统计）
+   */
+  async syncStatisticsFromAccessKey(logData: Omit<RequestLog, 'id'>): Promise<void> {
+    // 构造一个带有 id 的 RequestLog 以复用 updateStatistics
+    const log = { ...logData, id: `ak-sync-${Date.now()}` } as RequestLog;
+    await this.updateStatistics(log);
+  }
+
+  /**
    * 更新统计数据 - 在每次添加日志时调用
    */
   private async updateStatistics(log: RequestLog): Promise<void> {

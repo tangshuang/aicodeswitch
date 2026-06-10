@@ -3683,7 +3683,36 @@ export class ProxyServer {
           // 并发 -1（无论成功失败）
           this.accessKeyModule.quotaChecker.onRequestEnd(accessKey.id);
         }
-        return; // ⛔ 跳过现有日志系统和统计系统
+
+        // 同步全局统计数据（不写日志，仅更新统计）
+        try {
+          await this.dbManager.syncStatisticsFromAccessKey({
+            timestamp: Date.now(),
+            method: req.method,
+            path: req.originalUrl || req.path,
+            headers: this.normalizeHeaders(req.headers),
+            body: req.body,
+            statusCode,
+            responseTime: Date.now() - startTime,
+            targetProvider: service.name,
+            usage: usageForLog,
+            error,
+            contentType: rule.contentType,
+            ruleId: rule.id,
+            targetType,
+            targetServiceId: service.id,
+            targetServiceName: service.name,
+            targetModel: rule.targetModel || req.body?.model,
+            vendorId: service.vendorId,
+            vendorName: vendor?.name,
+            requestModel: req.body?.model,
+            tags: this.buildRelayTags(relayedForLog, useOriginalConfig),
+          });
+        } catch (statsErr) {
+          console.error('[AccessKey] Failed to sync global statistics:', statsErr);
+        }
+
+        return; // ⛔ 跳过现有日志系统
       }
 
       // 供应商信息已在函数顶部获取
@@ -4733,6 +4762,33 @@ export class ProxyServer {
         } finally {
           this.accessKeyModule.quotaChecker.onRequestEnd(accessKeyCtx.accessKey.id);
         }
+
+        // 同步全局统计数据（不写日志，仅更新统计）
+        try {
+          await this.dbManager.syncStatisticsFromAccessKey({
+            timestamp: Date.now(),
+            method: req.method,
+            path: req.originalUrl || req.path,
+            headers: this.normalizeHeaders(req.headers),
+            body: req.body,
+            statusCode,
+            responseTime: Date.now() - startTime,
+            usage: usageForLog,
+            error,
+            contentType: rule.contentType,
+            ruleId: rule.id,
+            targetServiceId: service.id,
+            targetServiceName: service.name,
+            targetModel: rule.targetModel || req.body?.model,
+            vendorId: service.vendorId,
+            vendorName: vendor?.name,
+            requestModel: req.body?.model,
+            tags: this.buildRelayTags(relayedForLog),
+          });
+        } catch (statsErr) {
+          console.error('[AccessKey] Failed to sync global statistics:', statsErr);
+        }
+
         return;
       }
 

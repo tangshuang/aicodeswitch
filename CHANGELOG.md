@@ -2,6 +2,11 @@
 
 ## 2026-06-10: 认证体系简化与密钥详情页 Tabs 改造
 
+### 新增
+- AccessKey 请求现在会同步更新全局统计数据（`syncStatisticsFromAccessKey`），确保"数据统计"页面在 AUTH 启用后仍能展示完整的使用情况
+  - 仅更新统计，不写入全局日志（AccessKey 日志仍独立存储）
+  - 覆盖 `/claude-code/`、`/codex/` 和 API 路径（`/v1/*`）所有代理入口
+
 ### 变更
 - 移除全局 `config.apiKey` 认证机制，简化为 AUTH 驱动的 AccessKey-only 认证
 - AUTH 未配置时：不展示"接入密钥"菜单，所有代理请求无需认证直接通过
