@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-06-11: 修复配置文件写入时认证字段丢失
+
+### 修复
+- 修复代理写入 Claude Code 配置时 `ANTHROPIC_API_KEY` 被置空的问题
+- 修复恢复配置时空值覆盖 backup 中原始 API Key 的问题
+- CLI `aicos restore` 管理字段列表与 Server 端同步，补全 8 个缺失字段
+- 提取 CLI 共享管理字段模块，避免未来不同步
+
 ## 2026-06-20: 局域网配置同步
 
 ### 新增

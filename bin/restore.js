@@ -5,6 +5,7 @@ const chalk = require('chalk');
 const boxen = require('boxen');
 const ora = require('ora');
 const { parseToml, stringifyToml, mergeJsonSettings, mergeTomlSettings, atomicWriteFile } = require('./utils/config-helpers');
+const { CLAUDE_SETTINGS_MANAGED_FIELDS, CLAUDE_JSON_MANAGED_FIELDS, CODEX_CONFIG_MANAGED_FIELDS, CODEX_AUTH_MANAGED_FIELDS } = require('./utils/managed-fields');
 const { isServerRunning, getServerInfo } = require('./utils/get-server');
 const { findPidByPort } = require('./utils/port-utils');
 
@@ -85,12 +86,19 @@ const restoreClaudeConfig = () => {
           }
         }
 
+        // 防御性清理：移除 currentSettings 中 ANTHROPIC_API_KEY 的空值，
+        // 防止旧版本代理写入的空值覆盖 backup 中的真实 Key
+        if (currentSettings?.env?.ANTHROPIC_API_KEY === '' && backupSettings?.env?.ANTHROPIC_API_KEY) {
+          delete currentSettings.env.ANTHROPIC_API_KEY;
+          if (Object.keys(currentSettings.env).length === 0) {
+            delete currentSettings.env;
+          }
+        }
+
         const mergedSettings = mergeJsonSettings(
           backupSettings,
           currentSettings,
-          ['env.ANTHROPIC_AUTH_TOKEN', 'env.ANTHROPIC_BASE_URL', 'env.API_TIMEOUT_MS',
-             'env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
-             'permissions', 'skipDangerousModePermissionPrompt']
+          CLAUDE_SETTINGS_MANAGED_FIELDS
         );
 
         atomicWriteFile(claudeSettingsPath, JSON.stringify(mergedSettings, null, 2));
@@ -127,7 +135,7 @@ const restoreClaudeConfig = () => {
         const mergedJson = mergeJsonSettings(
           backupJson,
           currentJson,
-          ['hasCompletedOnboarding', 'mcpServers']
+          CLAUDE_JSON_MANAGED_FIELDS
         );
 
         atomicWriteFile(claudeJsonPath, JSON.stringify(mergedJson, null, 2));
@@ -176,8 +184,7 @@ const restoreCodexConfig = () => {
         const mergedConfig = mergeTomlSettings(
           backupConfig,
           currentConfig,
-          ['model_provider', 'model', 'model_reasoning_effort', 'disable_response_storage',
-             'preferred_auth_method', 'requires_openai_auth', 'enableRouteSelection', 'model_providers.aicodeswitch']
+          CODEX_CONFIG_MANAGED_FIELDS
         );
 
         atomicWriteFile(codexConfigPath, stringifyToml(mergedConfig));
@@ -214,7 +221,7 @@ const restoreCodexConfig = () => {
         const mergedAuth = mergeJsonSettings(
           backupAuth,
           currentAuth,
-          ['OPENAI_API_KEY']
+          CODEX_AUTH_MANAGED_FIELDS
         );
 
         atomicWriteFile(codexAuthPath, JSON.stringify(mergedAuth, null, 2));

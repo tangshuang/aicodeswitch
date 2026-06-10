@@ -5,6 +5,7 @@ import type { ManagedFieldPath } from '../types';
  */
 export const CLAUDE_SETTINGS_MANAGED_FIELDS: ManagedFieldPath[] = [
   { path: ['env', 'ANTHROPIC_AUTH_TOKEN'] },
+  { path: ['env', 'ANTHROPIC_API_KEY'], optional: true },
   { path: ['env', 'ANTHROPIC_BASE_URL'] },
   { path: ['env', 'API_TIMEOUT_MS'] },
   { path: ['env', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC'] },

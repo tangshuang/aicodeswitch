@@ -229,7 +229,6 @@ const writeClaudeConfig = async (
     // 构建代理配置
     const claudeSettingsEnv: Record<string, any> = {
       ANTHROPIC_AUTH_TOKEN: "api_key",
-      ANTHROPIC_API_KEY: "",
       ANTHROPIC_BASE_URL: `http://${host}:${port}/claude-code`,
       API_TIMEOUT_MS: "3000000",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
@@ -526,6 +525,15 @@ const restoreClaudeConfig = async (): Promise<boolean> => {
           currentSettings = JSON.parse(fs.readFileSync(claudeSettingsPath, 'utf-8'));
         } catch (error) {
           console.warn('Failed to parse current settings.json during restore, using empty object:', error);
+        }
+      }
+
+      // 防御性清理：移除 currentSettings 中 ANTHROPIC_API_KEY 的空值，
+      // 防止旧版本代理写入的空值覆盖 backup 中的真实 Key
+      if (currentSettings?.env?.ANTHROPIC_API_KEY === '' && backupSettings?.env?.ANTHROPIC_API_KEY) {
+        delete currentSettings.env.ANTHROPIC_API_KEY;
+        if (Object.keys(currentSettings.env).length === 0) {
+          delete currentSettings.env;
         }
       }
 
