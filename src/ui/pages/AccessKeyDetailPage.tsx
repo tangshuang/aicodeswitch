@@ -355,7 +355,6 @@ export default function AccessKeyDetailPage() {
       {activeTab === 'policy' && (() => {
         const policy = policies.find(p => p.id === key.policyId);
         const routeName = policy?.routeId && policy.routeId !== 'system' ? routes.find(r => r.id === policy.routeId)?.name : undefined;
-        const isSystemRoute = policy?.routeId === 'system';
         const formatQuota = (p: Policy) => {
           const parts: string[] = [];
           if (p.dailyTokenLimit) parts.push(`日 ${p.dailyTokenLimit}k Token`);
@@ -400,15 +399,13 @@ export default function AccessKeyDetailPage() {
             </div>
 
             {/* 路由绑定 */}
-            <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '12px 20px', alignItems: 'center', marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid var(--border-primary)' }}>
-              <div style={{ color: 'var(--text-tertiary)', fontSize: '14px' }}>绑定路由</div>
+            <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid var(--border-primary)' }}>
+              <div style={{ color: 'var(--text-tertiary)', fontSize: '14px' }}>绑定路由：</div>
               <div style={{ fontSize: '14px' }}>
-                {isSystemRoute ? (
-                  <span style={{ color: 'var(--accent-color, #4a90d9)' }}>🔗 系统默认</span>
-                ) : routeName ? (
-                  <span>🔗 {routeName}</span>
+                {routeName ? (
+                  <span>{routeName}</span>
                 ) : (
-                  <span style={{ color: 'var(--text-tertiary)' }}>未绑定</span>
+                  <span style={{ color: 'var(--accent-color, #4a90d9)' }}>按系统默认</span>
                 )}
               </div>
             </div>

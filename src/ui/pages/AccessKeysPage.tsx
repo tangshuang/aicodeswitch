@@ -490,7 +490,7 @@ export default function AccessKeysPage() {
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: '16px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                          <span>🔗 路由: {policy.routeId === 'system' ? <span style={{ color: 'var(--accent-color, #4a90d9)' }}>系统默认</span> : (getRouteName(policy.routeId) || <span style={{ color: 'var(--text-tertiary)' }}>未绑定</span>)}</span>
+                          <span>🔗 路由: {policy.routeId && policy.routeId !== 'system' ? (getRouteName(policy.routeId) || <span style={{ color: 'var(--text-tertiary)' }}>未绑定</span>) : <span style={{ color: 'var(--accent-color, #4a90d9)' }}>按系统默认</span>}</span>
                           <span>🔑 Key: {policy.keyCount || 0}</span>
                           <span>📊 配额: {formatQuota(policy)}</span>
                         </div>
