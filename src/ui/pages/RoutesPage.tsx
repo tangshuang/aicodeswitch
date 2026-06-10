@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry, MCPServer, ToolInstallationStatus, CodexReasoningEffort, ClaudeEffortLevel, AppConfig, ApiPathBinding, ToolName, ToolBindings } from '../../types';
 import { useConfirm } from '../components/Confirm';
 import { toast } from '../components/Toast';
+import SyncConfigModal from '../components/SyncConfigModal';
 import { useRulesStatus } from '../hooks/useRulesStatus';
 import QuickSetupModal from '../components/QuickSetupModal';
 import openaiIcon from '../assets/openai.webp';
@@ -143,6 +144,7 @@ export default function RoutesPage() {
 
   // 一键配置弹窗状态
   const [showQuickSetupModal, setShowQuickSetupModal] = useState(false);
+  const [showSyncConfigModal, setShowSyncConfigModal] = useState(false);
 
   // 配置操作loading状态
   const [isUpdatingCodexReasoning, setIsUpdatingCodexReasoning] = useState(false);
@@ -1017,9 +1019,14 @@ export default function RoutesPage() {
           <h1>路由管理</h1>
           <p>管理API路由和路由配置</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowQuickSetupModal(true)} style={{ whiteSpace: 'nowrap' }}>
-          一键配置
-        </button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button className="btn btn-secondary" onClick={() => setShowSyncConfigModal(true)} style={{ whiteSpace: 'nowrap' }}>
+            局域网内同步配置
+          </button>
+          <button className="btn btn-primary" onClick={() => setShowQuickSetupModal(true)} style={{ whiteSpace: 'nowrap' }}>
+            一键配置
+          </button>
+        </div>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -2693,6 +2700,15 @@ export default function RoutesPage() {
           loadAllServices();
           loadToolBindings();
           loadApiPathBindings();
+        }}
+      />
+
+      <SyncConfigModal
+        show={showSyncConfigModal}
+        onClose={() => setShowSyncConfigModal(false)}
+        onComplete={() => {
+          loadVendors();
+          loadAllServices();
         }}
       />
 

@@ -17,6 +17,7 @@ function SettingsPage() {
     proxyUsername: '',
     proxyPassword: '',
   });
+  const [lanDiscoveryEnabled, setLanDiscoveryEnabled] = useState(false);
 
   // 导入预览状态
   const [previewData, setPreviewData] = useState<ImportPreview | null>(null);
@@ -42,6 +43,7 @@ function SettingsPage() {
       proxyUsername: data.proxyUsername || '',
       proxyPassword: data.proxyPassword || '',
     });
+    setLanDiscoveryEnabled(data.enableLanDiscovery || false);
   };
 
   const handleSaveConfig = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -101,6 +103,19 @@ function SettingsPage() {
       loadConfig();
     } else {
       toast.error('代理配置保存失败');
+    }
+  };
+
+  const handleToggleLanDiscovery = async (checked: boolean) => {
+    setLanDiscoveryEnabled(checked);
+    const newConfig: AppConfig = { ...config, enableLanDiscovery: checked };
+    const success = await api.updateConfig(newConfig);
+    if (success) {
+      toast.success(checked ? '已开启局域网同步' : '已关闭局域网同步');
+      loadConfig();
+    } else {
+      setLanDiscoveryEnabled(!checked);
+      toast.error('配置保存失败');
     }
   };
 
@@ -307,6 +322,25 @@ function SettingsPage() {
           </div>
           <button type="submit" className="btn btn-primary">保存代理配置</button>
         </form>
+      </div>
+
+      <div className="card" style={{ marginTop: '20px' }}>
+        <h3>局域网同步</h3>
+        <p style={{ color: '#7f8c8d', fontSize: '14px' }}>
+          开启后，同一局域网内的其他 AICodeSwitch 节点可以发现并拉取本节点的 Skills、MCP 配置信息。上游 API Key 等敏感信息不会被传输。
+        </p>
+        <div className="form-group">
+          <label>允许局域网拉取配置</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Switch
+              checked={lanDiscoveryEnabled}
+              onChange={handleToggleLanDiscovery}
+            />
+            <span style={{ fontSize: '14px', color: '#666' }}>
+              {lanDiscoveryEnabled ? '已启用' : '未启用'}
+            </span>
+          </div>
+        </div>
       </div>
 
       <div className="card" style={{ marginTop: '20px' }}>

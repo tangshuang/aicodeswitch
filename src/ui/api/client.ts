@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, KeyUsageDailyRecord, QuotaAlert } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, KeyUsageDailyRecord, QuotaAlert, LanDiscoverResponse, LanSyncRequest, LanSyncResult } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -193,6 +193,11 @@ interface BackendAPI {
   // AccessKey 统计
   getAccessKeyRanking: (params?: { sortBy?: string; order?: string; limit?: number }) => Promise<Array<{ keyId: string; keyName: string; totalTokens: number; totalRequests: number; lastActiveAt?: number }>>;
   getQuotaAlerts: () => Promise<QuotaAlert[]>;
+
+  // 局域网同步
+  lanScan: () => Promise<{ localIp: string; subnet: string; port: number }>;
+  lanDiscover: (ip: string, port: number) => Promise<LanDiscoverResponse>;
+  lanSync: (data: LanSyncRequest) => Promise<LanSyncResult>;
 }
 
 const buildUrl = (
@@ -619,4 +624,16 @@ export const api: BackendAPI = {
   // AccessKey 统计
   getAccessKeyRanking: (params) => requestJson(buildUrl('/api/statistics/access-keys', params as Record<string, string | number | undefined>)),
   getQuotaAlerts: () => requestJson(buildUrl('/api/statistics/quota-alerts')),
+
+  // 局域网同步
+  lanScan: () => requestJson(buildUrl('/api/lan/scan')),
+  lanDiscover: (ip, port) => {
+    // 直接请求远端节点，不经过本地代理
+    const url = `http://${ip}:${port}/api/lan/discover`;
+    return fetch(url, { signal: AbortSignal.timeout(3000) }).then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    });
+  },
+  lanSync: (data) => requestJson(buildUrl('/api/lan/sync'), { method: 'POST', body: JSON.stringify(data) }),
 };

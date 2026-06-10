@@ -259,7 +259,84 @@ export interface AppConfig {
   proxyUrl?: string;  // 代理地址，例如: proxy.example.com:8080
   proxyUsername?: string;  // 代理认证用户名
   proxyPassword?: string;  // 代理认证密码
+  // 局域网同步
+  enableLanDiscovery?: boolean;  // 是否允许局域网发现并拉取配置，默认 false
   // API 路径路由映射
+}
+
+/** 局域网发现响应 */
+export interface LanDiscoverResponse {
+  node: {
+    name: string;
+    version: string;
+    port: number;
+  };
+  skills: LanSkillItem[];
+  mcps: LanMcpItem[];
+  vendors: {
+    id: string;
+    name: string;
+    services: {
+      id: string;
+      name: string;
+      sourceType?: string;
+      supportedModels?: string[];
+      authType?: string;
+      enableProxy?: boolean;
+      enableCodingPlan?: boolean;
+    }[];
+  }[];
+}
+
+/** 局域网同步的 Skill 条目 */
+export interface LanSkillItem {
+  name: string;
+  description?: string;
+  targets?: ToolType[];
+  githubUrl?: string;
+  skillPath?: string;
+  instruction?: string;
+}
+
+/** 局域网同步的 MCP 条目 */
+export interface LanMcpItem {
+  name: string;
+  description?: string;
+  type: 'stdio' | 'http' | 'sse';
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  env?: Record<string, string>;
+  targets?: ToolType[];
+}
+
+/** 局域网同步请求 */
+export interface LanSyncRequest {
+  remoteNode: {
+    ip: string;
+    port: number;
+    name: string;
+  };
+  skills: LanSkillItem[];
+  mcps: LanMcpItem[];
+  vendor: {
+    enabled: boolean;
+    apiKey?: string;
+  };
+}
+
+/** 局域网同步结果 */
+export interface LanSyncResult {
+  success: boolean;
+  result?: {
+    skillsImported: number;
+    mcpsImported: number;
+    vendorCreated: boolean;
+    vendorName?: string;
+    servicesCreated?: number;
+  };
+  error?: string;
 }
 
 export interface ExportData {

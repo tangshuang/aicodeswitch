@@ -543,6 +543,18 @@ aicos version            # Show current version information
   - `POST /api/import/preview` - Preview import data (new)
   - `POST /api/import` - Import data with confirmation
 
+### LAN Config Sync
+- **Purpose**: Sync Skills, MCP, and optionally vendor/service configs between AICodeSwitch nodes on the same LAN
+- **Settings toggle**: `enableLanDiscovery` in AppConfig controls whether a node can be discovered
+- **Discovery**: IP subnet scanning (concurrent, 30 requests/batch, 1.5s timeout per IP)
+- **Security**: Sensitive fields (API keys, upstream URLs) are never transmitted; 404 returned when toggle is off
+- **API Endpoints**:
+  - `GET /api/lan/discover` - Return node config for LAN sync (no auth, controlled by toggle)
+  - `GET /api/lan/scan` - Return local IP and subnet info
+  - `POST /api/lan/sync` - Write synced data to local database
+- **Frontend**: `SyncConfigModal` component with 5-step wizard (scan → select Skills → select MCP → vendor config → preview & sync)
+- **Duplicate handling**: Skills/MCP with matching names are disabled (cannot be selected) with orange warning text
+
 ### Skills Management
 - Lists global Skills for Claude Code and Codex
 - Provides discovery search (discover/return toggle button) and installs Skills into target tool directories
@@ -906,6 +918,13 @@ npm 发布成功后，自动触发 Tauri 应用构建：
 - `.github/workflows/build-tauri.yaml` - Tauri 构建和发布
 
 ## 最近变更
+
+- 2026-06-20: 新增局域网配置同步功能
+  - 设置页面新增"局域网同步"卡片（`enableLanDiscovery` 开关），控制本节点是否可被局域网内其他节点发现
+  - 路由管理页面新增"同步配置"按钮，打开 `SyncConfigModal` 五步弹窗
+  - 五步流程：扫描发现节点 → 选择 Skills → 选择 MCP → 供应商配置 → 预览确认
+  - 后端新增 `GET /api/lan/discover`（免鉴权，由开关控制）、`GET /api/lan/scan`、`POST /api/lan/sync`
+  - Skills 同步包含 SKILL.md 内容，MCP 同步包含完整配置（command/args/env/url），重名项自动禁用
 
 - 2026-06-10: 认证体系简化与密钥详情页 Tabs 改造
   - 移除全局 `config.apiKey` 认证，简化为 AUTH 驱动的 AccessKey-only 认证

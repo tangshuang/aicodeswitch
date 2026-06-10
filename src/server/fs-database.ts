@@ -1102,6 +1102,7 @@ export class FileSystemDatabaseManager {
       proxyUrl: '',
       proxyUsername: '',
       proxyPassword: '',
+      enableLanDiscovery: false,
     };
 
 

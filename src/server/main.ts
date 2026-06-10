@@ -13,6 +13,7 @@ import { PolicyManager } from './access-keys/policy-manager';
 import type { FileSystemDatabaseManager } from './fs-database';
 import type {
   AppConfig,
+  APIService,
   LoginRequest,
   LoginResponse,
   AuthStatus,
@@ -1203,10 +1204,10 @@ const registerRoutes = async (dbManager: FileSystemDatabaseManager, proxyServer:
     }
   });
 
-  // 鉴权中间件 - 保护所有 /api/* 路由 (除了 /api/auth/*)
+  // 鉴权中间件 - 保护所有 /api/* 路由 (除了 /api/auth/* 和 /api/lan/discover)
   app.use('/api', (req, res, next) => {
-    if (req.path.startsWith('/auth/')) {
-      next(); // /api/auth/* 路由不需要鉴权
+    if (req.path.startsWith('/auth/') || req.path === '/lan/discover') {
+      next(); // /api/auth/* 和 /api/lan/discover 路由不需要鉴权
     } else {
       authMiddleware(req, res, next);
     }
@@ -1616,6 +1617,270 @@ const registerRoutes = async (dbManager: FileSystemDatabaseManager, proxyServer:
       res.json(result);
     })
   );
+
+  // ===================== 局域网同步相关 =====================
+
+  // GET /api/lan/discover - 远端节点暴露配置数据（不受鉴权保护，由开关控制）
+  app.get('/api/lan/discover', (_req, res) => {
+    const config = dbManager.getConfig();
+    if (!config.enableLanDiscovery) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+
+    try {
+      // 收集 Skills
+      const installedSkills = listInstalledSkills();
+      const skills: Array<{
+        name: string;
+        description?: string;
+        targets?: string[];
+        githubUrl?: string;
+        skillPath?: string;
+        instruction?: string;
+      }> = [];
+
+      for (const skill of installedSkills) {
+        const skillItem: typeof skills[0] = {
+          name: skill.name,
+          description: skill.description,
+          targets: skill.targets,
+          githubUrl: skill.githubUrl,
+          skillPath: skill.skillPath,
+        };
+        // 尝试读取 SKILL.md 内容
+        const skillDir = path.join(getCentralSkillsDir(), skill.id);
+        const skillMdPath = path.join(skillDir, 'SKILL.md');
+        if (fs.existsSync(skillMdPath)) {
+          try {
+            skillItem.instruction = fs.readFileSync(skillMdPath, 'utf-8');
+          } catch { /* ignore */ }
+        }
+        skills.push(skillItem);
+      }
+
+      // 收集 MCPs（脱敏 headers）
+      const allMcps = dbManager.getMCPs();
+      const mcps = allMcps.map(mcp => {
+        const sanitized: Record<string, unknown> = {
+          name: mcp.name,
+          description: mcp.description,
+          type: mcp.type,
+          command: mcp.command,
+          args: mcp.args,
+          env: mcp.env,
+          targets: mcp.targets,
+        };
+        if (mcp.url) sanitized.url = mcp.url;
+        if (mcp.headers) {
+          const sanitizedHeaders: Record<string, string> = {};
+          for (const [key, value] of Object.entries(mcp.headers)) {
+            if (/auth|key|token|secret|password/i.test(key)) {
+              sanitizedHeaders[key] = '***';
+            } else {
+              sanitizedHeaders[key] = value;
+            }
+          }
+          sanitized.headers = sanitizedHeaders;
+        }
+        return sanitized;
+      });
+
+      // 收集 Vendors + Services（脱敏）
+      const vendors = dbManager.getVendors().map(v => ({
+        id: v.id,
+        name: v.name,
+        services: (v.services || []).map(s => ({
+          id: s.id,
+          name: s.name,
+          sourceType: s.sourceType,
+          supportedModels: s.supportedModels,
+          authType: s.authType,
+          enableProxy: s.enableProxy,
+          enableCodingPlan: s.enableCodingPlan,
+        })),
+      }));
+
+      // 读取版本号
+      let version = 'unknown';
+      try {
+        const pkgPath = path.join(__dirname, '..', 'package.json');
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+        version = pkg.version || 'unknown';
+      } catch { /* ignore */ }
+
+      res.json({
+        node: {
+          name: os.hostname(),
+          version,
+          port: process.env.PORT ? parseInt(process.env.PORT) : 4567,
+        },
+        skills,
+        mcps,
+        vendors,
+      });
+    } catch (error) {
+      console.error('[LAN Discover] 错误:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/lan/scan - 获取本机局域网 IP 信息
+  app.get('/api/lan/scan', (_req, res) => {
+    const interfaces = os.networkInterfaces();
+    let localIp = '127.0.0.1';
+    let subnet = '127.0.0';
+
+    for (const entries of Object.values(interfaces)) {
+      if (!entries) continue;
+      for (const entry of entries) {
+        if (entry.family === 'IPv4' && !entry.internal) {
+          localIp = entry.address;
+          subnet = localIp.split('.').slice(0, 3).join('.');
+          break;
+        }
+      }
+      if (localIp !== '127.0.0.1') break;
+    }
+
+    const port = process.env.PORT ? parseInt(process.env.PORT) : 4567;
+
+    res.json({ localIp, subnet, port });
+  });
+
+  // POST /api/lan/sync - 执行同步写入
+  app.post('/api/lan/sync', asyncHandler(async (req, res) => {
+    const { remoteNode, skills, mcps, vendor } = req.body as {
+      remoteNode: { ip: string; port: number; name: string };
+      skills: Array<{
+        name: string;
+        description?: string;
+        targets?: string[];
+        githubUrl?: string;
+        skillPath?: string;
+        instruction?: string;
+      }>;
+      mcps: Array<{
+        name: string;
+        description?: string;
+        type: 'stdio' | 'http' | 'sse';
+        command?: string;
+        args?: string[];
+        url?: string;
+        headers?: Record<string, string>;
+        env?: Record<string, string>;
+        targets?: string[];
+      }>;
+      vendor: { enabled: boolean; apiKey?: string };
+    };
+
+    const result = {
+      skillsImported: 0,
+      mcpsImported: 0,
+      vendorCreated: false,
+      vendorName: '',
+      servicesCreated: 0,
+    };
+
+    // 1. 同步 Skills
+    const centralDir = getCentralSkillsDir();
+    if (!fs.existsSync(centralDir)) {
+      fs.mkdirSync(centralDir, { recursive: true });
+    }
+    const existingSkills = listInstalledSkills();
+    const existingSkillNames = new Set(existingSkills.map(s => s.name));
+
+    for (const skill of skills) {
+      if (existingSkillNames.has(skill.name)) continue; // 防御性跳过
+
+      const dirName = sanitizeDirName(skill.name);
+      const skillDir = path.join(centralDir, dirName);
+      if (!fs.existsSync(skillDir)) {
+        fs.mkdirSync(skillDir, { recursive: true });
+      }
+
+      // 写入 skill.json
+      const skillJson = {
+        id: dirName,
+        name: skill.name,
+        description: skill.description || '',
+        targets: skill.targets || [],
+        enabledTargets: [] as string[],
+        githubUrl: skill.githubUrl,
+        skillPath: skill.skillPath,
+        installedAt: Date.now(),
+      };
+      fs.writeFileSync(path.join(skillDir, 'skill.json'), JSON.stringify(skillJson, null, 2));
+
+      // 写入 SKILL.md（如果有 instruction）
+      if (skill.instruction) {
+        fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skill.instruction);
+      }
+
+      result.skillsImported++;
+    }
+
+    // 2. 同步 MCPs
+    const existingMcps = dbManager.getMCPs();
+    const existingMcpNames = new Set(existingMcps.map(m => m.name));
+
+    for (const mcp of mcps) {
+      if (existingMcpNames.has(mcp.name)) continue; // 防御性跳过
+
+      await dbManager.createMCP({
+        name: mcp.name,
+        description: mcp.description,
+        type: mcp.type,
+        command: mcp.command,
+        args: mcp.args,
+        url: mcp.url,
+        headers: mcp.headers,
+        env: mcp.env,
+        targets: mcp.targets as TargetType[] | undefined,
+      });
+      result.mcpsImported++;
+    }
+
+    // 3. 可选：创建供应商
+    if (vendor.enabled) {
+      const vendorName = `${remoteNode.name}@${remoteNode.ip}`;
+      const allVendors = dbManager.getVendors();
+
+      // 收集远端所有 services
+      const remoteUrl = `http://${remoteNode.ip}:${remoteNode.port}/v1/`;
+      const services: Omit<APIService, 'id' | 'createdAt' | 'updatedAt'>[] = [];
+      for (const v of allVendors) {
+        for (const s of (v.services || [])) {
+          services.push({
+            name: `${v.name} - ${s.name}`,
+            apiUrl: remoteUrl,
+            apiKey: vendor.apiKey || '',
+            sourceType: s.sourceType,
+            authType: s.authType,
+            supportedModels: s.supportedModels,
+            enableProxy: s.enableProxy,
+            enableCodingPlan: s.enableCodingPlan,
+          });
+        }
+      }
+
+      // 检查供应商是否已存在
+      const existingVendor = dbManager.getVendors().find(v => v.name === vendorName);
+      if (!existingVendor) {
+        await dbManager.createVendor({
+          name: vendorName,
+          description: `从局域网节点 ${remoteNode.ip}:${remoteNode.port} 同步`,
+          apiBaseUrl: `http://${remoteNode.ip}:${remoteNode.port}`,
+          services: services as any[],
+        });
+        result.vendorCreated = true;
+        result.vendorName = vendorName;
+        result.servicesCreated = services.length;
+      }
+    }
+
+    res.json({ success: true, result });
+  }));
 
   // Skills 管理相关
   app.get('/api/skills/installed', (_req, res) => {
