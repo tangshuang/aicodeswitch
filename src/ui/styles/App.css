@@ -798,20 +798,6 @@ table th {
   border-bottom-left-radius: 4px;
 }
 
-/* Dark mode: deepen chat bubble backgrounds */
-[data-theme="dark"] .chat-message--user .chat-bubble {
-  background: #003d22;
-}
-
-[data-theme="dark"] .chat-message--assistant .chat-bubble {
-  background: #132d1c;
-}
-
-[data-theme="dark"] .chat-message--tool_result .chat-bubble,
-[data-theme="dark"] .chat-message--tool_use .chat-bubble {
-  background: rgba(255, 255, 255, 0.2);
-}
-
 /* Tool messages */
 .chat-message--tool_result .chat-bubble,
 .chat-message--tool_use .chat-bubble {
@@ -907,9 +893,31 @@ table th {
   background: linear-gradient(to bottom, transparent, var(--bg-card));
 }
 
+/* Dark mode: deepen chat bubble backgrounds */
+[data-theme="dark"] .chat-message--user .chat-bubble {
+  background: #007b33;
+}
+
+[data-theme="dark"] .chat-message--assistant .chat-bubble {
+  background: #064d00;
+}
+
+[data-theme="dark"] .chat-message--tool_result .chat-bubble,
+[data-theme="dark"] .chat-message--tool_use .chat-bubble {
+  background: #223227;
+}
+
+[data-theme="dark"] .chat-message--user .chat-collapse-fade {
+  background: linear-gradient(to bottom, transparent, #007b33);
+}
+
+[data-theme="dark"] .chat-message--assistant .chat-collapse-fade {
+  background: linear-gradient(to bottom, transparent, #064d00);
+}
+
 [data-theme="dark"] .chat-message--tool_result .chat-collapse-fade,
 [data-theme="dark"] .chat-message--tool_use .chat-collapse-fade {
-  background: linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.2));
+  background: linear-gradient(to bottom, transparent, #223227);
 }
 
 .chat-collapse-fade-btn {
