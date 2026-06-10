@@ -94,6 +94,7 @@ export default function RoutesPage() {
   const { ruleStatuses, clearRuleStatus } = useRulesStatus();
   const [routes, setRoutes] = useState<Route[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
+  const [allRules, setAllRules] = useState<Rule[]>([]); // 所有路由的规则，用于检测活跃状态
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [allServices, setAllServices] = useState<APIService[]>([]);
   const [services, setServices] = useState<APIService[]>([]);
@@ -171,6 +172,7 @@ export default function RoutesPage() {
     loadToolBindings();
     loadApiPathBindings();
     checkClaudeVersion();
+    loadAllRules();
   }, []);
 
 
@@ -297,6 +299,9 @@ export default function RoutesPage() {
     const data = await api.getRules(routeId);
     setRules(data);
 
+    // 同时刷新全量规则（用于路由列表活跃状态检测）
+    loadAllRules();
+
     // 加载黑名单状态
     if (routeId) {
       try {
@@ -309,6 +314,16 @@ export default function RoutesPage() {
       } catch (error) {
         console.error('Failed to load blacklist status:', error);
       }
+    }
+  };
+
+  // 加载所有路由的规则（用于路由列表活跃状态检测）
+  const loadAllRules = async () => {
+    try {
+      const data = await api.getRules();
+      setAllRules(data);
+    } catch (error) {
+      console.error('Failed to load all rules:', error);
     }
   };
 
@@ -878,6 +893,11 @@ export default function RoutesPage() {
     setShowRuleModal(true);
   };
 
+  // 判断路由是否有规则处于"使用中"状态
+  const isRouteActive = (routeId: string) => {
+    return allRules.some(rule => rule.routeId === routeId && ruleStatuses[rule.id]?.status === 'in_use');
+  };
+
   // 判断规则状态
   const getRuleStatus = (rule: Rule) => {
     const blacklistStatus = blacklistStatuses[rule.id];
@@ -1043,7 +1063,7 @@ export default function RoutesPage() {
                 {routes.map((route) => (
                   <div
                     key={route.id}
-
+                    className={isRouteActive(route.id) ? 'route-active-glow' : undefined}
                     onClick={() => setSelectedRoute(route)}
                     style={{
                       padding: '12px',
