@@ -104,10 +104,14 @@ export function extractMessageContent(content: any): string {
 /**
  * 检测消息是否为 Claude Code 的 compact 命令请求。
  *
+ * 采用两级检测策略：
+ * - 严格匹配：四个关键词全部命中（适配已知格式）
+ * - 宽松匹配："TEXT ONLY" + "<summary>" 组合（覆盖 prompt 格式变化）
+ *
  * Compact 命令触发时，Claude Code 会在 messages 末尾插入一条特殊指令：
  * - role 为 "user"
  * - content 为数组，包含一个 text 块
- * - text 内容以 "CRITICAL: Respond with TEXT ONLY" 开头
+ * - text 内容包含 "CRITICAL: Respond with TEXT ONLY" 等标识
  * - 包含对话摘要生成指令，要求输出 <analysis> 和 <summary> 结构
  */
 export function isClaudeCompactRequest(message: any): boolean {
@@ -123,12 +127,23 @@ export function isClaudeCompactRequest(message: any): boolean {
   for (const block of content) {
     if (block?.type === 'text' && typeof block.text === 'string') {
       const text = block.text;
-      if (
-        text.includes('CRITICAL: Respond with TEXT ONLY') &&
-        text.includes('create a detailed summary of the conversation') &&
-        text.includes('<analysis>') &&
-        text.includes('<summary>')
-      ) {
+      const hasTextOnly = text.includes('TEXT ONLY');
+      const hasSummary = text.includes('<summary>');
+      const hasCritical = text.includes('CRITICAL: Respond with TEXT ONLY');
+      const hasDetailedSummary = text.includes('create a detailed summary of the conversation');
+      const hasAnalysis = text.includes('<analysis>');
+
+      // 严格匹配：Claude Code 标准格式（四个关键词）
+      if (hasCritical && hasDetailedSummary && hasAnalysis && hasSummary) {
+        console.log('[COMPACT] Strict match: all 4 markers found');
+        return true;
+      }
+
+      // 宽松匹配：覆盖 Claude Code prompt 格式变化
+      // "TEXT ONLY" 是紧凑指令的核心标识，<summary> 是输出格式标签
+      // 两者组合在非 compact 请求中几乎不可能同时出现
+      if (hasTextOnly && hasSummary) {
+        console.log(`[COMPACT] Loose match: CRITICAL=${hasCritical}, detailed_summary=${hasDetailedSummary}, <analysis>=${hasAnalysis}`);
         return true;
       }
     }
@@ -138,13 +153,22 @@ export function isClaudeCompactRequest(message: any): boolean {
 }
 
 /**
- * 检测消息列表中的最后一条消息是否为 Claude Code compact 请求。
+ * 检测消息列表中是否包含 Claude Code compact 请求。
+ *
+ * 从最后一条消息开始往前搜索，最多检查 3 条，
+ * 处理 compact 指令后面可能跟了 assistant 占位消息的边缘情况。
  */
 export function isLastClaudeMessageCompact(messages: any[]): boolean {
   if (!Array.isArray(messages) || messages.length === 0) {
     return false;
   }
-  return isClaudeCompactRequest(messages[messages.length - 1]);
+  const checkCount = Math.min(messages.length, 3);
+  for (let i = messages.length - 1; i >= messages.length - checkCount; i--) {
+    if (isClaudeCompactRequest(messages[i])) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

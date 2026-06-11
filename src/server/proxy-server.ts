@@ -1957,6 +1957,36 @@ export class ProxyServer {
       }
     }
 
+    // compact 规则同样拥有最高优先级，确保压缩请求不被其他规则覆盖
+    if (contentType === 'compact') {
+      const compactRules = enabledRules.filter(rule => rule.contentType === 'compact');
+      for (const rule of compactRules) {
+        const isBlacklisted = await this.dbManager.isServiceBlacklisted(
+          rule.targetServiceId,
+          routeId,
+          rule.contentType
+        );
+        if (isBlacklisted) {
+          continue;
+        }
+
+        this.dbManager.checkAndResetRuleIfNeeded(rule.id);
+        this.dbManager.checkAndResetRequestCountIfNeeded(rule.id);
+
+        if (rule.tokenLimit && rule.totalTokensUsed !== undefined && rule.totalTokensUsed >= rule.tokenLimit * 1000) {
+          continue;
+        }
+        if (rule.requestCountLimit && rule.totalRequestsUsed !== undefined && rule.totalRequestsUsed >= rule.requestCountLimit) {
+          continue;
+        }
+        if (this.isFrequencyLimitExceeded(rule)) {
+          continue;
+        }
+
+        return rule;
+      }
+    }
+
     // 1. 查找其他内容类型的规则
     const contentTypeRules = enabledRules.filter(rule => rule.contentType === contentType);
 
