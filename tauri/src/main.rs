@@ -195,6 +195,28 @@ async fn start_server(
             .env("PORT", port.to_string())
             .env("NODE_ENV", "production");
 
+        // 将 Node.js 子进程的 stdout/stderr 重定向到启动日志文件
+        let node_log_path = log_file_path();
+        match std::fs::OpenOptions::new().append(true).open(&node_log_path) {
+            Ok(log_file) => {
+                let child_stdin = std::process::Stdio::null();
+                command.stdin(child_stdin);
+                match log_file.try_clone() {
+                    Ok(log_copy) => {
+                        command.stdout(log_file);
+                        command.stderr(log_copy);
+                        debug_log("✓ Node.js 输出将写入启动日志");
+                    }
+                    Err(e) => {
+                        debug_log(&format!("⚠ 无法复制日志文件句柄: {}, stdout/stderr 将丢失", e));
+                    }
+                }
+            }
+            Err(e) => {
+                debug_log(&format!("⚠ 无法打开日志文件: {}, stdout/stderr 将丢失", e));
+            }
+        }
+
         // Windows 下隐藏控制台窗口
         #[cfg(target_os = "windows")]
         {
@@ -217,10 +239,32 @@ async fn start_server(
         server.process = Some(child);
     }
 
-    // 等待服务器就绪
+    // 等待服务器就绪（带进程存活检查）
     debug_log("开始等待服务就绪...");
     let _ = app.emit("startup-log", "正在等待服务就绪...");
-    wait_for_server(app, port).await
+    let result = wait_for_server(app, port).await;
+
+    // 如果健康检查失败，检查进程是否还活着
+    if result.is_err() {
+        let state2 = app.state::<Mutex<ServerProcess>>();
+        let mut server2 = state2.lock().unwrap();
+        if let Some(ref mut child) = server2.process {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    debug_log(&format!("✗ Node.js 进程已退出! 退出状态: {}", status));
+                    debug_log(">>> 检查上方日志中 Node.js 的输出以获取错误详情 <<<");
+                }
+                Ok(None) => {
+                    debug_log(&format!("⚠ Node.js 进程仍在运行 (PID: {}) 但健康检查未通过", child.id()));
+                }
+                Err(e) => {
+                    debug_log(&format!("⚠ 无法检查进程状态: {}", e));
+                }
+            }
+        }
+    }
+
+    result
 }
 
 /// 通过 HTTP /api/shutdown 优雅停止服务器，失败则强制终止
