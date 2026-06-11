@@ -271,13 +271,21 @@ async fn is_server_ready(port: u16) -> bool {
 
 // ── 主入口 ───────────────────────────────────────────────
 
+/// 判断是否为开发模式（由 beforeDevCommand 通过环境变量控制）
+/// - tauri:dev → beforeDevCommand 设置 TAURI_DEV_SERVER=1 → 跳过 Rust 端服务器管理
+/// - tauri:start / 生产构建 → 无此环境变量 → Rust 端管理服务器生命周期
+fn is_dev_mode() -> bool {
+    std::env::var("TAURI_DEV_SERVER").is_ok()
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(ServerProcess { process: None }))
         .setup(|app| {
             // 开发模式：Tauri 直接加载 Vite dev server，无需管理 Node.js 进程
-            if cfg!(debug_assertions) {
+            if is_dev_mode() {
+                println!("Dev mode: using external server from beforeDevCommand");
                 return Ok(());
             }
 
@@ -330,8 +338,8 @@ fn main() {
                 let app_handle = window.app_handle().clone();
 
                 tauri::async_runtime::spawn(async move {
-                    // 生产模式下优雅停止服务器
-                    if !cfg!(debug_assertions) {
+                    // 非开发模式下优雅停止服务器
+                    if !is_dev_mode() {
                         let port = read_port_from_config();
                         let state = app_handle.state::<Mutex<ServerProcess>>();
                         stop_server(&state, port).await;

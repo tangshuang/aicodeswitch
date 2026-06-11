@@ -4,7 +4,7 @@
   "version": "2.1.0",
   "identifier": "net.tangshuang.aicodeswitch",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "TAURI_DEV_SERVER=1 npm run dev",
     "devUrl": "http://localhost:17808",
     "beforeBuildCommand": "npm run build && node tauri/prepare-resources.js",
     "frontendDist": "resources/screens"
