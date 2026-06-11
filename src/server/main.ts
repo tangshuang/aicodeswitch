@@ -3291,9 +3291,102 @@ ${instruction}
     const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize as string) || 50));
     const startDate = req.query.startDate as string | undefined;
     const endDate = req.query.endDate as string | undefined;
+    const contentType = req.query.contentType as string | undefined;
+    const search = req.query.search as string | undefined;
 
-    const result = await accessKeyModule.keyLogger.getLogs(req.params.id, { page, pageSize, startDate, endDate });
+    const result = await accessKeyModule.keyLogger.getLogs(req.params.id, { page, pageSize, startDate, endDate, contentType, search });
     res.json(result);
+  }));
+
+  // ========== AccessKey 会话 API ==========
+
+  // 获取密钥的会话列表
+  app.get('/api/access-keys/:id/sessions', asyncHandler(async (req, res) => {
+    const accessKeyModule = proxyServer.getAccessKeyModule();
+    if (!accessKeyModule) {
+      res.status(404).json({ error: 'AccessKey 功能未启用' });
+      return;
+    }
+
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize as string) || 20));
+    const targetType = req.query.targetType as string | undefined;
+    const search = req.query.search as string | undefined;
+
+    const result = await accessKeyModule.keySessionTracker.getSessions(req.params.id, {
+      page, pageSize, targetType, search,
+    });
+    res.json(result);
+  }));
+
+  // 获取密钥的会话总数
+  app.get('/api/access-keys/:id/sessions/count', asyncHandler(async (req, res) => {
+    const accessKeyModule = proxyServer.getAccessKeyModule();
+    if (!accessKeyModule) {
+      res.status(404).json({ error: 'AccessKey 功能未启用' });
+      return;
+    }
+
+    const targetType = req.query.targetType as string | undefined;
+    const count = await accessKeyModule.keySessionTracker.getSessionsCount(req.params.id, targetType);
+    res.json({ count });
+  }));
+
+  // 获取密钥的单个会话
+  app.get('/api/access-keys/:id/sessions/:sessionId', asyncHandler(async (req, res) => {
+    const accessKeyModule = proxyServer.getAccessKeyModule();
+    if (!accessKeyModule) {
+      res.status(404).json({ error: 'AccessKey 功能未启用' });
+      return;
+    }
+
+    const session = await accessKeyModule.keySessionTracker.getSession(req.params.id, req.params.sessionId);
+    if (!session) {
+      res.status(404).json({ error: '会话不存在' });
+      return;
+    }
+    res.json(session);
+  }));
+
+  // 获取密钥会话的日志
+  app.get('/api/access-keys/:id/sessions/:sessionId/logs', asyncHandler(async (req, res) => {
+    const accessKeyModule = proxyServer.getAccessKeyModule();
+    if (!accessKeyModule) {
+      res.status(404).json({ error: 'AccessKey 功能未启用' });
+      return;
+    }
+
+    const limit = Math.min(10000, Math.max(1, parseInt(req.query.limit as string) || 10000));
+    const logs = await accessKeyModule.keyLogger.getLogsBySessionId(req.params.id, req.params.sessionId, limit);
+    res.json(logs);
+  }));
+
+  // 删除密钥的单个会话
+  app.delete('/api/access-keys/:id/sessions/:sessionId', asyncHandler(async (req, res) => {
+    const accessKeyModule = proxyServer.getAccessKeyModule();
+    if (!accessKeyModule) {
+      res.status(404).json({ error: 'AccessKey 功能未启用' });
+      return;
+    }
+
+    const deleted = await accessKeyModule.keySessionTracker.deleteSession(req.params.id, req.params.sessionId);
+    if (!deleted) {
+      res.status(404).json({ error: '会话不存在' });
+      return;
+    }
+    res.json({ success: true });
+  }));
+
+  // 清空密钥的所有会话
+  app.delete('/api/access-keys/:id/sessions', asyncHandler(async (req, res) => {
+    const accessKeyModule = proxyServer.getAccessKeyModule();
+    if (!accessKeyModule) {
+      res.status(404).json({ error: 'AccessKey 功能未启用' });
+      return;
+    }
+
+    await accessKeyModule.keySessionTracker.clearSessions(req.params.id);
+    res.json({ success: true });
   }));
 
   // Key 接入指引

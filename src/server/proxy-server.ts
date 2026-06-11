@@ -3791,6 +3791,26 @@ export class ProxyServer {
           if (statusCode >= 400) {
             await this.accessKeyModule.usageTracker.recordError(accessKey.id);
           }
+
+          // 密钥级会话追踪
+          if (sessionId && sessionId !== '-' && statusCode < 400) {
+            const sessionTokens = usageForLog?.totalTokens ||
+              ((usageForLog?.inputTokens || 0) + (usageForLog?.outputTokens || 0));
+            const sessionTitle = this.defaultExtractSessionTitle(req, sessionId);
+            this.accessKeyModule.keySessionTracker.upsertSession(accessKey.id, {
+              id: sessionId,
+              targetType,
+              title: sessionTitle,
+              firstRequestAt: startTime,
+              lastRequestAt: Date.now(),
+              vendorId: service.vendorId,
+              vendorName: vendor?.name,
+              serviceId: service.id,
+              serviceName: service.name,
+              model: rule.targetModel || req.body?.model,
+              totalTokens: sessionTokens,
+            }).catch(err => console.error('[KeySession] upsert error:', err));
+          }
         } finally {
           // 并发 -1（无论成功失败）
           this.accessKeyModule.quotaChecker.onRequestEnd(accessKey.id);
@@ -4882,6 +4902,28 @@ export class ProxyServer {
           }
           if (statusCode >= 400) {
             await this.accessKeyModule.usageTracker.recordError(accessKeyCtx.accessKey.id);
+          }
+
+          // 密钥级会话追踪
+          const apiSessionTargetType: ToolType = clientFormat === 'claude' ? 'claude-code' : 'codex';
+          const apiSessionId = this.extractSessionIdForFormat(req, clientFormat);
+          if (apiSessionId && apiSessionId !== '-' && statusCode < 400) {
+            const sessionTokens = usageForLog?.totalTokens ||
+              ((usageForLog?.inputTokens || 0) + (usageForLog?.outputTokens || 0));
+            const sessionTitle = this.defaultExtractSessionTitle(req, apiSessionId);
+            this.accessKeyModule.keySessionTracker.upsertSession(accessKeyCtx.accessKey.id, {
+              id: apiSessionId,
+              targetType: apiSessionTargetType,
+              title: sessionTitle,
+              firstRequestAt: startTime,
+              lastRequestAt: Date.now(),
+              vendorId: service.vendorId,
+              vendorName: vendor?.name,
+              serviceId: service.id,
+              serviceName: service.name,
+              model: rule.targetModel || req.body?.model,
+              totalTokens: sessionTokens,
+            }).catch(err => console.error('[KeySession] upsert error:', err));
           }
         } finally {
           this.accessKeyModule.quotaChecker.onRequestEnd(accessKeyCtx.accessKey.id);

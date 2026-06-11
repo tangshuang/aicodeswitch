@@ -224,13 +224,16 @@ aicos version            # Show current version information
   - `quota-checker.ts` - Token/request/RPM/concurrent quota checking
   - `usage-tracker.ts` - Per-key usage persistence with auto-flush
   - `key-logger.ts` - Per-key isolated log storage (sharded by date)
+  - `key-session-tracker.ts` - Per-key isolated session tracking (独立于全局会话系统)
   - `key-resolver.ts` - sk_ Key authentication and resolution
 - **Data Storage**:
   - `access-keys.json` - AccessKey records (with apiKeyHash for fast lookup)
   - `policies.json` - Policy configurations
   - `key-usage/{keyId}.json` - Per-key usage statistics
+  - `key-logs/{keyId}/` - Per-key isolated log storage (sharded by date)
+  - `key-sessions/{keyId}/sessions.json` - Per-key session records
   - `key-logs/{keyId}/` - Per-key isolated log directories
-- **Request Flow**: sk_ key → resolve AccessKey → get Policy → quota check → route from policy → proxy → independent logging
+- **Request Flow**: sk_ key → resolve AccessKey → get Policy → quota check → route from policy → proxy → independent logging + session tracking
 - **API Key Prefixes**: `sk_` = AccessKey, `skr_` = routing key (existing)
 - **Authentication Headers**: Supports `Authorization: Bearer`, `x-api-key`, `x-goog-api-key`
 - **Key Design**: AccessKey requests completely bypass existing log/statistics systems
@@ -703,6 +706,7 @@ aicodeswitch/
 │       │   ├── quota-checker.ts   # Quota checking
 │       │   ├── usage-tracker.ts   # Per-key usage tracking
 │       │   ├── key-logger.ts      # Per-key isolated logging
+│       │   ├── key-session-tracker.ts  # Per-key session tracking
 │       │   └── key-resolver.ts    # sk_ Key resolution
 │       └── transformers/
 ├── tauri/                   # Tauri desktop application
@@ -918,6 +922,15 @@ npm 发布成功后，自动触发 Tauri 应用构建：
 - `.github/workflows/build-tauri.yaml` - Tauri 构建和发布
 
 ## 最近变更
+
+- 2026-06-22: 密钥详情页新增"会话"Tab
+  - 密钥详情页新增"会话"Tab，支持按密钥查看独立会话列表（搜索、过滤、分页、自动刷新）
+  - 每密钥独立会话存储（`key-sessions/<keyId>/sessions.json`），与全局会话系统完全隔离
+  - 会话详情弹窗支持日志模式和对话模式双视图，支持 JSON 导出
+  - 代理请求处理中自动追踪密钥级会话（覆盖全部代理路径）
+  - 新增 `KeySessionTracker` 模块（`key-session-tracker.ts`）、`KeyLogger.getLogsBySessionId()` 方法
+  - 提取共享聊天工具函数到 `session-chat-utils.tsx`（ChatViewFromSessionLogs、CollapsibleChatContent 等）
+  - 新增 6 个 API 端点（`/api/access-keys/:id/sessions` 系列）
 
 - 2026-06-20: 新增局域网配置同步功能
   - 设置页面新增"局域网同步"卡片（`enableLanDiscovery` 开关），控制本节点是否可被局域网内其他节点发现

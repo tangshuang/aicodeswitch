@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, KeyUsageDailyRecord, QuotaAlert, LanDiscoverResponse, LanSyncRequest, LanSyncResult } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, AccessKeySession, KeyUsageDailyRecord, QuotaAlert, LanDiscoverResponse, LanSyncRequest, LanSyncResult } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -172,7 +172,13 @@ interface BackendAPI {
   batchDeleteAccessKeys: (keyIds: string[]) => Promise<{ count: number }>;
   getAccessKeyUsage: (id: string) => Promise<KeyUsage>;
   getAccessKeyUsageTrend: (id: string, days?: number) => Promise<KeyUsageDailyRecord[]>;
-  getAccessKeyLogs: (id: string, params?: { page?: number; pageSize?: number; startDate?: string; endDate?: string }) => Promise<{ data: AccessKeyRequestLog[]; total: number }>;
+  getAccessKeyLogs: (id: string, params?: { page?: number; pageSize?: number; startDate?: string; endDate?: string; contentType?: string; search?: string }) => Promise<{ data: AccessKeyRequestLog[]; total: number }>;
+  // AccessKey 会话
+  getAccessKeySessions: (id: string, params?: { page?: number; pageSize?: number; targetType?: string; search?: string }) => Promise<{ data: AccessKeySession[]; total: number }>;
+  getAccessKeySession: (keyId: string, sessionId: string) => Promise<AccessKeySession | null>;
+  getAccessKeySessionLogs: (keyId: string, sessionId: string, limit?: number) => Promise<AccessKeyRequestLog[]>;
+  deleteAccessKeySession: (keyId: string, sessionId: string) => Promise<boolean>;
+  clearAccessKeySessions: (keyId: string) => Promise<boolean>;
   getAccessKeyGuide: (id: string, host?: string, port?: string) => Promise<{
     claudeCode: { description: string; envVars: Record<string, string> };
     codex: { description: string; envVars: Record<string, string> };
@@ -609,6 +615,12 @@ export const api: BackendAPI = {
   getAccessKeyUsage: (id) => requestJson(buildUrl(`/api/access-keys/${id}/usage`)),
   getAccessKeyUsageTrend: (id, days) => requestJson(buildUrl(`/api/access-keys/${id}/usage/trend`, { days })),
   getAccessKeyLogs: (id, params) => requestJson(buildUrl(`/api/access-keys/${id}/logs`, params as Record<string, string | number | undefined>)),
+  // AccessKey 会话
+  getAccessKeySessions: (id, params) => requestJson(buildUrl(`/api/access-keys/${id}/sessions`, params as Record<string, string | number | undefined>)),
+  getAccessKeySession: (keyId, sessionId) => requestJson(buildUrl(`/api/access-keys/${keyId}/sessions/${sessionId}`)),
+  getAccessKeySessionLogs: (keyId, sessionId, limit) => requestJson(buildUrl(`/api/access-keys/${keyId}/sessions/${sessionId}/logs`, { limit })),
+  deleteAccessKeySession: (keyId, sessionId) => requestJson(buildUrl(`/api/access-keys/${keyId}/sessions/${sessionId}`), { method: 'DELETE' }),
+  clearAccessKeySessions: (keyId) => requestJson(buildUrl(`/api/access-keys/${keyId}/sessions`), { method: 'DELETE' }),
   getAccessKeyGuide: (id, host, port) => requestJson(buildUrl(`/api/access-keys/${id}/guide`, { host, port })),
   writeAccessKeyToLocal: (id, targets: string[]) => requestJson(buildUrl(`/api/access-keys/${id}/write-local`), { method: 'POST', body: JSON.stringify({ targets }) }),
   getWriteLocalRecords: () => requestJson(buildUrl('/api/write-local-records')),

@@ -10,6 +10,7 @@ import { PolicyManager } from './policy-manager';
 import { QuotaChecker } from './quota-checker';
 import { UsageTracker } from './usage-tracker';
 import { KeyLogger } from './key-logger';
+import { KeySessionTracker } from './key-session-tracker';
 import { KeyResolver } from './key-resolver';
 
 export class AccessKeyModule {
@@ -18,6 +19,7 @@ export class AccessKeyModule {
   readonly quotaChecker: QuotaChecker;
   readonly usageTracker: UsageTracker;
   readonly keyLogger: KeyLogger;
+  readonly keySessionTracker: KeySessionTracker;
   readonly keyResolver: KeyResolver;
 
   private accessKeysFile: string;
@@ -33,6 +35,7 @@ export class AccessKeyModule {
     this.quotaChecker = new QuotaChecker();
     this.usageTracker = new UsageTracker(dataPath);
     this.keyLogger = new KeyLogger(dataPath);
+    this.keySessionTracker = new KeySessionTracker(dataPath);
     this.keyResolver = new KeyResolver(this.keyManager, this.policyManager);
   }
 
@@ -51,6 +54,7 @@ export class AccessKeyModule {
     await Promise.all([
       this.usageTracker.initialize(),
       this.keyLogger.initialize(),
+      this.keySessionTracker.initialize(),
     ]);
 
     // 启动自动刷新

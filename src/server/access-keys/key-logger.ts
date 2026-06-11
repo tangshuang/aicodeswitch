@@ -90,8 +90,8 @@ export class KeyLogger {
     await this.saveShardIndex(keyId, index);
   }
 
-  /** 获取 Key 的日志列表（分页） */
-  async getLogs(keyId: string, options: { page: number; pageSize: number; startDate?: string; endDate?: string }): Promise<{ data: AccessKeyRequestLog[]; total: number }> {
+  /** 获取 Key 的日志列表（分页 + 过滤） */
+  async getLogs(keyId: string, options: { page: number; pageSize: number; startDate?: string; endDate?: string; contentType?: string; search?: string }): Promise<{ data: AccessKeyRequestLog[]; total: number }> {
     const index = await this.getShardIndex(keyId);
     let filteredShards = index;
 
@@ -102,37 +102,60 @@ export class KeyLogger {
       filteredShards = filteredShards.filter(s => s.date <= options.endDate!);
     }
 
-    // 计算总数
-    const total = filteredShards.reduce((sum, s) => sum + s.count, 0);
+    const needsFilter = !!(options.contentType || options.search);
+    const searchLower = options.search?.toLowerCase();
 
     // 计算分页偏移
     const offset = (options.page - 1) * options.pageSize;
     const limit = options.pageSize;
 
-    // 从最新的分片开始读取
-    const allLogs: AccessKeyRequestLog[] = [];
-    let skipped = 0;
-    let collected = 0;
+    // 如果不需要细粒度过滤，使用快速分片级分页
+    if (!needsFilter) {
+      const total = filteredShards.reduce((sum, s) => sum + s.count, 0);
+      const allLogs: AccessKeyRequestLog[] = [];
+      let skipped = 0;
+      let collected = 0;
 
-    for (let i = filteredShards.length - 1; i >= 0 && collected < limit; i--) {
+      for (let i = filteredShards.length - 1; i >= 0 && collected < limit; i++) {
+        const shard = filteredShards[i];
+        const logs = await this.readShardFile(keyId, shard.filename);
+        const reversed = logs.reverse();
+
+        for (const log of reversed) {
+          if (skipped < offset) { skipped++; continue; }
+          allLogs.push(log);
+          collected++;
+          if (collected >= limit) break;
+        }
+      }
+
+      return { data: allLogs, total };
+    }
+
+    // 需要细粒度过滤：先收集所有匹配日志，再分页
+    const matchedLogs: AccessKeyRequestLog[] = [];
+    for (let i = filteredShards.length - 1; i >= 0; i--) {
       const shard = filteredShards[i];
       const logs = await this.readShardFile(keyId, shard.filename);
-
-      // 从最新的日志开始
       const reversed = logs.reverse();
 
       for (const log of reversed) {
-        if (skipped < offset) {
-          skipped++;
-          continue;
+        // 类型过滤
+        if (options.contentType && log.contentType !== options.contentType) continue;
+        // 搜索过滤（匹配路径、模型）
+        if (searchLower) {
+          const path = (log.path || '').toLowerCase();
+          const model = (log.requestModel || log.targetModel || '').toLowerCase();
+          const error = (log.error || '').toLowerCase();
+          if (!path.includes(searchLower) && !model.includes(searchLower) && !error.includes(searchLower)) continue;
         }
-        allLogs.push(log);
-        collected++;
-        if (collected >= limit) break;
+        matchedLogs.push(log);
       }
     }
 
-    return { data: allLogs, total };
+    const total = matchedLogs.length;
+    const data = matchedLogs.slice(offset, offset + limit);
+    return { data, total };
   }
 
   /** 清理过期日志 */
@@ -176,6 +199,61 @@ export class KeyLogger {
   async getLogsCount(keyId: string): Promise<number> {
     const index = await this.getShardIndex(keyId);
     return index.reduce((sum, s) => sum + s.count, 0);
+  }
+
+  /** 按 sessionId 过滤日志（用于密钥会话的日志查询） */
+  async getLogsBySessionId(keyId: string, sessionId: string, limit: number = 10000): Promise<AccessKeyRequestLog[]> {
+    const index = await this.getShardIndex(keyId);
+    const allLogs: AccessKeyRequestLog[] = [];
+
+    // 从最新的分片开始扫描
+    for (let i = index.length - 1; i >= 0 && allLogs.length < limit; i--) {
+      const shard = index[i];
+      const logs = await this.readShardFile(keyId, shard.filename);
+
+      for (let j = logs.length - 1; j >= 0 && allLogs.length < limit; j--) {
+        if (this.logBelongsToSession(logs[j], sessionId)) {
+          allLogs.push(logs[j]);
+        }
+      }
+    }
+
+    // 按时间正序排列（用于对话视图）
+    return allLogs.sort((a, b) => a.timestamp - b.timestamp);
+  }
+
+  /** 判断日志是否属于指定会话 */
+  private logBelongsToSession(log: AccessKeyRequestLog, sessionId: string): boolean {
+    // Codex: 检查 headers 中的 session-id
+    const headers = log.headers as Record<string, string | string[] | undefined> | undefined;
+    if (headers) {
+      const sid = headers['session-id'] || headers['session_id'];
+      if (typeof sid === 'string' && sid === sessionId) return true;
+      if (Array.isArray(sid) && sid[0] === sessionId) return true;
+    }
+
+    // Claude Code: 检查 body.metadata.user_id
+    if (log.body) {
+      try {
+        const body = typeof log.body === 'string' ? JSON.parse(log.body) : log.body;
+        const rawUserId = body?.metadata?.user_id;
+        if (rawUserId) {
+          // 复用 ProxyServer 的 session ID 提取逻辑
+          let extractedId: string | null = null;
+          try {
+            const parsed = JSON.parse(rawUserId);
+            if (parsed && typeof parsed === 'object' && parsed.session_id) {
+              extractedId = parsed.session_id;
+            }
+          } catch {
+            extractedId = rawUserId;
+          }
+          if (extractedId === sessionId) return true;
+        }
+      } catch { /* ignore */ }
+    }
+
+    return false;
   }
 
   // ---- helpers ----

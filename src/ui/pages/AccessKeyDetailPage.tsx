@@ -1,14 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
-import type { AccessKey, Policy, Route, KeyUsage, KeyUsageDailyRecord, AccessKeyRequestLog } from '../../types';
+import type { AccessKey, Policy, Route, KeyUsage, KeyUsageDailyRecord, AccessKeyRequestLog, AccessKeySession } from '../../types';
 import { toast } from '../components/Toast';
 import { useConfirm } from '../components/Confirm';
 import { Pagination } from '../components/Pagination';
 import LogDetailModal from '../components/LogDetailModal';
 import AccessKeyGuideModal from '../components/AccessKeyGuideModal';
+import SessionDetailModal from '../components/SessionDetailModal';
+import { cleanSessionTitle } from '../utils/session-chat-utils';
 
-type DetailTab = 'info' | 'policy' | 'stats' | 'logs';
+type DetailTab = 'info' | 'policy' | 'stats' | 'logs' | 'sessions';
 
 export default function AccessKeyDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -36,6 +38,8 @@ export default function AccessKeyDetailPage() {
   const [logsPageSize, setLogsPageSize] = useState(20);
   const [logsStartDate, setLogsStartDate] = useState('');
   const [logsEndDate, setLogsEndDate] = useState('');
+  const [logsContentType, setLogsContentType] = useState('');
+  const [logsSearch, setLogsSearch] = useState('');
   const [selectedLog, setSelectedLog] = useState<AccessKeyRequestLog | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [countdown, setCountdown] = useState(10);
@@ -50,6 +54,20 @@ export default function AccessKeyDetailPage() {
   const [showWriteLocalModal, setShowWriteLocalModal] = useState(false);
   const [writeLocalTargets, setWriteLocalTargets] = useState<{ 'claude-code': boolean; codex: boolean }>({ 'claude-code': true, codex: true });
   const [writeLocalLoading, setWriteLocalLoading] = useState(false);
+
+  // 会话 Tab
+  const [sessions, setSessions] = useState<AccessKeySession[]>([]);
+  const [sessionsTotal, setSessionsTotal] = useState(0);
+  const [sessionsPage, setSessionsPage] = useState(1);
+  const [sessionsPageSize, setSessionsPageSize] = useState(20);
+  const [sessionSearch, setSessionSearch] = useState('');
+  const [sessionTargetType, setSessionTargetType] = useState('');
+  const [selectedSession, setSelectedSession] = useState<AccessKeySession | null>(null);
+  const [selectedSessionLogs, setSelectedSessionLogs] = useState<AccessKeyRequestLog[]>([]);
+  const [sessionLogsLoading, setSessionLogsLoading] = useState(false);
+  const [sessionsAutoRefresh, setSessionsAutoRefresh] = useState(false);
+  const [sessionsCountdown, setSessionsCountdown] = useState(10);
+  const sessionsCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ==================== 数据加载 ====================
 
@@ -101,13 +119,31 @@ export default function AccessKeyDetailPage() {
         pageSize: logsPageSize,
         startDate: logsStartDate || undefined,
         endDate: logsEndDate || undefined,
+        contentType: logsContentType || undefined,
+        search: logsSearch || undefined,
       });
       setLogs(result.data);
       setLogsTotal(result.total);
     } catch {
       // ignore
     }
-  }, [id, logsPage, logsPageSize, logsStartDate, logsEndDate]);
+  }, [id, logsPage, logsPageSize, logsStartDate, logsEndDate, logsContentType, logsSearch]);
+
+  const loadSessionData = useCallback(async () => {
+    if (!id) return;
+    try {
+      const result = await api.getAccessKeySessions(id, {
+        page: sessionsPage,
+        pageSize: sessionsPageSize,
+        targetType: sessionTargetType || undefined,
+        search: sessionSearch || undefined,
+      });
+      setSessions(result.data);
+      setSessionsTotal(result.total);
+    } catch {
+      // ignore
+    }
+  }, [id, sessionsPage, sessionsPageSize, sessionTargetType, sessionSearch]);
 
   // 初始加载
   useEffect(() => { loadKeyData(); }, [loadKeyData]);
@@ -116,9 +152,10 @@ export default function AccessKeyDetailPage() {
   useEffect(() => {
     if (activeTab === 'stats') loadUsageData();
     if (activeTab === 'logs') loadLogData();
-  }, [activeTab, loadUsageData, loadLogData]);
+    if (activeTab === 'sessions') loadSessionData();
+  }, [activeTab, loadUsageData, loadLogData, loadSessionData]);
 
-  // 自动刷新倒计时
+  // 自动刷新倒计时（日志）
   useEffect(() => {
     if (autoRefresh && activeTab === 'logs') {
       countdownRef.current = setInterval(() => {
@@ -136,6 +173,25 @@ export default function AccessKeyDetailPage() {
       setCountdown(10);
     }
   }, [autoRefresh, activeTab, loadLogData]);
+
+  // 自动刷新倒计时（会话）
+  useEffect(() => {
+    if (sessionsAutoRefresh && activeTab === 'sessions') {
+      sessionsCountdownRef.current = setInterval(() => {
+        setSessionsCountdown(prev => {
+          if (prev <= 1) {
+            loadSessionData();
+            return 10;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => { if (sessionsCountdownRef.current) clearInterval(sessionsCountdownRef.current); };
+    } else {
+      if (sessionsCountdownRef.current) clearInterval(sessionsCountdownRef.current);
+      setSessionsCountdown(10);
+    }
+  }, [sessionsAutoRefresh, activeTab, loadSessionData]);
 
   // ==================== 操作函数 ====================
 
@@ -267,6 +323,7 @@ export default function AccessKeyDetailPage() {
     { key: 'policy', label: '策略' },
     { key: 'stats', label: '统计' },
     { key: 'logs', label: '日志' },
+    { key: 'sessions', label: '会话' },
   ];
 
   return (
@@ -570,21 +627,42 @@ export default function AccessKeyDetailPage() {
           {/* 筛选栏 */}
           <div className="card" style={{ marginBottom: '16px', padding: '12px 16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <label style={{ fontSize: '13px', color: 'var(--text-tertiary)' }}>开始日期</label>
-                <input type="date" value={logsStartDate} onChange={e => { setLogsStartDate(e.target.value); setLogsPage(1); }}
-                  style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid var(--border-primary)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '13px' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+                <input type="text" placeholder="搜索路径、模型..." value={logsSearch}
+                  onChange={e => { setLogsSearch(e.target.value); setLogsPage(1); }}
+                  style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid var(--border-primary)',
+                    background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '13px', width: '180px' }} />
+                <select value={logsContentType}
+                  onChange={e => { setLogsContentType(e.target.value); setLogsPage(1); }}
+                  style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid var(--border-primary)',
+                    background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '13px' }}>
+                  <option value="">全部类型</option>
+                  <option value="default">默认</option>
+                  <option value="thinking">思考</option>
+                  <option value="long-context">长上下文</option>
+                  <option value="image-understanding">图像理解</option>
+                  <option value="background">后台</option>
+                  <option value="compact">压缩</option>
+                  <option value="high-iq">高智商</option>
+                </select>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <label style={{ fontSize: '13px', color: 'var(--text-tertiary)' }}>开始</label>
+                  <input type="date" value={logsStartDate} onChange={e => { setLogsStartDate(e.target.value); setLogsPage(1); }}
+                    style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid var(--border-primary)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '13px' }} />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <label style={{ fontSize: '13px', color: 'var(--text-tertiary)' }}>结束</label>
+                  <input type="date" value={logsEndDate} onChange={e => { setLogsEndDate(e.target.value); setLogsPage(1); }}
+                    style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid var(--border-primary)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '13px' }} />
+                </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <label style={{ fontSize: '13px', color: 'var(--text-tertiary)' }}>结束日期</label>
-                <input type="date" value={logsEndDate} onChange={e => { setLogsEndDate(e.target.value); setLogsPage(1); }}
-                  style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid var(--border-primary)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '13px' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
+                  <input type="checkbox" checked={autoRefresh} onChange={e => setAutoRefresh(e.target.checked)} />
+                  自动刷新 {autoRefresh && <span style={{ color: 'var(--color-primary)' }}>({countdown}s)</span>}
+                </label>
+                <button className="ak-action-btn" onClick={() => loadLogData()} style={{ padding: '4px 12px' }}>🔄 刷新</button>
               </div>
-              <button className="ak-action-btn" onClick={() => loadLogData()} style={{ padding: '4px 12px' }}>🔄 刷新</button>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
-                <input type="checkbox" checked={autoRefresh} onChange={e => setAutoRefresh(e.target.checked)} />
-                自动刷新 {autoRefresh && <span style={{ color: 'var(--color-primary)' }}>({countdown}s)</span>}
-              </label>
             </div>
           </div>
 
@@ -651,6 +729,155 @@ export default function AccessKeyDetailPage() {
           </div>
         </div>
       )}
+
+      {/* ==================== 会话 Tab ==================== */}
+      {activeTab === 'sessions' && (() => {
+        const formatDuration = (start: number, end: number) => {
+          const d = end - start;
+          if (d < 60000) return `${Math.floor(d / 1000)}秒`;
+          if (d < 3600000) return `${Math.floor(d / 60000)}分钟`;
+          return `${Math.floor(d / 3600000)}小时`;
+        };
+
+        const handleOpenSessionDetail = async (session: AccessKeySession) => {
+          setSelectedSession(session);
+          setSessionLogsLoading(true);
+          try {
+            const logs = await api.getAccessKeySessionLogs(id!, session.id, 10000);
+            setSelectedSessionLogs(logs);
+          } catch {
+            toast.error('加载会话日志失败');
+          } finally {
+            setSessionLogsLoading(false);
+          }
+        };
+
+        const handleRefreshSessionLogs = async () => {
+          if (!selectedSession || sessionLogsLoading) return;
+          setSessionLogsLoading(true);
+          try {
+            const logs = await api.getAccessKeySessionLogs(id!, selectedSession.id, 10000);
+            setSelectedSessionLogs(logs);
+          } catch { /* ignore */ } finally {
+            setSessionLogsLoading(false);
+          }
+        };
+
+        return (
+          <div>
+            {/* 筛选栏 */}
+            <div className="card" style={{ marginBottom: '16px', padding: '12px 16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+                  <input type="text" placeholder="搜索标题或ID..." value={sessionSearch}
+                    onChange={e => { setSessionSearch(e.target.value); setSessionsPage(1); }}
+                    style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid var(--border-primary)',
+                      background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '13px', width: '200px' }} />
+                  <select value={sessionTargetType}
+                    onChange={e => { setSessionTargetType(e.target.value); setSessionsPage(1); }}
+                    style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid var(--border-primary)',
+                      background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '13px' }}>
+                    <option value="">全部类型</option>
+                    <option value="claude-code">Claude Code</option>
+                    <option value="codex">Codex</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
+                    <input type="checkbox" checked={sessionsAutoRefresh} onChange={e => setSessionsAutoRefresh(e.target.checked)} />
+                    自动刷新 {sessionsAutoRefresh && <span style={{ color: 'var(--color-primary)' }}>({sessionsCountdown}s)</span>}
+                  </label>
+                  <button className="ak-action-btn" onClick={() => loadSessionData()} style={{ padding: '4px 12px' }}>🔄 刷新</button>
+                </div>
+              </div>
+            </div>
+
+            {/* 会话表格 */}
+            <div className="card">
+              {sessions.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-tertiary)' }}>暂无会话记录</div>
+              ) : (
+                <>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid var(--border-primary)' }}>
+                          <th style={{ padding: '8px 6px', textAlign: 'left' }}>标题</th>
+                          <th style={{ padding: '8px 6px', textAlign: 'left' }}>类型</th>
+                          <th style={{ padding: '8px 6px', textAlign: 'right' }}>请求数</th>
+                          <th style={{ padding: '8px 6px', textAlign: 'right' }}>Tokens</th>
+                          <th style={{ padding: '8px 6px', textAlign: 'left' }}>首次请求</th>
+                          <th style={{ padding: '8px 6px', textAlign: 'left' }}>最后请求</th>
+                          <th style={{ padding: '8px 6px', textAlign: 'left' }}>时长</th>
+                          <th style={{ padding: '8px 6px', textAlign: 'center' }}>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sessions.map(session => (
+                          <tr key={session.id} style={{ borderBottom: '1px solid var(--border-primary)', cursor: 'pointer' }}
+                            onClick={() => handleOpenSessionDetail(session)}>
+                            <td style={{ padding: '8px 6px', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {cleanSessionTitle(session.title)}
+                            </td>
+                            <td style={{ padding: '8px 6px' }}>
+                              <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '4px', fontSize: '12px',
+                                background: session.targetType === 'claude-code' ? 'rgba(59,130,246,0.1)' : 'rgba(34,197,94,0.1)',
+                                color: session.targetType === 'claude-code' ? 'var(--color-primary, #3b82f6)' : 'var(--color-success, #22c55e)',
+                              }}>
+                                {session.targetType === 'claude-code' ? 'Claude Code' : 'Codex'}
+                              </span>
+                            </td>
+                            <td style={{ padding: '8px 6px', textAlign: 'right' }}>{session.requestCount}</td>
+                            <td style={{ padding: '8px 6px', textAlign: 'right' }}>{formatToken(session.totalTokens)}</td>
+                            <td style={{ padding: '8px 6px', whiteSpace: 'nowrap' }}>
+                              {new Date(session.firstRequestAt).toLocaleDateString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                            </td>
+                            <td style={{ padding: '8px 6px', whiteSpace: 'nowrap' }}>
+                              {new Date(session.lastRequestAt).toLocaleDateString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                            </td>
+                            <td style={{ padding: '8px 6px' }}>{formatDuration(session.firstRequestAt, session.lastRequestAt)}</td>
+                            <td style={{ padding: '8px 6px', textAlign: 'center' }}>
+                              <button className="ak-action-btn" style={{ padding: '2px 8px', fontSize: '12px' }}
+                                onClick={e => { e.stopPropagation(); handleOpenSessionDetail(session); }}>详情</button>
+                              <button className="ak-action-btn" style={{ padding: '2px 8px', fontSize: '12px', marginLeft: '4px' }}
+                                onClick={e => { e.stopPropagation(); setSelectedSession(session); setSessionLogsLoading(true);
+                                  api.getAccessKeySessionLogs(id!, session.id, 10000).then(logs => { setSelectedSessionLogs(logs); setSessionLogsLoading(false); }).catch(() => setSessionLogsLoading(false)); }}>对话</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ marginTop: '12px' }}>
+                    <Pagination
+                      currentPage={sessionsPage}
+                      totalItems={sessionsTotal}
+                      pageSize={sessionsPageSize}
+                      onPageChange={setSessionsPage}
+                      onPageSizeChange={size => { setSessionsPageSize(size); setSessionsPage(1); }}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* 会话详情弹窗（复用共享组件） */}
+            {selectedSession && (
+              <SessionDetailModal
+                session={selectedSession}
+                logs={selectedSessionLogs}
+                logsLoading={sessionLogsLoading}
+                onRefreshLogs={handleRefreshSessionLogs}
+                onFetchNewLogs={async () => {
+                  if (!selectedSession) return [];
+                  return await api.getAccessKeySessionLogs(id!, selectedSession.id, 10000);
+                }}
+                onClose={() => { setSelectedSession(null); setSelectedSessionLogs([]); }}
+              />
+            )}
+          </div>
+        );
+      })()}
 
       {/* ==================== 编辑弹窗 ==================== */}
       {showEditModal && (

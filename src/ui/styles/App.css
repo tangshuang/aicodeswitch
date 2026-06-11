@@ -466,7 +466,7 @@ table th {
 }
 
 .modal {
-  background: var(--bg-secondary);
+  background: #ffffff;
   border-radius: 24px;
   padding: 32px;
   padding-right: 28px;
@@ -801,7 +801,7 @@ table th {
 /* Tool messages */
 .chat-message--tool_result .chat-bubble,
 .chat-message--tool_use .chat-bubble {
-  background: var(--bg-card);
+  background: #f0f4f1;
   border: 1px solid var(--border-color);
   opacity: 0.85;
 }
@@ -890,7 +890,7 @@ table th {
 
 .chat-message--tool_result .chat-collapse-fade,
 .chat-message--tool_use .chat-collapse-fade {
-  background: linear-gradient(to bottom, transparent, var(--bg-card));
+  background: linear-gradient(to bottom, transparent, #f0f4f1);
 }
 
 /* Dark mode: deepen chat bubble backgrounds */
@@ -2371,6 +2371,10 @@ table th {
 [data-theme="dark"] .migration-options label,
 [data-theme="dark"] .migration-source-meta {
   color: var(--text-secondary, #a0a0b8);
+}
+
+[data-theme="dark"] .modal {
+  background: #0f2415;
 }
 
 /* Route card icon popover */

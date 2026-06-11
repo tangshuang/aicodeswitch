@@ -492,23 +492,21 @@ export default function LogDetailModal({ log, onClose, zIndex }: LogDetailModalP
       >
         ×
       </button>
-      <div className="modal" style={{ width: '800px', zIndex: z }}>
-        <div className="modal-container">
-          <div className="modal-header">
-            <h2>{isErr ? '错误日志详情' : '请求详情'}</h2>
-          </div>
-          <div>
-            {isErr
-              ? <ErrorLogDetail log={log} />
-              : <RequestLogDetail log={log} />
-            }
-          </div>
-          <div className="modal-footer">
-            <button className="btn btn-primary" onClick={handleCopy}>
-              复制
-            </button>
-            <button className="btn btn-secondary" onClick={onClose}>关闭</button>
-          </div>
+      <div className="modal modal--sticky-layout" style={{ width: '800px', zIndex: z }}>
+        <div className="modal-header">
+          <h2>{isErr ? '错误日志详情' : '请求详情'}</h2>
+        </div>
+        <div className="modal-body-scrollable">
+          {isErr
+            ? <ErrorLogDetail log={log} />
+            : <RequestLogDetail log={log} />
+          }
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-primary" onClick={handleCopy}>
+            复制
+          </button>
+          <button className="btn btn-secondary" onClick={onClose}>关闭</button>
         </div>
       </div>
     </div>

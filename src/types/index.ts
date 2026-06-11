@@ -743,6 +743,22 @@ export interface KeyUsageDailyRecord {
   errors: number;
 }
 
+/** AccessKey 级会话信息（独立于全局 Session，按密钥隔离存储） */
+export interface AccessKeySession {
+  id: string;
+  targetType: ToolType;
+  title?: string;
+  firstRequestAt: number;
+  lastRequestAt: number;
+  requestCount: number;
+  totalTokens: number;
+  vendorId?: string;
+  vendorName?: string;
+  serviceId?: string;
+  serviceName?: string;
+  model?: string;
+}
+
 /** AccessKey 请求的日志（复用 RequestLog 结构，额外附加 keyId/keyName） */
 export interface AccessKeyRequestLog extends RequestLog {
   keyId: string;

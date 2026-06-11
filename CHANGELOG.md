@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-06-22: 密钥详情页新增"会话"Tab
+
+### 新增
+- 密钥详情页新增"会话"Tab，支持按密钥查看独立会话列表
+- 每密钥独立会话存储（`key-sessions/<keyId>/sessions.json`），与全局会话系统完全隔离
+- 会话列表支持搜索（标题/ID）、客户端类型过滤、分页、自动刷新
+- 会话详情弹窗支持双模式切换：日志模式（表格查看）和对话模式（聊天视图）
+- 会话日志/对话数据导出（JSON 格式）
+- 代理请求处理中自动追踪密钥级会话（两处 finalizeLog 覆盖全部代理路径）
+- 新增 `KeySessionTracker` 模块（`src/server/access-keys/key-session-tracker.ts`）
+- 新增 `KeyLogger.getLogsBySessionId()` 方法，按 sessionId 过滤密钥日志
+- 提取共享聊天工具函数到 `session-chat-utils.tsx`，供 SessionsPage 和 AccessKeyDetailPage 共用
+- 新增 6 个 API 端点：`GET/DELETE /api/access-keys/:id/sessions`、`GET /api/access-keys/:id/sessions/count`、`GET /api/access-keys/:id/sessions/:sessionId`、`GET /api/access-keys/:id/sessions/:sessionId/logs`、`DELETE /api/access-keys/:id/sessions/:sessionId`
+
 ## 2026-06-21: 写入本地记录持久化与自动恢复
 
 ### 新增
