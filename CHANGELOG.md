@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-06-11: 修复关闭 AUTH 后日志/会话不再写入的问题
+
+### 修复
+- 修复当未配置 AUTH（`AUTH` 环境变量为空）时，代理请求日志和会话不再写入「日志」「会话」页面的问题
+- 根因：`AccessKeyModule` 在服务启动时被无条件初始化并注入 `ProxyServer`，导致 4 处 `sk_` 前缀识别条件（`/v1/models`、`/v1/*` 标准路径、`/claude-code/`+`/codex/` 动态路径、`createFixedRouteHandler`）仅依赖 `apiKeyValue.startsWith('sk_') && this.accessKeyModule` 即判定为 AccessKey 请求
+- 当用户曾开启 AUTH 并通过「写入本地」把 AccessKey 写入编程工具配置（如 `~/.claude/settings.json` 的 `ANTHROPIC_AUTH_TOKEN`），关闭 AUTH 后该 `sk_` 凭据仍残留在配置中，编程工具继续携带它发请求；代理将这些请求误判为 AccessKey，日志写入密钥独立日志空间（`key-logs/{keyId}/`）并在 `finalizeLog` 中 `return` 跳过 `dbManager.addLog`，导致关闭 AUTH 后本应可见的「日志」「会话」始终为空
+- 修复：上述 4 处识别条件统一追加 `&& isAuthEnabled()` 守卫，明确语义——未配置 AUTH 时完全不进入任何 API Key 相关逻辑，即使请求携带 `sk_` 凭据也直接忽略并走普通放行+普通日志路径
+- 影响文件：`src/server/proxy-server.ts`
+
 ## 2026-06-23: 流式模式下智能故障切换修复
 
 ### 修复

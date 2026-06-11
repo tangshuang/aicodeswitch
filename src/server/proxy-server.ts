@@ -359,7 +359,7 @@ export class ProxyServer {
       if (apiPath === '/v1/models') {
         // 鉴权
         const apiKeyValue = this.extractApiKey(req);
-        if (apiKeyValue?.startsWith('sk_')) {
+        if (apiKeyValue?.startsWith('sk_') && isAuthEnabled()) {
           // AccessKey 鉴权
           if (!this.accessKeyModule) {
             res.status(401).json({ error: { type: 'authentication_error', code: 'INVALID_API_KEY', message: 'AccessKey 功能未启用' } });
@@ -386,7 +386,7 @@ export class ProxyServer {
       const apiKeyValue = this.extractApiKey(req);
       let accessKeyCtx: { accessKey: AccessKey; policy: Policy } | null = null;
 
-      if (apiKeyValue?.startsWith('sk_') && this.accessKeyModule) {
+      if (apiKeyValue?.startsWith('sk_') && this.accessKeyModule && isAuthEnabled()) {
         const result = this.accessKeyModule.keyResolver.resolve(apiKeyValue);
         if (!result || 'error' in result) {
           const err = result ? (result as any).error : { type: 'authentication_error', code: 'INVALID_API_KEY', message: '无效的 API Key', httpStatus: 401 };
@@ -474,7 +474,7 @@ export class ProxyServer {
 
       // AUTH 鉴权检查
       const apiKeyValue = this.extractApiKey(req);
-      if (apiKeyValue?.startsWith('sk_') && this.accessKeyModule) {
+      if (apiKeyValue?.startsWith('sk_') && this.accessKeyModule && isAuthEnabled()) {
         const result = this.accessKeyModule.keyResolver.resolve(apiKeyValue);
         if (!result || 'error' in result) {
           const err = result ? (result as any).error : { type: 'authentication_error', code: 'INVALID_API_KEY', message: '无效的 API Key', httpStatus: 401 };
@@ -850,7 +850,7 @@ export class ProxyServer {
         // 检查 API Key 验证（支持 AccessKey 和全局 apiKey）
         const apiKeyValue = this.extractApiKey(req);
 
-        if (apiKeyValue?.startsWith('sk_') && this.accessKeyModule) {
+        if (apiKeyValue?.startsWith('sk_') && this.accessKeyModule && isAuthEnabled()) {
           // AccessKey 鉴权
           const result = this.accessKeyModule.keyResolver.resolve(apiKeyValue);
           if (!result || 'error' in result) {
