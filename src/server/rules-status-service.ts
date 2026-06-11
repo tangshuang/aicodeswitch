@@ -1,3 +1,4 @@
+import { EventEmitter } from 'events';
 import type { ContentType } from '../types';
 
 /**
@@ -34,7 +35,7 @@ export type BlacklistChecker = (
  * 规则状态管理服务
  * 负责管理所有规则的状态（使用中、空闲、错误、挂起）
  */
-export class RulesStatusBroadcaster {
+export class RulesStatusBroadcaster extends EventEmitter {
   private ruleStates: Map<string, RuleStatusData> = new Map(); // ruleId -> RuleStatusData
   private ruleTimeouts: Map<string, NodeJS.Timeout> = new Map();
   private idleDebounceTimeouts: Map<string, NodeJS.Timeout> = new Map();
@@ -46,6 +47,9 @@ export class RulesStatusBroadcaster {
   private readonly ERROR_RECOVERY_TIMEOUT = 30000; // error 状态30秒后自动恢复
 
   constructor() {
+    super();
+    // 允许多标签页场景下的多连接监听
+    this.setMaxListeners(50);
     // 启动定期状态检查定时器
     this.startSyncInterval();
   }
@@ -82,7 +86,7 @@ export class RulesStatusBroadcaster {
         console.log(
           `[RulesStatusBroadcaster] 规则 ${ruleId} 错误状态已超时，自动恢复为 idle 状态`
         );
-        this.ruleStates.set(ruleId, {
+        this.updateRuleStatus({
           ruleId,
           status: 'idle',
           routeId: data.routeId,
@@ -129,7 +133,7 @@ export class RulesStatusBroadcaster {
             console.log(
               `[RulesStatusBroadcaster] 规则 ${ruleId} 黑名单已过期，恢复为 idle 状态`
             );
-            this.ruleStates.set(ruleId, {
+            this.updateRuleStatus({
               ruleId,
               status: 'idle',
               routeId,
@@ -175,6 +179,8 @@ export class RulesStatusBroadcaster {
   private updateRuleStatus(data: RuleStatusData) {
     // 更新本地状态
     this.ruleStates.set(data.ruleId, data);
+    // 通知 SSE 客户端状态已变更
+    this.emit('statusChanged', data);
   }
 
   /**
@@ -320,6 +326,12 @@ export class RulesStatusBroadcaster {
    */
   clearRuleStatus(ruleId: string) {
     this.ruleStates.delete(ruleId);
+    // 通知 SSE 客户端状态已清除（恢复为 idle）
+    this.emit('statusChanged', {
+      ruleId,
+      status: 'idle' as const,
+      timestamp: Date.now(),
+    });
   }
 
   /**
@@ -355,6 +367,7 @@ export class RulesStatusBroadcaster {
     this.idleDebounceTimeouts.forEach((timeout) => clearTimeout(timeout));
     this.idleDebounceTimeouts.clear();
     this.ruleStates.clear();
+    this.removeAllListeners();
   }
 }
 

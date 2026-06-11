@@ -82,8 +82,10 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     return;
   }
 
-  // 从 Access-Token header 中提取 JWT token
-  const accessToken = req.headers['access-token'] as string | undefined;
+  // 从 Access-Token header 或查询参数中提取 JWT token
+  // 查询参数支持用于 EventSource 等 API（无法设置自定义 Header）
+  const accessToken = req.headers['access-token'] as string | undefined
+    || (req.query.token as string | undefined);
   if (!accessToken) {
     res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
     return;

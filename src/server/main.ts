@@ -35,7 +35,7 @@ import { checkVersionUpdate } from './version-check';
 import { checkPortUsable } from './utils';
 import { getToolsInstallationStatus } from './tools-service';
 import { createToolInstallationWSServer } from './websocket-service';
-import { rulesStatusBroadcaster } from './rules-status-service';
+import { rulesStatusBroadcaster, type RuleStatusData } from './rules-status-service';
 import { normalizeSourceType, isLegacySourceType } from './type-migration';
 import {
   saveMetadata,
@@ -1563,6 +1563,57 @@ const registerRoutes = async (dbManager: FileSystemDatabaseManager, proxyServer:
       });
 
       res.json(allStatuses);
+    })
+  );
+
+  // SSE 端点：实时推送规则状态变更
+  app.get(
+    '/api/rules/status/stream',
+    asyncHandler(async (req, res) => {
+      // 设置 SSE 响应头
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no', // 防止 nginx 等代理缓冲
+      });
+
+      // 连接时立即发送完整快照（init 事件）
+      const allRules = dbManager.getRules();
+      const statusMap = rulesStatusBroadcaster.getAllRuleStatuses();
+      const statusMapByRuleId = new Map(
+        statusMap.map(status => [status.ruleId, status])
+      );
+      const allStatuses = allRules.map(rule => {
+        const existingStatus = statusMapByRuleId.get(rule.id);
+        if (existingStatus) {
+          return existingStatus;
+        } else {
+          return {
+            ruleId: rule.id,
+            status: 'idle' as const,
+            timestamp: Date.now(),
+          };
+        }
+      });
+      res.write(`data: ${JSON.stringify({ type: 'init', statuses: allStatuses })}\n\n`);
+
+      // 监听状态变更，推送增量更新
+      const onChange = (data: RuleStatusData) => {
+        res.write(`data: ${JSON.stringify({ type: 'update', status: data })}\n\n`);
+      };
+      rulesStatusBroadcaster.on('statusChanged', onChange);
+
+      // 3 秒心跳，用于客户端检测连接存活状态
+      const heartbeat = setInterval(() => {
+        res.write(`data: ${JSON.stringify({ type: 'heartbeat', timestamp: Date.now() })}\n\n`);
+      }, 3000);
+
+      // 客户端断开时清理
+      req.on('close', () => {
+        rulesStatusBroadcaster.off('statusChanged', onChange);
+        clearInterval(heartbeat);
+      });
     })
   );
 
@@ -4135,6 +4186,9 @@ const start = async () => {
       }
 
       dbManager.close();
+
+      // 清理规则状态广播器（关闭 SSE 连接）
+      rulesStatusBroadcaster.destroy();
 
       await Promise.race([
         new Promise<void>((resolve) => {
