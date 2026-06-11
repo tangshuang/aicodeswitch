@@ -4154,7 +4154,7 @@ const start = async () => {
   let isShuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;
 
-  const shutdown = async (signal: NodeJS.Signals) => {
+  const shutdown = async (signal: string) => {
     if (isShuttingDown) {
       return shutdownPromise ?? Promise.resolve();
     }
@@ -4208,6 +4208,13 @@ const start = async () => {
 
   process.on('SIGINT', () => { void shutdown('SIGINT'); });
   process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
+
+  // 优雅关闭端点（供 Tauri 等外部调用者触发服务端完整清理流程）
+  // 放在 shutdown 定义之后注册，确保闭包可引用
+  app.post('/api/shutdown', asyncHandler(async (_req, res) => {
+    res.json({ success: true });
+    setImmediate(() => { void shutdown('HTTP_SHUTDOWN'); });
+  }));
 };
 
 // 全局未捕获异常处理 - 防止服务崩溃

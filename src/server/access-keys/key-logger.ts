@@ -273,7 +273,11 @@ export class KeyLogger {
 
     try {
       const data = await fs.readFile(this.getShardIndexPath(keyId), 'utf-8');
-      const index = JSON.parse(data);
+      const parsed = JSON.parse(data);
+      // 防御性过滤：确保返回有效数组，剔除 null/undefined 或缺少 filename 的条目
+      const index: LogShardIndex[] = Array.isArray(parsed)
+        ? parsed.filter((s: unknown) => s != null && typeof s === 'object' && 'filename' in (s as Record<string, unknown>))
+        : [];
       this.shardIndexCache.set(keyId, index);
       return index;
     } catch {
