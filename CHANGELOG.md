@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-06-13: 对齐 Claude Code 官方 Modes 文案，调整权限模式提示
+
+### 优化
+- 路由页「默认权限模式」下拉项的描述文案对齐 Claude Code 官方 Modes 面板表述：
+  - `default`：每次编辑前都会请求批准
+  - `acceptEdits`：自动编辑选中文本或整个文件（保留文件系统命令补充说明）
+  - `plan`：先探索代码并给出方案，确认后再编辑（补充"给出方案"语义）
+  - `auto`：自动为每个任务选择最佳权限模式（强调自动选择，而非仅"免询问"）
+  - `bypassPermissions`：运行潜在危险命令前不请求批准（对齐官方危险命令表述）
+- `dontAsk` 模式官方 Modes 面板未展示，保留原描述不变
+- 影响文件：`src/ui/pages/RoutesPage.tsx`
+
+## 2026-06-13: 侧边栏收起状态下隐藏深色/浅色模式切换按钮
+
+### 优化
+- 左侧菜单栏收起状态下不再展示深色/浅色模式切换按钮，避免与收起/展开按钮拥挤重叠
+- 给主题切换按钮新增独立 class `theme-mode-btn`（区别于侧边栏收起按钮 `sidebar-toggle-btn`），在 `.sidebar.collapsed` 状态下统一隐藏
+- 影响文件：`src/ui/App.tsx`、`src/ui/styles/App.css`
+
+## 2026-06-13: 新增 Claude Code 默认权限模式配置项 `permissions.defaultMode`
+
+### 新增
+- 新增全局配置 `claudePermissionsDefaultMode`，支持 6 种模式（`default`/`acceptEdits`/`plan`/`auto`/`dontAsk`/`bypassPermissions`），默认 `default`，写入 `~/.claude/settings.json` 的 `permissions.defaultMode`
+- 保留 `enableBypassPermissionsSupport` 作为门控：仅当其开启时，下拉框才显示并允许选择 `bypassPermissions`；关闭门控时若当前模式为 `bypassPermissions`，自动同步写回 `default`
+- 后端写入兜底：`bypassPermissions` 仅在门控开启时才允许写出，否则强制降级为 `default`；该模式额外写入 `skipDangerousModePermissionPrompt: true`
+- 管理字段由整对象 `permissions` 收窄为叶子 `permissions.defaultMode`，保留用户自配的 `permissions.allow/deny/ask` 规则（`src/server/config-managed-fields.ts` 与 `bin/utils/managed-fields.js` 同步）
+- 修复配置合并器 `deepSet` 的潜在缺陷：还原数组结构时不再错误地转为数字键对象（`src/server/config-merge.ts` 与 `bin/utils/config-helpers.js` 同步），使被保留的数组型非管理字段（如 `permissions.allow`）正确还原
+- 兼容迁移：旧配置缺失新字段时按 `enableBypassPermissionsSupport` 推导（true→`bypassPermissions`，否则 `default`）
+- UI：权限模式下拉由原生 `<select>` 改为内部通用 `Select` 组件（`src/ui/components/Select.tsx`），每项在列表内展示标题 + 用法说明，便于用户选择时直观对比各模式
+- 影响文件：`src/types/index.ts`、`src/server/fs-database.ts`、`src/server/main.ts`、`src/server/config-managed-fields.ts`、`src/server/config-merge.ts`、`bin/utils/managed-fields.js`、`bin/utils/config-helpers.js`、`src/ui/api/client.ts`、`src/ui/components/Select.tsx`、`src/ui/pages/RoutesPage.tsx`
+
 ## 2026-06-11: 路由「绑定会话」弹窗新增会话解绑功能
 
 ### 新增

@@ -70,7 +70,8 @@ const deepSet = (obj, fieldPath, value) => {
   for (let i = 0; i < fieldPath.length - 1; i += 1) {
     const key = fieldPath[i];
     if (current[key] === undefined || current[key] === null || typeof current[key] !== 'object') {
-      current[key] = {};
+      // 下一级路径为数字索引时创建数组，否则创建对象（正确还原数组结构）
+      current[key] = typeof fieldPath[i + 1] === 'number' ? [] : {};
     }
     current = current[key];
   }

@@ -25,6 +25,7 @@ import type {
   MCPInstallRequest,
   CodexReasoningEffort,
   ClaudeEffortLevel,
+  ClaudePermissionDefaultMode,
   ToolName,
   WriteLocalRecord,
   SourceType,
@@ -262,8 +263,16 @@ interface ToolConfigWriteOptions {
 const VALID_CLAUDE_EFFORT_LEVELS: ClaudeEffortLevel[] = ['low', 'medium', 'high', 'max'];
 const DEFAULT_CLAUDE_EFFORT_LEVEL: ClaudeEffortLevel = 'medium';
 
+const VALID_CLAUDE_PERMISSION_DEFAULT_MODES: ClaudePermissionDefaultMode[] =
+  ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'];
+const DEFAULT_CLAUDE_PERMISSION_DEFAULT_MODE: ClaudePermissionDefaultMode = 'default';
+
 const isClaudeEffortLevel = (value: unknown): value is ClaudeEffortLevel => {
   return typeof value === 'string' && VALID_CLAUDE_EFFORT_LEVELS.includes(value as ClaudeEffortLevel);
+};
+
+const isClaudePermissionDefaultMode = (value: unknown): value is ClaudePermissionDefaultMode => {
+  return typeof value === 'string' && VALID_CLAUDE_PERMISSION_DEFAULT_MODES.includes(value as ClaudePermissionDefaultMode);
 };
 
 const isValidAutocompactPct = (v: unknown): v is number => {
@@ -274,6 +283,7 @@ const writeClaudeConfig = async (
   _dbManager: FileSystemDatabaseManager,
   enableAgentTeams?: boolean,
   enableBypassPermissionsSupport?: boolean,
+  permissionsDefaultMode?: ClaudePermissionDefaultMode,
   effortLevel?: ClaudeEffortLevel,
   defaultModel?: string,
   autocompactPctOverride?: number,
@@ -350,11 +360,17 @@ const writeClaudeConfig = async (
       env: claudeSettingsEnv
     };
 
-    // 如果开启对bypassPermissions的支持，添加对应的配置项
-    if (enableBypassPermissionsSupport) {
-      proxySettings.permissions = {
-        defaultMode: "bypassPermissions"
-      };
+    // 解析默认权限模式：bypassPermissions 必须门控开启才生效，否则降级为 default
+    let claudeDefaultMode: ClaudePermissionDefaultMode = isClaudePermissionDefaultMode(permissionsDefaultMode)
+      ? permissionsDefaultMode
+      : DEFAULT_CLAUDE_PERMISSION_DEFAULT_MODE;
+    if (claudeDefaultMode === 'bypassPermissions' && enableBypassPermissionsSupport !== true) {
+      claudeDefaultMode = 'default';
+    }
+    proxySettings.permissions = {
+      defaultMode: claudeDefaultMode
+    };
+    if (claudeDefaultMode === 'bypassPermissions') {
       proxySettings.skipDangerousModePermissionPrompt = true;
     }
 
@@ -832,6 +848,7 @@ const syncConfigsOnServerStartup = async (dbManager: FileSystemDatabaseManager):
     dbManager,
     config.enableAgentTeams,
     config.enableBypassPermissionsSupport,
+    config.claudePermissionsDefaultMode,
     claudeEffortLevel,
     config.claudeDefaultModel,
     config.autocompactPctOverride
@@ -859,6 +876,7 @@ const syncConfigsOnGlobalConfigUpdate = async (dbManager: FileSystemDatabaseMana
     dbManager,
     config.enableAgentTeams,
     config.enableBypassPermissionsSupport,
+    config.claudePermissionsDefaultMode,
     claudeEffortLevel,
     config.claudeDefaultModel,
     config.autocompactPctOverride,
@@ -2513,16 +2531,23 @@ ${instruction}
       const appConfig = dbManager.getConfig();
       const requestedEnableAgentTeams = req.body.enableAgentTeams;
       const requestedBypass = req.body.enableBypassPermissionsSupport;
+      const requestedMode = req.body.permissionsDefaultMode;
       const enableAgentTeams = typeof requestedEnableAgentTeams === 'boolean'
         ? requestedEnableAgentTeams
         : appConfig.enableAgentTeams;
       const enableBypassPermissionsSupport = typeof requestedBypass === 'boolean'
         ? requestedBypass
         : appConfig.enableBypassPermissionsSupport;
+      const permissionsDefaultMode = isClaudePermissionDefaultMode(requestedMode)
+        ? requestedMode
+        : isClaudePermissionDefaultMode(appConfig.claudePermissionsDefaultMode)
+          ? appConfig.claudePermissionsDefaultMode
+          : DEFAULT_CLAUDE_PERMISSION_DEFAULT_MODE;
       const result = await writeClaudeConfig(
         dbManager,
         enableAgentTeams,
         enableBypassPermissionsSupport,
+        permissionsDefaultMode,
         undefined,
         appConfig.claudeDefaultModel,
         appConfig.autocompactPctOverride

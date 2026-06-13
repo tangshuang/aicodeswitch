@@ -456,6 +456,7 @@ function AppContent() {
         <div className="theme-toggle">
           <button
             onClick={toggleTheme}
+            className="theme-mode-btn"
           >
             {theme === 'dark' ? '🌙' : '☀️'}
           </button>

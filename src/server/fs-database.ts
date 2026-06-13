@@ -21,6 +21,7 @@ import type {
   TargetType,
   CodexReasoningEffort,
   ClaudeEffortLevel,
+  ClaudePermissionDefaultMode,
   ApiPathBinding,
   ToolName,
   ToolBindings,
@@ -48,12 +49,20 @@ const DEFAULT_FAILOVER_RECOVERY_SECONDS = 30;
 const VALID_CLAUDE_EFFORT_LEVELS: ClaudeEffortLevel[] = ['low', 'medium', 'high', 'max'];
 const DEFAULT_CLAUDE_EFFORT_LEVEL: ClaudeEffortLevel = 'medium';
 
+const VALID_CLAUDE_PERMISSION_DEFAULT_MODES: ClaudePermissionDefaultMode[] =
+  ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'];
+const DEFAULT_CLAUDE_PERMISSION_DEFAULT_MODE: ClaudePermissionDefaultMode = 'default';
+
 const isCodexReasoningEffort = (value: unknown): value is CodexReasoningEffort => {
   return typeof value === 'string' && VALID_CODEX_REASONING_EFFORTS.includes(value as CodexReasoningEffort);
 };
 
 const isClaudeEffortLevel = (value: unknown): value is ClaudeEffortLevel => {
   return typeof value === 'string' && VALID_CLAUDE_EFFORT_LEVELS.includes(value as ClaudeEffortLevel);
+};
+
+const isClaudePermissionDefaultMode = (value: unknown): value is ClaudePermissionDefaultMode => {
+  return typeof value === 'string' && VALID_CLAUDE_PERMISSION_DEFAULT_MODES.includes(value as ClaudePermissionDefaultMode);
 };
 
 const isValidAutocompactPct = (v: unknown): v is number => {
@@ -1093,6 +1102,7 @@ export class FileSystemDatabaseManager {
       ruleGlobalTimeout: undefined,
       enableAgentTeams: false,
       enableBypassPermissionsSupport: false,
+      claudePermissionsDefaultMode: DEFAULT_CLAUDE_PERMISSION_DEFAULT_MODE,
       claudeEffortLevel: DEFAULT_CLAUDE_EFFORT_LEVEL,
       autocompactPctOverride: undefined,
       claudeDefaultModel: undefined,
@@ -1117,6 +1127,12 @@ export class FileSystemDatabaseManager {
     }
     if (!isClaudeEffortLevel(this.config.claudeEffortLevel)) {
       this.config.claudeEffortLevel = DEFAULT_CLAUDE_EFFORT_LEVEL;
+    }
+    if (!isClaudePermissionDefaultMode(this.config.claudePermissionsDefaultMode)) {
+      // 缺失或非法时，按旧 enableBypassPermissionsSupport 推导（迁移兼容）
+      this.config.claudePermissionsDefaultMode = this.config.enableBypassPermissionsSupport === true
+        ? 'bypassPermissions'
+        : DEFAULT_CLAUDE_PERMISSION_DEFAULT_MODE;
     }
     if (typeof this.config.autocompactPctOverride !== 'undefined' && !isValidAutocompactPct(this.config.autocompactPctOverride)) {
       this.config.autocompactPctOverride = undefined;
@@ -1144,6 +1160,7 @@ export class FileSystemDatabaseManager {
       (
         Object.prototype.hasOwnProperty.call(this.config, 'enableAgentTeams') ||
         Object.prototype.hasOwnProperty.call(this.config, 'enableBypassPermissionsSupport') ||
+        Object.prototype.hasOwnProperty.call(this.config, 'claudePermissionsDefaultMode') ||
         Object.prototype.hasOwnProperty.call(this.config, 'codexModelReasoningEffort')
       );
 
@@ -2366,6 +2383,11 @@ export class FileSystemDatabaseManager {
     }
     if (!isClaudeEffortLevel(merged.claudeEffortLevel)) {
       merged.claudeEffortLevel = DEFAULT_CLAUDE_EFFORT_LEVEL;
+    }
+    if (!isClaudePermissionDefaultMode(merged.claudePermissionsDefaultMode)) {
+      merged.claudePermissionsDefaultMode = merged.enableBypassPermissionsSupport === true
+        ? 'bypassPermissions'
+        : DEFAULT_CLAUDE_PERMISSION_DEFAULT_MODE;
     }
     if (typeof merged.autocompactPctOverride !== 'undefined' && !isValidAutocompactPct(merged.autocompactPctOverride)) {
       merged.autocompactPctOverride = undefined;

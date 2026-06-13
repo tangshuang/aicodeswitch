@@ -31,7 +31,8 @@
 .sidebar.collapsed .logo h2,
 .sidebar.collapsed .nav-menu .nav-text,
 .sidebar.collapsed .github-link,
-.sidebar.collapsed .version-info {
+.sidebar.collapsed .version-info,
+.sidebar.collapsed .theme-mode-btn {
   display: none;
   opacity: 0;
 }

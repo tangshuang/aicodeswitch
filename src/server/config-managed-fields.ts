@@ -15,7 +15,7 @@ export const CLAUDE_SETTINGS_MANAGED_FIELDS: ManagedFieldPath[] = [
   { path: ['env', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'], optional: true },
   { path: ['env', 'ANTHROPIC_DEFAULT_SONNET_MODEL'], optional: true },
   { path: ['env', 'ANTHROPIC_DEFAULT_OPUS_MODEL'], optional: true },
-  { path: ['permissions'], optional: true },
+  { path: ['permissions', 'defaultMode'], optional: true },
   { path: ['skipDangerousModePermissionPrompt'], optional: true },
   { path: ['effortLevel'], optional: true },
   { path: ['model'], optional: true },

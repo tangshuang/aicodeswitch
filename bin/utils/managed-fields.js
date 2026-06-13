@@ -18,7 +18,7 @@ const CLAUDE_SETTINGS_MANAGED_FIELDS = [
   'env.ANTHROPIC_DEFAULT_HAIKU_MODEL',
   'env.ANTHROPIC_DEFAULT_SONNET_MODEL',
   'env.ANTHROPIC_DEFAULT_OPUS_MODEL',
-  'permissions',
+  'permissions.defaultMode',
   'skipDangerousModePermissionPrompt',
   'effortLevel',
   'model',

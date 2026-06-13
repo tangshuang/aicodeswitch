@@ -35,6 +35,15 @@ export type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 /** Claude Code effort level 配置 */
 export type ClaudeEffortLevel = 'low' | 'medium' | 'high' | 'max';
 
+/** Claude Code permissions.defaultMode 配置 */
+export type ClaudePermissionDefaultMode =
+  | 'default'
+  | 'acceptEdits'
+  | 'plan'
+  | 'auto'
+  | 'dontAsk'
+  | 'bypassPermissions';
+
 /** Skills 管理相关类型 */
 export interface InstalledSkill {
   id: string;
@@ -248,7 +257,8 @@ export interface AppConfig {
   ruleGlobalTimeout?: number;  // 规则全局超时时间（秒），覆盖未设置超时的规则，默认 300
   // 工具全局配置
   enableAgentTeams?: boolean;  // Claude Code Agent Teams（全局）
-  enableBypassPermissionsSupport?: boolean;  // Claude Code bypassPermissions 支持（全局）
+  enableBypassPermissionsSupport?: boolean;  // Claude Code bypassPermissions 门控（全局）：决定 bypassPermissions 模式是否可见/可选
+  claudePermissionsDefaultMode?: ClaudePermissionDefaultMode;  // Claude Code permissions.defaultMode（全局）
   claudeEffortLevel?: ClaudeEffortLevel;  // Claude Code effort level（全局）
   autocompactPctOverride?: number;  // Claude Code 自动压缩百分比阈值（1-100，全局）
   claudeDefaultModel?: string;  // Claude Code 默认模型（全局）

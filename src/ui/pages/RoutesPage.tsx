@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api/client';
-import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry, MCPServer, ToolInstallationStatus, CodexReasoningEffort, ClaudeEffortLevel, AppConfig, ApiPathBinding, ToolName, ToolBindings } from '../../types';
+import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry, MCPServer, ToolInstallationStatus, CodexReasoningEffort, ClaudeEffortLevel, ClaudePermissionDefaultMode, AppConfig, ApiPathBinding, ToolName, ToolBindings } from '../../types';
 import { useConfirm } from '../components/Confirm';
 import { toast } from '../components/Toast';
+import Select from '../components/Select';
 import SyncConfigModal from '../components/SyncConfigModal';
 import { useRulesStatus } from '../hooks/useRulesStatus';
 import QuickSetupModal from '../components/QuickSetupModal';
@@ -57,12 +58,26 @@ const CLAUDE_EFFORT_LEVEL_OPTIONS: Array<{ value: ClaudeEffortLevel; label: stri
   { value: 'max', label: 'Max' },
 ];
 
+// Claude Code permissions.defaultMode 可选项（bypassPermissions 受门控控制，仅在 UI 层按需展示）
+const CLAUDE_PERMISSION_DEFAULT_MODE_OPTIONS: Array<{ value: ClaudePermissionDefaultMode; label: string; desc: string }> = [
+  { value: 'default', label: 'default', desc: '每次编辑前都会请求批准。适合入门或处理敏感代码。' },
+  { value: 'acceptEdits', label: 'acceptEdits', desc: '自动编辑选中文本或整个文件；读取、文件编辑及常见文件系统命令（mkdir、touch、mv、cp 等）免询问。' },
+  { value: 'plan', label: 'plan', desc: '先探索代码并给出方案，确认后再编辑；仅读取免询问。' },
+  { value: 'auto', label: 'auto', desc: '自动为每个任务选择最佳权限模式；所有操作免询问，带后台安全检查。' },
+  { value: 'dontAsk', label: 'dontAsk', desc: '仅预先批准的工具免询问。适合锁定的 CI 与脚本。' },
+  { value: 'bypassPermissions', label: 'bypassPermissions', desc: '运行潜在危险命令前不请求批准；所有操作免询问，带后台安全检查。仅建议在隔离容器与 VM 中使用。' },
+];
+
 const isCodexReasoningEffort = (value: unknown): value is CodexReasoningEffort => {
   return CODEX_REASONING_EFFORT_OPTIONS.some(option => option.value === value);
 };
 
 const isClaudeEffortLevel = (value: unknown): value is ClaudeEffortLevel => {
   return CLAUDE_EFFORT_LEVEL_OPTIONS.some(option => option.value === value);
+};
+
+const isClaudePermissionDefaultMode = (value: unknown): value is ClaudePermissionDefaultMode => {
+  return CLAUDE_PERMISSION_DEFAULT_MODE_OPTIONS.some(option => option.value === value);
 };
 
 const getGlobalCodexReasoningEffort = (config: AppConfig | null): CodexReasoningEffort => {
@@ -75,6 +90,17 @@ const getGlobalClaudeEffortLevel = (config: AppConfig | null): ClaudeEffortLevel
   return isClaudeEffortLevel(config?.claudeEffortLevel)
     ? config.claudeEffortLevel
     : 'medium';
+};
+
+// 返回当前默认权限模式（显示兜底：若为 bypassPermissions 但门控关闭，则按 default 显示）
+const getGlobalClaudePermissionDefaultMode = (config: AppConfig | null): ClaudePermissionDefaultMode => {
+  const stored = isClaudePermissionDefaultMode(config?.claudePermissionsDefaultMode)
+    ? config.claudePermissionsDefaultMode
+    : 'default';
+  if (stored === 'bypassPermissions' && !config?.enableBypassPermissionsSupport) {
+    return 'default';
+  }
+  return stored;
 };
 
 /**
@@ -700,13 +726,31 @@ export default function RoutesPage() {
   const handleToggleBypassPermissionsSupport = async (newValue: boolean) => {
     try {
       const current = appConfig || {};
+      // 关闭门控时，若当前模式为 bypassPermissions，同步写回 default
+      const currentMode = getGlobalClaudePermissionDefaultMode(appConfig);
+      const nextMode = !newValue && currentMode === 'bypassPermissions' ? 'default' as ClaudePermissionDefaultMode : currentMode;
       await api.updateConfig({
         ...current,
         enableBypassPermissionsSupport: newValue,
+        claudePermissionsDefaultMode: nextMode,
       });
       toast.success(newValue
         ? '对 bypassPermissions 的支持设置已保存（重启 Claude Code 后生效）'
         : '对 bypassPermissions 的支持设置已取消（重启 Claude Code 后生效）');
+      await loadAppConfig();
+    } catch (error: any) {
+      toast.error('更新失败: ' + error.message);
+    }
+  };
+
+  const handleUpdateClaudePermissionDefaultMode = async (newValue: ClaudePermissionDefaultMode) => {
+    try {
+      const current = appConfig || {};
+      await api.updateConfig({
+        ...current,
+        claudePermissionsDefaultMode: newValue,
+      });
+      toast.success('默认权限模式已保存（重启 Claude Code 后生效）');
       await loadAppConfig();
     } catch (error: any) {
       toast.error('更新失败: ' + error.message);
@@ -1823,6 +1867,40 @@ export default function RoutesPage() {
             </div>
             <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
               开启后默认编辑跳过危险模式权限提示，你可以切换到其他模式。该设置会实时写入配置文件，重启 Claude Code 后生效。
+            </div>
+          </div>
+          <div style={{ marginTop: '20px' }}>
+            <div
+              className="form-group"
+              style={{
+                marginBottom: '0',
+                maxWidth: '420px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}
+            >
+              <label
+                style={{ marginBottom: 0, minWidth: '100px', whiteSpace: 'nowrap' }}
+              >
+                默认权限模式
+              </label>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Select
+                  value={getGlobalClaudePermissionDefaultMode(appConfig)}
+                  options={CLAUDE_PERMISSION_DEFAULT_MODE_OPTIONS
+                    .filter((option) => option.value !== 'bypassPermissions' || appConfig?.enableBypassPermissionsSupport)
+                    .map((option) => ({ value: option.value, label: option.label, description: option.desc }))}
+                  onChange={(v) => handleUpdateClaudePermissionDefaultMode(v as ClaudePermissionDefaultMode)}
+                />
+              </div>
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+              {CLAUDE_PERMISSION_DEFAULT_MODE_OPTIONS.find(o => o.value === getGlobalClaudePermissionDefaultMode(appConfig))?.desc}
+              {!appConfig?.enableBypassPermissionsSupport
+                ? ' 需先开启上方的 bypassPermissions 支持，才能切换到 bypassPermissions 模式。'
+                : ''}
+              {' 该设置会实时写入 ~/.claude/settings.json，重启 Claude Code 后生效。'}
             </div>
           </div>
           <div style={{ marginTop: '20px' }}>

@@ -308,10 +308,19 @@ aicos version            # Show current version information
     - Sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"` environment variable
     - Requires Claude Code version ≥ 2.1.32
     - Can be toggled on/off for both active and inactive routes
-  - **Bypass Permissions Support (Claude Code only)**: Enables support for bypassPermissions mode
-    - Sets `permissions.defaultMode` to `"bypassPermissions"` in `~/.claude/settings.json`
-    - Sets `skipDangerousModePermissionPrompt` to `true` in `~/.claude/settings.json`
-    - Can be toggled on/off for both active and inactive routes
+  - **Bypass Permissions Support (Claude Code only)**: 门控开关，决定 `bypassPermissions` 模式是否可见/可选
+    - 开启后，默认权限模式下拉框中才会出现 `bypassPermissions` 选项
+    - 关闭时若当前模式为 `bypassPermissions`，会自动同步写回 `default`
+    - 可在激活/未激活路由下切换
+  - **Default Permission Mode (Claude Code only)**: Claude Code 默认权限模式，写入 `permissions.defaultMode`
+    - 选项：`default`、`acceptEdits`、`plan`、`auto`、`dontAsk`、`bypassPermissions`（默认 `default`）
+    - `default`：每次编辑前都会请求批准
+    - `acceptEdits`：自动编辑选中文本或整个文件；读取、文件编辑及常见文件系统命令免询问
+    - `plan`：先探索代码并给出方案，确认后再编辑；仅读取免询问
+    - `auto`：自动为每个任务选择最佳权限模式；所有操作免询问，带后台安全检查
+    - `dontAsk`：仅预先批准的工具免询问
+    - `bypassPermissions`：运行潜在危险命令前不请求批准；所有操作免询问，带后台安全检查（仅当 Bypass Permissions Support 门控开启时可选/生效；此时额外写入 `skipDangerousModePermissionPrompt: true`）
+    - 后端写入兜底：`bypassPermissions` 仅在门控开启时才允许写出，否则强制降级为 `default`
   - **Effort Level (Claude Code only)**: Controls the effort level for Claude Code
     - Options: `low`, `medium`, `high` (default: `medium`)
     - Sets `effortLevel` in `~/.claude/settings.json`
@@ -483,7 +492,7 @@ aicos version            # Show current version information
   - `env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`
   - `env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`（可选）
   - `env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`（可选）
-  - `permissions.defaultMode`（可选）
+  - `permissions.defaultMode`（可选，仅托管该叶子字段，保留用户自配的 `permissions.allow/deny/ask` 等其它规则）
   - `skipDangerousModePermissionPrompt`（可选）
   - `effortLevel`（可选）
 - Claude Code `.claude.json`：

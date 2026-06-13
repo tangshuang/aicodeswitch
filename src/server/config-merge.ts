@@ -127,7 +127,8 @@ const deepSet = (obj: any, path: FieldPath, value: any): void => {
   for (let i = 0; i < path.length - 1; i++) {
     const key = path[i];
     if (current[key] === undefined || current[key] === null || typeof current[key] !== 'object') {
-      current[key] = {};
+      // 下一级路径为数字索引时创建数组，否则创建对象（正确还原 collectPaths 收集到的数组结构）
+      current[key] = typeof path[i + 1] === 'number' ? [] : {};
     }
     current = current[key];
   }

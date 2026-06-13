@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, AccessKeySession, KeyUsageDailyRecord, QuotaAlert, LanDiscoverResponse, LanSyncRequest, LanSyncResult } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ClaudePermissionDefaultMode, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, AccessKeySession, KeyUsageDailyRecord, QuotaAlert, LanDiscoverResponse, LanSyncRequest, LanSyncResult } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -73,7 +73,7 @@ interface BackendAPI {
   previewImportData: (encryptedData: string, password: string) => Promise<ImportPreview>;
   importData: (encryptedData: string, password: string) => Promise<ImportResult>;
 
-  writeClaudeConfig: (enableAgentTeams?: boolean, enableBypassPermissionsSupport?: boolean) => Promise<boolean>;
+  writeClaudeConfig: (enableAgentTeams?: boolean, enableBypassPermissionsSupport?: boolean, permissionsDefaultMode?: ClaudePermissionDefaultMode) => Promise<boolean>;
   writeCodexConfig: (modelReasoningEffort?: CodexReasoningEffort) => Promise<boolean>;
   restoreClaudeConfig: () => Promise<boolean>;
   restoreCodexConfig: () => Promise<boolean>;
@@ -353,10 +353,10 @@ export const api: BackendAPI = {
       body: JSON.stringify({ encryptedData, password }),
     }),
 
-  writeClaudeConfig: (enableAgentTeams?: boolean, enableBypassPermissionsSupport?: boolean) =>
+  writeClaudeConfig: (enableAgentTeams?: boolean, enableBypassPermissionsSupport?: boolean, permissionsDefaultMode?: ClaudePermissionDefaultMode) =>
     requestJson(buildUrl('/api/write-config/claude'), {
       method: 'POST',
-      body: JSON.stringify({ enableAgentTeams, enableBypassPermissionsSupport })
+      body: JSON.stringify({ enableAgentTeams, enableBypassPermissionsSupport, permissionsDefaultMode })
     }),
   writeCodexConfig: (modelReasoningEffort?: CodexReasoningEffort) =>
     requestJson(buildUrl('/api/write-config/codex'), {

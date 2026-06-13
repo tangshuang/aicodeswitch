@@ -120,6 +120,10 @@ aicos stop            # 停止服务
 
 ## 最近变更
 
+- 2026-06-13: 新增 Claude Code 默认权限模式配置项 `permissions.defaultMode`
+  - 新增全局配置 `claudePermissionsDefaultMode`，支持 6 种模式（`default`/`acceptEdits`/`plan`/`auto`/`dontAsk`/`bypassPermissions`），默认 `default`
+  - 保留 `enableBypassPermissionsSupport` 作为门控：仅当其开启时 `bypassPermissions` 才可选/生效；关闭时若当前为该模式自动同步写回 `default`
+  - 管理字段由整对象 `permissions` 收窄为叶子 `permissions.defaultMode`，保留用户自配的 `allow/deny/ask` 规则（`src/server/config-managed-fields.ts` 与 `bin/utils/managed-fields.js` 同步）
 - 2026-06-03: 强化 Claude Code compact 链路
   - compact 请求在转发到上游前会补齐未配对的 `tool_use/server_tool_use`，并主动移除 `thinking`、`tools`、`tool_choice`、`mcp_servers`
   - compact 响应回传给 Claude Code 前会过滤 `thinking` / `tool_use` block，只保留纯文本摘要，避免 compact 成功后客户端继续进入错误恢复流程
