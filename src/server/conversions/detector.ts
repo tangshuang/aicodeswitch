@@ -64,24 +64,3 @@ export function isOfficialOpenAiApi(apiUrl: string): boolean {
   const u = (apiUrl || '').toLowerCase();
   return u.includes('api.openai.com') || u.includes('.openai.azure.com');
 }
-
-/**
- * Determine the upstream format from a SourceType string.
- * Maps the legacy SourceType values to the new Format type.
- */
-export function sourceTypeToFormat(sourceType: string): Format {
-  switch (sourceType) {
-    case 'claude':
-    case 'claude-chat':
-      return 'claude';
-    case 'openai':
-      return 'responses';
-    case 'openai-chat':
-      return 'completions';
-    case 'gemini':
-    case 'gemini-chat':
-      return 'gemini';
-    default:
-      return 'completions';
-  }
-}

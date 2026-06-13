@@ -654,9 +654,10 @@ aicos version            # Show current version information
    - In web mode, you manually start the backend with `npm run dev:server`
    - The backend always runs on localhost:4567 (configurable via `~/.aicodeswitch/aicodeswitch.conf`)
    - React UI uses standard HTTP requests (fetch/axios) to communicate with backend
-   - **Service Detection**: On startup, Tauri app checks if port is already in use
-     - If a Node.js server is already running (e.g., started via `aicos start`), the app will connect to it instead of starting a new process
-     - This prevents conflicts when users have both the CLI tool and desktop app installed
+   - **Service Detection & Restart**: On startup, Tauri app checks if the port is already in use
+     - If a Node.js server is already running (started via `aicos start` or leftover from a previous run), the app **shuts it down first** then starts a fresh server (`shutdown_existing_server`: POST `/api/shutdown` → old service restores config + exits; if unresponsive, kills the process on the port via `kill_process_on_port` — Unix `lsof`+`kill`, Windows `netstat`+`taskkill`)
+     - This ensures newly installed code actually runs — previously the app reused the stale service, so upgrades/reinstalls had no effect
+     - On exit (`stop_server`), the app POSTs `/api/shutdown`, which (like `aicos stop`'s SIGTERM) runs the same Node `shutdown()` that `restoreClaudeConfig` + `restoreCodexConfig` before exiting
 
 4. **Debugging**:
    - **Frontend**: Use browser DevTools (F12 in Tauri window)

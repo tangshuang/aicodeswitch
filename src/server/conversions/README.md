@@ -19,7 +19,7 @@ conversions/
 ├── pipeline.ts                   # SSE 流式管线：SSEEventParser + SSEParserTransform + createStreamPipeline + serializeSSE
 ├── stream-converter-adapter.ts   # StreamConverter → Node.js Transform 流的桥接适配器
 ├── compact.ts                    # /v1/responses/compact 对话压缩（提取对话、构建提示词、解析摘要）
-├── detector.ts                   # 请求格式自动检测（按路径 + body 结构推断）+ sourceTypeToFormat 映射
+├── detector.ts                   # 请求格式自动检测（按路径 + body 结构推断）
 ├── url-normalizer.ts             # API URL 规范化工具（智能处理版本路径冲突）
 ├── types.ts                      # 共享类型定义（Format, SSEEvent, StreamConverter 等）
 │
@@ -312,28 +312,6 @@ const format = detectRequestFormat('/v1/messages', requestBody);
 ```
 
 > **注意**：`gemini` 是纯上游格式，客户端不会以该格式发请求，`detectRequestFormat` 永远不会返回它。此外 `/v1/responses/compact` 路径被特殊排除，不会匹配为 `responses` 格式。
-
-### `sourceTypeToFormat(sourceType): Format`
-
-将旧版 `SourceType` 字符串映射为 `Format` 类型。用于兼容旧代码。
-
-```typescript
-import { sourceTypeToFormat } from './conversions/index.js';
-
-sourceTypeToFormat('claude-chat');   // => 'claude'
-sourceTypeToFormat('openai');        // => 'responses'
-sourceTypeToFormat('openai-chat');   // => 'completions'
-sourceTypeToFormat('gemini-chat');   // => 'gemini'
-```
-
-映射关系：
-| SourceType | Format |
-|------------|--------|
-| `claude`, `claude-chat` | `claude` |
-| `openai` | `responses` |
-| `openai-chat` | `completions` |
-| `gemini`, `gemini-chat` | `gemini` |
-| 其他 | `completions`（默认） |
 
 ### `getReasoningConfig(providerName, baseUrl, model): ReasoningConfig`
 
@@ -700,7 +678,7 @@ fetch(upstream)                ← 转发给上游供应商
 
 1. 在 `types.ts` 的 `Format` 联合类型中添加新字符串
 2. 在 `detector.ts` 中添加路径/结构检测规则（如果客户端会以该格式发请求）
-3. 在 `sourceTypeToFormat` 中添加旧版 SourceType 映射（如果需要兼容）
+3. 在 `src/server/source-type-mapping.ts` 的 `sourceTypeToFormat` 中添加旧版 SourceType 映射（如果需要兼容）
 4. 创建 3 个新 pair 目录（与其他 3 种格式各一个），每个目录独立实现
 5. 在 `index.ts` 中添加 import 和 switch case
 6. 在 `utils/tool-schema.ts`、`stop-reasons.ts`、`usage.ts`、`id.ts` 中添加映射函数

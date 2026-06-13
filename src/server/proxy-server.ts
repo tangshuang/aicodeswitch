@@ -14,7 +14,6 @@ import {
   transformRequest as convertRequest,
   transformResponse as convertResponse,
   createStreamConverter,
-  sourceTypeToFormat,
   getReasoningConfig,
   getServerToolSupport,
   sanitizeRequestBody,
@@ -32,6 +31,7 @@ import {
   cleanupTempImages,
 } from './mcp-image-handler';
 import { normalizeSourceType } from './type-migration';
+import { sourceTypeToFormat } from './source-type-mapping';
 import { readOriginalConfig } from './original-config-reader';
 import {
   isCodexCompactRequest,

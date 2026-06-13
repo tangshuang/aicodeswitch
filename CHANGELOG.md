@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-06-13: 将 sourceTypeToFormat 迁出 conversions 模块
+
+### 重构
+- `sourceTypeToFormat` 是系统适配逻辑（产品专有 SourceType 词表 → 通用 Format），非通用转换，将其从 `src/server/conversions/detector.ts` 迁出到独立的 `src/server/source-type-mapping.ts`
+- `conversions/` 桶导出 (`index.ts`) 不再导出该函数；唯一消费者 `proxy-server.ts` 改为从新模块导入（函数名/签名/行为不变）
+- 同步清理 `conversions/README.md` 中相关文档
+- 影响文件：`src/server/source-type-mapping.ts`（新增）、`src/server/conversions/detector.ts`、`src/server/conversions/index.ts`、`src/server/proxy-server.ts`、`src/server/conversions/README.md`
+
 ## 2026-06-13: 新增 Tauri 构建版本号自动同步机制
 
 ### 新增

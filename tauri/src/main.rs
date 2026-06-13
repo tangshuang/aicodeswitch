@@ -450,6 +450,92 @@ async fn is_server_ready(port: u16) -> bool {
     false
 }
 
+/// 优雅关闭占用端口的已有服务（上次未正常退出的、或 `aicos start` 启动的）。
+/// 优先 POST `/api/shutdown`，让旧服务走统一的 shutdown 流程（恢复配置 + 退出）；
+/// 若不响应则按端口强杀（此时旧服务的配置可能来不及恢复，属极端兜底）。
+async fn shutdown_existing_server(port: u16) {
+    let shutdown_url = format!("http://localhost:{}/api/shutdown", port);
+    debug_log(&format!("请求旧服务关闭: POST {}", shutdown_url));
+    let graceful = matches!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(8),
+            reqwest::Client::new().post(&shutdown_url).send(),
+        )
+        .await,
+        Ok(Ok(_))
+    );
+    if graceful {
+        debug_log("旧服务已收到关闭请求，等待其退出...");
+    } else {
+        debug_log("⚠ 旧服务未响应 /api/shutdown，稍后将按端口强杀");
+    }
+
+    // 轮询 /health，等待旧服务退出（最多约 10 秒）
+    for i in 0..20 {
+        if !is_server_ready(port).await {
+            debug_log(&format!("✓ 旧服务已退出 (第 {}/20 次探测)", i + 1));
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    debug_log("⚠ 旧服务仍未退出，按端口强制清理");
+    kill_process_on_port(port);
+}
+
+/// 跨平台强杀占用指定端口的进程（最后手段）。
+#[cfg(unix)]
+fn kill_process_on_port(port: u16) {
+    if let Ok(out) = Command::new("lsof")
+        .arg("-t")
+        .arg("-i")
+        .arg(format!("tcp:{}", port))
+        .output()
+    {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        for pid_str in stdout.split_whitespace() {
+            if let Ok(pid) = pid_str.parse::<u32>() {
+                debug_log(&format!("kill -9 {}", pid));
+                let _ = Command::new("kill")
+                    .arg("-9")
+                    .arg(pid.to_string())
+                    .status();
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn kill_process_on_port(port: u16) {
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    // netstat -ano 最后一列为 PID，筛选出 LISTENING 该端口的行
+    let mut cmd = Command::new("cmd");
+    cmd.arg("/C")
+        .arg(format!("netstat -ano -p TCP | findstr :{}", port))
+        .creation_flags(CREATE_NO_WINDOW);
+    let mut pids: Vec<u32> = Vec::new();
+    if let Ok(out) = cmd.output() {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        pids = stdout
+            .lines()
+            .filter(|line| line.contains("LISTENING"))
+            .filter_map(|line| line.split_whitespace().last())
+            .filter_map(|s| s.parse::<u32>().ok())
+            .collect();
+    }
+    pids.sort();
+    pids.dedup();
+    for pid in pids {
+        debug_log(&format!("taskkill /PID {} /F", pid));
+        let _ = Command::new("taskkill")
+            .arg("/PID")
+            .arg(pid.to_string())
+            .arg("/F")
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+}
+
 // ── 主入口 ───────────────────────────────────────────────
 
 /// 判断是否为开发模式（由 beforeDevCommand 通过环境变量控制）
@@ -499,17 +585,14 @@ fn main() {
                 debug_log("开始启动流程...");
                 let _ = app_handle.emit("startup-log", "正在检查服务状态...");
 
-                // 先检测是否已有服务在运行
+                // 检测是否已有服务在运行 → 优雅关闭旧服务后再启动新的，
+                // 避免复用旧代码（升级后旧服务挡道，导致新版本不生效）
                 if is_server_ready(port).await {
-                    debug_log(&format!("检测到已有服务运行 → 导航到 {}", server_url));
-                    let _ = app_handle.emit("startup-log", "正在验证数据就绪...");
-                    let _ = verify_data_ready(port).await;
-                    let _ = app_handle.emit("startup-log", "检测到已有服务运行，正在加载...");
-                    match window.navigate(server_url.parse().unwrap()) {
-                        Ok(_) => debug_log("✓ 导航成功"),
-                        Err(e) => debug_log(&format!("✗ 导航失败: {}", e)),
-                    }
-                    return;
+                    debug_log(&format!("检测到已有服务运行 (端口 {}) → 关闭旧服务后重启", port));
+                    let _ = app_handle.emit("startup-log", "检测到已有服务，正在关闭旧服务...");
+                    shutdown_existing_server(port).await;
+                    // 等待端口释放，避免新服务绑定失败
+                    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
                 }
 
                 // 启动新服务器

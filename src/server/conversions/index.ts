@@ -17,7 +17,7 @@
 import type { TransformResult, StreamConverter, TransformRequestOptions, TransformResponseOptions, StreamConverterOptions } from './types.js';
 export type { Format, TransformResult, StreamConverter, SSEEvent, TransformRequestOptions, TransformResponseOptions, StreamConverterOptions, ReasoningConfig, ServerToolConfig } from './types.js';
 
-export { detectRequestFormat, sourceTypeToFormat, isOfficialOpenAiApi } from './detector.js';
+export { detectRequestFormat, isOfficialOpenAiApi } from './detector.js';
 export { getReasoningConfig } from './thinking/providers.js';
 import { applyReasoningConfig } from './thinking/providers.js';
 export { getServerToolSupport } from './server-tool/providers.js';
