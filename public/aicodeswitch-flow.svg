@@ -1,0 +1,360 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 860" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif" text-rendering="geometricPrecision">
+  <title>AICodeSwitch 转流架构图</title>
+  <desc>展示 AI 编程工具（Claude Code / Codex / Cursor 等）的请求，经 AICodeSwitch 本地代理完成鉴权、路由、规则匹配、格式转换后，转流到上游 LLM 服务商（Anthropic / OpenAI / Gemini / DeepSeek 等），响应原路回流。</desc>
+
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0c1326"/>
+      <stop offset=".5" stop-color="#111c3a"/>
+      <stop offset="1" stop-color="#090f1f"/>
+    </linearGradient>
+    <radialGradient id="bgGlow" cx=".5" cy=".06" r=".78">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity=".18"/>
+      <stop offset=".45" stop-color="#7c3aed" stop-opacity=".10"/>
+      <stop offset="1" stop-color="#090f1f" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="titleGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#5eead4"/>
+      <stop offset=".45" stop-color="#22d3ee"/>
+      <stop offset=".75" stop-color="#a855f7"/>
+      <stop offset="1" stop-color="#ec4899"/>
+    </linearGradient>
+    <linearGradient id="coreStroke" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset=".5" stop-color="#a855f7"/>
+      <stop offset="1" stop-color="#ec4899"/>
+    </linearGradient>
+    <linearGradient id="coreFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0f1830" stop-opacity=".92"/>
+      <stop offset="1" stop-color="#0b1124" stop-opacity=".92"/>
+    </linearGradient>
+    <linearGradient id="panelFill" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#16234c" stop-opacity=".78"/>
+      <stop offset="1" stop-color="#101935" stop-opacity=".78"/>
+    </linearGradient>
+    <radialGradient id="dotCyan">
+      <stop offset="0" stop-color="#cffafe"/>
+      <stop offset=".45" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="dotPurple">
+      <stop offset="0" stop-color="#f3e8ff"/>
+      <stop offset=".45" stop-color="#c084fc"/>
+      <stop offset="1" stop-color="#a855f7" stop-opacity="0"/>
+    </radialGradient>
+    <marker id="arrowCyan" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="#22d3ee"/>
+    </marker>
+    <marker id="arrowPurple" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="#c084fc"/>
+    </marker>
+    <style>
+      @media (prefers-reduced-motion: reduce){
+        animate,animateTransform,animateMotion{display:none}
+      }
+    </style>
+  </defs>
+
+  <!-- ============ background ============ -->
+  <rect width="1400" height="860" fill="url(#bgGrad)"/>
+  <rect width="1400" height="860" fill="url(#bgGlow)"/>
+
+  <!-- ============ title ============ -->
+  <text x="700" y="60" text-anchor="middle" font-size="32" font-weight="800" fill="url(#titleGrad)" letter-spacing="0.5">AICodeSwitch · 转流架构</text>
+  <text x="700" y="89" text-anchor="middle" font-size="14.5" fill="#8c9bc4">本地代理 · 把 AI 编程工具的请求智能路由并转换格式，转流到任意模型 API</text>
+
+  <!-- column captions -->
+  <text x="169" y="196" text-anchor="middle" font-size="12" font-weight="700" fill="#6f7da6" letter-spacing="2">客户端 · AI 编程工具</text>
+  <text x="1231" y="158" text-anchor="middle" font-size="12" font-weight="700" fill="#6f7da6" letter-spacing="2">上游 · LLM 服务商</text>
+
+  <!-- ============ LEFT column · clients ============ -->
+  <!-- Claude Code -->
+  <g>
+    <rect x="64" y="220" width="210" height="118" rx="16" fill="#111a33" stroke="#243156"/>
+    <rect x="66" y="238" width="4" height="82" rx="2" fill="#a855f7"/>
+    <circle cx="108" cy="264" r="22" fill="#a855f7" fill-opacity=".16" stroke="#a855f7" stroke-width="1.5"/>
+    <text x="108" y="271" text-anchor="middle" font-size="18" font-weight="800" fill="#d8b4fe">C</text>
+    <text x="142" y="258" font-size="16.5" font-weight="700" fill="#e6edf7">Claude Code</text>
+    <text x="142" y="280" font-size="12" fill="#8c9bc4">/v1/messages</text>
+    <g transform="translate(82,298)">
+      <rect width="118" height="24" rx="12" fill="#a855f7" fill-opacity=".12" stroke="#a855f7" stroke-opacity=".5"/>
+      <text x="59" y="16" text-anchor="middle" font-size="11" fill="#d8b4fe">Anthropic 协议</text>
+    </g>
+  </g>
+
+  <!-- Codex -->
+  <g>
+    <rect x="64" y="372" width="210" height="118" rx="16" fill="#111a33" stroke="#243156"/>
+    <rect x="66" y="390" width="4" height="82" rx="2" fill="#10b981"/>
+    <circle cx="108" cy="416" r="22" fill="#10b981" fill-opacity=".16" stroke="#10b981" stroke-width="1.5"/>
+    <text x="108" y="423" text-anchor="middle" font-size="15" font-weight="800" fill="#a7f3d0">Cx</text>
+    <text x="142" y="410" font-size="16.5" font-weight="700" fill="#e6edf7">Codex</text>
+    <text x="142" y="432" font-size="12" fill="#8c9bc4">/v1/responses</text>
+    <g transform="translate(82,450)">
+      <rect width="118" height="24" rx="12" fill="#10b981" fill-opacity=".12" stroke="#10b981" stroke-opacity=".5"/>
+      <text x="59" y="16" text-anchor="middle" font-size="11" fill="#a7f3d0">OpenAI 协议</text>
+    </g>
+  </g>
+
+  <!-- Cursor / others -->
+  <g>
+    <rect x="64" y="524" width="210" height="118" rx="16" fill="#111a33" stroke="#243156"/>
+    <rect x="66" y="542" width="4" height="82" rx="2" fill="#22d3ee"/>
+    <circle cx="108" cy="568" r="22" fill="#22d3ee" fill-opacity=".16" stroke="#22d3ee" stroke-width="1.5"/>
+    <text x="108" y="576" text-anchor="middle" font-size="20" font-weight="800" fill="#a5f3fc">+</text>
+    <text x="142" y="562" font-size="16.5" font-weight="700" fill="#e6edf7">Cursor · 其他</text>
+    <text x="142" y="584" font-size="12" fill="#8c9bc4">/v1/chat/completions</text>
+    <g transform="translate(82,602)">
+      <rect width="132" height="24" rx="12" fill="#22d3ee" fill-opacity=".12" stroke="#22d3ee" stroke-opacity=".5"/>
+      <text x="66" y="16" text-anchor="middle" font-size="11" fill="#a5f3fc">OpenAI 兼容</text>
+    </g>
+  </g>
+
+  <!-- ============ CENTER · core engine ============ -->
+  <g>
+    <rect x="360" y="150" width="680" height="550" rx="22" fill="url(#coreFill)" stroke="url(#coreStroke)" stroke-width="1.6">
+      <animate attributeName="stroke-opacity" values="0.55;0.95;0.55" dur="4.5s" repeatCount="indefinite"/>
+    </rect>
+    <!-- top highlight -->
+    <path d="M382,150 H1018 a22,22 0 0 1 22,22 V192 H360 V172 a22,22 0 0 1 22,-22 z" fill="#ffffff" fill-opacity=".035"/>
+    <!-- header -->
+    <rect x="386" y="166" width="16" height="16" rx="4" fill="url(#coreStroke)"/>
+    <text x="410" y="180" font-size="17" font-weight="800" fill="#e6edf7">AICodeSwitch Proxy Core</text>
+    <text x="1014" y="180" text-anchor="end" font-size="11.5" fill="#6f7da6">localhost · 中转引擎</text>
+
+    <!-- ── M1 Auth ── -->
+    <g>
+      <rect x="380" y="210" width="640" height="86" rx="14" fill="url(#panelFill)" stroke="#1f2c52"/>
+      <circle cx="416" cy="253" r="18" fill="#22d3ee" fill-opacity=".14" stroke="#22d3ee" stroke-width="1.4"/>
+      <g transform="translate(408,243)" stroke="#67e8f9" stroke-width="1.6" fill="none" stroke-linecap="round">
+        <rect x="2" y="7" width="12" height="9" rx="2"/>
+        <path d="M5,7 V5 a3,3 0 0 1 6,0 V7"/>
+      </g>
+      <text x="446" y="244" font-size="15.5" font-weight="700" fill="#e6edf7">① 鉴权 Auth</text>
+      <text x="446" y="266" font-size="12" fill="#8c9bc4">API Key 解析 · sk_ 池密钥 / skr_ 路由密钥 · JWT</text>
+      <g transform="translate(818,242)">
+        <rect width="202" height="22" rx="11" fill="#22d3ee" fill-opacity=".10" stroke="#22d3ee" stroke-opacity=".4"/>
+        <text x="101" y="15" text-anchor="middle" font-size="10" fill="#67e8f9">Authorization · x-api-key · x-goog-api-key</text>
+      </g>
+    </g>
+
+    <!-- ── M2 Route + Rules ── -->
+    <g>
+      <rect x="380" y="308" width="640" height="148" rx="14" fill="url(#panelFill)" stroke="#1f2c52"/>
+      <circle cx="416" cy="338" r="18" fill="#a855f7" fill-opacity=".14" stroke="#a855f7" stroke-width="1.4"/>
+      <g transform="translate(407,329)" stroke="#d8b4fe" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="9" cy="9" r="7"/>
+        <path d="M9,4 L11,9 L9,14 L7,9 z" fill="#d8b4fe" stroke="none"/>
+      </g>
+      <text x="446" y="334" font-size="15.5" font-weight="700" fill="#e6edf7">② 路由 &amp; 规则 Route · Rules</text>
+      <text x="446" y="356" font-size="12" fill="#8c9bc4">按内容类型分发到候选上游池，失败自动回退（fallback）</text>
+
+      <!-- content-type pills -->
+      <g font-size="11" font-weight="600">
+        <g transform="translate(396,378)">
+          <rect width="68" height="24" rx="12" fill="#94a3b8" fill-opacity=".10" stroke="#94a3b8" stroke-opacity=".5"/>
+          <text x="34" y="16" text-anchor="middle" fill="#cbd5e1">default</text>
+        </g>
+        <g transform="translate(472,378)">
+          <rect width="72" height="24" rx="12" fill="#a855f7" fill-opacity=".12" stroke="#a855f7" stroke-opacity=".55"/>
+          <text x="36" y="16" text-anchor="middle" fill="#d8b4fe">thinking</text>
+        </g>
+        <g transform="translate(554,378)">
+          <rect width="100" height="24" rx="12" fill="#3b82f6" fill-opacity=".12" stroke="#3b82f6" stroke-opacity=".55"/>
+          <text x="50" y="16" text-anchor="middle" fill="#bfdbfe">long-context</text>
+        </g>
+        <g transform="translate(396,410)">
+          <rect width="140" height="24" rx="12" fill="#ec4899" fill-opacity=".12" stroke="#ec4899" stroke-opacity=".55"/>
+          <text x="70" y="16" text-anchor="middle" fill="#f9a8d4">image-understanding</text>
+        </g>
+        <g transform="translate(544,410)">
+          <rect width="86" height="24" rx="12" fill="#06b6d4" fill-opacity=".12" stroke="#06b6d4" stroke-opacity=".55"/>
+          <text x="43" y="16" text-anchor="middle" fill="#a5f3fc">background</text>
+        </g>
+        <g transform="translate(638,410)">
+          <rect width="66" height="24" rx="12" fill="#f59e0b" fill-opacity=".12" stroke="#f59e0b" stroke-opacity=".55"/>
+          <text x="33" y="16" text-anchor="middle" fill="#fcd34d">high-iq</text>
+        </g>
+      </g>
+    </g>
+
+    <!-- ── M3 Transformers ── -->
+    <g>
+      <rect x="380" y="468" width="640" height="104" rx="14" fill="url(#panelFill)" stroke="#1f2c52"/>
+      <circle cx="416" cy="500" r="18" fill="#ec4899" fill-opacity=".14" stroke="#ec4899" stroke-width="1.4"/>
+      <g transform="translate(407,491)" stroke="#f9a8d4" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3,5 H15 M12,2 L15,5 L12,8"/>
+        <path d="M15,13 H3 M6,10 L3,13 L6,16"/>
+      </g>
+      <text x="446" y="498" font-size="15.5" font-weight="700" fill="#e6edf7">③ 格式转换 Transformers</text>
+      <text x="446" y="520" font-size="12" fill="#8c9bc4">Claude ↔ OpenAI ↔ Gemini ↔ DeepSeek · 双向转换 · SSE 流式</text>
+      <g transform="translate(446,536)" font-size="10.5" font-weight="700">
+        <rect x="0" y="0" width="56" height="22" rx="6" fill="#a855f7" fill-opacity=".16" stroke="#a855f7" stroke-opacity=".5"/>
+        <text x="28" y="15" text-anchor="middle" fill="#d8b4fe">Claude</text>
+        <text x="64" y="15" fill="#6f7da6">↔</text>
+        <rect x="78" y="0" width="58" height="22" rx="6" fill="#10b981" fill-opacity=".16" stroke="#10b981" stroke-opacity=".5"/>
+        <text x="107" y="15" text-anchor="middle" fill="#a7f3d0">OpenAI</text>
+        <text x="144" y="15" fill="#6f7da6">↔</text>
+        <rect x="158" y="0" width="58" height="22" rx="6" fill="#3b82f6" fill-opacity=".16" stroke="#3b82f6" stroke-opacity=".5"/>
+        <text x="187" y="15" text-anchor="middle" fill="#bfdbfe">Gemini</text>
+        <text x="224" y="15" fill="#6f7da6">↔</text>
+        <rect x="238" y="0" width="68" height="22" rx="6" fill="#8b5cf6" fill-opacity=".16" stroke="#8b5cf6" stroke-opacity=".5"/>
+        <text x="272" y="15" text-anchor="middle" fill="#c4b5fd">DeepSeek</text>
+      </g>
+      <g transform="translate(912,490)">
+        <rect width="96" height="22" rx="11" fill="#ec4899" fill-opacity=".12" stroke="#ec4899" stroke-opacity=".45"/>
+        <text x="48" y="15" text-anchor="middle" font-size="10.5" fill="#f9a8d4">SSE 流式</text>
+      </g>
+    </g>
+
+    <!-- ── M4 Logging ── -->
+    <g>
+      <rect x="380" y="584" width="640" height="92" rx="14" fill="url(#panelFill)" stroke="#1f2c52"/>
+      <circle cx="416" cy="616" r="18" fill="#10b981" fill-opacity=".14" stroke="#10b981" stroke-width="1.4"/>
+      <g transform="translate(407,607)" stroke="#6ee7b7" stroke-width="1.4" fill="none" stroke-linecap="round">
+        <path d="M3,15 H17"/>
+        <rect x="5" y="9" width="3" height="6" fill="#6ee7b7" stroke="none"/>
+        <rect x="10" y="5" width="3" height="10" fill="#6ee7b7" stroke="none"/>
+        <rect x="15" y="11" width="3" height="4" fill="#6ee7b7" stroke="none"/>
+      </g>
+      <text x="446" y="614" font-size="15.5" font-weight="700" fill="#e6edf7">④ 日志 / 会话 / 配额 Logging</text>
+      <text x="446" y="636" font-size="12" fill="#8c9bc4">请求日志 · 会话追踪 · 多维配额（Token / RPM / 并发）</text>
+      <g transform="translate(842,606)">
+        <rect width="78" height="22" rx="11" fill="#10b981" fill-opacity=".10" stroke="#10b981" stroke-opacity=".4"/>
+        <text x="39" y="15" text-anchor="middle" font-size="10.5" fill="#6ee7b7">Token 计费</text>
+      </g>
+      <g transform="translate(928,606)">
+        <rect width="78" height="22" rx="11" fill="#10b981" fill-opacity=".10" stroke="#10b981" stroke-opacity=".4"/>
+        <text x="39" y="15" text-anchor="middle" font-size="10.5" fill="#6ee7b7">配额限速</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- ============ RIGHT column · upstream ============ -->
+  <!-- Anthropic -->
+  <g>
+    <rect x="1126" y="180" width="210" height="92" rx="14" fill="#111a33" stroke="#243156"/>
+    <rect x="1330" y="200" width="4" height="52" rx="2" fill="#f59e0b"/>
+    <circle cx="1158" cy="226" r="18" fill="#f59e0b" fill-opacity=".16" stroke="#f59e0b" stroke-width="1.5"/>
+    <text x="1158" y="232" text-anchor="middle" font-size="15" font-weight="800" fill="#fcd34d">A</text>
+    <text x="1188" y="221" font-size="14.5" font-weight="700" fill="#e6edf7">Anthropic</text>
+    <text x="1188" y="240" font-size="11.5" fill="#8c9bc4">Claude · claude-*</text>
+  </g>
+  <!-- OpenAI -->
+  <g>
+    <rect x="1126" y="288" width="210" height="92" rx="14" fill="#111a33" stroke="#243156"/>
+    <rect x="1330" y="308" width="4" height="52" rx="2" fill="#10b981"/>
+    <circle cx="1158" cy="334" r="18" fill="#10b981" fill-opacity=".16" stroke="#10b981" stroke-width="1.5"/>
+    <text x="1158" y="340" text-anchor="middle" font-size="15" font-weight="800" fill="#a7f3d0">O</text>
+    <text x="1188" y="329" font-size="14.5" font-weight="700" fill="#e6edf7">OpenAI</text>
+    <text x="1188" y="348" font-size="11.5" fill="#8c9bc4">GPT · o-*</text>
+  </g>
+  <!-- Gemini -->
+  <g>
+    <rect x="1126" y="396" width="210" height="92" rx="14" fill="#111a33" stroke="#243156"/>
+    <rect x="1330" y="416" width="4" height="52" rx="2" fill="#3b82f6"/>
+    <circle cx="1158" cy="442" r="18" fill="#3b82f6" fill-opacity=".16" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="1158" y="448" text-anchor="middle" font-size="15" font-weight="800" fill="#bfdbfe">G</text>
+    <text x="1188" y="437" font-size="14.5" font-weight="700" fill="#e6edf7">Google</text>
+    <text x="1188" y="456" font-size="11.5" fill="#8c9bc4">Gemini · gemini-*</text>
+  </g>
+  <!-- DeepSeek -->
+  <g>
+    <rect x="1126" y="504" width="210" height="92" rx="14" fill="#111a33" stroke="#243156"/>
+    <rect x="1330" y="524" width="4" height="52" rx="2" fill="#8b5cf6"/>
+    <circle cx="1158" cy="550" r="18" fill="#8b5cf6" fill-opacity=".16" stroke="#8b5cf6" stroke-width="1.5"/>
+    <text x="1158" y="556" text-anchor="middle" font-size="15" font-weight="800" fill="#c4b5fd">D</text>
+    <text x="1188" y="545" font-size="14.5" font-weight="700" fill="#e6edf7">DeepSeek</text>
+    <text x="1188" y="564" font-size="11.5" fill="#8c9bc4">deepseek-*</text>
+  </g>
+  <!-- Qwen / others -->
+  <g>
+    <rect x="1126" y="612" width="210" height="92" rx="14" fill="#111a33" stroke="#243156"/>
+    <rect x="1330" y="632" width="4" height="52" rx="2" fill="#06b6d4"/>
+    <circle cx="1158" cy="658" r="18" fill="#06b6d4" fill-opacity=".16" stroke="#06b6d4" stroke-width="1.5"/>
+    <text x="1158" y="664" text-anchor="middle" font-size="15" font-weight="800" fill="#a5f3fc">Q</text>
+    <text x="1188" y="653" font-size="14.5" font-weight="700" fill="#e6edf7">Qwen · Kimi 等</text>
+    <text x="1188" y="672" font-size="11.5" fill="#8c9bc4">兼容 OpenAI 协议</text>
+  </g>
+
+  <!-- ============ flow lines · LEFT (clients → core) ============ -->
+  <g fill="none">
+    <!-- L1 -->
+    <path d="M274,279 C314,279 322,375 360,375" stroke="#1c284f" stroke-width="2.2"/>
+    <path d="M274,279 C314,279 322,375 360,375" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 9" marker-end="url(#arrowCyan)" opacity=".92">
+      <animate attributeName="stroke-dashoffset" from="14" to="0" dur="1.1s" repeatCount="indefinite"/>
+    </path>
+    <circle r="3.8" fill="url(#dotCyan)">
+      <animateMotion dur="2.4s" repeatCount="indefinite" path="M274,279 C314,279 322,375 360,375"/>
+    </circle>
+    <!-- L2 -->
+    <path d="M274,431 C320,431 322,375 360,375" stroke="#1c284f" stroke-width="2.2"/>
+    <path d="M274,431 C320,431 322,375 360,375" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 9" marker-end="url(#arrowCyan)" opacity=".92">
+      <animate attributeName="stroke-dashoffset" from="14" to="0" dur="1.1s" begin="0.35s" repeatCount="indefinite"/>
+    </path>
+    <circle r="3.8" fill="url(#dotCyan)">
+      <animateMotion dur="2.4s" begin="0.8s" repeatCount="indefinite" path="M274,431 C320,431 322,375 360,375"/>
+    </circle>
+    <!-- L3 -->
+    <path d="M274,583 C326,583 324,375 360,375" stroke="#1c284f" stroke-width="2.2"/>
+    <path d="M274,583 C326,583 324,375 360,375" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 9" marker-end="url(#arrowCyan)" opacity=".92">
+      <animate attributeName="stroke-dashoffset" from="14" to="0" dur="1.1s" begin="0.7s" repeatCount="indefinite"/>
+    </path>
+    <circle r="3.8" fill="url(#dotCyan)">
+      <animateMotion dur="2.4s" begin="1.6s" repeatCount="indefinite" path="M274,583 C326,583 324,375 360,375"/>
+    </circle>
+  </g>
+
+  <!-- ============ flow lines · RIGHT (core → upstream) ============ -->
+  <g fill="none">
+    <!-- R1 -->
+    <path d="M1040,430 C1082,430 1088,226 1126,226" stroke="#1c284f" stroke-width="2.2"/>
+    <path d="M1040,430 C1082,430 1088,226 1126,226" stroke="#c084fc" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 9" marker-end="url(#arrowPurple)" opacity=".92">
+      <animate attributeName="stroke-dashoffset" from="14" to="0" dur="1.2s" repeatCount="indefinite"/>
+    </path>
+    <circle r="3.8" fill="url(#dotPurple)">
+      <animateMotion dur="2.8s" repeatCount="indefinite" path="M1040,430 C1082,430 1088,226 1126,226"/>
+    </circle>
+    <!-- R2 -->
+    <path d="M1040,430 C1082,430 1088,334 1126,334" stroke="#1c284f" stroke-width="2.2"/>
+    <path d="M1040,430 C1082,430 1088,334 1126,334" stroke="#c084fc" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 9" marker-end="url(#arrowPurple)" opacity=".92">
+      <animate attributeName="stroke-dashoffset" from="14" to="0" dur="1.2s" begin="0.3s" repeatCount="indefinite"/>
+    </path>
+    <circle r="3.8" fill="url(#dotPurple)">
+      <animateMotion dur="2.8s" begin="0.56s" repeatCount="indefinite" path="M1040,430 C1082,430 1088,334 1126,334"/>
+    </circle>
+    <!-- R3 -->
+    <path d="M1040,430 C1082,430 1088,442 1126,442" stroke="#1c284f" stroke-width="2.2"/>
+    <path d="M1040,430 C1082,430 1088,442 1126,442" stroke="#c084fc" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 9" marker-end="url(#arrowPurple)" opacity=".92">
+      <animate attributeName="stroke-dashoffset" from="14" to="0" dur="1.2s" begin="0.6s" repeatCount="indefinite"/>
+    </path>
+    <circle r="3.8" fill="url(#dotPurple)">
+      <animateMotion dur="2.8s" begin="1.12s" repeatCount="indefinite" path="M1040,430 C1082,430 1088,442 1126,442"/>
+    </circle>
+    <!-- R4 -->
+    <path d="M1040,430 C1084,430 1088,550 1126,550" stroke="#1c284f" stroke-width="2.2"/>
+    <path d="M1040,430 C1084,430 1088,550 1126,550" stroke="#c084fc" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 9" marker-end="url(#arrowPurple)" opacity=".92">
+      <animate attributeName="stroke-dashoffset" from="14" to="0" dur="1.2s" begin="0.9s" repeatCount="indefinite"/>
+    </path>
+    <circle r="3.8" fill="url(#dotPurple)">
+      <animateMotion dur="2.8s" begin="1.68s" repeatCount="indefinite" path="M1040,430 C1084,430 1088,550 1126,550"/>
+    </circle>
+    <!-- R5 -->
+    <path d="M1040,430 C1086,430 1088,658 1126,658" stroke="#1c284f" stroke-width="2.2"/>
+    <path d="M1040,430 C1086,430 1088,658 1126,658" stroke="#c084fc" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 9" marker-end="url(#arrowPurple)" opacity=".92">
+      <animate attributeName="stroke-dashoffset" from="14" to="0" dur="1.2s" begin="1.2s" repeatCount="indefinite"/>
+    </path>
+    <circle r="3.8" fill="url(#dotPurple)">
+      <animateMotion dur="2.8s" begin="2.24s" repeatCount="indefinite" path="M1040,430 C1086,430 1088,658 1126,658"/>
+    </circle>
+  </g>
+
+  <!-- ============ footer caption + legend ============ -->
+  <text x="700" y="778" text-anchor="middle" font-size="12.5" fill="#7c89ab">流向：客户端发起请求 → 鉴权 → 路由 / 规则匹配 → 格式转换 → 上游模型；响应原路回流</text>
+  <g transform="translate(592,800)" font-size="11" fill="#8c9bc4">
+    <line x1="0" y1="0" x2="34" y2="0" stroke="#22d3ee" stroke-width="2" stroke-dasharray="5 9"/>
+    <text x="42" y="4">请求汇聚</text>
+    <line x1="130" y1="0" x2="164" y2="0" stroke="#c084fc" stroke-width="2" stroke-dasharray="5 9"/>
+    <text x="172" y="4">分发上游</text>
+  </g>
+</svg>
