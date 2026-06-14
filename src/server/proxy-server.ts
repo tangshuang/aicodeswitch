@@ -351,6 +351,43 @@ export class ProxyServer {
     // === 标准 API 路径前置中间件 ===
     // 处理 /v1/models 和 4 个可绑定的标准 API 路径
     this.app.use(async (req: Request, res: Response, next: NextFunction) => {
+      // 拦截 Codex/Claude Code 的模型列表请求，不转发到上游
+      // 上游（如 DeepSeek）的 /v1/models 响应格式与工具体系不兼容
+      const toolType = req.path.startsWith('/codex') ? 'codex'
+        : req.path.startsWith('/claude-code') ? 'claude-code'
+        : null;
+      if (toolType) {
+        const prefix = toolType === 'codex' ? '/codex' : '/claude-code';
+        const strippedPath = req.path.slice(prefix.length) || '/';
+        if (strippedPath === '/v1/models' || strippedPath === '/models') {
+          // 鉴权
+          if (this.config.apiKey) {
+            const authHeader = req.headers.authorization;
+            const providedKey = authHeader?.replace('Bearer ', '');
+            if (!providedKey || providedKey !== this.config.apiKey) {
+              res.status(401).json({ error: { message: 'Invalid API key' } });
+              return;
+            }
+          }
+          // 从激活路由的规则中收集模型名
+          const routeId = this.dbManager.getActiveRouteIdForTool(toolType);
+          if (routeId) {
+            const rules = this.dbManager.getRules(routeId);
+            const modelNames = [...new Set(
+              rules
+                .filter(r => r.targetModel)
+                .map(r => r.targetModel!.trim())
+                .filter(Boolean)
+            )];
+            const modelsStr = modelNames.length > 0 ? modelNames.join(',') : undefined;
+            res.json(buildModelsResponse(modelsStr));
+            return;
+          }
+          // 无激活路由时交由后续 fallback 处理
+          return next();
+        }
+      }
+
       const apiPath = matchApiPath(req.path);
       if (!apiPath) {
         return next();
