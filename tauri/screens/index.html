@@ -180,17 +180,52 @@
       margin-bottom: 8px;
     }
 
+    .error-panel .error-cause {
+      color: #f4a261;
+      font-weight: 600;
+      font-size: 0.85rem;
+      margin-bottom: 10px;
+      line-height: 1.4;
+    }
+
     .error-panel .error-msg {
-      color: rgba(231, 111, 81, 0.8);
-      font-size: 0.8rem;
+      color: rgba(231, 111, 81, 0.85);
+      font-size: 0.78rem;
       line-height: 1.5;
       word-break: break-word;
+      white-space: pre-wrap;
+      max-height: 220px;
+      overflow-y: auto;
       font-family: 'SF Mono', 'Menlo', monospace;
+      background: rgba(0, 0, 0, 0.2);
+      padding: 10px 12px;
+      border-radius: 6px;
+    }
+
+    .error-panel .error-actions {
+      margin-top: 10px;
+      display: flex;
+      gap: 8px;
+    }
+
+    .error-panel .error-actions button {
+      background: rgba(45, 106, 79, 0.5);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      font-size: 0.78rem;
+      padding: 5px 12px;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .error-panel .error-actions button:hover {
+      background: rgba(45, 106, 79, 0.8);
     }
 
     .error-panel .error-hint {
       color: var(--text-dim);
-      font-size: 0.8rem;
+      font-size: 0.75rem;
       margin-top: 12px;
       line-height: 1.5;
     }
@@ -221,12 +256,13 @@
 
     <div class="error-panel" id="errorPanel">
       <div class="error-title">启动失败</div>
+      <div class="error-cause" id="errorCause"></div>
       <div class="error-msg" id="errorMsg"></div>
+      <div class="error-actions">
+        <button id="copyDiagBtn" type="button">复制诊断信息</button>
+      </div>
       <div class="error-hint">
-        请检查：<br>
-        1. Node.js 是否已正确安装（https://nodejs.org/）<br>
-        2. 端口是否被其他程序占用<br>
-        3. 关闭后重新打开应用重试
+        可将诊断信息反馈给开发者；也可尝试检查 Node.js 是否安装，或关闭后重新打开重试。
       </div>
     </div>
   </div>
@@ -260,6 +296,22 @@
       return el.innerHTML;
     }
 
+    function guessCause(payload) {
+      if (/未检测到|不可运行|无法运行 Node|未正确安装/.test(payload)) {
+        return '最可能原因：Node.js 未正确安装或不在系统 PATH。';
+      }
+      if (/入口文件.*缺失|not found|Server entry file not found/i.test(payload)) {
+        return '最可能原因：程序文件不完整，建议重新安装。';
+      }
+      if (/EADDRINUSE|端口.*占用|已被占用/.test(payload)) {
+        return '最可能原因：端口被占用，请关闭其它占用该端口的服务后重试。';
+      }
+      if (/已退出|code=|子进程.*退出/.test(payload)) {
+        return '最可能原因：Node 服务进程崩溃，详见下方日志尾部。';
+      }
+      return '服务启动失败，请参考下方诊断信息。';
+    }
+
     function showError(msg) {
       // 最后一行标红
       const active = document.querySelector('.log-entry.active');
@@ -268,6 +320,7 @@
         active.classList.add('error');
       }
 
+      document.getElementById('errorCause').textContent = guessCause(msg);
       document.getElementById('errorMsg').textContent = msg;
       document.getElementById('errorPanel').classList.add('visible');
       document.querySelector('.subtitle').textContent = '启动失败';
@@ -284,9 +337,27 @@
       });
 
       window.__TAURI__.event.listen('startup-error', function(event) {
-        addLog('启动失败: ' + event.payload, 'error');
-        showError(event.payload);
+        const payload = String(event.payload || '');
+        addLog('启动失败: ' + payload.split('\n')[0], 'error');
+        showError(payload);
       });
+
+      // 复制诊断信息到剪贴板，方便用户一键反馈给开发者
+      document.getElementById('copyDiagBtn').onclick = function() {
+        const text = document.getElementById('errorMsg').textContent || '';
+        const btn = this;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(function() {
+            btn.textContent = '已复制 ✓';
+            setTimeout(function() { btn.textContent = '复制诊断信息'; }, 2000);
+          }, function() {
+            btn.textContent = '复制失败';
+            setTimeout(function() { btn.textContent = '复制诊断信息'; }, 2000);
+          });
+        } else {
+          btn.textContent = '浏览器不支持复制';
+        }
+      };
     } else {
       addLog('等待启动...');
     }

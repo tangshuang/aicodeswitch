@@ -187,7 +187,20 @@ jobs:
         with:
           tag_name: ${{ needs.check-release.outputs.tag }}
           name: AI Code Switch v${{ needs.check-release.outputs.version }}
-          body: "自动构建发布。"
+          body: |
+            ## 下载说明
+
+            本版本为自动构建发布。
+
+            ### Windows
+
+            - 推荐下载 **`.exe`** 安装包（NSIS），无需管理员权限，安装更稳定。
+            - 若使用 **`.msi`** 安装包时遇到错误码 `2503` / `2502`（通常是 Windows Installer 权限不足），请改用 `.exe`；或右键 `.msi` →「以管理员身份运行」，也可在管理员 CMD 中执行 `msiexec /i "安装包.msi"`。
+
+            ### 前置要求
+
+            - 已安装 [Node.js](https://nodejs.org/)（LTS 版本，应用启动时需要）。
+            - 系统要求：Windows 10 / 11（x64）。
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

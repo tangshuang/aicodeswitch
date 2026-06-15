@@ -4093,22 +4093,25 @@ ${instruction}
 
 };
 
+// listen 就绪标志：区分"启动阶段"与"运行阶段"，启动期致命异常应让进程退出
+let listenReady = false;
+
 const start = async () => {
   fs.mkdirSync(dataDir, { recursive: true });
 
   // 自动检测数据库类型并执行迁移（如果需要）
-  console.log('[Server] Initializing database...');
+  console.time('[Server] step "database-init"');
   const dbManager = await DatabaseFactory.createAuto(dataDir, legacyDataDir) as FileSystemDatabaseManager;
-  console.log('[Server] Database initialized successfully');
+  console.timeEnd('[Server] step "database-init"');
 
   // 服务启动时自动同步配置文件（适用于 CLI 和 dev:server）
-  console.log('[Server] Syncing tool configs with global settings...');
+  console.time('[Server] step "sync-configs"');
   try {
     await syncConfigsOnServerStartup(dbManager);
-    console.log('[Server] Tool config sync completed');
   } catch (error) {
     console.error('[Server] Tool config sync failed:', error);
   }
+  console.timeEnd('[Server] step "sync-configs"');
 
   // 清理旧的迁移临时文件
   try {
@@ -4137,8 +4140,10 @@ const start = async () => {
   proxyServer.initialize();
 
   // Register admin routes first
+  console.time('[Server] step "register-routes"');
   await registerRoutes(dbManager, proxyServer);
   await proxyServer.registerProxyRoutes();
+  console.timeEnd('[Server] step "register-routes"');
 
   app.use(express.static(path.resolve(__dirname, '../ui')));
 
@@ -4161,14 +4166,28 @@ const start = async () => {
     process.exit(1);
   }
 
+  console.time('[Server] step "listen"');
   const server = app.listen(port, host, () => {
+    listenReady = true;
     console.log(`Admin server running on http://${host}:${port}`);
+    console.timeEnd('[Server] step "listen"');
 
     // 启动后异步执行延迟维护任务（分片校验/修复、日志清理、会话索引构建）
     // 不阻塞服务启动，后台静默执行
     dbManager.deferredMaintenance().catch(err => {
       console.error('[Server] Deferred maintenance error:', err);
     });
+  });
+
+  // 显式处理 listen 错误（EADDRINUSE/权限不足等），打印明确日志并退出，
+  // 避免被全局 uncaughtException 静默吞掉导致"进程在但不 listen"
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[Server] 端口 ${port} 已被占用（EADDRINUSE）。请执行 aicos stop 后重启，或更换端口（PORT 环境变量）。`);
+    } else {
+      console.error('[Server] 监听失败:', err);
+    }
+    setImmediate(() => process.exit(1));
   });
 
   // 创建 WebSocket 服务器用于工具安装
@@ -4269,12 +4288,20 @@ const start = async () => {
 process.on('uncaughtException', (error: Error) => {
   console.error('[Uncaught Exception] 服务遇到未捕获的异常:', error);
   console.error('[Uncaught Exception] 堆栈信息:', error.stack);
-  // 不退出进程，继续运行
+  // 启动阶段（listen 之前）的异常通常是致命的（依赖加载失败、初始化崩溃等），
+  // 静默吞掉会导致"进程在但不 listen"，Tauri 只能干等超时；此时退出让上层重新探测/诊断。
+  if (!listenReady) {
+    console.error('[Uncaught Exception] 发生在服务监听之前，退出进程');
+    process.exit(1);
+  }
 });
 
 process.on('unhandledRejection', (reason: unknown) => {
   console.error('[Unhandled Rejection] 服务遇到未处理的 Promise 拒绝:', reason);
-  // 不退出进程，继续运行
+  if (!listenReady) {
+    console.error('[Unhandled Rejection] 发生在服务监听之前，退出进程');
+    process.exit(1);
+  }
 });
 
 start().catch((error) => {

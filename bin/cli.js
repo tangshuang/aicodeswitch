@@ -7,6 +7,7 @@ const commands = {
   start: require('./start'),
   stop: require('./stop'),
   restart: require('./restart'),
+  status: require('./status'),
   upgrade: require('./upgrade'),
   restore: require('./restore'),
   version: require('./version'),
@@ -21,6 +22,7 @@ Commands:
   start      Start the AI Code Switch server
   stop       Stop the AI Code Switch server
   restart    Restart the AI Code Switch server
+  status     Show server status, running address and port
   ui         Open the web UI in browser (starts server if needed)
   upgrade    Upgrade to the latest version and restart
   restore    Restore original configuration files
@@ -30,6 +32,7 @@ Example:
   aicos start
   aicos stop
   aicos restart
+  aicos status
   aicos ui
   aicos upgrade
   aicos restore
