@@ -7,7 +7,7 @@ import type { LaunchResult, ToolType } from '../types';
 function which(cmd: string): boolean {
   try {
     const command = process.platform === 'win32' ? `where ${cmd}` : `which ${cmd}`;
-    execSync(command, { stdio: 'ignore' });
+    execSync(command, { stdio: 'ignore', windowsHide: true }); // 隐藏 Windows 命令行窗口，避免检测时闪窗
     return true;
   } catch {
     return false;

@@ -117,30 +117,111 @@ fn get_resource_root(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     }
 }
 
-// ── Node.js 可执行文件 ────────────────────────────────────
+// ── Node.js 环境探测 ───────────────────────────────────────
 
-/// 获取 Node.js 可执行文件路径
-fn get_node_executable() -> String {
+/// Node.js 探测结果
+struct NodeProbe {
+    /// 最终将用于 spawn 的路径
+    path: String,
+    /// `node --version` 输出（如 "v20.11.0"）；None 表示无法运行
+    version: Option<String>,
+    /// 失败原因（中文，给用户看）；None 表示通过
+    error: Option<String>,
+}
+
+/// 从版本字符串解析主版本号（"v20.11.0" → 20）
+fn parse_node_major(v: &str) -> Option<u32> {
+    v.trim_start_matches('v').split('.').next()?.parse().ok()
+}
+
+/// 跨平台解析 Node 路径。Windows 优先用 `where node` 拿绝对路径，避免 GUI 应用 PATH 不全。
+fn resolve_node_path() -> String {
     #[cfg(target_os = "windows")]
     {
-        "node.exe".to_string()
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let mut cmd = Command::new("where");
+        cmd.arg("node").creation_flags(CREATE_NO_WINDOW);
+        if let Ok(out) = cmd.output() {
+            if let Some(first) = String::from_utf8_lossy(&out.stdout).lines().next() {
+                let p = first.trim();
+                if !p.is_empty() {
+                    return p.to_string();
+                }
+            }
+        }
+        return "node.exe".to_string();
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let possible_paths = vec![
+        for path in [
             "/usr/local/bin/node",
             "/opt/homebrew/bin/node",
             "/home/linuxbrew/.linuxbrew/bin/node",
             "/usr/bin/node",
-            "node",
-        ];
-
-        for path in possible_paths {
+        ] {
             if std::path::Path::new(path).exists() {
                 return path.to_string();
             }
         }
         "node".to_string()
+    }
+}
+
+/// 运行 `<node> --version`，返回 (版本输出, 是否成功)
+fn run_node_version(node_path: &str) -> (Option<String>, bool) {
+    let mut cmd = Command::new(node_path);
+    cmd.arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(target_os = "windows")]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    match cmd.output() {
+        Ok(out) => {
+            let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            (if v.is_empty() { None } else { Some(v) }, out.status.success())
+        }
+        Err(_) => (None, false),
+    }
+}
+
+/// 完整探测 Node：解析路径 → 跑 --version → 校验版本
+fn resolve_and_verify_node() -> NodeProbe {
+    let path = resolve_node_path();
+    debug_log(&format!("Node.js 候选路径: {}", path));
+
+    let (version, ok) = run_node_version(&path);
+    debug_log(&format!(
+        "Node.js 版本检测: version={:?} run_ok={}",
+        version, ok
+    ));
+
+    let version_ok = match &version {
+        Some(v) if ok => parse_node_major(v).map(|m| m >= 18).unwrap_or(false),
+        _ => false,
+    };
+
+    let error = if !ok {
+        Some(format!(
+            "无法运行 Node.js（执行 \"{} --version\" 失败）。请确认 Node.js 已正确安装并加入系统 PATH。",
+            path
+        ))
+    } else if !version_ok {
+        Some(format!(
+            "Node.js 版本过低（{}），需要 v18 或以上，请到 https://nodejs.org/ 升级。",
+            version.as_deref().unwrap_or("未知")
+        ))
+    } else {
+        None
+    };
+
+    NodeProbe {
+        path,
+        version,
+        error,
     }
 }
 
@@ -184,7 +265,20 @@ async fn start_server(
         }
         debug_log("✓ 服务入口文件存在");
 
-        let node_path = get_node_executable();
+        // spawn 前主动探测并校验 Node，失败立即返回（不进入健康检查轮询）
+        let node_probe = resolve_and_verify_node();
+        let _ = app.emit(
+            "startup-log",
+            format!(
+                "Node.js: {}",
+                node_probe.version.as_deref().unwrap_or("未检测到")
+            ),
+        );
+        if let Some(err) = &node_probe.error {
+            debug_log(&format!("✗ {}", err));
+            return Err(err.clone());
+        }
+        let node_path = node_probe.path.clone();
         debug_log(&format!("Node.js 路径: {}", node_path));
         let _ = app.emit("startup-log", format!("正在启动服务 (端口: {})...", port));
 
@@ -349,10 +443,20 @@ async fn stop_server(state: &State<'_, Mutex<ServerProcess>>, port: u16) {
 
 // ── 健康检查 ─────────────────────────────────────────────
 
-/// 轮询 /health 端点，等待服务器就绪（最多 15 秒）
+/// 健康检查最大尝试次数。
+/// 优先环境变量 `AIC_STARTUP_TIMEOUT`（秒）；否则默认 60 次（每次 0.5s ≈ 30 秒）。
+fn read_max_attempts() -> u32 {
+    std::env::var("AIC_STARTUP_TIMEOUT")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .map(|secs| secs.saturating_mul(2))
+        .unwrap_or(60)
+}
+
+/// 轮询 /health 端点，等待服务器就绪
 async fn wait_for_server(app: &AppHandle, port: u16) -> Result<(), String> {
     let health_url = format!("http://localhost:{}/health", port);
-    let max_attempts = 30;
+    let max_attempts = read_max_attempts();
 
     for attempt in 1..=max_attempts {
         // 每次健康检查最多等 2 秒，防止 reqwest 永久阻塞
@@ -536,6 +640,121 @@ fn kill_process_on_port(port: u16) {
     }
 }
 
+// ── 启动失败诊断 ────────────────────────────────────────────
+
+/// 读取启动日志尾部 N 行（采集线程正在追加写入，读快照安全，无需加锁）
+fn read_log_tail(n: usize) -> String {
+    let path = log_file_path();
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            let lines: Vec<&str> = content.lines().collect();
+            let start = lines.len().saturating_sub(n);
+            lines[start..].join("\n")
+        }
+        Err(e) => format!("(无法读取日志: {})", e),
+    }
+}
+
+/// 查端口占用情况（跨平台）。无占用时返回 "(无占用)"。
+fn probe_port_occupancy(port: u16) -> String {
+    #[cfg(unix)]
+    {
+        if let Ok(out) = Command::new("lsof")
+            .args(["-i", &format!("tcp:{}", port)])
+            .output()
+        {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if s.is_empty() {
+                return "(无占用)".to_string();
+            }
+            return s;
+        }
+        return "(无法检测)".to_string();
+    }
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/C")
+            .arg(format!("netstat -ano -p TCP | findstr :{}", port))
+            .creation_flags(CREATE_NO_WINDOW);
+        if let Ok(out) = cmd.output() {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if s.is_empty() {
+                return "(无占用)".to_string();
+            }
+            return s;
+        }
+        return "(无法检测)".to_string();
+    }
+}
+
+/// 组装启动失败的诊断报告（中文、分段纯文本，前端 pre-wrap 直接展示）。
+/// 在 setup 钩子（锁外）调用；内部查询子进程状态会短暂加锁。
+fn build_failure_report(app: &AppHandle, port: u16, short_reason: &str) -> String {
+    let probe = resolve_and_verify_node();
+    let resource_root = get_resource_root(app).unwrap_or_default();
+    let entry_path = resource_root.join("dist").join("server").join("main.js");
+    let entry_exists = entry_path.exists();
+
+    let child_state = {
+        let state = app.state::<Mutex<ServerProcess>>();
+        let mut server = state.lock().unwrap();
+        match server.process.as_mut() {
+            Some(child) => match child.try_wait() {
+                Ok(Some(status)) => format!("已退出 (code={})", status),
+                Ok(None) => format!("仍在运行 (PID {})", child.id()),
+                Err(e) => format!("未知 ({})", e),
+            },
+            None => "未启动".to_string(),
+        }
+    };
+
+    let port_info = probe_port_occupancy(port);
+
+    let mut s = String::new();
+    s.push_str(&format!("启动失败：{}\n\n", short_reason));
+    s.push_str("【诊断信息】\n");
+    s.push_str(&format!("Node 路径: {}\n", probe.path));
+    s.push_str(&format!(
+        "Node 版本: {}\n",
+        probe.version.as_deref().unwrap_or("未检测到 / 不可运行")
+    ));
+    s.push_str(&format!(
+        "入口文件 dist/server/main.js: {} ({})\n",
+        if entry_exists { "存在" } else { "缺失" },
+        entry_path.display()
+    ));
+    s.push_str(&format!("子进程: {}\n", child_state));
+    s.push_str(&format!("端口 {} 占用:\n{}\n", port, port_info));
+    s.push_str("\n【最近日志（app-launch-debug.log 尾部）】\n");
+    s.push_str(&read_log_tail(40));
+    s
+}
+
+/// 失败路径专用：强制清理已 spawn 的 Node 子进程（不走 HTTP，避免 stop_server 的 8s 白等）。
+fn force_kill_child(state: &State<'_, Mutex<ServerProcess>>) {
+    let mut child_opt = {
+        let mut server = state.lock().unwrap();
+        server.process.take()
+    };
+    if let Some(child) = child_opt.as_mut() {
+        let pid = child.id();
+        #[cfg(unix)]
+        {
+            let _ = Command::new("kill")
+                .arg("-9")
+                .arg(pid.to_string())
+                .status();
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        debug_log(&format!("✓ 已强制终止残留子进程 (PID {})", pid));
+    } else {
+        debug_log("失败清理: 无子进程需要终止");
+    }
+}
+
 // ── 主入口 ───────────────────────────────────────────────
 
 /// 判断是否为开发模式（由 beforeDevCommand 通过环境变量控制）
@@ -609,7 +828,11 @@ fn main() {
                     }
                     Err(e) => {
                         debug_log(&format!("✗ 服务启动失败: {}", e));
-                        let _ = app_handle.emit("startup-error", &e);
+                        // 收集诊断报告 + 清理残留子进程，再展示给用户
+                        let report = build_failure_report(&app_handle, port, &e);
+                        debug_log(&format!("✗ 启动失败诊断报告:\n{}", report));
+                        force_kill_child(&state);
+                        let _ = app_handle.emit("startup-error", &report);
                     }
                 }
             });

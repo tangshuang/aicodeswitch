@@ -953,6 +953,13 @@ npm 发布成功后，自动触发 Tauri 应用构建：
   - 后端新增 `GET /api/lan/discover`（免鉴权，由开关控制）、`GET /api/lan/scan`、`POST /api/lan/sync`
   - Skills 同步包含 SKILL.md 内容，MCP 同步包含完整配置（command/args/env/url），重名项自动禁用
 
+- 2026-06-15: Tauri 后端启动健壮性与诊断增强
+  - spawn 前主动检测 Node（`node --version` + Windows `where node`），未安装 / 不在 PATH / 版本过低时秒级报错，不再干等超时
+  - 启动失败收集结构化诊断（Node 路径/版本、入口文件存在性、子进程状态、端口占用、启动日志尾部 40 行），在启动屏展示并支持一键复制、根因速判
+  - 健康检查超时 15s → 30s，可用环境变量 `AIC_STARTUP_TIMEOUT`（秒）覆盖；失败后强制清理残留子进程
+  - 修复 Node 端 `checkPortUsable` 无超时（1.5s 兜底）；修复 `app.listen` 的 `EADDRINUSE` 等错误被全局 `uncaughtException` 静默吞掉（改为明确报错并退出，启动期未捕获异常同样退出）
+  - 影响文件：`tauri/src/main.rs`、`tauri/screens/index.html`、`src/server/utils.ts`、`src/server/main.ts`
+
 - 2026-06-10: 认证体系简化与密钥详情页 Tabs 改造
   - 移除全局 `config.apiKey` 认证，简化为 AUTH 驱动的 AccessKey-only 认证
   - AUTH 未配置时：隐藏"接入密钥"菜单，代理无需认证；AUTH 已配置时：显示"接入密钥"，隐藏"会话""日志"，代理必须 AccessKey 认证

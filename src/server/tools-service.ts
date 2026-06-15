@@ -15,6 +15,7 @@ async function checkToolInstalled(toolName: string): Promise<{ installed: boolea
     const child = spawn(command, ['--version'], {
       shell: true,
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true, // 隐藏 Windows 命令行窗口，避免检测时闪窗
     });
 
     let stdout = '';

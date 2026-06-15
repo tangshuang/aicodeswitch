@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-06-15: Tauri 后端启动健壮性与诊断增强
+
+### 改进
+- Tauri 启动 Node 后端前主动检测 Node（`node --version` + Windows `where node`），未安装 / 不在 PATH / 版本过低时秒级报错，不再干等超时
+- 启动失败时收集结构化诊断（Node 路径/版本、入口文件存在性、子进程状态、端口占用、启动日志尾部 40 行），展示在启动屏并支持一键复制、根因速判
+- 健康检查超时由 15s 提升到 30s，可用环境变量 `AIC_STARTUP_TIMEOUT`（秒）覆盖；失败后强制清理残留子进程，避免占用端口
+
+### 修复
+- Node 端 `checkPortUsable` 无超时，网络栈异常时可能永久卡死启动流程；新增 1.5s 兜底
+- `app.listen` 的 `EADDRINUSE` 等错误此前被全局 `uncaughtException` 静默吞掉（进程在但不 listen），改为明确报错并退出；启动阶段未捕获异常同样退出
+- 影响：解决 Windows 首次安装后启动弹「服务器启动失败」却无法判断根因的问题
+- 影响文件：`tauri/src/main.rs`、`tauri/screens/index.html`、`src/server/utils.ts`、`src/server/main.ts`
+
+## 2026-06-15: 修复 Windows 上检测工具时的命令行闪窗
+
+### 修复
+- 路由管理界面检测 Claude Code / Codex 安装状态时，`checkToolInstalled` 的 `spawn` 新增 `windowsHide: true`，消除 Windows 上每次进入页面 cmd 窗口闪两次的问题
+- `session-launcher.ts` 中 `which()` 的 `execSync('where ...')` 同步新增 `windowsHide: true`，消除启动会话检测命令存在性时的 cmd 闪窗
+- 与同文件 `installTool` 已有的 `windowsHide: true` 约定对齐；macOS/Linux 上为 no-op，行为不变
+- 影响文件：`src/server/tools-service.ts`、`src/server/session-launcher.ts`
+
 ## 2026-06-14: 新增 aicos status 命令
 
 ### 新增
