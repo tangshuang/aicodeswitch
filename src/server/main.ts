@@ -475,6 +475,7 @@ const writeCodexConfig = async (
   _dbManager: FileSystemDatabaseManager,
   modelReasoningEffort: CodexReasoningEffort = DEFAULT_CODEX_REASONING_EFFORT,
   codexDefaultModel?: string,
+  enableMemories?: boolean,
   options: ToolConfigWriteOptions = {}
 ): Promise<boolean> => {
   try {
@@ -548,6 +549,18 @@ const writeCodexConfig = async (
         }
       }
     };
+
+    // 记忆功能配置
+    if (enableMemories) {
+      proxyConfig.features = {
+        memories: true,
+      };
+      proxyConfig.memories = {
+        generate_memories: true,
+        use_memories: true,
+        disable_on_external_context: true,
+      };
+    }
 
     // 使用智能合并
     const mergedConfig = mergeTomlConfig(
@@ -861,7 +874,8 @@ const syncConfigsOnServerStartup = async (dbManager: FileSystemDatabaseManager):
   const codexWritten = await writeCodexConfig(
     dbManager,
     modelReasoningEffort,
-    config.codexDefaultModel
+    config.codexDefaultModel,
+    config.codexEnableMemories
   );
   console.log(`[Startup Config Sync] Codex config ${codexWritten ? 'written' : 'skipped'}`);
 };
@@ -891,6 +905,7 @@ const syncConfigsOnGlobalConfigUpdate = async (dbManager: FileSystemDatabaseMana
     dbManager,
     modelReasoningEffort,
     config.codexDefaultModel,
+    config.codexEnableMemories,
     { allowOverwriteRefresh: true }
   );
   console.log(`[Config Update Sync] Codex config ${codexUpdated ? 'written' : 'skipped'}`);
@@ -2567,10 +2582,15 @@ ${instruction}
         : isCodexReasoningEffort(appConfig.codexModelReasoningEffort)
           ? appConfig.codexModelReasoningEffort
         : DEFAULT_CODEX_REASONING_EFFORT;
+      const requestedEnableMemories = req.body.enableMemories;
+      const enableMemories = requestedEnableMemories !== undefined
+        ? !!requestedEnableMemories
+        : !!appConfig.codexEnableMemories;
       const result = await writeCodexConfig(
         dbManager,
         modelReasoningEffort,
-        appConfig.codexDefaultModel
+        appConfig.codexDefaultModel,
+        enableMemories
       );
       applyWriteLocalRecords(proxyServer);
       res.json(result);

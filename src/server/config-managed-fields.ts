@@ -42,6 +42,8 @@ export const CODEX_CONFIG_MANAGED_FIELDS: ManagedFieldPath[] = [
   { path: ['enableRouteSelection'] },
   { path: ['model_providers', 'aicodeswitch'], isSection: true },
   { path: ['mcp_servers'], isSection: true, optional: true },
+  { path: ['features'], isSection: true, optional: true },
+  { path: ['memories'], isSection: true, optional: true },
 ];
 
 /**
