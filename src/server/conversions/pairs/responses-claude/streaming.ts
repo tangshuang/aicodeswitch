@@ -9,6 +9,7 @@ import type { SSEEvent, StreamConverter } from '../../types.js';
 import { generateResponseId, generateCallId } from '../../utils/id.js';
 import { claudeToResponsesStatus } from '../../utils/stop-reasons.js';
 import { parseEventData } from '../../utils/streaming-helpers.js';
+import { toResponsesUsage } from '../../utils/usage.js';
 
 /**
  * ClaudeToResponsesConverter: Claude Messages SSE → Responses API SSE
@@ -19,7 +20,7 @@ export class ClaudeToResponsesConverter implements StreamConverter {
   private thinkingStarted = false;
   private responseId = generateResponseId();
   private model = '';
-  private usage: any = { input_tokens: 0, output_tokens: 0 };
+  private usage: any = null;
   private output: any[] = [];
   private currentToolCallId: string | null = null;
   private currentToolName: string | null = null;
@@ -39,6 +40,14 @@ export class ClaudeToResponsesConverter implements StreamConverter {
         case 'message_start': {
           this.model = data.message?.model || '';
           this.responseId = data.message?.id || this.responseId;
+          // Claude 的 prompt token 数在 message_start 的 message.usage.input_tokens
+          const startUsage = data.message?.usage;
+          if (startUsage) {
+            this.usage = {
+              input_tokens: startUsage.input_tokens ?? 0,
+              output_tokens: startUsage.output_tokens ?? 0,
+            };
+          }
           events.push(this.makeSSE('response.created', {
             id: this.responseId,
             object: 'response',
@@ -179,8 +188,8 @@ export class ClaudeToResponsesConverter implements StreamConverter {
           this.pendingStopReason = data.delta?.stop_reason || null;
           if (data.usage) {
             this.usage = {
-              input_tokens: this.usage.input_tokens,
-              output_tokens: data.usage.output_tokens ?? data.usage.tokens ?? 0,
+              input_tokens: data.usage.input_tokens ?? this.usage?.input_tokens ?? 0,
+              output_tokens: data.usage.output_tokens ?? data.usage.tokens ?? this.usage?.output_tokens ?? 0,
             };
           }
           break;
@@ -263,6 +272,8 @@ export class ClaudeToResponsesConverter implements StreamConverter {
 
     const { status, incomplete_details } = claudeToResponsesStatus(this.pendingStopReason);
 
+    // 上游无 usage 时省略 usage 字段（不伪造 0，避免 Codex missing field input_tokens）
+    const responsesUsage = toResponsesUsage(this.usage);
     const responseObj: any = {
       id: this.responseId,
       object: 'response',
@@ -270,12 +281,8 @@ export class ClaudeToResponsesConverter implements StreamConverter {
       output: this.output,
       model: this.model,
       created_at: Math.floor(Date.now() / 1000),
-      usage: {
-        input_tokens: this.usage.input_tokens,
-        output_tokens: this.usage.output_tokens,
-        total_tokens: this.usage.input_tokens + this.usage.output_tokens,
-      },
       metadata: {},
+      ...(responsesUsage ? { usage: responsesUsage } : {}),
     };
 
     if (incomplete_details) {

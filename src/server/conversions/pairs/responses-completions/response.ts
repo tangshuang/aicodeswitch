@@ -91,8 +91,9 @@ export function completionsToResponsesResponse(response: any): any {
     status,
     output,
     model: response.model,
-    usage,
     created_at: response.created || Math.floor(Date.now() / 1000),
+    // 上游无 usage 时省略 usage 字段（不伪造 0）
+    ...(usage ? { usage } : {}),
   };
 
   if (status === 'incomplete') {
