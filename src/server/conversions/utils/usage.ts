@@ -57,12 +57,31 @@ export function responsesToClaudeUsage(usage: any): { input_tokens: number; outp
   };
 }
 
-/** Map OpenAI Chat usage to Responses API usage */
-export function completionsToResponsesUsage(usage: any): any {
-  if (!usage) return {};
+/**
+ * 构造标准 Responses API usage 对象（转换层兼容入口）。
+ *
+ * 真实值优先：input_tokens ?? prompt_tokens、output_tokens ?? completion_tokens、total_tokens。
+ * 覆盖上游 chat completions / claude / gemini 三种格式的字段命名归一。
+ *
+ * 仅当上游确实提供了任意 token 字段时返回归一化对象；否则返回 null（调用方应省略 usage 字段，
+ * 不伪造 0）。这是避免 Codex `ResponseCompleted: missing field input_tokens` 的关键——
+ * 既不吐空 `{}`，也不吐伪造的 `{0,0,0}`。
+ */
+export function toResponsesUsage(usage: any): { input_tokens: number; output_tokens: number; total_tokens: number } | null {
+  if (!usage || typeof usage !== 'object') return null;
+  const input_tokens = usage.input_tokens ?? usage.prompt_tokens;
+  const output_tokens = usage.output_tokens ?? usage.completion_tokens;
+  const total_tokens = usage.total_tokens;
+  // 上游没返回任何 token 字段 → 不伪造，返回 null
+  if (input_tokens == null && output_tokens == null && total_tokens == null) return null;
   return {
-    input_tokens: usage.input_tokens ?? usage.prompt_tokens ?? 0,
-    output_tokens: usage.output_tokens ?? usage.completion_tokens ?? 0,
-    total_tokens: usage.total_tokens ?? ((usage.input_tokens ?? usage.prompt_tokens ?? 0) + (usage.output_tokens ?? usage.completion_tokens ?? 0)),
+    input_tokens: input_tokens ?? 0,
+    output_tokens: output_tokens ?? 0,
+    total_tokens: total_tokens ?? ((input_tokens ?? 0) + (output_tokens ?? 0)),
   };
+}
+
+/** Map OpenAI Chat usage to Responses API usage（薄封装，保持现有调用方不变） */
+export function completionsToResponsesUsage(usage: any): any {
+  return toResponsesUsage(usage);
 }

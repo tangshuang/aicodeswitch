@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-06-15: 修复 Codex Responses 流 usage 缺字段断连 + 转换层 usage 兼容
+
+### 修复
+- Codex 经 Chat Completions / Claude / Gemini 上游时，`response.completed` 此前吐空 `usage:{}`，导致 Codex 报 `missing field input_tokens` 流断连；改为上游无 usage 时省略 `usage` 字段
+- Claude → Responses 流式转换器此前从未读取 `message_start` 的 `usage.input_tokens`，导致 `input_tokens` 恒为 0
+
+### 改进
+- 新增 Responses 转换层 usage 兼容入口 `toResponsesUsage`：上游有 usage 带真实值（`input_tokens ?? prompt_tokens`、`output_tokens ?? completion_tokens`、`total_tokens` 归一），上游无任何 token 字段时省略 `usage`（不伪造 0）
+- 统一 completions / claude / gemini 三条上游 → Responses 路径（流式 finalize/flush + 非流式）的 usage 输出语义
+- 统计/日志读取层已天然防御（可选链 + `|| 0` + 返回 null/undefined），无 usage 上游下不报错
+- 影响文件：`src/server/conversions/utils/usage.ts`、`src/server/conversions/pairs/responses-completions/streaming.ts`、`src/server/conversions/pairs/responses-completions/response.ts`、`src/server/conversions/pairs/responses-claude/streaming.ts`、`src/server/conversions/pairs/responses-claude/response.ts`
+
 ## 2026-06-15: Tauri 后端启动健壮性与诊断增强
 
 ### 改进

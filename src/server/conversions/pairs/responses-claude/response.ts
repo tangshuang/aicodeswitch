@@ -7,6 +7,7 @@
 import { generateResponseId, generateCallId } from '../../utils/id.js';
 import { claudeToResponsesStatus } from '../../utils/stop-reasons.js';
 import { thinkingToReasoningSummary } from '../../thinking/mapper.js';
+import { toResponsesUsage } from '../../utils/usage.js';
 
 /**
  * Convert a Claude Messages response to an OpenAI Responses API response.
@@ -44,7 +45,8 @@ export function claudeToResponsesResponse(response: any): any {
   }
 
   const { status, incomplete_details } = claudeToResponsesStatus(response.stop_reason);
-  const usage = claudeToResponsesUsage(response.usage);
+  // 上游无 usage 时省略 usage 字段（不伪造 0）
+  const usage = toResponsesUsage(response.usage);
   const responseId = response.id || generateResponseId();
 
   return {
@@ -54,26 +56,8 @@ export function claudeToResponsesResponse(response: any): any {
     output,
     model: response.model || '',
     created_at: Math.floor(Date.now() / 1000),
-    usage,
+    ...(usage ? { usage } : {}),
     ...(incomplete_details ? { incomplete_details } : {}),
     metadata: {},
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Map Claude usage to Responses API usage.
- */
-function claudeToResponsesUsage(usage: any): any {
-  if (!usage) return { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
-  const input = usage.input_tokens ?? 0;
-  const output = usage.output_tokens ?? 0;
-  return {
-    input_tokens: input,
-    output_tokens: output,
-    total_tokens: input + output,
   };
 }

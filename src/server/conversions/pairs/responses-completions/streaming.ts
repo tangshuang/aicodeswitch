@@ -266,15 +266,17 @@ export class CompletionsToResponsesConverter implements StreamConverter {
 
     // Build full response object
     const status = this.finishReason === 'length' ? 'incomplete' : 'completed';
+    // 上游无 usage 时省略 usage 字段（不伪造 0，避免 Codex missing field input_tokens）
+    const responsesUsage = completionsToResponsesUsage(this.usage);
     const responseObj: any = {
       id: this.responseId,
       object: 'response',
       status,
       output: this.output,
       model: this.model,
-      usage: this.usage ? completionsToResponsesUsage(this.usage) : {},
       created_at: Math.floor(Date.now() / 1000),
       metadata: {},
+      ...(responsesUsage ? { usage: responsesUsage } : {}),
     };
 
     if (status === 'incomplete') {

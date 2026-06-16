@@ -1826,7 +1826,7 @@ export default function RoutesPage() {
               Agent Teams 功能需要 Claude Code 版本 ≥ 2.1.32。请升级 Claude Code 后再使用此功能。
             </div>
           )}
-          <div style={{ marginBottom: '20px' }}>
+          <div style={{ marginTop: '20px', marginBottom: '20px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <input
                 type="checkbox"
@@ -2115,6 +2115,40 @@ export default function RoutesPage() {
             </div>
             <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
               设置后写入 ~/.codex/config.toml 的 model 字段，重启 Codex 后生效。留空则使用默认值 gpt-5.3-codex。
+            </div>
+          </div>
+
+          <div style={{ marginTop: '20px', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <input
+                type="checkbox"
+                id="codex-enable-memories-toggle"
+                checked={!!appConfig?.codexEnableMemories}
+                onChange={async (e) => {
+                  try {
+                    const current = appConfig || {};
+                    await api.updateConfig({
+                      ...current,
+                      codexEnableMemories: e.target.checked,
+                    });
+                    await loadAppConfig();
+                    await api.writeCodexConfig(undefined, e.target.checked);
+                    toast.success('记忆功能设置已保存（重启 Codex 后生效）');
+                  } catch (error: any) {
+                    toast.error('更新失败: ' + error.message);
+                  }
+                }}
+                style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+              />
+              <label
+                htmlFor="codex-enable-memories-toggle"
+                style={{ cursor: 'pointer', fontSize: '14px', userSelect: 'none' }}
+              >
+                开启记忆功能
+              </label>
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+              开启后会在 ~/.codex/config.toml 中添加 features.memories 和 memories 配置段。
             </div>
           </div>
         </div>

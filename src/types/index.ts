@@ -263,6 +263,7 @@ export interface AppConfig {
   autocompactPctOverride?: number;  // Claude Code 自动压缩百分比阈值（1-100，全局）
   claudeDefaultModel?: string;  // Claude Code 默认模型（全局）
   codexModelReasoningEffort?: CodexReasoningEffort;  // Codex reasoning effort（全局）
+  codexEnableMemories?: boolean;  // Codex 记忆功能（全局）
   codexDefaultModel?: string;  // Codex 默认模型（全局）
   // 代理配置
   proxyEnabled?: boolean;  // 是否启用代理

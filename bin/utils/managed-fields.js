@@ -45,6 +45,8 @@ const CODEX_CONFIG_MANAGED_FIELDS = [
   'enableRouteSelection',
   'model_providers.aicodeswitch',
   'mcp_servers',
+  'features',
+  'memories',
 ];
 
 /**
