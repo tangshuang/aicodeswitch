@@ -3883,6 +3883,13 @@ ${instruction}
     return tracker;
   };
 
+  // 全部 API 服务平铺一览（含所属供应商）
+  app.get('/api/performance/services-overview', asyncHandler(async (_req, res) => {
+    const tracker = requirePerfTracker(res);
+    if (!tracker) return;
+    res.json(tracker.getServicesOverview());
+  }));
+
   // 全部供应商一览
   app.get('/api/performance/vendors', asyncHandler(async (_req, res) => {
     const tracker = requirePerfTracker(res);

@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ClaudePermissionDefaultMode, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, AccessKeySession, KeyUsageDailyRecord, QuotaAlert, LanDiscoverResponse, LanSyncRequest, LanSyncResult, PerfVendorOverview, PerfVendorDetail, PerfServiceDetail, PerfModelDetail } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ClaudePermissionDefaultMode, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, AccessKeySession, KeyUsageDailyRecord, QuotaAlert, LanDiscoverResponse, LanSyncRequest, LanSyncResult, PerfVendorOverview, PerfVendorDetail, PerfServiceDetail, PerfModelDetail, PerfServiceOverview } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -67,6 +67,7 @@ interface BackendAPI {
   resetStatistics: () => Promise<boolean>;
 
   // 服务性能统计（全局，与 AUTH 无关）
+  getPerformanceServicesOverview: () => Promise<PerfServiceOverview[]>;
   getPerformanceVendors: () => Promise<PerfVendorOverview[]>;
   getPerformanceVendor: (vendorId: string) => Promise<PerfVendorDetail>;
   getPerformanceService: (serviceId: string) => Promise<PerfServiceDetail>;
@@ -338,6 +339,7 @@ export const api: BackendAPI = {
   resetStatistics: () => requestJson(buildUrl('/api/statistics'), { method: 'DELETE' }),
 
   // 服务性能统计（全局，与 AUTH 无关）
+  getPerformanceServicesOverview: () => requestJson(buildUrl('/api/performance/services-overview')),
   getPerformanceVendors: () => requestJson(buildUrl('/api/performance/vendors')),
   getPerformanceVendor: (vendorId) => requestJson(buildUrl(`/api/performance/vendors/${vendorId}`)),
   getPerformanceService: (serviceId) => requestJson(buildUrl(`/api/performance/services/${serviceId}`)),

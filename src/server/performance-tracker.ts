@@ -96,6 +96,29 @@ export class ServicePerformanceTracker {
     }));
   }
 
+  /** 全部 API 服务平铺一览（含所属供应商），用于「API 服务」维度对比 */
+  getServicesOverview(): Array<{
+    serviceId: string;
+    serviceName?: string;
+    vendorId: string;
+    vendorName?: string;
+    derived: PerfDerived;
+  }> {
+    const out: Array<{ serviceId: string; serviceName?: string; vendorId: string; vendorName?: string; derived: PerfDerived }> = [];
+    for (const [vendorId, v] of Object.entries(this.file.vendors)) {
+      for (const [serviceId, s] of Object.entries(v.services)) {
+        out.push({
+          serviceId,
+          serviceName: s.serviceName,
+          vendorId,
+          vendorName: v.vendorName,
+          derived: this.derive(s.serviceRollup),
+        });
+      }
+    }
+    return out;
+  }
+
   /** 某供应商：自身 rollup + 其下所有服务 rollup */
   getVendorDetail(vendorId: string): {
     vendorName?: string;

@@ -860,6 +860,13 @@ export interface PerfVendorOverview {
   vendorName?: string;
   derived: PerfDerived;
 }
+export interface PerfServiceOverview {
+  serviceId: string;
+  serviceName?: string;
+  vendorId: string;
+  vendorName?: string;
+  derived: PerfDerived;
+}
 export interface PerfServiceSummary {
   serviceId: string;
   serviceName?: string;

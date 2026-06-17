@@ -46,6 +46,11 @@
   justify-content: center;
 }
 
+/* 折叠态保留 overflow: visible，避免右侧 tooltip 被滚动容器裁切 */
+.sidebar.collapsed .nav-menu {
+  overflow: visible;
+}
+
 .sidebar.collapsed .theme-toggle {
   flex-direction: column;
   gap: 8px;
@@ -106,7 +111,30 @@
   list-style: none;
   padding: 16px 0;
   margin: 0;
-  overflow: visible;
+  /* 占满侧边栏剩余高度，屏幕较矮时菜单区域可独立滚动，避免布局被挤压 */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: visible;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-secondary) transparent;
+}
+
+.nav-menu::-webkit-scrollbar {
+  width: 6px;
+}
+
+.nav-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.nav-menu::-webkit-scrollbar-thumb {
+  background: var(--border-secondary);
+  border-radius: 4px;
+}
+
+.nav-menu::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 
 .nav-menu li {
