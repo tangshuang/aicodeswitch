@@ -278,6 +278,8 @@ export interface AppConfig {
   proxyPassword?: string;  // 代理认证密码
   // 局域网同步
   enableLanDiscovery?: boolean;  // 是否允许局域网发现并拉取配置，默认 false
+  // ATO 编排：运行中的团队任务数（配置态软锁，>0 时禁止恢复用户配置）
+  atoActiveTeamCount?: number;
   // API 路径路由映射
 }
 
@@ -893,4 +895,87 @@ export interface PerfServiceDetail {
 export interface PerfModelDetail {
   derived: PerfDerived;
   hourly: PerfTrendPoint[];
+}
+
+// ===================== ATO (Agent Team Orchestrator) =====================
+export type AtoTaskStatus = 'pending' | 'running' | 'awaiting-question' | 'completed' | 'failed' | 'skipped';
+export type AtoTeamStatus = 'queued' | 'running' | 'awaiting-question' | 'completed' | 'failed' | 'stopped';
+export type AtoQuestionLevel = 'L0' | 'L1' | 'L2';
+
+export interface AtoTask {
+  id: string;
+  description: string;
+  dependencies: string[];
+  expectedOutput?: string;
+  verificationScript?: string;
+  agentTool?: string;
+  routeId?: string;
+}
+export interface AtoTaskResult {
+  taskId: string;
+  status: AtoTaskStatus;
+  summary?: string;
+  artifacts?: string[];
+  retryCount: number;
+  startedAt?: number;
+  completedAt?: number;
+  error?: string;
+  tokensEstimate?: number;
+}
+export interface AtoPendingQuestion {
+  id: string;
+  taskId: string;
+  level: AtoQuestionLevel;
+  text: string;
+  options: string[];
+  suggestion?: string;
+  createdAt: number;
+  autoAdoptAt?: number;
+}
+export interface AtoLogEntry {
+  ts: number;
+  agentId: string;
+  agentTool?: string;
+  taskId?: string;
+  type: 'status' | 'decision' | 'question' | 'answer' | 'result' | 'error' | 'verification' | 'log';
+  content: unknown;
+}
+export interface AtoTeamRun {
+  id: string;
+  prompt: string;
+  createdAt: number;
+  updatedAt: number;
+  status: AtoTeamStatus;
+  workspacePath: string;
+  defaultAgent: string;
+  teamAccessKey?: string;
+  tasks: Record<string, AtoTask>;
+  results: Record<string, AtoTaskResult>;
+  logs: AtoLogEntry[];
+  pendingQuestions: AtoPendingQuestion[];
+  tokenBudget: { total?: number; spent: number };
+  error?: string;
+}
+export interface AtoCreateTeamRequest {
+  prompt: string;
+  workspacePath?: string;
+  defaultAgent?: string;
+  routeId?: string;
+  teamAccessKey?: string;
+  verificationScript?: string;
+  tasks?: Array<Partial<AtoTask> & { description: string }>;
+}
+
+// ===================== ATO Leader 对话 =====================
+export interface AtoChatMessage {
+  ts: number;
+  role: 'user' | 'assistant';
+  content: string;
+  tools?: Array<{ kind?: string; name?: string; input?: unknown; content?: unknown }>;
+}
+export interface AtoLeaderToolEvent {
+  kind: 'tool_use' | 'tool_result';
+  name?: string;
+  input?: unknown;
+  content?: unknown;
 }

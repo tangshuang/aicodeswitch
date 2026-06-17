@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ClaudePermissionDefaultMode, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, AccessKeySession, KeyUsageDailyRecord, QuotaAlert, LanDiscoverResponse, LanSyncRequest, LanSyncResult, PerfVendorOverview, PerfVendorDetail, PerfServiceDetail, PerfModelDetail, PerfServiceOverview } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ClaudePermissionDefaultMode, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, AccessKeySession, KeyUsageDailyRecord, QuotaAlert, LanDiscoverResponse, LanSyncRequest, LanSyncResult, PerfVendorOverview, PerfVendorDetail, PerfServiceDetail, PerfModelDetail, PerfServiceOverview, AtoTeamRun, AtoCreateTeamRequest, AtoLogEntry, AtoChatMessage, AtoLeaderToolEvent } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -213,6 +213,34 @@ interface BackendAPI {
   lanScan: () => Promise<{ localIp: string; subnet: string; port: number; networkInterfaces: Array<{ name: string; address: string; subnet: string; netmask: string }> }>;
   lanDiscover: (ip: string, port: number) => Promise<LanDiscoverResponse>;
   lanSync: (data: LanSyncRequest) => Promise<LanSyncResult>;
+
+  // ATO 编排
+  atoCreateTeam: (req: AtoCreateTeamRequest) => Promise<AtoTeamRun>;
+  atoListTeams: () => Promise<AtoTeamRun[]>;
+  atoGetTeam: (id: string) => Promise<AtoTeamRun>;
+  atoGetLogs: (id: string, since?: number) => Promise<AtoLogEntry[]>;
+  atoStopTeam: (id: string) => Promise<boolean>;
+  atoAnswerQuestion: (teamId: string, questionId: string, choice: string) => Promise<boolean>;
+  atoCheckAdapters: () => Promise<Record<string, boolean>>;
+  atoGetRoutes: () => Promise<Route[]>;
+
+  // ATO 主 Agent（Leader）对话
+  atoLeaderHistory: () => Promise<AtoChatMessage[]>;
+  atoLeaderStatus: () => Promise<{ busy: boolean; available: boolean }>;
+  atoLeaderGetConfig: () => Promise<{ leaderTool: 'claude-code' | 'codex'; available: boolean }>;
+  atoLeaderSetConfig: (tool: 'claude-code' | 'codex') => Promise<{ leaderTool: 'claude-code' | 'codex' }>;
+  atoLeaderReset: () => Promise<boolean>;
+  atoPermissionPending: () => Promise<Array<{ id: string; toolName: string; input: unknown; risk: string; reason?: string; createdAt: number }>>;
+  atoPermissionResolve: (id: string, behavior: 'allow' | 'deny', message?: string) => Promise<boolean>;
+  atoLeaderMessage: (
+    text: string,
+    handlers: {
+      onText?: (delta: string) => void;
+      onTool?: (e: AtoLeaderToolEvent) => void;
+      onStatus?: (text: string) => void;
+      onError?: (message: string) => void;
+    }
+  ) => Promise<string>;
 }
 
 const buildUrl = (
@@ -669,4 +697,71 @@ export const api: BackendAPI = {
     });
   },
   lanSync: (data) => requestJson(buildUrl('/api/lan/sync'), { method: 'POST', body: JSON.stringify(data) }),
+
+  // ATO 编排
+  atoCreateTeam: (req) => requestJson(buildUrl('/api/orchestrator/teams'), { method: 'POST', body: JSON.stringify(req) }),
+  atoListTeams: () => requestJson(buildUrl('/api/orchestrator/teams')),
+  atoGetTeam: (id) => requestJson(buildUrl(`/api/orchestrator/teams/${id}`)),
+  atoGetLogs: (id, since = 0) => requestJson(buildUrl(`/api/orchestrator/teams/${id}/logs`, { since })),
+  atoStopTeam: (id) => requestJson(buildUrl(`/api/orchestrator/teams/${id}/stop`), { method: 'POST' }).then(() => true),
+  atoAnswerQuestion: (teamId, questionId, choice) => requestJson(buildUrl(`/api/orchestrator/teams/${teamId}/questions/${questionId}/answer`), { method: 'POST', body: JSON.stringify({ choice }) }).then(() => true),
+  atoCheckAdapters: () => requestJson(buildUrl('/api/orchestrator/adapters/check')),
+  atoGetRoutes: () => requestJson(buildUrl('/api/orchestrator/routes')),
+
+  // ATO 主 Agent（Leader）对话
+  atoLeaderHistory: () => requestJson(buildUrl('/api/orchestrator/leader/history')),
+  atoLeaderStatus: () => requestJson(buildUrl('/api/orchestrator/leader/status')),
+  atoLeaderGetConfig: () => requestJson(buildUrl('/api/orchestrator/leader/config')),
+  atoLeaderSetConfig: (tool) => requestJson(buildUrl('/api/orchestrator/leader/config'), { method: 'PUT', body: JSON.stringify({ leaderTool: tool }) }),
+  atoLeaderReset: () => requestJson(buildUrl('/api/orchestrator/leader/reset'), { method: 'POST' }).then(() => true),
+  atoPermissionPending: () => requestJson(buildUrl('/api/orchestrator/leader/permissions/pending')),
+  atoPermissionResolve: (id, behavior, message) => requestJson(buildUrl(`/api/orchestrator/leader/permissions/${id}/resolve`), { method: 'POST', body: JSON.stringify({ behavior, message }) }).then(() => true),
+  atoLeaderMessage: async (text, handlers) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = localStorage.getItem('auth_token');
+    if (token) headers['Access-Token'] = token;
+    const res = await fetch(buildUrl('/api/orchestrator/leader/message'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok || !res.body) {
+      const t = await res.text().catch(() => '');
+      throw new Error(t || `HTTP ${res.status}`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let full = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop() || '';
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith('data:')) continue;
+        let evt: any;
+        try {
+          evt = JSON.parse(line.slice(5).trim());
+        } catch {
+          continue;
+        }
+        if (evt.type === 'text' && typeof evt.delta === 'string') {
+          full += evt.delta;
+          handlers.onText?.(evt.delta);
+        } else if (evt.type === 'tool') {
+          handlers.onTool?.(evt.tool as AtoLeaderToolEvent);
+        } else if (evt.type === 'status') {
+          handlers.onStatus?.(evt.text);
+        } else if (evt.type === 'error') {
+          handlers.onError?.(evt.message);
+        } else if (evt.type === 'done') {
+          if (typeof evt.full === 'string') full = evt.full;
+        }
+      }
+    }
+    return full;
+  },
 };

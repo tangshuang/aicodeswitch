@@ -4128,6 +4128,12 @@ export class ProxyServer {
         tagsForLog.push(...extraTagsForLog);
       }
 
+      // ATO 归因：若请求携带 x-ato-task-id（ATO 子 Agent 注入），打 tag 便于按 task 聚合成本
+      const atoTaskId = typeof req.headers['x-ato-task-id'] === 'string' ? (req.headers['x-ato-task-id'] as string) : '';
+      if (atoTaskId) {
+        tagsForLog.push(`ato:${atoTaskId}`);
+      }
+
       await this.dbManager.addLog({
         timestamp: Date.now(),
         method: req.method,

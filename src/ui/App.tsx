@@ -428,8 +428,8 @@ function AppContent() {
         <div className="nav-menu-wrap">
         <ul className="nav-menu" ref={navMenuRef}>
           <li>
-            <NavItemWithTooltip text="首页 (ATO 团队)" showTooltip={sidebarCollapsed}>
-              <NavLink to="/"><span className="nav-icon">🤖</span><span className="nav-text">首页 (ATO 团队)</span></NavLink>
+            <NavItemWithTooltip text="首页" showTooltip={sidebarCollapsed}>
+              <NavLink to="/"><span className="nav-icon">🤖</span><span className="nav-text">首页</span></NavLink>
             </NavItemWithTooltip>
           </li>
           <li>

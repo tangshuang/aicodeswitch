@@ -248,6 +248,41 @@ aicos version            # Show current version information
   - AUTH 关闭 → 隐藏"接入密钥"菜单，显示"会话""日志"
   - AUTH 开启 → 显示"接入密钥"菜单，隐藏"会话""日志"
 
+#### 5.6. ATO Orchestrator Module - `server/orchestrator/`
+- **Purpose**: 多 Agent 团队编排（Ralph Loop + 验证门控），作为 AICodeSwitch 的可选嵌入式模块。PRD 依据 `docs/PRD/supervisor-agent/supervisor-agent-v4.md`
+- **设计要点**：
+  - **厚路径 + 进程隔离**：编排逻辑放 `src/server/orchestrator/`，子 Agent（claude/codex CLI）作为独立 `child_process` spawn；子 Agent 流量天然走代理（base_url 已写入本地配置）
+  - **Ralph Loop**：选就绪任务 → spawn 全新子 Agent → 退出后执行验证脚本（exit 0 = 完成）→ 失败重试/失败策略
+  - **stdout 协议问答**：子 Agent 输出 `«ATO_QUESTION»{json}«/ATO_QUESTION»` 标记后退出，编排器下轮注入 `## Prior Decisions`。统一 claude-code（stream-json）与 codex（纯文本）
+  - **两层混合路由**：Layer1 task 级（task → routeId）+ Layer2 请求级（代理 `determineContentType` 自动切模型，零代码复用）
+  - **Token 预算复用**：团队绑定 AccessKey 即可复用 `quota-checker` 的 token limit 硬停止，不新建计数器
+  - **配置态软锁**：`AppConfig.atoActiveTeamCount > 0` 时，`/api/restore-config/*` 拒绝恢复用户配置；spawn 前自检 `checkClaudeConfigStatus().isOverwritten`
+- **Key Files**:
+  - `types.ts` - Task/TeamRun/AgentAdapter/Decision 等类型
+  - `adapters.ts` - `ClaudeCodeAdapter`/`CodexAdapter`/`AgentAdapterRegistry`，问题解析 `«ATO_QUESTION»`
+  - `scheduler.ts` - `TeamScheduler`（Ralph Loop 单团队调度器，含验证与问答分支）
+  - `manager.ts` - `OrchestratorManager`（团队生命周期、持久化 `.team/state.json`+`logs.jsonl`、L0/L1/L2 问题分级、软锁维护）
+  - `routes.ts` - `registerOrchestratorRoutes` → `/api/orchestrator/*`
+  - `index.ts` - 模块导出
+- **HTTP API**: `/api/orchestrator/teams` (POST 创建/GET 列表)、`/teams/:id` (状态)、`/teams/:id/logs?since=` (增量日志)、`/teams/:id/stop`、`/teams/:id/questions/:qid/answer`、`/adapters/check`、`/routes`
+- **main.ts 接线**: `start()` 中在 `registerRoutes` 后实例化 `OrchestratorManager` 并注册路由；`restore-config/*` 端点加软锁守卫；`shutdown()` 先 `shutdownAll()` 再恢复配置
+- **proxy-server 归因**: `finalizeLog` 读取 `x-ato-task-id` header → 写入 `RequestLog.tags`（`ato:<taskId>`），唯一动代理内核的小改动
+- **前端**: `HomePage.tsx`（ATO 对话界面，应用默认首页 `/`），群聊式日志流 + 任务状态 + 问题面板 + Agent 健康检查；"局域网同步""一键配置"两按钮迁移至该页右上角
+
+#### 5.7. ATO 主 Agent（Leader）子系统 - `server/orchestrator/leader/`
+- **Purpose**: 以 Claude Code 作为主 Agent，用户只通过一个聊天窗口与它对话；团队/任务/路由/记忆全部由主 Agent 经 MCP 工具自主管理（无需用户操作界面）
+- **设计**:
+  - **无状态运行 + 持久化记忆**：每轮 spawn `claude --print --output-format stream-json`，从磁盘读取记忆重建上下文（不依赖 `--resume`/`--input-format stream-json`）
+  - **内置 stdio MCP**：`mcp-server.ts`（手写 JSON-RPC，无 SDK 依赖）暴露 `ato_list_routes/ato_create_team/ato_list_teams/ato_get_team/ato_stop_team/ato_answer_question/ato_check_adapters` + `memory_read/memory_write/conversation_recent`；经 HTTP 调本机 `/api/orchestrator/*`（跨进程解耦）
+  - **MCP 注册**：`main.ts:ensureLeaderMcpRegistered()` 启动时写入 `~/.claude.json` 的 `mcpServers['ato-leader']`（`node dist/server/orchestrator/leader/mcp-server.js` + `env:{ATO_BASE,ATO_TOKEN}`）
+  - **记忆目录** `~/.aicodeswitch/ato-leader/`：`memory/{conversation.jsonl, profile.md, scratchpad.md}` + `sessions/<id>/` + `teams-index.json` + `workspace/`（leader 的固定 cwd"家"，内种 CLAUDE.md；编程工具在此自由创建记忆/计划/skills 等文件）
+- **Key Files**: `memory.ts`(目录/记忆读写) / `prompt.ts`(系统提示+上下文拼装) / `runner.ts`(流式 claude spawn + stream-json 增量解析) / `manager.ts`(`LeaderManager` 单活跃会话) / `mcp-server.ts`(独立进程入口) / `routes.ts` / `index.ts`
+- **HTTP API**: `POST /api/orchestrator/leader/message`(SSE 流式回复) / `GET .../leader/history` / `GET .../leader/status` / `POST .../leader/reset`
+- **前端**: `HomePage.tsx` 重写为 Codex 风格聊天窗（顶栏两按钮保留，消息区 user/assistant 气泡 + ReactMarkdown + 工具调用折叠 chip，底部输入框，`fetch().body.getReader()` 流式逐字渲染）；菜单名「首页」
+- **主 Agent 工具切换**: 用户可在首页顶栏选择主 Agent 由 Claude Code 还是 Codex 扮演（`runner.ts:streamLeader` 分派；`memory.ts:loadLeaderConfig/saveLeaderConfig` 持久化到 `ato-leader/config.json`；`GET/PUT /api/orchestrator/leader/config`；ato-leader MCP 同时写入 `.claude.json` 与 `~/.codex/config.toml`）。Codex 走 `codex exec` 纯文本流式（无 stream-json/工具事件）
+- **已知约束**: `claude --print --output-format stream-json` 事件结构以真实环境为准（runner 增量解析可能需微调）；MCP 走 HTTP 调本机，若开启 AUTH 需 `ATO_TOKEN`；单活跃会话避免并发冲突
+- **权限裁决（PermissionJudge，`leader/permission.ts`）**：claude 经 `--permission-prompt-tool mcp__ato-leader__permission_request`（leader `runner.ts` 与子 Agent `adapters.ts` 的 spawn 都加，强制 `--permission-mode default`）把权限请求路由到 ato-leader MCP → `POST /api/orchestrator/leader/permission`（同步阻塞）。裁决：先硬规则（deny/allow 正则）→ 否则 LLM 危险度分析（经本机代理 `/v1/messages` 打一次上游，不走 CLI、不递归）→ low 放行 / high 拒绝（deny message 含建议喂回 claude 让其 adapt）/ medium 按配置自动或上抛人类。上抛人类经 pending 队列 + `GET /permissions/stream` SSE 推前端，UI 卡片放行/拒绝 → `/permissions/:id/resolve`。配置在 `ato-leader/config.json` 的 `permission`（enabled/allowPatterns/denyPatterns/humanGateMedium/humanGateHigh）。**P0 待实测**：MCP 入参字段名（`tool_name`/`input`，已做容错）与返回形态（标准 text-content 包 JSON）
+
 #### 6. UI (React) - `ui/`
 - Main app: `App.tsx` - Navigation and layout with collapsible sidebar
 - Components:

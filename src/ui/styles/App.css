@@ -117,25 +117,14 @@
   /* 屏幕较矮时菜单区域可独立滚动，避免布局被挤压 */
   overflow-y: auto;
   overflow-x: visible;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-secondary) transparent;
+  /* 隐藏滚动条但保留滚动能力，避免占用宽度（滚动提示已由阴影+滚轮 icon 提供） */
+  scrollbar-width: none;
 }
 
 .nav-menu::-webkit-scrollbar {
-  width: 6px;
-}
-
-.nav-menu::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.nav-menu::-webkit-scrollbar-thumb {
-  background: var(--border-secondary);
-  border-radius: 4px;
-}
-
-.nav-menu::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 /* 滚动阴影 + 滚轮提示：当菜单可滚动时叠加在上下边缘，提示还有更多菜单。
@@ -2497,3 +2486,70 @@ table th {
 div:hover > .route-icon-popover {
   opacity: 1;
 }
+
+/* ATO Leader 对话光标动画 */
+.ato-cursor {
+  display: inline-block;
+  margin-left: 2px;
+  animation: ato-blink 1s step-start infinite;
+  color: var(--accent-primary, #2563eb);
+}
+@keyframes ato-blink {
+  50% { opacity: 0; }
+}
+
+/* ===== ATO Leader 极简首页 ===== */
+.leader-home { height: 100%; display: flex; flex-direction: column; }
+.leader-empty { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.leader-chat { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.leader-messages { flex: 1; overflow: auto; padding: 24px 16px 8px; }
+.leader-input-wrap { padding: 8px 16px 20px; }
+
+.leader-input-box {
+  max-width: 720px; width: 100%; margin: 0 auto;
+  background: #ffffff;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 12px 14px 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.15s ease;
+}
+.leader-input-box:focus-within { border-color: var(--accent-primary, #2563eb); }
+[data-theme="dark"] .leader-input-box { background: #000000; }
+.leader-input-box textarea {
+  width: 100%; border: none; outline: none; resize: none;
+  background: transparent; color: var(--text-primary);
+  font-size: 15px; line-height: 1.55; font-family: inherit;
+  max-height: 200px; padding: 0;
+}
+.leader-input-bar { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+
+.leader-tool-select {
+  border: none; background: transparent; color: var(--text-secondary);
+  font-size: 13px; cursor: pointer; outline: none; padding: 4px 6px; border-radius: 6px;
+}
+.leader-tool-select:hover { background: var(--bg-secondary); color: var(--text-primary); }
+
+.leader-send-btn {
+  width: 32px; height: 32px; border-radius: 50%;
+  border: none; cursor: pointer;
+  background: var(--accent-primary, #2563eb); color: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: opacity 0.15s ease;
+}
+.leader-send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.leader-send-btn svg { width: 16px; height: 16px; }
+
+.leader-msg { max-width: 720px; margin: 0 auto 18px; }
+.leader-msg--assistant { color: var(--text-primary); }
+.leader-msg--assistant .markdown-content > *:first-child { margin-top: 0; }
+.leader-msg--assistant .markdown-content > *:last-child { margin-bottom: 0; }
+.leader-msg--user { display: flex; justify-content: flex-end; }
+.leader-msg--user .leader-bubble {
+  background: var(--bg-secondary); border: 1px solid var(--border-color);
+  padding: 8px 12px; border-radius: 12px; max-width: 80%;
+  white-space: pre-wrap; word-break: break-word;
+}
+.leader-status { max-width: 720px; margin: 0 auto 12px; color: var(--text-secondary); font-size: 13px; }
+.leader-hint { max-width: 720px; margin: 14px auto 0; color: var(--text-secondary); font-size: 12px; text-align: center; }
+.leader-tools-inline { margin-bottom: 8px; }

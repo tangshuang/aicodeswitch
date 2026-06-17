@@ -63,6 +63,8 @@ import {
 import { SKILLSMP_API_KEY } from './config';
 import { extractSessionContent, previewMigration, migrateSession } from './session-migration';
 import { writePromptToTempFile, cleanupTempFile, launchTargetWithFallback, cleanupOldTempFiles, resolveProjectDir } from './session-launcher';
+import { OrchestratorManager, registerOrchestratorRoutes } from './orchestrator';
+import { LeaderManager, registerLeaderRoutes, ensureLeaderDirs } from './orchestrator/leader';
 
 const appDir = path.join(os.homedir(), '.aicodeswitch');
 const legacyDataDir = path.join(appDir, 'data');
@@ -2668,6 +2670,9 @@ ${instruction}
   app.post(
     '/api/restore-config/claude',
     asyncHandler(async (_req, res) => {
+      if (orchestratorManager?.isConfigLocked()) {
+        return res.status(409).json({ error: '有 ATO 团队任务运行中，配置已被软锁保护，请先停止团队任务。' });
+      }
       const result = await restoreClaudeConfig();
       res.json(result);
     })
@@ -2676,6 +2681,9 @@ ${instruction}
   app.post(
     '/api/restore-config/codex',
     asyncHandler(async (_req, res) => {
+      if (orchestratorManager?.isConfigLocked()) {
+        return res.status(409).json({ error: '有 ATO 团队任务运行中，配置已被软锁保护，请先停止团队任务。' });
+      }
       const result = await restoreCodexConfig();
       res.json(result);
     })
@@ -4167,6 +4175,65 @@ ${instruction}
 // listen 就绪标志：区分"启动阶段"与"运行阶段"，启动期致命异常应让进程退出
 let listenReady = false;
 
+// ATO 编排器实例（start() 中创建）
+let orchestratorManager: OrchestratorManager | null = null;
+
+// ATO 主 Agent（Leader）实例（start() 中创建）
+let leaderManager: LeaderManager | null = null;
+
+/** 把 ato-leader 内置 MCP 写入 ~/.claude.json 与 ~/.codex/config.toml，使 Leader（claude/codex）进程都能加载管理工具 */
+function ensureLeaderMcpRegistered(port: number): void {
+  const homeDir = os.homedir();
+  const mcpServerPath = path.join(__dirname, 'orchestrator', 'leader', 'mcp-server.js');
+  const envVars = {
+    ATO_BASE: `http://127.0.0.1:${port}`,
+    ATO_TOKEN: process.env.ATO_TOKEN || '',
+  };
+
+  // Claude Code：~/.claude.json 的 mcpServers
+  const claudeJsonPath = path.join(homeDir, '.claude.json');
+  let claudeJson: any = {};
+  if (fs.existsSync(claudeJsonPath)) {
+    try {
+      claudeJson = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8'));
+    } catch {
+      claudeJson = {};
+    }
+  }
+  if (!claudeJson.mcpServers) claudeJson.mcpServers = {};
+  claudeJson.mcpServers['ato-leader'] = {
+    type: 'stdio',
+    command: 'node',
+    args: [mcpServerPath],
+    env: { ...envVars },
+  };
+  fs.writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2), 'utf8');
+
+  // Codex：~/.codex/config.toml 的 [mcp_servers.ato-leader]
+  const codexDir = path.join(homeDir, '.codex');
+  const codexConfigPath = path.join(codexDir, 'config.toml');
+  try {
+    if (!fs.existsSync(codexDir)) fs.mkdirSync(codexDir, { recursive: true });
+    let codexConfig: Record<string, any> = {};
+    if (fs.existsSync(codexConfigPath)) {
+      try {
+        codexConfig = parseToml(fs.readFileSync(codexConfigPath, 'utf-8'));
+      } catch {
+        codexConfig = {};
+      }
+    }
+    if (!codexConfig.mcp_servers) codexConfig.mcp_servers = {};
+    codexConfig.mcp_servers['ato-leader'] = {
+      command: 'node',
+      args: [mcpServerPath],
+      env: { ...envVars },
+    };
+    fs.writeFileSync(codexConfigPath, stringifyToml(codexConfig), 'utf-8');
+  } catch (error) {
+    console.error('[Server] Failed to register ato-leader MCP for codex:', error);
+  }
+}
+
 const start = async () => {
   fs.mkdirSync(dataDir, { recursive: true });
 
@@ -4225,6 +4292,35 @@ const start = async () => {
   await registerRoutes(dbManager, proxyServer);
   await proxyServer.registerProxyRoutes();
   console.timeEnd('[Server] step "register-routes"');
+
+  // Initialize ATO Orchestrator module（v4：嵌入式编排模块）
+  orchestratorManager = new OrchestratorManager({
+    getConfig: () => dbManager.getConfig(),
+    updateConfig: (patch) => {
+      const cur = dbManager.getConfig();
+      dbManager.updateConfig({ ...cur, ...patch });
+    },
+    isConfigOverwritten: () => checkClaudeConfigStatus().isOverwritten || checkCodexConfigStatus().isOverwritten,
+  });
+  // 启动时重置可能残留的软锁计数
+  try {
+    const cur = dbManager.getConfig();
+    if (cur.atoActiveTeamCount) {
+      dbManager.updateConfig({ ...cur, atoActiveTeamCount: 0 });
+    }
+  } catch { /* ignore */ }
+  registerOrchestratorRoutes(app, orchestratorManager, dbManager);
+
+  // Initialize ATO 主 Agent（Leader）子系统
+  ensureLeaderDirs();
+  leaderManager = new LeaderManager(`http://127.0.0.1:${port}`);
+  registerLeaderRoutes(app, leaderManager);
+  // 把 ato-leader MCP 写入 ~/.claude.json，让 Leader 的 claude 进程加载管理工具
+  try {
+    ensureLeaderMcpRegistered(port);
+  } catch (error) {
+    console.error('[Server] Failed to register ato-leader MCP:', error);
+  }
 
   app.use(express.static(path.resolve(__dirname, '../ui')));
 
@@ -4310,6 +4406,18 @@ const start = async () => {
     isShuttingDown = true;
     shutdownPromise = (async () => {
       console.log(`[Server] Received ${signal}, shutting down...`);
+
+      // 先停止所有 ATO 团队任务（回收子 Agent），再恢复配置
+      try {
+        leaderManager?.shutdownAll();
+        orchestratorManager?.shutdownAll();
+        const curCfg = dbManager.getConfig();
+        if (curCfg.atoActiveTeamCount) {
+          dbManager.updateConfig({ ...curCfg, atoActiveTeamCount: 0 });
+        }
+      } catch (error) {
+        console.error('[Shutdown ...] Orchestrator shutdown failed:', error);
+      }
 
       // 服务终止前恢复配置文件（适用于 aicos stop 与 Ctrl+C）
       try {
