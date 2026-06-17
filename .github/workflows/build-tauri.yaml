@@ -70,6 +70,24 @@ jobs:
             target: x86_64-pc-windows-msvc
             args: ""
             bundle: "msi nsis"
+          - os: macos-13
+            platform: macos
+            arch: x64
+            target: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin"
+            bundle: "dmg app"
+          - os: macos-14
+            platform: macos
+            arch: aarch64
+            target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
+            bundle: "dmg app"
+          - os: ubuntu-22.04
+            platform: linux
+            arch: x64
+            target: x86_64-unknown-linux-gnu
+            args: ""
+            bundle: "deb rpm appimage"
     permissions:
       contents: write
     runs-on: ${{ matrix.os }}
@@ -80,6 +98,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+        shell: bash
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -166,6 +191,74 @@ jobs:
             tauri/target/release/bundle/msi/*.msi
             tauri/target/release/bundle/nsis/*.exe
 
+      - name: Rename macOS artifacts
+        if: matrix.platform == 'macos'
+        run: |
+          VERSION="${{ needs.check-release.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          BUNDLE_DIR="tauri/target/${TARGET}/release/bundle"
+          cd "$BUNDLE_DIR"
+          if [ -d "dmg" ]; then
+            for file in dmg/*.dmg; do
+              [ -e "$file" ] || continue
+              mv "$file" "dmg/AI-Code-Switch-${VERSION}-macOS-${{ matrix.arch }}.dmg"
+            done
+          fi
+          # Zip the .app bundle for release (GitHub Release 需要压缩包，不能直接上传 .app 目录)
+          if [ -d "macos" ]; then
+            cd macos
+            for app in *.app; do
+              [ -e "$app" ] || continue
+              ditto -c -k --keepParent "$app" "AI-Code-Switch-${VERSION}-macOS-${{ matrix.arch }}.zip"
+            done
+          fi
+        shell: bash
+
+      - name: Upload artifacts (macOS)
+        if: matrix.platform == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-macos-${{ matrix.arch }}
+          path: |
+            tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            tauri/target/${{ matrix.target }}/release/bundle/macos/*.zip
+
+      - name: Rename Linux artifacts
+        if: matrix.platform == 'linux'
+        run: |
+          VERSION="${{ needs.check-release.outputs.version }}"
+          BUNDLE_DIR="tauri/target/release/bundle"
+          cd "$BUNDLE_DIR"
+          if [ -d "deb" ]; then
+            for file in deb/*.deb; do
+              [ -e "$file" ] || continue
+              mv "$file" "deb/AI-Code-Switch-${VERSION}-Linux-${{ matrix.arch }}.deb"
+            done
+          fi
+          if [ -d "rpm" ]; then
+            for file in rpm/*.rpm; do
+              [ -e "$file" ] || continue
+              mv "$file" "rpm/AI-Code-Switch-${VERSION}-Linux-${{ matrix.arch }}.rpm"
+            done
+          fi
+          if [ -d "appimage" ]; then
+            for file in appimage/*.AppImage; do
+              [ -e "$file" ] || continue
+              mv "$file" "appimage/AI-Code-Switch-${VERSION}-Linux-${{ matrix.arch }}.AppImage"
+            done
+          fi
+        shell: bash
+
+      - name: Upload artifacts (Linux)
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-linux-${{ matrix.arch }}
+          path: |
+            tauri/target/release/bundle/deb/*.deb
+            tauri/target/release/bundle/rpm/*.rpm
+            tauri/target/release/bundle/appimage/*.AppImage
+
   create-release:
     needs: [check-release, build-tauri]
     permissions:
@@ -197,10 +290,24 @@ jobs:
             - 推荐下载 **`.exe`** 安装包（NSIS），无需管理员权限，安装更稳定。
             - 若使用 **`.msi`** 安装包时遇到错误码 `2503` / `2502`（通常是 Windows Installer 权限不足），请改用 `.exe`；或右键 `.msi` →「以管理员身份运行」，也可在管理员 CMD 中执行 `msiexec /i "安装包.msi"`。
 
+            ### macOS
+
+            - Apple Silicon（M1/M2/M3/M4）请下载 **`macOS-aarch64`** 版本的 **`.dmg`**。
+            - Intel 芯片请下载 **`macOS-x64`** 版本的 **`.dmg`**。
+            - `.zip` 为应用包（`.app`），适合免安装使用或手动放置到「应用程序」。
+            - 若提示「无法验证开发者」或「已损坏」，请在「系统设置 → 隐私与安全性」中点击「仍要打开」，或在终端执行 `xattr -dr com.apple.quarantine /Applications/AI\ Code\ Switch.app`。
+
+            ### Linux
+
+            - **`.AppImage`**：可直接运行的便携版，赋予执行权限后双击即可（`chmod +x *.AppImage`）。
+            - **`.deb`**：适用于 Debian / Ubuntu 及其衍生发行版（`sudo dpkg -i *.deb`）。
+            - **`.rpm`**：适用于 Fedora / RHEL / openSUSE 等（`sudo rpm -i *.rpm`）。
+            - 需系统已安装 WebKitGTK 运行时（多数桌面发行版自带）。
+
             ### 前置要求
 
             - 已安装 [Node.js](https://nodejs.org/)（LTS 版本，应用启动时需要）。
-            - 系统要求：Windows 10 / 11（x64）。
+            - 系统要求：Windows 10 / 11（x64）、macOS 11+、主流 Linux 桌面发行版。
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

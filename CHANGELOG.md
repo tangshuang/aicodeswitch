@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-06-17: Tauri 构建流水线新增 macOS 与 Linux 产物
+
+### 新增
+- `build-tauri.yaml` 构建矩阵扩展：新增 macOS Intel（`macos-13`，`x86_64-apple-darwin`）与 Apple Silicon（`macos-14`，`aarch64-apple-darwin`），产出 `.dmg` + `.app`（`.zip`）
+- 新增 Linux 桌面构建（`ubuntu-22.04`，`x86_64-unknown-linux-gnu`），产出 `.deb` / `.rpm` / `.AppImage`
+- Linux job 新增 WebKitGTK、libayatana-appindicator 等系统依赖安装步骤
+- 新增各平台产物重命名（`AI-Code-Switch-<ver>-<OS>-<arch>`）与分组上传步骤
+- Release 说明补充 macOS（Intel/ARM 区分、Gatekeeper 提示）与 Linux（deb/rpm/AppImage 用法）下载指引
+
 ## 2026-06-17: 新增服务性能测速与吞吐统计（被动流量，全局）
 
 ### 新增
