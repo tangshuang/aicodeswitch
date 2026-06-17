@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-06-16: 修复 thinking 过程中路由"使用中"状态丢失
+
+### 修复
+- thinking hold（思考计算阶段）期间上游仅发 `ping`/keep-alive，而 SSE 转换器会丢弃 ping，导致无下游 chunk 触发刷新、不活动定时器在 10s 后提前触发，经 `status/stream` 推送了一条错误的 `idle` update，路由页 badge 在思考期间变空闲
+- `refreshRuleInUse` 此前只清 `ruleTimeout` 未清 pending 的 `idle debounce`，即便刷新也无法拦住已触发的 idle；且 `idle` 一旦 emit 后刷新早退、永远无法经 SSE 恢复"使用中"
+
+### 改进
+- 不活动定时器 `INACTIVITY_TIMEOUT` 由 10s 提升到 120s（兜底安全网，正常结束仍由 `finalizeLog` 立即清状态），从源头避免长静默期间误判空闲
+- `refreshRuleInUse` 重构：`in_use` 时同时清除 pending idle debounce；`idle` 时重新 `markRuleInUse` 恢复"使用中"（经 SSE 自愈）；仅 `error`/`suspended` 终态早退
+
 ## 2026-06-15: 修复 Codex Responses 流 usage 缺字段断连 + 转换层 usage 兼容
 
 ### 修复
