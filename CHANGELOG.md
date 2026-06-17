@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-06-17: 修复 Windows 下 ATO 主 Agent/子 Agent 检测不到 Claude Code / Codex CLI
+
+### 修复
+- Windows 上 npm 全局包以 `.cmd` 批处理 shim 分发，Node.js `spawn/spawnSync` 默认（不带 `shell:true`）无法经 `CreateProcess` 解析 `.cmd` 扩展名，导致 `isClaudeAvailable/isCodexAvailable` 返回 `false`，前端首页显示「未检测到 Claude Code CLI」；加 `shell:true` 又会闪现 `cmd.exe` 控制台窗口
+
+### 改进
+- 新增跨平台 CLI 解析模块 `src/server/orchestrator/cli-resolver.ts`：Windows 下用 `where` 定位 `.cmd`，读出 shim 内 `%dp0%\node_modules\<pkg>\<entry>.js`，把 `%dp0%` 替换为 .cmd 所在目录，最终用 `process.execPath + [jsEntry]` 直接调用，既不依赖 shell 解析也不会闪窗；解析失败回退到原命令；结果进程内缓存
+- `runner.ts`（`isClaudeAvailable`/`isCodexAvailable`/`streamClaude`/`streamCodex`）与 `adapters.ts`（`ClaudeCodeAdapter`/`CodexAdapter` 的 spawn + checkHealth）全部改走 resolver；删除 `adapters.ts` 内的 `checkCommandHealth`（统一到 `isCliAvailable`）
+
 ## 2026-06-17: Tauri 构建流水线新增 macOS 与 Linux 产物
 
 ### 新增

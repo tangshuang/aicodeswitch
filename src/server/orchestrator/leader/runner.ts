@@ -9,6 +9,7 @@
  */
 import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import { loadPermissionConfig } from './permission';
+import { isCliAvailable, resolveCli } from '../cli-resolver';
 
 export interface ToolEvent {
   kind: 'tool_use' | 'tool_result';
@@ -35,25 +36,15 @@ export interface StreamOptions {
   timeoutMs?: number;
 }
 
-/** 健康检查：claude CLI 是否可用 */
+/** 健康检查：claude/codex CLI 是否可用（Windows 下自动解析 .cmd shim，绕过 cmd.exe 避免闪窗） */
 export type LeaderTool = 'claude-code' | 'codex';
 
 export function isClaudeAvailable(): boolean {
-  try {
-    const r = spawnSync('claude', ['--version'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, timeout: 4000 });
-    return r.status === 0;
-  } catch {
-    return false;
-  }
+  return isCliAvailable('claude');
 }
 
 export function isCodexAvailable(): boolean {
-  try {
-    const r = spawnSync('codex', ['--version'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, timeout: 4000 });
-    return r.status === 0;
-  } catch {
-    return false;
-  }
+  return isCliAvailable('codex');
 }
 
 export function isToolAvailable(tool: LeaderTool): boolean {
@@ -99,9 +90,10 @@ export function streamClaude(prompt: string, opts: StreamOptions, cb: StreamCall
       claudeArgs.push('--permission-mode', 'default', '--permission-prompt-tool', 'mcp__ato-leader__permission_request');
     }
 
+    const resolved = resolveCli('claude');
     child = spawn(
-      'claude',
-      claudeArgs,
+      resolved.command,
+      [...resolved.prependArgs, ...claudeArgs],
       { cwd: opts.cwd, env: { ...process.env, ...opts.env } as Record<string, string>, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }
     );
 
@@ -203,9 +195,10 @@ export function streamCodex(prompt: string, opts: StreamOptions, cb: StreamCallb
       resolve(finalText);
     };
 
+    const resolved = resolveCli('codex');
     child = spawn(
-      'codex',
-      ['exec'],
+      resolved.command,
+      [...resolved.prependArgs, 'exec'],
       { cwd: opts.cwd, env: { ...process.env, ...opts.env } as Record<string, string>, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }
     );
 

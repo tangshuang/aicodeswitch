@@ -7,6 +7,7 @@
 import { spawn, spawnSync } from 'child_process';
 import path from 'path';
 import { loadPermissionConfig } from './leader/permission';
+import { resolveCli, isCliAvailable } from './cli-resolver';
 import fs from 'fs';
 import type {
   AgentAdapter,
@@ -184,15 +185,7 @@ function buildCommonSections(task: Task, deps: TaskResult[], decisions: Decision
   return ctx;
 }
 
-/** 健康检查：运行 `<cmd> --version`，exit 0 即可用 */
-function checkCommandHealth(command: string, args: string[] = ['--version']): boolean {
-  try {
-    const r = spawnSync(command, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, timeout: 4000 });
-    return r.status === 0;
-  } catch {
-    return false;
-  }
-}
+/** 健康检查：跨平台 CLI 可用性（Windows 下自动解析 .cmd shim） */
 
 // ───────────────────────── Claude Code 适配器 ─────────────────────────
 
@@ -213,9 +206,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     if (loadPermissionConfig().enabled) {
       args.push('--permission-mode', 'default', '--permission-prompt-tool', 'mcp__ato-leader__permission_request');
     }
+    const resolved = resolveCli('claude');
     return runProcess(
-      'claude',
-      args,
+      resolved.command,
+      [...resolved.prependArgs, ...args],
       { cwd: opts.workspacePath, env, timeoutMs: opts.timeoutMs, stdinInput }
     );
   }
@@ -229,7 +223,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   async checkHealth(): Promise<boolean> {
-    return checkCommandHealth('claude');
+    return isCliAvailable('claude');
   }
 }
 
@@ -248,9 +242,10 @@ export class CodexAdapter implements AgentAdapter {
     // codex exec 读取 stdin 作为 prompt（非交互）
     const env = { ...process.env, ...opts.env } as Record<string, string>;
     const stdinInput = await fs.promises.readFile(opts.contextFilePath, 'utf-8').catch(() => '');
+    const resolved = resolveCli('codex');
     return runProcess(
-      'codex',
-      ['exec'],
+      resolved.command,
+      [...resolved.prependArgs, 'exec'],
       { cwd: opts.workspacePath, env, timeoutMs: opts.timeoutMs, stdinInput }
     );
   }
@@ -264,7 +259,7 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async checkHealth(): Promise<boolean> {
-    return checkCommandHealth('codex');
+    return isCliAvailable('codex');
   }
 }
 

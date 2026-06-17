@@ -87,6 +87,11 @@ aicodeswitch/
 - **资源打包:** 构建时将 `dist/server` 和 `dist/ui` 嵌入 Tauri
 - **原理:** 通过tauri来运行dist/server/main.js，并使用内置的webview来渲染ui页面
 
+### Windows 子进程调用
+- **禁止直接 `spawn('claude' / 'codex', ...)`**：Windows 上 npm 全局包以 `.cmd` 批处理 shim 分发，Node.js `spawn` 默认（不带 `shell:true`）的 `CreateProcess` 不识别 `.cmd` 扩展名 → ENOENT；加 `shell:true` 又会闪现 cmd.exe 窗口
+- **统一走 `orchestrator/cli-resolver.ts`**：`resolveCli(name)` 解析出 `{ command: process.execPath, prependArgs: [jsEntry] }`（Windows 读 `.cmd` 内 `%dp0%\node_modules\<pkg>\<entry>.js` 替换为真实路径），非 Windows 或解析失败回退原命令
+- **健康检查用 `isCliAvailable(name)`**，不要手写 `spawnSync(cmd, ['--version'])`
+
 ## 构建与发布
 
 ```bash
@@ -119,6 +124,11 @@ aicos stop            # 停止服务
 - `tauri/AGENTS.md` - Tauri 桌面应用约定
 
 ## 最近变更
+
+- 2026-06-17: 修复 Windows 下 ATO 主 Agent/子 Agent 检测不到 Claude Code / Codex CLI
+  - Windows 上 npm 全局包以 `.cmd` shim 分发，`spawn('claude', ...)` 默认无法解析（ENOENT），加 `shell:true` 又会闪现 cmd.exe 窗口
+  - 新增跨平台模块 `orchestrator/cli-resolver.ts`：Windows 下 `where` 找 `.cmd` → 读 shim 内 `%dp0%\node_modules\<pkg>\<entry>.js` → 替换 `%dp0%` → 用 `process.execPath + [jsEntry]` 直调
+  - `leader/runner.ts`（`isClaudeAvailable`/`isCodexAvailable`/`streamClaude`/`streamCodex`）与 `orchestrator/adapters.ts`（两个 Adapter 的 `spawn` + `checkHealth`）统一走 resolver
 
 - 2026-06-17: 新增服务性能测速与吞吐统计（被动流量，全局）
   - 以「供应商 → 服务 → 模型」三级聚合两个指标：首 Token 返回时间（TTFT）、吞吐 TPM（生成阶段每分钟吐出 token 数），走势按小时桶
