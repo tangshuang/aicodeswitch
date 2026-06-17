@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { HashRouter as Router, Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import { api } from './api/client';
@@ -220,6 +220,40 @@ function AppContent() {
     localStorage.setItem('sidebar-collapsed', (!sidebarCollapsed).toString());
   };
 
+  // 侧边栏菜单滚动状态检测：当菜单项溢出时可滚动时，显示阴影 + 滚轮提示
+  const navMenuRef = useRef<HTMLUListElement>(null);
+  const [navScrollState, setNavScrollState] = useState({ scrollable: false, atTop: true, atBottom: true });
+
+  useEffect(() => {
+    const el = navMenuRef.current;
+    if (!el) return;
+    const update = () => {
+      const scrollable = el.scrollHeight - el.clientHeight > 2;
+      setNavScrollState({
+        scrollable,
+        atTop: el.scrollTop <= 1,
+        atBottom: el.scrollTop + el.clientHeight >= el.scrollHeight - 1,
+      });
+    };
+    update();
+    let raf = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(update);
+    };
+    const ro = new ResizeObserver(onScroll);
+    ro.observe(el);
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      el.removeEventListener('scroll', onScroll);
+    };
+  }, [authEnabled, sidebarCollapsed]);
+
+  // 折叠态菜单 overflow 为 visible（不滚动），此时不显示滚动提示
+  const showNavScrollHint = !sidebarCollapsed && navScrollState.scrollable;
+
   const handleVendorModalConfirm = () => {
     setShowVendorModal(false);
     navigate('/vendors');
@@ -390,7 +424,8 @@ function AppContent() {
           <img src={logoImage} alt="AI Code Switch Logo" className="logo-image" />
           <h2>AI Code Switch</h2>
         </div>
-         <ul className="nav-menu">
+        <div className="nav-menu-wrap">
+        <ul className="nav-menu" ref={navMenuRef}>
           <li>
             <NavItemWithTooltip text="路由管理" showTooltip={sidebarCollapsed}>
               <NavLink to="/"><span className="nav-icon">🌏</span><span className="nav-text">路由管理</span></NavLink>
@@ -452,6 +487,20 @@ function AppContent() {
             </NavItemWithTooltip>
           </li>
         </ul>
+        {showNavScrollHint && (
+          <>
+            <div className={`nav-scroll-shadow nav-scroll-shadow--top${navScrollState.atTop ? ' is-hidden' : ''}`} aria-hidden="true" />
+            <div className={`nav-scroll-shadow nav-scroll-shadow--bottom${navScrollState.atBottom ? ' is-hidden' : ''}`} aria-hidden="true">
+              <span className="nav-scroll-wheel">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="6" y="3" width="12" height="18" rx="6" />
+                  <line x1="12" y1="7" x2="12" y2="11" />
+                </svg>
+              </span>
+            </div>
+          </>
+        )}
+        </div>
 
         <div className="theme-toggle">
           <button
