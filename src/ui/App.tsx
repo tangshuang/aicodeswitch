@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { HashRouter as Router, Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import { api } from './api/client';
+import HomePage from './pages/HomePage';
 import VendorsPage from './pages/VendorsPage';
 import RouteGroupsPage from './pages/RoutesPage';
 import LogsPage from './pages/LogsPage';
@@ -251,8 +252,8 @@ function AppContent() {
     };
   }, [authEnabled, sidebarCollapsed]);
 
-  // 折叠态菜单 overflow 为 visible（不滚动），此时不显示滚动提示
-  const showNavScrollHint = !sidebarCollapsed && navScrollState.scrollable;
+  // 菜单可滚动时显示阴影 + 滚轮提示（展开态与折叠态通用）
+  const showNavScrollHint = navScrollState.scrollable;
 
   const handleVendorModalConfirm = () => {
     setShowVendorModal(false);
@@ -427,8 +428,13 @@ function AppContent() {
         <div className="nav-menu-wrap">
         <ul className="nav-menu" ref={navMenuRef}>
           <li>
+            <NavItemWithTooltip text="首页 (ATO 团队)" showTooltip={sidebarCollapsed}>
+              <NavLink to="/"><span className="nav-icon">🤖</span><span className="nav-text">首页 (ATO 团队)</span></NavLink>
+            </NavItemWithTooltip>
+          </li>
+          <li>
             <NavItemWithTooltip text="路由管理" showTooltip={sidebarCollapsed}>
-              <NavLink to="/"><span className="nav-icon">🌏</span><span className="nav-text">路由管理</span></NavLink>
+              <NavLink to="/routes"><span className="nav-icon">🌏</span><span className="nav-text">路由管理</span></NavLink>
             </NavItemWithTooltip>
           </li>
           <li>
@@ -543,7 +549,7 @@ function AppContent() {
       </nav>
       <main className="main-content">
           <Routes>
-            <Route path="/" element={<RouteGroupsPage />} />
+            <Route path="/" element={<HomePage />} />
             <Route path="/statistics" element={<StatisticsPage />} />
             <Route path="/routes" element={<RouteGroupsPage />} />
             <Route path="/vendors" element={<VendorsPage />} />
