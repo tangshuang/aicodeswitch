@@ -210,6 +210,7 @@ aicos version            # Show current version information
   - `error-logs.json` - Error logs
   - `blacklist.json` - Service blacklist entries
   - `mcps.json` - MCP (Model Context Protocol) tools
+  - `service-performance.json` - 服务性能统计全局桶（首 Token 返回时间 TTFT / 吞吐 TPM，按 供应商→服务→模型 三级聚合 + 小时走势）
 
 **Data Structure**:
 - Vendors contain nested services array: `vendors[{ id, name, services: [{ id, name, apiUrl, ... }], ... }]`
@@ -622,6 +623,18 @@ aicos version            # Show current version information
     - Binding is stored as `routeId`/`routeName` fields on the Session object
     - Route deletion cascades: automatically clears all session bindings for the deleted route
     - UI: "路由" button in SessionsPage opens route selection modal; RoutesPage shows bound session count per route card
+
+### 服务性能统计（测速 / TPM）
+- **全局被动统计，与 AUTH 模式无关**：在代理转发真实请求时自动采集，普通路由 + AccessKey 路由流量统一计入 `service-performance.json`，不主动发探测请求、不按 key/用户隔离
+- **两个指标（每次请求记录，按「服务×模型」）**：
+  - 首 Token 返回时间（TTFT）= 第一个 token 返回 − 请求发起
+  - 吞吐 TPM = 输出 token / 生成阶段秒 × 60（从第一个 token 到返回结束每分钟吐出多少 token）
+- **三级上卷**：模型 → 服务 → 供应商，加权聚合（sum+count）保证自洽；走势按小时桶（保留 72 桶）
+- **流式精确 / 非流式估算**：流式经 `StreamTimingTransform` 记录首/末事件时间得 `precise` 口径；非流式按端到端 `estimated`，两者分开存放不互相污染
+- **采集点**：两条转发路径（`proxyRequest` 标准 `/v1/*`、`proxyRequestForApiPath` API path）的 `finalizeLog` 公共点调用 `emitPerformance`；AccessKey 与普通路由在 `proxyRequest` 内合流，无需单独挂载
+- **模块**：`server/performance-tracker.ts`（`ServicePerformanceTracker`）、`server/transformers/stream-timing-transform.ts`（`StreamTimingTransform`）
+- **API**：`GET /api/performance/vendors`、`/vendors/:id`、`/services/:id`、`/services/:id/models/:model`
+- **UI**：数据统计页（`StatisticsPage`）内「服务性能 / 测速统计」面板，提供指标（TTFT/TPM）× 维度（供应商/服务/模型）× 时段（24h/7d/30d）筛选 + 对比表 + 小时走势折线
 
 ### Usage Limits Auto-Sync
 - **Service-Level Limits**: API services can have token and request count limits configured

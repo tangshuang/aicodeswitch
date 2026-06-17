@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-06-17: 新增服务性能测速与吞吐统计（被动流量，全局）
+
+### 新增
+- 新增全局服务性能统计：以「供应商 → 服务 → 模型」三级聚合两个指标——首 Token 返回时间（TTFT）与吞吐 TPM（生成阶段每分钟吐出 token 数），走势按小时桶
+- 被动采集：在代理转发真实请求时自动打点，与 AUTH 模式无关（普通路由 + AccessKey 路由统一计入），零额外上游开销
+- 新增 `StreamTimingTransform` 流式打点（记录首/末 SSE 事件时间），注入两条转发路径（标准 `/v1/*` 与 API path `/claude-code/`、`/codex/`）；非流式按端到端估算（`estimated`），失败请求计入错误率
+- 新增 `ServicePerformanceTracker` 全局聚合模块（`~/.aicodeswitch/data/service-performance.json`，内存增量 + 5s debounce flush + 原子写），加权聚合（sum+count）保证三级上卷数学自洽
+- 数据统计页新增「服务性能 / 测速统计」面板：指标（TTFT/TPM）× 维度（供应商/服务/模型）× 时段（24h/7d/30d）筛选，对比表 + 小时走势折线 + 模型级极值
+- 新增 4 个 API：`GET /api/performance/vendors`、`/vendors/:id`、`/services/:id`、`/services/:id/models/:model`
+- `RequestLog` 扩展 `ttftMs` / `generationMs` / `tokensPerSecond` / `timingAccuracy` 字段
+
 ## 2026-06-16: 修复 thinking 过程中路由"使用中"状态丢失
 
 ### 修复

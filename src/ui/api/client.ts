@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ClaudePermissionDefaultMode, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, AccessKeySession, KeyUsageDailyRecord, QuotaAlert, LanDiscoverResponse, LanSyncRequest, LanSyncResult } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ClaudePermissionDefaultMode, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, AccessKeySession, KeyUsageDailyRecord, QuotaAlert, LanDiscoverResponse, LanSyncRequest, LanSyncResult, PerfVendorOverview, PerfVendorDetail, PerfServiceDetail, PerfModelDetail } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -65,6 +65,12 @@ interface BackendAPI {
 
   getStatistics: (days?: number) => Promise<Statistics>;
   resetStatistics: () => Promise<boolean>;
+
+  // 服务性能统计（全局，与 AUTH 无关）
+  getPerformanceVendors: () => Promise<PerfVendorOverview[]>;
+  getPerformanceVendor: (vendorId: string) => Promise<PerfVendorDetail>;
+  getPerformanceService: (serviceId: string) => Promise<PerfServiceDetail>;
+  getPerformanceModel: (serviceId: string, model: string) => Promise<PerfModelDetail>;
 
   getConfig: () => Promise<AppConfig>;
   updateConfig: (config: AppConfig) => Promise<boolean>;
@@ -330,6 +336,12 @@ export const api: BackendAPI = {
 
   getStatistics: (days = 30) => requestJson(buildUrl('/api/statistics', { days })),
   resetStatistics: () => requestJson(buildUrl('/api/statistics'), { method: 'DELETE' }),
+
+  // 服务性能统计（全局，与 AUTH 无关）
+  getPerformanceVendors: () => requestJson(buildUrl('/api/performance/vendors')),
+  getPerformanceVendor: (vendorId) => requestJson(buildUrl(`/api/performance/vendors/${vendorId}`)),
+  getPerformanceService: (serviceId) => requestJson(buildUrl(`/api/performance/services/${serviceId}`)),
+  getPerformanceModel: (serviceId, model) => requestJson(buildUrl(`/api/performance/services/${serviceId}/models/${encodeURIComponent(model)}`)),
 
   getConfig: () => requestJson(buildUrl('/api/config')),
   updateConfig: (config) => requestJson(buildUrl('/api/config'), { method: 'PUT', body: JSON.stringify(config) }),

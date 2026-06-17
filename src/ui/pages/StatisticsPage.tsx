@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import type { Statistics } from '../../types';
+import ServicePerformancePanel from '../components/ServicePerformancePanel';
 import {
   AreaChart,
   Area,
@@ -614,6 +615,7 @@ function StatisticsPage() {
           </div>
         </div>
       </div>
+      <ServicePerformancePanel />
     </div>
   );
 }
