@@ -213,6 +213,12 @@ export interface RequestLog {
     body?: any;                                    // 实际发送的请求体，改为对象类型
   };
   downstreamResponseBody?: any;                      // 实际转发的响应体（经过转换后发送给客户端的响应体）
+
+  // —— 服务性能数据点（全局统计，与 AUTH 无关） ——
+  ttftMs?: number;                                   // 首 Token 返回时间（firstTokenAt − requestStartAt）
+  generationMs?: number;                             // 纯生成阶段时长（lastTokenAt − firstTokenAt）
+  tokensPerSecond?: number;                          // 等效 tokens/s（TPM/60）
+  timingAccuracy?: 'precise' | 'estimated';          // 流式精确 / 非流式端到端估算
 }
 
 export interface ErrorLog {
@@ -778,4 +784,113 @@ export interface QuotaAlert {
   limit: number;
   percentage: number;
   level: 'warning' | 'critical' | 'exceeded';
+}
+
+// ===================== 服务性能统计（全局，与 AUTH 无关） =====================
+// 数据点为每次请求的 TTFT（首 Token 返回时间）与 TPM（每分钟吐 token 数），
+// 以「供应商 → 服务 → 模型」三级聚合，走势统一按小时桶。
+
+/** 加权求和单元：avg 由 sum/count 派生，保证三级上卷数学自洽 */
+export interface PerfBucket {
+  count: number;            // 样本数
+  sumTtftMs: number;        // Σ TTFT（毫秒）
+  sumTps: number;           // Σ tokensPerSecond
+  totalOutputTokens: number;
+}
+
+/** 单个聚合节点（模型级 / 服务级 / 供应商级通用） */
+export interface PerfAggregate {
+  precise: PerfBucket;      // 流式精确口径
+  estimated: PerfBucket;    // 非流式端到端估算（TPM 用，TTFT 不计）
+  errorCount: number;       // 失败请求数（计入样本但不参与吞吐均值）
+  /** 模型级独有：极值（仅精确样本）；服务级/供应商级为子项 min/max 的聚合 */
+  minTtftMs?: number;
+  maxTtftMs?: number;
+  minTps?: number;
+  maxTps?: number;
+  /** 小时走势桶，键 "YYYY-MM-DD HH" */
+  hourly: Record<string, PerfBucket>;
+}
+
+/** 全局性能数据桶（独立存储于 service-performance.json） */
+export interface ServicePerformanceFile {
+  vendors: {
+    [vendorId: string]: {
+      vendorName?: string;
+      vendorRollup: PerfAggregate;
+      services: {
+        [serviceId: string]: {
+          serviceName?: string;
+          serviceRollup: PerfAggregate;
+          models: {
+            [model: string]: PerfAggregate;
+          };
+          updatedAt: number;
+        };
+      };
+    };
+  };
+}
+
+/** API 返回的派生视图项（avg 由 sum/count 计算） */
+export interface PerfDerived {
+  count: number;
+  avgTtftMs: number;
+  avgTpm: number;
+  minTtftMs?: number;
+  maxTtftMs?: number;
+  minTps?: number;
+  maxTps?: number;
+  errorCount: number;
+  totalOutputTokens: number;
+  successRate: number;
+}
+
+/** 小时走势点（API 返回） */
+export interface PerfTrendPoint {
+  hour: string;            // "YYYY-MM-DD HH"
+  count: number;
+  avgTtftMs: number;
+  avgTpm: number;
+}
+
+/** API 响应类型（前端 / tracker 共享结构） */
+export interface PerfVendorOverview {
+  vendorId: string;
+  vendorName?: string;
+  derived: PerfDerived;
+}
+export interface PerfServiceOverview {
+  serviceId: string;
+  serviceName?: string;
+  vendorId: string;
+  vendorName?: string;
+  derived: PerfDerived;
+}
+export interface PerfServiceSummary {
+  serviceId: string;
+  serviceName?: string;
+  derived: PerfDerived;
+}
+export interface PerfVendorDetail {
+  vendorName?: string;
+  derived: PerfDerived;
+  hourly: PerfTrendPoint[];
+  services: PerfServiceSummary[];
+}
+export interface PerfModelSummary {
+  model: string;
+  derived: PerfDerived;
+}
+export interface PerfServiceDetail {
+  vendorId?: string;
+  vendorName?: string;
+  serviceName?: string;
+  derived: PerfDerived;
+  hourly: PerfTrendPoint[];
+  models: PerfModelSummary[];
+}
+export interface PerfModelDetail {
+  derived: PerfDerived;
+  hourly: PerfTrendPoint[];
 }

@@ -120,6 +120,11 @@ aicos stop            # 停止服务
 
 ## 最近变更
 
+- 2026-06-17: 新增服务性能测速与吞吐统计（被动流量，全局）
+  - 以「供应商 → 服务 → 模型」三级聚合两个指标：首 Token 返回时间（TTFT）、吞吐 TPM（生成阶段每分钟吐出 token 数），走势按小时桶
+  - 被动采集，与 AUTH 模式无关（普通路由 + AccessKey 路由统一计入 `service-performance.json`）；流式经 `StreamTimingTransform` 精确打点，非流式端到端估算
+  - 采集点在两条转发路径（`proxyRequest` / `proxyRequestForApiPath`）的 `finalizeLog` 公共点；聚合模块 `server/performance-tracker.ts`（加权 sum+count）
+  - 新增 4 个 API `/api/performance/*`；数据统计页新增「服务性能」面板（指标 × 维度 × 时段筛选）
 - 2026-06-13: 新增 Claude Code 默认权限模式配置项 `permissions.defaultMode`
   - 新增全局配置 `claudePermissionsDefaultMode`，支持 6 种模式（`default`/`acceptEdits`/`plan`/`auto`/`dontAsk`/`bypassPermissions`），默认 `default`
   - 保留 `enableBypassPermissionsSupport` 作为门控：仅当其开启时 `bypassPermissions` 才可选/生效；关闭时若当前为该模式自动同步写回 `default`

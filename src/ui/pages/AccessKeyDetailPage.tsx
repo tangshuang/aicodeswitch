@@ -695,7 +695,7 @@ export default function AccessKeyDetailPage() {
                             onClick={() => setSelectedLog(log)}>
                             <td style={{ padding: '8px 6px', whiteSpace: 'nowrap' }}>{new Date(log.timestamp).toLocaleString()}</td>
                             <td style={{ padding: '8px 6px', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{log.path || '-'}</td>
-                            <td style={{ padding: '8px 6px' }}>{log.requestModel || log.targetModel || '-'}</td>
+                            <td style={{ padding: '8px 6px' }}>{log.targetModel || log.requestModel || '-'}</td>
                             <td style={{ padding: '8px 6px', textAlign: 'right' }}>{formatToken(tokens)}</td>
                             <td style={{ padding: '8px 6px', textAlign: 'right' }}>{log.responseTime ? (log.responseTime / 1000).toFixed(1) + 's' : '-'}</td>
                             <td style={{ padding: '8px 6px', textAlign: 'center' }}>

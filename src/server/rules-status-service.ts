@@ -41,7 +41,7 @@ export class RulesStatusBroadcaster extends EventEmitter {
   private idleDebounceTimeouts: Map<string, NodeJS.Timeout> = new Map();
   private syncInterval: NodeJS.Timeout | null = null;
   private blacklistChecker: BlacklistChecker | null = null;
-  private readonly INACTIVITY_TIMEOUT = 10000; // 10秒无活动后标记为空闲
+  private readonly INACTIVITY_TIMEOUT = 120000; // 120秒无活动后标记为空闲（兜底安全网，覆盖 thinking hold 等长静默场景）
   private readonly IDLE_DEBOUNCE_DELAY = 3000; // idle 延迟3秒，避免对话快速进入 in_use 时闪烁
   private readonly SYNC_INTERVAL = 10000; // 每10秒检查一次 suspended 和 error 状态
   private readonly ERROR_RECOVERY_TIMEOUT = 30000; // error 状态30秒后自动恢复
@@ -285,16 +285,35 @@ export class RulesStatusBroadcaster extends EventEmitter {
   }
 
   /**
-   * 刷新规则使用中的不活动定时器（轻量级，仅重置定时器，不修改状态）
-   * 用于 streaming 过程中持续保持 in_use 状态
+   * 刷新规则使用中的不活动定时器（轻量级，仅重置定时器，通常不修改状态）
+   * 用于 streaming 过程中持续保持 in_use 状态。
+   *
+   * 行为：
+   * - status === 'in_use'：重置不活动定时器，并清除可能 pending 的 idle debounce，
+   *   避免已触发的 idle 经 SSE 推送出去（thinking hold 场景的关键修复）。
+   * - status === 'idle'：说明此前已被错误判空闲，但请求仍在出流——重新标记为 in_use
+   *   以便经 SSE 把状态推回"使用中"，实现前端自愈。
+   * - status === 'error' / 'suspended'：早退，这两种终态有独立恢复机制，不应被流式刷新覆盖。
    */
   refreshRuleInUse(routeId: string, ruleId: string) {
     const currentStatus = this.ruleStates.get(ruleId);
-    // 仅当状态已经是 in_use 时才刷新定时器
-    if (currentStatus?.status !== 'in_use') return;
+
+    // 终态有独立恢复机制，刷新不应覆盖
+    if (currentStatus?.status === 'error' || currentStatus?.status === 'suspended') {
+      return;
+    }
 
     const timeoutKey = `${routeId}:${ruleId}`;
+
+    // 已被错误判空闲：重新标记为 in_use（内部会清旧定时器/debounce 并 emit statusChanged → SSE 推回使用中）
+    if (currentStatus?.status === 'idle') {
+      this.markRuleInUse(routeId, ruleId);
+      return;
+    }
+
+    // in_use：重置不活动定时器，并清除 pending 的 idle debounce（阻止已触发的 idle 经 SSE 推送）
     this.clearRuleTimeout(timeoutKey);
+    this.clearIdleDebounce(timeoutKey);
 
     const timeout = setTimeout(() => {
       this.markRuleIdle(routeId, ruleId);

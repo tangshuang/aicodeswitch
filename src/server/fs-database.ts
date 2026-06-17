@@ -2907,9 +2907,9 @@ export class FileSystemDatabaseManager {
         (serviceStats.avgResponseTime * (serviceStats.totalRequests - 1) + responseTime) / serviceStats.totalRequests;
     }
 
-    // 更新 byModel
-    if (log.requestModel || log.targetModel) {
-      const modelName = log.requestModel || log.targetModel || 'Unknown';
+    // 更新 byModel（按实际转发的模型统计，优先 targetModel 而非客户端提交的 requestModel）
+    if (log.targetModel || log.requestModel) {
+      const modelName = log.targetModel || log.requestModel || 'Unknown';
       let modelStats = this.statistics.byModel.find(s => s.modelName === modelName);
       if (!modelStats) {
         modelStats = { modelName, totalRequests: 0, totalTokens: 0, avgResponseTime: 0 };

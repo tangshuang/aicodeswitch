@@ -10,6 +10,7 @@ import { ProxyServer } from './proxy-server';
 import { AccessKeyModule } from './access-keys/index';
 import { AccessKeyManager } from './access-keys/manager';
 import { PolicyManager } from './access-keys/policy-manager';
+import { ServicePerformanceTracker } from './performance-tracker';
 import type { FileSystemDatabaseManager } from './fs-database';
 import type {
   AppConfig,
@@ -3873,6 +3874,56 @@ ${instruction}
     res.json(alerts);
   }));
 
+  // ============ 服务性能统计（全局，与 AUTH 无关） ============
+  const requirePerfTracker = (res: Response) => {
+    const tracker = proxyServer.getPerformanceTracker();
+    if (!tracker) {
+      res.status(503).json({ error: 'Performance tracker not initialized' });
+    }
+    return tracker;
+  };
+
+  // 全部 API 服务平铺一览（含所属供应商）
+  app.get('/api/performance/services-overview', asyncHandler(async (_req, res) => {
+    const tracker = requirePerfTracker(res);
+    if (!tracker) return;
+    res.json(tracker.getServicesOverview());
+  }));
+
+  // 全部供应商一览
+  app.get('/api/performance/vendors', asyncHandler(async (_req, res) => {
+    const tracker = requirePerfTracker(res);
+    if (!tracker) return;
+    res.json(tracker.getVendorsOverview());
+  }));
+
+  // 某供应商详情（rollup + 其下服务）
+  app.get('/api/performance/vendors/:vendorId', asyncHandler(async (req, res) => {
+    const tracker = requirePerfTracker(res);
+    if (!tracker) return;
+    const detail = tracker.getVendorDetail(req.params.vendorId);
+    if (!detail) { res.status(404).json({ error: 'Vendor not found' }); return; }
+    res.json(detail);
+  }));
+
+  // 某服务详情（rollup + 其下模型）
+  app.get('/api/performance/services/:serviceId', asyncHandler(async (req, res) => {
+    const tracker = requirePerfTracker(res);
+    if (!tracker) return;
+    const detail = tracker.getServiceDetail(req.params.serviceId);
+    if (!detail) { res.status(404).json({ error: 'Service not found' }); return; }
+    res.json(detail);
+  }));
+
+  // 单模型详情（派生 + 小时走势 + 极值）
+  app.get('/api/performance/services/:serviceId/models/:model', asyncHandler(async (req, res) => {
+    const tracker = requirePerfTracker(res);
+    if (!tracker) return;
+    const detail = tracker.getModelDetail(req.params.serviceId, decodeURIComponent(req.params.model));
+    if (!detail) { res.status(404).json({ error: 'Model not found' }); return; }
+    res.json(detail);
+  }));
+
   // 写入MCP配置到Claude Code或Codex的全局配置文件
   const writeMCPConfig = async (targetType: TargetType): Promise<boolean> => {
     try {
@@ -4149,6 +4200,16 @@ const start = async () => {
     console.error('[Server] AccessKey module initialization failed:', error);
   }
 
+  // Initialize Service Performance Tracker (全局统计，与 AUTH 无关)
+  const performanceTracker = new ServicePerformanceTracker(dataDir);
+  try {
+    await performanceTracker.initialize();
+    performanceTracker.startAutoFlush();
+    proxyServer.setPerformanceTracker(performanceTracker);
+  } catch (error) {
+    console.error('[Server] Performance tracker initialization failed:', error);
+  }
+
   // 恢复已写入本地的 AccessKey（在代理配置写入之后、AccessKey 模块初始化之后）
   try {
     applyWriteLocalRecords(proxyServer);
@@ -4270,6 +4331,14 @@ const start = async () => {
         await accessKeyModule.shutdown();
       } catch (error) {
         console.error('[Shutdown ...] AccessKey module shutdown failed:', error);
+      }
+
+      // Flush 服务性能统计（全局桶）后停止定时刷盘
+      try {
+        performanceTracker.stopAutoFlush();
+        await performanceTracker.flush();
+      } catch (error) {
+        console.error('[Shutdown ...] Performance tracker flush failed:', error);
       }
 
       dbManager.close();

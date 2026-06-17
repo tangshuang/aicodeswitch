@@ -9,6 +9,8 @@ import {
 } from './transformers/streaming';
 import { ModelRewriteTransform, rewriteResponseModel } from './transformers/model-rewrite-transform';
 import { ChunkCollectorTransform, SSEEventCollectorTransform, type SSEEvent } from './transformers/chunk-collector';
+import { StreamTimingTransform } from './transformers/stream-timing-transform';
+import type { ServicePerformanceTracker } from './performance-tracker';
 import { rulesStatusBroadcaster } from './rules-status-service';
 import {
   transformRequest as convertRequest,
@@ -202,6 +204,7 @@ export class ProxyServer {
   private services?: Map<string, APIService> = new Map();
   private config: AppConfig;
   private accessKeyModule: AccessKeyModule | null = null;
+  private performanceTracker: ServicePerformanceTracker | null = null;
   // 请求去重缓存：用于防止同一个请求被重复计数（如网络重试）
   // key: requestHash, value: timestamp
   private requestDedupeCache = new Map<string, number>();
@@ -225,6 +228,64 @@ export class ProxyServer {
   /** 获取 AccessKey 模块引用 */
   getAccessKeyModule(): AccessKeyModule | null {
     return this.accessKeyModule;
+  }
+
+  /** 设置服务性能统计 tracker（全局，与 AUTH 无关） */
+  setPerformanceTracker(tracker: ServicePerformanceTracker | null): void {
+    this.performanceTracker = tracker;
+  }
+
+  /** 获取服务性能统计 tracker */
+  getPerformanceTracker(): ServicePerformanceTracker | null {
+    return this.performanceTracker;
+  }
+
+  /**
+   * 采集一次请求的服务性能数据点（全局，与 AUTH 无关）。
+   * 在两条转发路径的 finalizeLog 公共点调用，覆盖 AccessKey + 普通路由。
+   * 流式：依据 streamTiming 精确计算 TTFT 与生成阶段吞吐；非流式：端到端估算（estimated）。
+   */
+  private emitPerformance(params: {
+    statusCode: number;
+    startTime: number;
+    usage?: TokenUsage;
+    streamTiming: StreamTimingTransform | null;
+    service: APIService;
+    vendorId?: string;
+    vendorName?: string;
+    model?: string;
+  }): void {
+    const tracker = this.performanceTracker;
+    if (!tracker) return;
+    const { statusCode, startTime, usage, streamTiming, service, vendorId, vendorName, model } = params;
+
+    const isError = statusCode >= 400;
+    const outputTokens = usage?.outputTokens;
+    const responseMs = Date.now() - startTime;
+
+    let ttftMs: number | undefined;
+    let tokensPerSecond: number | undefined;
+    let timingAccuracy: 'precise' | 'estimated' = 'estimated';
+
+    if (streamTiming && streamTiming.hasTiming()) {
+      timingAccuracy = 'precise';
+      ttftMs = streamTiming.firstEventAt - startTime;
+      const generationMs = streamTiming.lastEventAt - streamTiming.firstEventAt;
+      if (outputTokens && generationMs > 0) {
+        tokensPerSecond = outputTokens / (generationMs / 1000);
+      }
+    } else if (outputTokens && responseMs > 0) {
+      tokensPerSecond = outputTokens / (responseMs / 1000);
+    }
+
+    tracker.recordPerformance(
+      vendorId ?? service.vendorId,
+      vendorName,
+      service.id,
+      service.name,
+      model,
+      { ttftMs, tokensPerSecond, outputTokens, timingAccuracy, isError },
+    );
   }
 
   /**
@@ -3923,12 +3984,21 @@ export class ProxyServer {
     let downstreamResponseBodyForLog: string | undefined;
     let upstreamRequestForLog: RequestLog['upstreamRequest'] | undefined;
     let actuallyUsedProxy = false; // 标记是否实际使用了代理
+    // 服务性能打点：流式分支会创建实例并注入 pipeline；finalizeLog 据此判定 precise/estimated
+    let streamTiming: StreamTimingTransform | null = null;
 
     // 标记规则正在使用
     rulesStatusBroadcaster.markRuleInUse(route.id, rule.id);
 
     const finalizeLog = async (statusCode: number, error?: string) => {
       if (logged) return;
+
+      // 服务性能数据点采集（全局，与 AUTH 无关；独立于 enableLogging 开关）
+      this.emitPerformance({
+        statusCode, startTime, usage: usageForLog, streamTiming,
+        service, vendorId: vendor?.id, vendorName: vendor?.name,
+        model: rule.targetModel || req.body?.model,
+      });
 
       const isError = statusCode >= 400;
       if (isError) {
@@ -4507,6 +4577,8 @@ export class ProxyServer {
         const downstreamChunkCollector = new ChunkCollectorTransform(() => {
           rulesStatusBroadcaster.refreshRuleInUse(route.id, rule.id);
         });
+        // 服务性能打点：记录首/末 SSE 事件时间，用于 TTFT 与生成阶段吞吐
+        streamTiming = new StreamTimingTransform(startTime);
         const compactResponseSanitizer = rule.contentType === 'compact' && targetType === 'claude-code'
           ? new ClaudeCompactResponseSanitizer()
           : null;
@@ -4555,7 +4627,7 @@ export class ProxyServer {
           ensureResponseWritable();
           return await new Promise<void>((resolve, reject) => {
             if (converter) {
-              const streamStages: any[] = [streamSource, parser, eventCollector, converter];
+              const streamStages: any[] = [streamSource, parser, eventCollector, streamTiming!, converter];
               if (compactResponseSanitizer) {
                 streamStages.push(compactResponseSanitizer);
               }
@@ -4574,7 +4646,7 @@ export class ProxyServer {
               return;
             }
 
-            const streamStages: any[] = [streamSource, parser, eventCollector];
+            const streamStages: any[] = [streamSource, parser, eventCollector, streamTiming!];
             if (compactResponseSanitizer) {
               streamStages.push(compactResponseSanitizer);
             }
@@ -5118,6 +5190,8 @@ export class ProxyServer {
     let responseBodyForLog: string | undefined;
     let downstreamResponseBodyForLog: string | undefined;
     let streamChunksForLog: string[] | undefined;
+    // 服务性能打点：流式分支会创建实例并注入 pipeline
+    let streamTiming: StreamTimingTransform | null = null;
     let responseHeadersForLog: Record<string, string> | undefined;
     let upstreamRequestForLog: any;
     let relayedForLog = true;
@@ -5140,6 +5214,13 @@ export class ProxyServer {
     const finalizeLog = async (statusCode: number, error?: string) => {
       if (logged) return;
       logged = true;
+
+      // 服务性能数据点采集（全局，与 AUTH 无关；独立于 enableLogging 开关）
+      this.emitPerformance({
+        statusCode, startTime, usage: usageForLog, streamTiming,
+        service, vendorId: vendor?.id, vendorName: vendor?.name,
+        model: rule.targetModel || req.body?.model,
+      });
 
       // AccessKey 独立日志处理
       const accessKeyCtx = (req as any)._accessKeyCtx as { accessKey: AccessKey; policy: Policy } | undefined;
@@ -5410,6 +5491,8 @@ export class ProxyServer {
         const downstreamChunkCollector = new ChunkCollectorTransform(() => {
           rulesStatusBroadcaster.refreshRuleInUse(route.id, rule.id);
         });
+        // 服务性能打点：记录首/末 SSE 事件时间
+        streamTiming = new StreamTimingTransform(startTime);
         responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
 
         // 流式 model 回写：将上游返回的 model 改写为客户端请求时的原始模型名
@@ -5445,13 +5528,13 @@ export class ProxyServer {
               return stages;
             };
             if (converter) {
-              const stages = buildStages(streamSource, parser, eventCollector, converter);
+              const stages = buildStages(streamSource, parser, eventCollector, streamTiming!, converter);
               (pipeline as any)(...stages, (error: any) => {
                 if (error) { reject(error); return; }
                 resolve();
               });
             } else {
-              const stages = buildStages(streamSource, parser, eventCollector);
+              const stages = buildStages(streamSource, parser, eventCollector, streamTiming!);
               (pipeline as any)(...stages, (error: any) => {
                 if (error) { reject(error); return; }
                 resolve();

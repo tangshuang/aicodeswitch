@@ -46,6 +46,11 @@
   justify-content: center;
 }
 
+/* 折叠态保留 overflow: visible，避免右侧 tooltip 被滚动容器裁切 */
+.sidebar.collapsed .nav-menu {
+  overflow: visible;
+}
+
 .sidebar.collapsed .theme-toggle {
   flex-direction: column;
   gap: 8px;
@@ -102,11 +107,100 @@
   height: 32px;
 }
 
+.nav-menu-wrap {
+  /* 占满侧边栏剩余高度，作为滚动容器与阴影/滚轮提示的定位基准 */
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
 .nav-menu {
   list-style: none;
   padding: 16px 0;
   margin: 0;
-  overflow: visible;
+  height: 100%;
+  /* 屏幕较矮时菜单区域可独立滚动，避免布局被挤压 */
+  overflow-y: auto;
+  overflow-x: visible;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-secondary) transparent;
+}
+
+.nav-menu::-webkit-scrollbar {
+  width: 6px;
+}
+
+.nav-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.nav-menu::-webkit-scrollbar-thumb {
+  background: var(--border-secondary);
+  border-radius: 4px;
+}
+
+.nav-menu::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* 滚动阴影 + 滚轮提示：当菜单可滚动时叠加在上下边缘，提示还有更多菜单。
+   注意：--bg-sidebar 是渐变值，不能直接当作 color 使用，必须用具体纯色。
+   采用比侧栏底色更深的纯色 + 渐隐，既遮住文字，又形成明显的阴影凹陷感。 */
+.nav-scroll-shadow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 48px;
+  pointer-events: none;
+  z-index: 10;
+  transition: opacity 0.2s ease;
+}
+
+.nav-scroll-shadow--top {
+  top: 0;
+  background: linear-gradient(
+    to bottom,
+    #0F5132 0%,
+    rgba(15, 81, 50, 0.85) 45%,
+    transparent 100%
+  );
+}
+
+.nav-scroll-shadow--bottom {
+  bottom: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 4px;
+  background: linear-gradient(
+    to top,
+    #065F46 0%,
+    rgba(6, 95, 70, 0.85) 45%,
+    transparent 100%
+  );
+}
+
+.nav-scroll-shadow.is-hidden {
+  opacity: 0;
+}
+
+.nav-scroll-wheel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-sidebar);
+  opacity: 0.55;
+  animation: nav-wheel-hint 1.6s ease-in-out infinite;
+}
+
+.nav-scroll-wheel svg {
+  width: 16px;
+  height: 16px;
+}
+
+@keyframes nav-wheel-hint {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(3px); }
 }
 
 .nav-menu li {
