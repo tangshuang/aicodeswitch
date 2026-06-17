@@ -46,11 +46,6 @@
   justify-content: center;
 }
 
-/* 折叠态保留 overflow: visible，避免右侧 tooltip 被滚动容器裁切 */
-.sidebar.collapsed .nav-menu {
-  overflow: visible;
-}
-
 .sidebar.collapsed .theme-toggle {
   flex-direction: column;
   gap: 8px;
