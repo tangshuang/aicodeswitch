@@ -4181,14 +4181,45 @@ let orchestratorManager: OrchestratorManager | null = null;
 // ATO 主 Agent（Leader）实例（start() 中创建）
 let leaderManager: LeaderManager | null = null;
 
-/** 把 ato-leader 内置 MCP 写入 ~/.claude.json 与 ~/.codex/config.toml，使 Leader（claude/codex）进程都能加载管理工具 */
-function ensureLeaderMcpRegistered(port: number): void {
-  const homeDir = os.homedir();
-  const mcpServerPath = path.join(__dirname, 'orchestrator', 'leader', 'mcp-server.js');
-  const envVars = {
+/** 解析 ato-leader MCP server 的启动命令（适配 dev/prod 两种模式）
+ *  - prod（dist/server/）：直接用 node 运行编译后的 mcp-server.js
+ *  - dev（src/server/ via tsx）：优先用 dist 里的 stale build；否则用 tsx CLI 运行 .ts 源文件
+ */
+function resolveMcpServerCommand(port: number): { command: string; args: string[]; env: Record<string, string> } {
+  const envVars: Record<string, string> = {
     ATO_BASE: `http://127.0.0.1:${port}`,
     ATO_TOKEN: process.env.ATO_TOKEN || '',
   };
+
+  // 1) prod 模式：编译产物就在 __dirname 下
+  const jsPath = path.join(__dirname, 'orchestrator', 'leader', 'mcp-server.js');
+  if (fs.existsSync(jsPath)) {
+    return { command: 'node', args: [jsPath], env: envVars };
+  }
+
+  // 2) dev 模式：尝试上次 build 的 dist 产物
+  const projectRoot = path.join(__dirname, '..', '..');
+  const distJsPath = path.join(projectRoot, 'dist', 'server', 'orchestrator', 'leader', 'mcp-server.js');
+  if (fs.existsSync(distJsPath)) {
+    return { command: 'node', args: [distJsPath], env: envVars };
+  }
+
+  // 3) dev 模式无 build：用 tsx 运行 .ts 源文件
+  const tsPath = path.join(__dirname, 'orchestrator', 'leader', 'mcp-server.ts');
+  const tsxCli = path.join(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+  if (fs.existsSync(tsPath) && fs.existsSync(tsxCli)) {
+    return { command: process.execPath, args: [tsxCli, tsPath], env: envVars };
+  }
+
+  // 4) 兜底：返回不存在的 js 路径（claude 启动时会报清晰错误）
+  console.warn(`[Server] ⚠️ 无法定位 ato-leader MCP server！js=${jsPath} (missing), dist=${distJsPath} (missing), ts=${tsPath}`);
+  return { command: 'node', args: [jsPath], env: envVars };
+}
+
+/** 把 ato-leader 内置 MCP 写入 ~/.claude.json 与 ~/.codex/config.toml，使 Leader（claude/codex）进程都能加载管理工具 */
+function ensureLeaderMcpRegistered(port: number): void {
+  const homeDir = os.homedir();
+  const mcp = resolveMcpServerCommand(port);
 
   // Claude Code：~/.claude.json 的 mcpServers
   const claudeJsonPath = path.join(homeDir, '.claude.json');
@@ -4203,9 +4234,9 @@ function ensureLeaderMcpRegistered(port: number): void {
   if (!claudeJson.mcpServers) claudeJson.mcpServers = {};
   claudeJson.mcpServers['ato-leader'] = {
     type: 'stdio',
-    command: 'node',
-    args: [mcpServerPath],
-    env: { ...envVars },
+    command: mcp.command,
+    args: mcp.args,
+    env: { ...mcp.env },
   };
   fs.writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2), 'utf8');
 
@@ -4224,14 +4255,16 @@ function ensureLeaderMcpRegistered(port: number): void {
     }
     if (!codexConfig.mcp_servers) codexConfig.mcp_servers = {};
     codexConfig.mcp_servers['ato-leader'] = {
-      command: 'node',
-      args: [mcpServerPath],
-      env: { ...envVars },
+      command: mcp.command,
+      args: mcp.args,
+      env: { ...mcp.env },
     };
     fs.writeFileSync(codexConfigPath, stringifyToml(codexConfig), 'utf-8');
   } catch (error) {
     console.error('[Server] Failed to register ato-leader MCP for codex:', error);
   }
+
+  console.log(`[Server] ato-leader MCP registered: ${mcp.command} ${mcp.args.map((a) => `"${a}"`).join(' ')}`);
 }
 
 const start = async () => {

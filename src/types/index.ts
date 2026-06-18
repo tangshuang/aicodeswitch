@@ -979,3 +979,12 @@ export interface AtoLeaderToolEvent {
   input?: unknown;
   content?: unknown;
 }
+/** Leader 会话元信息 */
+export interface AtoLeaderSession {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  leaderTool: 'claude-code' | 'codex';
+  messageCount: number;
+}

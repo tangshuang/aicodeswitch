@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ClaudePermissionDefaultMode, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, AccessKeySession, KeyUsageDailyRecord, QuotaAlert, LanDiscoverResponse, LanSyncRequest, LanSyncResult, PerfVendorOverview, PerfVendorDetail, PerfServiceDetail, PerfModelDetail, PerfServiceOverview, AtoTeamRun, AtoCreateTeamRequest, AtoLogEntry, AtoChatMessage, AtoLeaderToolEvent } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ClaudePermissionDefaultMode, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, AccessKeySession, KeyUsageDailyRecord, QuotaAlert, LanDiscoverResponse, LanSyncRequest, LanSyncResult, PerfVendorOverview, PerfVendorDetail, PerfServiceDetail, PerfModelDetail, PerfServiceOverview, AtoTeamRun, AtoCreateTeamRequest, AtoLogEntry, AtoChatMessage, AtoLeaderToolEvent, AtoLeaderSession } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -230,6 +230,12 @@ interface BackendAPI {
   atoLeaderGetConfig: () => Promise<{ leaderTool: 'claude-code' | 'codex'; available: boolean }>;
   atoLeaderSetConfig: (tool: 'claude-code' | 'codex') => Promise<{ leaderTool: 'claude-code' | 'codex' }>;
   atoLeaderReset: () => Promise<boolean>;
+  // Leader 会话管理
+  atoLeaderListSessions: () => Promise<{ sessions: AtoLeaderSession[]; currentSessionId: string | null }>;
+  atoLeaderCreateSession: () => Promise<{ session: AtoLeaderSession; currentSessionId: string }>;
+  atoLeaderActivateSession: (id: string) => Promise<{ currentSessionId: string }>;
+  atoLeaderRenameSession: (id: string, title: string) => Promise<{ session: AtoLeaderSession }>;
+  atoLeaderDeleteSession: (id: string) => Promise<{ deleted: string; switchedTo: string | null; filesRemoved: number }>;
   atoPermissionPending: () => Promise<Array<{ id: string; toolName: string; input: unknown; risk: string; reason?: string; createdAt: number }>>;
   atoPermissionResolve: (id: string, behavior: 'allow' | 'deny', message?: string) => Promise<boolean>;
   atoLeaderMessage: (
@@ -239,6 +245,7 @@ interface BackendAPI {
       onTool?: (e: AtoLeaderToolEvent) => void;
       onStatus?: (text: string) => void;
       onError?: (message: string) => void;
+      onDebug?: (entry: { kind: string; message: string }) => void;
     }
   ) => Promise<string>;
 }
@@ -714,6 +721,11 @@ export const api: BackendAPI = {
   atoLeaderGetConfig: () => requestJson(buildUrl('/api/orchestrator/leader/config')),
   atoLeaderSetConfig: (tool) => requestJson(buildUrl('/api/orchestrator/leader/config'), { method: 'PUT', body: JSON.stringify({ leaderTool: tool }) }),
   atoLeaderReset: () => requestJson(buildUrl('/api/orchestrator/leader/reset'), { method: 'POST' }).then(() => true),
+  atoLeaderListSessions: () => requestJson(buildUrl('/api/orchestrator/leader/sessions')),
+  atoLeaderCreateSession: () => requestJson(buildUrl('/api/orchestrator/leader/sessions'), { method: 'POST' }),
+  atoLeaderActivateSession: (id) => requestJson(buildUrl(`/api/orchestrator/leader/sessions/${id}/activate`), { method: 'POST' }),
+  atoLeaderRenameSession: (id, title) => requestJson(buildUrl(`/api/orchestrator/leader/sessions/${id}`), { method: 'PATCH', body: JSON.stringify({ title }) }),
+  atoLeaderDeleteSession: (id) => requestJson(buildUrl(`/api/orchestrator/leader/sessions/${id}`), { method: 'DELETE' }),
   atoPermissionPending: () => requestJson(buildUrl('/api/orchestrator/leader/permissions/pending')),
   atoPermissionResolve: (id, behavior, message) => requestJson(buildUrl(`/api/orchestrator/leader/permissions/${id}/resolve`), { method: 'POST', body: JSON.stringify({ behavior, message }) }).then(() => true),
   atoLeaderMessage: async (text, handlers) => {
@@ -757,6 +769,8 @@ export const api: BackendAPI = {
           handlers.onStatus?.(evt.text);
         } else if (evt.type === 'error') {
           handlers.onError?.(evt.message);
+        } else if (evt.type === 'debug') {
+          handlers.onDebug?.(evt.debug);
         } else if (evt.type === 'done') {
           if (typeof evt.full === 'string') full = evt.full;
         }

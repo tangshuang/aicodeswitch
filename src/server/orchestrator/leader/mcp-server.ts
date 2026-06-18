@@ -13,7 +13,7 @@
  * 不被其它模块 import。
  */
 import readline from 'readline';
-import { loadConversation, readMemoryFile, writeMemoryFile } from './memory';
+import { loadConversation, readCurrentSessionId, readMemoryFile, writeMemoryFile } from './memory';
 
 const BASE = process.env.ATO_BASE || `http://127.0.0.1:${process.env.ATO_PORT || '4567'}`;
 const TOKEN = process.env.ATO_TOKEN || '';
@@ -169,7 +169,10 @@ const TOOLS: ToolDef[] = [
     inputSchema: { type: 'object', properties: { n: { type: 'number' } } },
     run: (a) => {
       const n = typeof a.n === 'number' ? a.n : 12;
-      return loadConversation().slice(-n);
+      // 读当前会话指针；缺失则回落到遗留全局对话文件
+      const id = readCurrentSessionId();
+      const msgs = id ? loadConversation(id) : loadConversation();
+      return msgs.slice(-n);
     },
   },
 ];

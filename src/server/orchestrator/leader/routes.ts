@@ -37,6 +37,7 @@ export function registerLeaderRoutes(app: Express, manager: LeaderManager): void
     });
     let closed = false;
     req.on('close', () => {
+      console.error(`[leader:routes] SSE req.on('close') fired — client disconnected, killing leader`);
       closed = true;
       manager.stop();
     });
@@ -45,6 +46,14 @@ export function registerLeaderRoutes(app: Express, manager: LeaderManager): void
       status: (t) => { if (!closed) sseData(res, { type: 'status', text: t }); },
       text: (delta) => { if (!closed) sseData(res, { type: 'text', delta }); },
       tool: (e: ToolEvent) => { if (!closed) sseData(res, { type: 'tool', tool: e }); },
+      debug: (entry) => {
+        if (closed) {
+          console.error(`[leader:routes] SSE debug dropped (closed=true): ${entry.message?.slice(0, 100)}`);
+          return;
+        }
+        const ok = sseData(res, { type: 'debug', debug: entry });
+        if (!ok) console.error(`[leader:routes] SSE debug write FAILED (writableEnded=${res.writableEnded}): ${entry.message?.slice(0, 100)}`);
+      },
       done: (full) => {
         if (!closed) { sseData(res, { type: 'done', full }); }
         if (!res.writableEnded) res.end();
@@ -84,6 +93,56 @@ export function registerLeaderRoutes(app: Express, manager: LeaderManager): void
   app.post('/api/orchestrator/leader/reset', (_req, res) => {
     manager.reset();
     res.json({ success: true });
+  });
+
+  // ===== 会话管理 =====
+
+  app.get('/api/orchestrator/leader/sessions', (_req, res) => {
+    res.json({ sessions: manager.getSessions(), currentSessionId: manager.getCurrentSessionId() });
+  });
+
+  app.post('/api/orchestrator/leader/sessions', (_req, res) => {
+    if (manager.isBusy()) {
+      res.status(409).json({ error: '主 Agent 正在处理消息，请稍后再新建会话。' });
+      return;
+    }
+    const session = manager.createSessionAndActivate();
+    res.json({ session, currentSessionId: manager.getCurrentSessionId() });
+  });
+
+  app.post('/api/orchestrator/leader/sessions/:id/activate', (req, res) => {
+    if (manager.isBusy()) {
+      res.status(409).json({ error: '主 Agent 正在处理消息，无法切换会话。' });
+      return;
+    }
+    if (!manager.activateSession(req.params.id)) {
+      res.status(404).json({ error: '会话不存在' });
+      return;
+    }
+    res.json({ currentSessionId: manager.getCurrentSessionId() });
+  });
+
+  app.patch('/api/orchestrator/leader/sessions/:id', (req, res) => {
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    if (!title) {
+      res.status(400).json({ error: 'title 不能为空' });
+      return;
+    }
+    const session = manager.renameSession(req.params.id, title);
+    if (!session) {
+      res.status(404).json({ error: '会话不存在' });
+      return;
+    }
+    res.json({ session });
+  });
+
+  app.delete('/api/orchestrator/leader/sessions/:id', (req, res) => {
+    const result = manager.deleteSession(req.params.id);
+    if ('error' in result) {
+      res.status(409).json(result);
+      return;
+    }
+    res.json(result);
   });
 
   // ===== 权限裁决（Claude Code 经 --permission-prompt-tool 调用）=====

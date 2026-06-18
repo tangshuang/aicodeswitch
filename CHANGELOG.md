@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-06-18: Leader 主 Agent 新增多会话管理
+
+### 新增
+- 主 Agent（Leader）支持多会话：新建 / 切换 / 删除会话，对话历史按会话隔离（`~/.aicodeswitch/ato-leader/sessions/<id>/conversation.jsonl`），长期记忆（profile/scratchpad）跨会话共享
+- 删除会话时一并清理关联的本地 CLI 会话文件：Claude Code 按 `session_id` 精确删除 `~/.claude/projects/*/<id>.jsonl`；Codex 按每轮快照差分删除 `~/.codex/sessions/**` 下产生的 rollout 文件（best-effort）
+- runner 捕获 Claude stream-json 的 `session_id`（`onSessionId` 回发，原先是丢弃的）；manager 每轮记录 artifacts
+- 首次启动自动把遗留全局 `memory/conversation.jsonl` 迁移为「迁移的会话」
+- HTTP API：`GET/POST /api/orchestrator/leader/sessions`、`POST /sessions/:id/activate`、`PATCH /sessions/:id`、`DELETE /sessions/:id`
+- mcp-server `conversation_recent` 改读 `current.json` 指针（兼容回落遗留文件）
+
+### 改进
+- 首页 UI 左侧新增会话列表面板（与对话窗口并列、默认收起、左上角按钮切换）
+- 左侧会话面板 / 右侧调试面板均改为「并列 + 滑动」：外层宽度收缩、内层固定宽度靠 margin-left/transform 滑出，动画期间保持 overflow:hidden，完全展开后移除；右侧调试面板不再悬浮
+- 右侧调试面板与聊天窗口之间增加间距，打开按钮移至聊天窗口外部（独立轨道列）
+- `index.json` / `current.json` 采用原子写（tmp+rename），`resolveCurrentSessionId()` 读取时校验并自愈悬空指针
+
+## 2026-06-17: 修复 dev 模式下 ato-leader MCP 路径错误导致主 Agent 挂起
+
+### 修复
+- **根因**：`ensureLeaderMcpRegistered` 用 `path.join(__dirname, 'orchestrator', 'leader', 'mcp-server.js')` 注册 MCP，但 dev 模式下（tsx 从 `src/` 运行）`__dirname` 指向 TypeScript 源码目录，文件是 `mcp-server.ts` 而非 `.js`；claude 启动时 `node mcp-server.js` 因文件不存在导致 MCP 初始化挂起 → 整个 claude 进程无输出
+
+### 改进
+- 新增 `resolveMcpServerCommand()`（`main.ts`）按优先级解析 MCP 启动命令：
+  1. prod 模式：`__dirname` 下的编译产物 `mcp-server.js` → `node mcp-server.js`
+  2. dev 模式 + 有 stale build：`<project>/dist/server/.../mcp-server.js` → `node mcp-server.js`
+  3. dev 模式无 build：`process.execPath + [node_modules/tsx/dist/cli.mjs, mcp-server.ts]` → 用 tsx 运行 `.ts` 源文件
+- 启动日志输出最终注册的 MCP 命令：`[Server] ato-leader MCP registered: ...`
+- runner `[mcp-check]` 改为同时检查 `.js` 和 `.ts`，避免 dev 模式误报
+- manager `[preflight]` 适配新的 args 格式（tsx 模式 args 有 2 个元素），检查最后一个参数（实际入口文件）是否存在
+
+## 2026-06-17: 修复主 Agent 空响应 + 调试面板无输出
+
+### 修复
+- 主 Agent 进程启动失败（Windows ENOENT / `.cmd` 解析失败 / `--permission-prompt-tool` 引用的 MCP 不存在）时，`child.on('error')`/`on('close')` 错误分支不 emit debug 事件，经 SSE `error` 传到前端后被 `onError: () => {}` 静默丢弃，用户只看到 `onDone('')` → "(主 Agent 未返回内容)"，调试面板空白
+
+### 改进
+- `runner.ts`：spawn 前 emit 实际命令（cmd + args + cwd + pid + promptBytes + permissionPromptTool 标志），`on('error')` 接收 `err: Error` 并 emit `[process error]` 完整信息，`on('close')` emit `[close] exit code: N`；新增 `on('exit')` handler（code + signal）；新增 5 秒心跳 emit `[heartbeat] elapsed=N pid=... stdout=NB stderr=NB` 用于判断进程是否卡死；stdin write 回调 emit 成功/失败；stdout/stderr 首字节事件标记；`[finish]` 汇总 elapsed + IO 字节数 + fullText 长度
+- `runner.ts`：启用 permission 时 spawn 前检查 mcp-server.js 文件是否存在（`[mcp-check]`），缺失会导致 claude 挂起
+- `manager.ts`：`sendMessage` 预检 `~/.claude.json` 中 ato-leader MCP 是否注册（`[preflight]`），并验证 args[0] 路径是否存在；`onError` 回调同步 `sink.debug` emit `[runner error]`
+- `HomePage.tsx`：`onError` 不再静默——改为自动展开调试面板并把 `[error] msg` 写入；提取 `renderDebugSidebar()` 函数，空状态与对话状态都渲染调试面板
+
 ## 2026-06-17: 修复 Windows 下 ATO 主 Agent/子 Agent 检测不到 Claude Code / Codex CLI
 
 ### 修复
