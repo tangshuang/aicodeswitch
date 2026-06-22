@@ -78,6 +78,11 @@ if (fs.existsSync(dotenvPath)) {
 const host = process.env.HOST || '0.0.0.0';
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
 
+// 写入客户端工具配置文件（Codex config.toml / Claude settings.json）的 base_url 必须是「可连接」地址。
+// 0.0.0.0 / :: 仅是「监听任意网卡」语义，不是有效连接目标，
+// Windows 客户端无法 connect 到 0.0.0.0，会导致 stream disconnected。
+const clientHost = (host === '0.0.0.0' || host === '::') ? '127.0.0.1' : host;
+
 let globalProxyConfig: { enabled: boolean; url: string; username?: string; password?: string } | null = null;
 
 function updateProxyConfig(config: AppConfig): void {
@@ -347,7 +352,7 @@ const writeClaudeConfig = async (
     // 构建代理配置
     const claudeSettingsEnv: Record<string, any> = {
       ANTHROPIC_AUTH_TOKEN: "api_key",
-      ANTHROPIC_BASE_URL: `http://${host}:${port}/claude-code`,
+      ANTHROPIC_BASE_URL: `http://${clientHost}:${port}/claude-code`,
       API_TIMEOUT_MS: "3000000",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
       CLAUDE_CODE_MAX_RETRIES: 3
@@ -544,7 +549,7 @@ const writeCodexConfig = async (
       model_providers: {
         aicodeswitch: {
           name: "aicodeswitch",
-          base_url: `http://${host}:${process.env.PORT ? parseInt(process.env.PORT, 10) : 4567}/codex`,
+          base_url: `http://${clientHost}:${port}/codex`,
           wire_api: "responses",
           stream_max_retries: 3,
           stream_retry_backoff: "fixed"

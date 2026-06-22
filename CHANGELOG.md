@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-06-22: 修复写入 Codex/Claude Code 配置时 base_url 为 0.0.0.0 导致客户端无法连接
+
+### 修复
+- 服务端默认监听 `0.0.0.0`（监听所有网卡，监听语义正确），但同一 `host` 被原样拼进写入客户端工具配置文件的 `base_url`（Codex `config.toml` 的 `base_url`、Claude Code `settings.json` 的 `env.ANTHROPIC_BASE_URL`）。`0.0.0.0` 不是有效连接目标，Windows 等系统的 HTTP 客户端无法 connect，导致 Codex 桌面端报 `stream disconnected before completion: error sending request for url (http://0.0.0.0:4567/codex/responses)`
+- `server/main.ts` 新增 `clientHost` 常量，将通配监听地址（`0.0.0.0` / `::`）归一化为可连接的回环地址 `127.0.0.1`；两处写配置点改用 `clientHost`，`app.listen` 仍用 `host` 保持「监听所有网卡」能力
+- 顺手将 Codex `base_url` 中重复的 `process.env.PORT` 三元判断替换为已有的 `port` 变量
+
 ## 2026-06-22: 开发环境 Ctrl+C 同步阻塞优化
 
 ### 改进
