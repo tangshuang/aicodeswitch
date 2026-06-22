@@ -81,21 +81,22 @@ function hashStr(s: string): number {
 
 /**
  * 计算节点基础位置：
- * - 半径（距中心距离）以「会话开始时间 firstRequestAt」为准：越早开始的会话越靠外围，
- *   使用饱和函数 t = age/(age+TAU) 增长到 MAX_R 后收敛、不会无限远。
+ * - 半径（距中心距离）以「会话开始时间 firstRequestAt」为准：刚创建的会话紧贴中心，
+ *   随时间推移缓慢外移；分档插值，越往外越紧凑，封顶不会无限远。
  *   由于 firstRequestAt 不随后续请求变化，节点落定后位置稳定、不再漂移。
  * - 角度由 sessionId 哈希决定（稳定，新增节点不会扰动已有节点位置）。
  *
- * 半径量级刻意放大：MAX_R 使最早开始的节点在画布缩到 40% 时才出现在最外围
- * （R_MAX * 0.4 ≈ 350 ≈ viewBox 短半轴），日常 100% 视野只聚焦近期开始的会话。
+ * 半径量级刻意放大：最早开始的节点在画布缩到 40% 时才出现在最外围
+ * （最外档 860 * 0.4 ≈ 344 ≈ viewBox 短半轴），日常 100% 视野只聚焦近期开始的会话。
  */
-// [会话开始距今天数, 半径] 控制点：内圈分布最宽、越往外越紧凑
+// [会话开始距今天数, 半径] 控制点：age=0 紧贴中心，前两小时缓慢外移，之后逐渐加速
 const R_POINTS: [number, number][] = [
-  [0, 80],
-  [1, 420],
-  [5, 620],
-  [10, 760],
-  [30, 860],
+  [0, 20],        // 刚创建：紧贴中心
+  [2 / 24, 60],   // 约 2 小时：缓慢外移
+  [1, 420],       // 1 天（1天临界圈）
+  [5, 620],       // 5 天
+  [10, 760],      // 10 天
+  [30, 860],      // 封顶
 ];
 // 距离分档临界圆：1 / 5 / 10 天（10 天为最外圈，超过 10 天的节点落在此圈之外）
 const RINGS: { days: number; r: number; tier: number; label: string }[] = [
@@ -104,7 +105,8 @@ const RINGS: { days: number; r: number; tier: number; label: string }[] = [
   { days: 10, r: 760, tier: 2, label: '10 天' },
 ];
 function radiusForAgeDays(ageDays: number): number {
-  if (ageDays <= 0) return R_POINTS[0][1];
+  // 非有限值（firstRequestAt 缺失 / NaN）一律按「最新」处理，紧贴中心，避免被误推到最外围
+  if (!Number.isFinite(ageDays) || ageDays <= 0) return R_POINTS[0][1];
   for (let i = 1; i < R_POINTS.length; i++) {
     if (ageDays <= R_POINTS[i][0]) {
       const [a0, r0] = R_POINTS[i - 1];
@@ -118,7 +120,8 @@ function radiusForAgeDays(ageDays: number): number {
 function basePosition(sessionId: string, firstRequestAt: number, now: number) {
   const cx = SVG_W / 2;
   const cy = SVG_H / 2;
-  const ageDays = Math.max(0, now - firstRequestAt) / DAY;
+  const rawAge = now - firstRequestAt;
+  const ageDays = Number.isFinite(rawAge) && rawAge > 0 ? rawAge / DAY : 0;
   const radius = radiusForAgeDays(ageDays);
   // 主角度由 hash 决定；再用第二个 hash 做小幅抖动，避免同角度重叠
   const angle = ((hashStr(sessionId) % 360) + (hashStr(sessionId + '~j') % 40 - 20)) * (Math.PI / 180);
