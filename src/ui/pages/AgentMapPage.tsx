@@ -15,6 +15,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { api } from '../api/client';
 import { ClaudeCodeIcon, CodexIcon, AgentIcon } from '../components/AgentIcons';
+import { Switch } from '../components/Switch';
+import { useAgentNotifications } from '../components/AgentNotificationsProvider';
 import type {
   ActivityEvent,
   AgentMapInitPayload,
@@ -464,6 +466,8 @@ function MapLegend({ onClose }: { onClose: () => void }) {
   );
 }
 
+
+
 // ============================ 主页面 ============================
 
 export default function AgentMapPage() {
@@ -480,6 +484,8 @@ export default function AgentMapPage() {
   const [helpOpen, setHelpOpen] = useState(false);
   // 时间筛选工具条默认展开，可在 topbar 收起
   const [timebarOpen, setTimebarOpen] = useState(false);
+  // 任务结束浏览器通知（全局 Provider 提供）
+  const { enabled: notifyEnabled, toggle: toggleNotify } = useAgentNotifications();
   const [connected, setConnected] = useState(false);
   // 画布按下时切换为 grabbing 光标
   const [pressing, setPressing] = useState(false);
@@ -791,6 +797,29 @@ export default function AgentMapPage() {
               <polyline points="6 9 12 15 18 9" />
             </svg>
           </button>
+          <div
+            className="am-notify-switch"
+            title={notifyEnabled
+              ? '已开启：本页处于后台时，Agent 一轮工作结束会弹系统通知（服务端 OS 通知，浏览器关掉也能弹）'
+              : '开启：本页处于后台时，Agent 一轮工作结束会弹系统通知'}
+          >
+            <Switch
+              checked={notifyEnabled}
+              onChange={toggleNotify}
+              label="🔔 通知"
+              labelPosition="left"
+            />
+            {notifyEnabled && (
+              <button
+                type="button"
+                className="am-notify-test"
+                onClick={() => api.testAgentMapNotify()}
+                title="发一条测试通知，验证系统是否真的弹（若没弹，请在系统设置里允许 AICodeSwitch/终端 的通知）"
+              >
+                测试
+              </button>
+            )}
+          </div>
         </div>
         {helpOpen && <MapLegend onClose={() => setHelpOpen(false)} />}
       </div>

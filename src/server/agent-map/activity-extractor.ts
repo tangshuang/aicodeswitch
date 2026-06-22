@@ -278,6 +278,43 @@ function nextId(ts: number): string {
 }
 
 /**
+ * 检测本轮响应是否表示「一轮工作结束」（turn end），比 60s 空闲延时更精确、即时。
+ *
+ * 这正是官方 SDK 用来判定一轮完成的语义（Claude Agent SDK 的 query() 迭代器结束、
+ * Codex SDK 的 thread.run() resolve）在响应里的具体字段：
+ * - Claude（Messages）：响应 stop_reason。`tool_use` = 还要继续调工具（未结束）；
+ *   `end_turn` / `stop_sequence` / `max_tokens` / `refusal` 等 = 本轮结束、交回用户。
+ * - Codex（Responses）：本轮若含 function_call = 还要继续；否则仅 message/output_text 且
+ *   有 response.completed = 本轮结束。
+ *
+ * 返回：true=本轮结束；false=仍将继续；null=无法判定（回退到时间窗启发式）。
+ * 解析下游响应（downstreamResponseBody，已是客户端协议格式）；兼容流式 SSE 文本与非流式 JSON。
+ */
+export function detectTurnEnd(
+  agent: 'claude-code' | 'codex',
+  downstream: any,
+  responseBody?: any,
+): boolean | null {
+  const downRaw = typeof downstream === 'string' ? downstream : (downstream ? JSON.stringify(downstream) : '');
+  const bodyRaw = typeof responseBody === 'string' ? responseBody : (responseBody ? JSON.stringify(responseBody) : '');
+  const raw = downRaw || bodyRaw;
+  if (!raw) return null;
+
+  if (agent === 'codex') {
+    // Responses：含 function_call → 还要继续；否则有完成态 → 本轮结束
+    if (/"type"\s*:\s*"function_call"/.test(raw)) return false;
+    if (/"type"\s*:\s*"response\.completed"/.test(raw) || /"status"\s*:\s*"completed"/.test(raw)) return true;
+    return null;
+  }
+  // Claude：看 stop_reason（流式 message_delta 或非流式 JSON 都带该字段）
+  const m = raw.match(/"stop_reason"\s*:\s*"([a-z_]+)"/);
+  const stopReason = m ? m[1] : null;
+  if (stopReason === 'tool_use') return false;
+  if (stopReason) return true; // end_turn / stop_sequence / max_tokens / refusal / ...
+  return null;
+}
+
+/**
  * 从一次代理请求抽取本轮 ActivityEvent 列表。
  * 顺序：[prompt?]? → [thinking]? → tool_use* → response? → error?
  * 末尾按需追加 error 事件（statusCode >= 400）。

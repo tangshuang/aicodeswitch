@@ -3225,3 +3225,38 @@ div:hover > .route-icon-popover {
   word-break: break-all;
 }
 .am-detail-path-na { color: var(--text-muted); font-size: 11px; font-style: normal; }
+
+/* topbar 通知开关 */
+.am-notify-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 4px;
+}
+.am-notify-switch .switch { width: 42px; height: 24px; }
+
+/* 通知被禁止时的「如何开启」恢复链接 */
+.am-notify-help-link {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  font-size: 11px;
+  color: var(--accent-warning);
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: underline;
+}
+.am-notify-help-link:hover { color: var(--accent-danger); }
+
+/* 通知「测试」按钮 */
+.am-notify-test {
+  margin-left: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border-radius: 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.am-notify-test:hover { color: var(--accent-primary); border-color: var(--accent-primary); }

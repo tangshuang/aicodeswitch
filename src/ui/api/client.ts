@@ -128,6 +128,10 @@ interface BackendAPI {
   getAgentMapSessionEvents: (id: string, since?: number) => Promise<import('../../types').ActivityEvent[]>;
   getAgentMapStats: () => Promise<import('../../types').AgentMapStats>;
   getAgentMapSessionMeta: (id: string) => Promise<{ source: 'global' | 'access-key' | 'unknown'; projectPath?: string; title?: string }>;
+  getAgentMapNotify: () => Promise<{ enabled: boolean }>;
+  setAgentMapNotify: (enabled: boolean) => Promise<{ enabled: boolean }>;
+  setAgentMapNotifyFocus: (hidden: boolean) => Promise<{ ok: boolean }>;
+  testAgentMapNotify: () => Promise<{ ok: boolean }>;
   /** 建立 Agent Map SSE 实时流（返回 AbortController，回调逐帧解析） */
   streamAgentMap: (handlers: {
     onInit?: (payload: import('../../types').AgentMapInitPayload) => void;
@@ -689,6 +693,10 @@ export const api: BackendAPI = {
   getAgentMapSessionEvents: (id, since) => requestJson(buildUrl(`/api/agent-map/sessions/${id}/events`, since != null ? { since } : undefined)),
   getAgentMapStats: () => requestJson(buildUrl('/api/agent-map/stats')),
   getAgentMapSessionMeta: (id) => requestJson(buildUrl(`/api/agent-map/sessions/${id}/meta`)),
+  getAgentMapNotify: () => requestJson(buildUrl('/api/agent-map/notify')),
+  setAgentMapNotify: (enabled) => requestJson(buildUrl('/api/agent-map/notify'), { method: 'POST', body: JSON.stringify({ enabled }) }),
+  setAgentMapNotifyFocus: (hidden) => requestJson(buildUrl('/api/agent-map/notify-focus'), { method: 'POST', body: JSON.stringify({ hidden }) }),
+  testAgentMapNotify: () => requestJson(buildUrl('/api/agent-map/notify-test'), { method: 'POST' }),
   streamAgentMap: (handlers) => {
     const controller = new AbortController();
     const token = localStorage.getItem('auth_token');

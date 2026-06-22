@@ -72,4 +72,22 @@ export function registerAgentMapRoutes(app: Express, service: AgentMapService) {
   app.get('/api/agent-map/stats', (_req, res) => {
     res.json(service.getSnapshot().stats);
   });
+
+  // 任务结束 OS 通知：开关 / 页面后台态上报 / 测试
+  app.get('/api/agent-map/notify', (_req, res) => {
+    res.json({ enabled: service.getNotifyEnabled() });
+  });
+  app.post('/api/agent-map/notify', (req, res) => {
+    const enabled = !!req.body?.enabled;
+    service.setNotifyEnabled(enabled);
+    res.json({ enabled });
+  });
+  app.post('/api/agent-map/notify-focus', (req, res) => {
+    service.setPageHidden(!!req.body?.hidden);
+    res.json({ ok: true });
+  });
+  app.post('/api/agent-map/notify-test', (_req, res) => {
+    service.notifyTest();
+    res.json({ ok: true });
+  });
 }

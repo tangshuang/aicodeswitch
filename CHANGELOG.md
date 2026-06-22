@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-06-22: Agent Map 一轮结束精确识别（响应 turn-end 信号）+ 通知权限「禁止」兜底
+
+### 改进
+- 新增 `activity-extractor.ts` `detectTurnEnd`：从代理转发的下游响应里读取官方 SDK 判定「一轮完成」所用的字段——Claude 的 `stop_reason`（`tool_use`=继续，其余如 `end_turn`/`max_tokens`=结束）、Codex 的 `function_call`(继续)/`response.completed`(结束)。替代纯「60 秒无活动」启发式作为主信号。
+- `agent-map-service` 状态引擎：本轮响应判定为「结束」时**立即** `active → idle`，节点**停止脉冲**（此前已结束的节点会继续脉冲约 60s）；任务结束浏览器通知随之**即时触发**而非等 60s；`tool_use` 续轮保持 active，60s 时间窗仍作未知/兜底。
+- 新增 `RuntimeState.lastTurnEnd`；`inferStatus` / `onFinalized` / 15s 清扫均接入该信号。
+
+### 新增
+- 通知开关权限「禁止」路径兜底：`AgentNotificationsProvider.toggle` 按 `requestPermission` 结果 toast 反馈（开启成功 / 被禁止 / 未授权可重试 / 不支持）；「任务地图」topbar 在权限被禁止时常驻「⚠ 已被禁止 · 如何开启？」链接，弹出帮助 Popover 给出 Chrome/Edge/Safari/Firefox 站点设置放行步骤 +「切回本页开关自动恢复」提示。
+
 ## 2026-06-22: 修复 Agent Map「最近模型」显示为编程工具提交的模型名
 
 ### 修复

@@ -26,6 +26,7 @@ import './styles/App.css';
 import logoImage from './assets/logo.png';
 import { useUpgradeNotes } from './hooks/docs';
 import { RulesStatusProvider } from './hooks/useRulesStatus';
+import { AgentNotificationsProvider } from './components/AgentNotificationsProvider';
 import upgradMd from '../../UPGRADE.md?raw';
 
 function AppContent() {
@@ -758,8 +759,10 @@ function App() {
     <Router>
       <ConfirmProvider>
         <RulesStatusProvider>
-          <AppContent />
-          <ToastContainer />
+          <AgentNotificationsProvider>
+            <AppContent />
+            <ToastContainer />
+          </AgentNotificationsProvider>
         </RulesStatusProvider>
       </ConfirmProvider>
     </Router>

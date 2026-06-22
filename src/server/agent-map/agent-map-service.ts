@@ -20,8 +20,9 @@ import type {
   SessionStatus,
   ToolType,
 } from '../../types';
-import { deriveLastActivity, extractActivityEvents, type ExtractInput } from './activity-extractor';
+import { deriveLastActivity, extractActivityEvents, detectTurnEnd, type ExtractInput } from './activity-extractor';
 import { resolveSessionMeta } from './session-meta';
+import { notify } from '../notifier';
 
 type DbManagerLike = {
   getSessions?: (targetType?: ToolType, limit?: number, offset?: number) => Promise<any[]>;
@@ -47,6 +48,7 @@ interface RuntimeState {
   inFlight: number;
   projectPath?: string;
   metaResolved?: boolean; // 是否已尝试解析本地会话元信息（避免重复扫盘）
+  lastTurnEnd?: boolean | null; // 末轮响应是否表示「一轮结束」（精确信号，见 detectTurnEnd）
 }
 
 export interface FinalizeContext {
@@ -78,6 +80,9 @@ export class AgentMapService extends EventEmitter {
   private sessionEvents = new Map<string, ActivityEvent[]>();
   private globalEvents: ActivityEvent[] = [];
   private sweepTimer: NodeJS.Timeout | null = null;
+  // 任务结束 OS 通知（服务端交付，前端上报开关 + 页面后台态）
+  private notifyEnabled = false;
+  private pageHidden = true; // 默认 true：前端未上报/Tab 关闭时按「不在看」处理 → 允许弹
 
   // 阈值可调（供测试/配置覆盖）
   public readonly activeWindowMs = ACTIVE_WINDOW_MS;
@@ -244,15 +249,22 @@ export class AgentMapService extends EventEmitter {
     if (summary) st.lastActivitySummary = summary;
     if (toolName) st.lastToolName = toolName;
 
+    // 本轮响应是否表示「一轮结束」（精确信号，替代纯时间窗）
+    const turnEnd = detectTurnEnd(ctx.agent, ctx.downstreamResponseBody, ctx.responseBody);
+    st.lastTurnEnd = turnEnd;
+
     // 重算状态（onFinalized 时请求已结束，inFlight 会被 endRequest 减，但可能尚未调用）
+    const prevStatus = st.status;
     const { status, reason } = this.inferStatus({
       lastRequestAt: st.lastRequestAt,
       lastStatusCode: st.lastStatusCode,
       inFlight: st.inFlight,
       now,
+      turnEnd,
     });
     st.status = status;
     st.statusReason = reason;
+    this.maybeNotifyTurnEnd(prevStatus, st);
 
     // 记录事件
     if (events.length > 0) {
@@ -298,6 +310,28 @@ export class AgentMapService extends EventEmitter {
     return { source, projectPath: meta.projectPath || st?.projectPath, title: meta.title || st?.title };
   }
 
+  // ============ 任务结束 OS 通知 ============
+
+  setNotifyEnabled(enabled: boolean) { this.notifyEnabled = !!enabled; }
+  setPageHidden(hidden: boolean) { this.pageHidden = !!hidden; }
+  getNotifyEnabled() { return this.notifyEnabled; }
+
+  /** 发一条测试通知（供 UI「测试」按钮验证 OS 是否真弹） */
+  notifyTest() {
+    notify({ title: '✅ 测试通知', body: 'AICodeSwitch 通知可用' });
+  }
+
+  /** active → idle 迁移时，若开关开且页面在后台，弹 OS 通知（一轮工作结束） */
+  private maybeNotifyTurnEnd(prevStatus: SessionStatus, st: RuntimeState) {
+    if (!this.notifyEnabled || !this.pageHidden) return;
+    if (prevStatus !== 'active' || st.status !== 'idle') return;
+    const agentName = st.agent === 'codex' ? 'Codex' : 'Claude Code';
+    notify({
+      title: `✅ ${agentName} · 一轮工作结束`,
+      body: st.title || st.lastActivitySummary || '任务已暂停，等待下一步',
+    });
+  }
+
   private recordEvents(sessionId: string, events: ActivityEvent[]) {
     const arr = this.sessionEvents.get(sessionId) || [];
     arr.push(...events);
@@ -314,7 +348,10 @@ export class AgentMapService extends EventEmitter {
 
   // ============ 状态推断（纯函数，基于活跃度） ============
 
-  private inferStatus(args: { lastRequestAt: number; lastStatusCode?: number; inFlight: number; now: number }): { status: SessionStatus; reason: string } {
+  private inferStatus(args: {
+    lastRequestAt: number; lastStatusCode?: number; inFlight: number; now: number;
+    turnEnd?: boolean | null;
+  }): { status: SessionStatus; reason: string } {
     // 在途请求 → active
     if (args.inFlight > 0) return { status: 'active', reason: 'in-flight' };
     // 末次失败 → error（即使时间较近也标 error，下一次成功会刷回 active）
@@ -322,7 +359,15 @@ export class AgentMapService extends EventEmitter {
       return { status: 'error', reason: `upstream ${args.lastStatusCode}` };
     }
     const elapsed = args.now - args.lastRequestAt;
-    if (elapsed <= this.activeWindowMs) return { status: 'active', reason: 'recent request' };
+    // 精确信号：本轮响应明确「结束」→ 立即停止脉冲，进入 idle（超时再 completed）
+    if (args.turnEnd === true) {
+      if (elapsed <= this.idleWindowMs) return { status: 'idle', reason: 'turn ended' };
+      return { status: 'completed', reason: 'inactive' };
+    }
+    // 仍将继续（tool_use）或信号未知 → 回退到活跃时间窗
+    if (elapsed <= this.activeWindowMs) {
+      return { status: 'active', reason: args.turnEnd === false ? 'tool loop' : 'recent request' };
+    }
     if (elapsed <= this.idleWindowMs) return { status: 'idle', reason: 'no recent activity' };
     return { status: 'completed', reason: 'inactive' };
   }
@@ -339,11 +384,13 @@ export class AgentMapService extends EventEmitter {
         lastStatusCode: st.lastStatusCode,
         inFlight: st.inFlight,
         now,
+        turnEnd: st.lastTurnEnd,
       });
       if (status !== prevStatus) {
         st.status = status;
         st.statusReason = reason;
         changed = true;
+        this.maybeNotifyTurnEnd(prevStatus, st);
         this.emitSession(st);
       }
     });
