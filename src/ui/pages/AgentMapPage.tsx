@@ -45,9 +45,9 @@ const STATUS_LABEL: Record<string, string> = {
 
 type Preset = 'all' | '1h' | '6h' | '24h' | '7d';
 
-// 节点视觉半径：默认小（footprint ≈ 60×60），仅随对话轮数增长，封顶避免过大
-const NODE_R_MIN = 24;
-const NODE_R_MAX = 72;
+// 节点视觉半径：默认很小，仅随对话轮数增长，封顶避免过大；尺寸差距刻意拉大
+const NODE_R_MIN = 8;
+const NODE_R_MAX = 96;
 const PRESETS: { key: Preset; label: string; ms: number }[] = [
   { key: 'all', label: '全部', ms: 0 },
   { key: '1h', label: '近 1 小时', ms: HOUR },
@@ -133,7 +133,7 @@ function SessionNodeSvg({ item, pos, selected }: {
 }) {
   // 节点尺寸：默认小，仅随对话轮数增长，封顶；尺寸越大代表历史对话轮数越多
   const req = item.requestCount || 0;
-  const activity = req / (req + 30); // 0..1 饱和（30 轮约半饱和）
+  const activity = Math.min(req / 100, 1); // 0..1 饱和（30 轮约半饱和）
   const r = NODE_R_MIN + (NODE_R_MAX - NODE_R_MIN) * activity;
   const iconSize = Math.round(r * 0.85);
 
