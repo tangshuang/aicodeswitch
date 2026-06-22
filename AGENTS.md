@@ -64,7 +64,7 @@ aicodeswitch/
 - API 路由前缀: `/api/` (除代理路由 `/claude-code/`、`/codex/`)
 - 服务端口: 4567 (服务器), 4568 (UI 开发服务器)
 - 数据目录: `~/.aicodeswitch/fs-db/`
-- 配置文件: `~/.aicodeswitch/aicodeswitch.conf`
+- 配置文件: `~/.aicodeswitch/aicodeswitch.conf`（PORT、AUTH）。监听地址由 AUTH 决定（AUTH 开→`0.0.0.0` / AUTH 关→`127.0.0.1`），`HOST` 已忽略；写入本地工具配置与 UI/CLI 展示地址恒为 `127.0.0.1`
 
 ## 特殊约定
 

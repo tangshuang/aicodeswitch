@@ -76,13 +76,16 @@ if (fs.existsSync(dotenvPath)) {
   dotenv.config({ path: dotenvPath });
 }
 
-const host = process.env.HOST || '0.0.0.0';
+// 服务监听地址由 AUTH 模式强制决定（忽略 process.env.HOST）：
+// - AUTH 开启：监听 0.0.0.0，允许远端 AccessKey 客户端连接
+// - AUTH 关闭：监听 127.0.0.1，仅本机访问（默认最安全）
+const host = isAuthEnabled() ? '0.0.0.0' : '127.0.0.1';
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
 
-// 写入客户端工具配置文件（Codex config.toml / Claude settings.json）的 base_url 必须是「可连接」地址。
-// 0.0.0.0 / :: 仅是「监听任意网卡」语义，不是有效连接目标，
-// Windows 客户端无法 connect 到 0.0.0.0，会导致 stream disconnected。
-const clientHost = (host === '0.0.0.0' || host === '::') ? '127.0.0.1' : host;
+// 写入本地编程工具配置（Codex config.toml / Claude settings.json）+ UI/CLI 展示用的地址恒为回环地址。
+// 即便 AUTH 开启监听 0.0.0.0，本机工具与 dashboard 仍走 127.0.0.1，
+// 避免 0.0.0.0（监听语义）被当成连接目标，导致 Windows 客户端 stream disconnected。
+const clientHost = '127.0.0.1';
 
 let globalProxyConfig: { enabled: boolean; url: string; username?: string; password?: string } | null = null;
 
@@ -4277,7 +4280,10 @@ const start = async () => {
   console.time('[Server] step "listen"');
   const server = app.listen(port, host, () => {
     listenReady = true;
-    console.log(`Admin server running on http://${host}:${port}`);
+    const listenInfo = host === '0.0.0.0'
+      ? ` (listening on all interfaces, port ${port})`
+      : '';
+    console.log(`Admin server running on http://${clientHost}:${port}${listenInfo}`);
     console.timeEnd('[Server] step "listen"');
 
     // 启动后异步执行延迟维护任务（分片校验/修复、日志清理、会话索引构建）
@@ -4324,7 +4330,7 @@ const start = async () => {
     }
   });
 
-  console.log(`WebSocket server for tool installation attached to ws://${host}:${port}/api/tools/install`);
+  console.log(`WebSocket server for tool installation attached to ws://${clientHost}:${port}/api/tools/install`);
 
   let isShuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;

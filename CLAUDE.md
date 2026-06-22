@@ -660,7 +660,7 @@ aicos version            # Show current version information
 
 1. **Environment Variables**: Copy `.env.example` to `.env` and modify as needed
 2. **Data Directory**: Default: `~/.aicodeswitch/data/` (JSON files)
-3. **Config File**: `~/.aicodeswitch/aicodeswitch.conf` (HOST, PORT, AUTH)
+3. **Config File**: `~/.aicodeswitch/aicodeswitch.conf` (PORT, AUTH)。监听地址由 AUTH 决定（AUTH 开→`0.0.0.0` / AUTH 关→`127.0.0.1`），`HOST` 已忽略；写入本地工具配置与 UI/CLI 展示地址恒为 `127.0.0.1`
 4. **Dev Ports**: UI (4568), Server (4567) - configured in `vite.config.ts` and `server/main.ts`
 5. **Skills Search**: `SKILLSMP_API_KEY` is required for Skills discovery via SkillsMP
 6. **API Endpoints**: All routes are prefixed with `/api/` except proxy routes (`/claude-code/`, `/codex/`)

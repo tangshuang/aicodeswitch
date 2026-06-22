@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-06-22: 服务监听地址改为 AUTH 驱动；本地工具/UI 地址统一 127.0.0.1
+
+### 改进
+- 服务监听地址不再由 `process.env.HOST` 决定，改为由 AUTH 模式强制：AUTH 开启→监听 `0.0.0.0`（允许远端 AccessKey 客户端连接），AUTH 关闭→监听 `127.0.0.1`（仅本机，默认最安全）。`aicodeswitch.conf` 里的 `HOST` 不再生效
+- `clientHost` 恒为 `127.0.0.1`：写入 Codex `config.toml` 的 `base_url`、Claude `settings.json` 的 `ANTHROPIC_BASE_URL`，以及 `app.listen` 启动日志、工具安装 WebSocket 日志统一使用回环地址；AUTH 开启绑定全网卡时启动日志追加 `(listening on all interfaces)` 说明
+- CLI 侧 `bin/utils/get-server.js` `getServerInfo()` 不再读 `HOST`，始终返回 `127.0.0.1`（+ 配置端口）；`aicos status` / `aicos ui` / `aicos start` 展示与自动打开的 URL 统一为 `http://127.0.0.1:<port>`，即便 conf 残留旧 `HOST=0.0.0.0` 也不会再回显
+- AccessKey `connect-config` 端点保留 `req.hostname` 上下文相关逻辑（远端 AccessKey 客户端复制 env 时需要 LAN IP），是有意保留的唯一例外
+- 文档同步：README 删除 `HOST` 配置项并补充 AUTH 驱动说明；CLAUDE.md / AGENTS.md 配置文件说明更新
+
 ## 2026-06-22: 日志存储层重构（独立 LogStore，追加写 NDJSON）
 
 ### 重构

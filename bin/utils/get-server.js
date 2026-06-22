@@ -36,16 +36,16 @@ const getServerInfo = () => {
     path.join(os.homedir(), '.aicodeswitch', 'aicodeswitch.conf')
   ];
 
-  let host = '127.0.0.1';
+  // 监听地址现由 AUTH 模式决定（AUTH 开→0.0.0.0 / AUTH 关→127.0.0.1），HOST 已忽略；
+  // 本机 dashboard 的访问地址恒为回环地址，CLI 展示与自动打开统一用 127.0.0.1。
+  const host = '127.0.0.1';
   let port = 4567;
 
   for (const dotenvPath of possiblePaths) {
     if (fs.existsSync(dotenvPath)) {
       const content = fs.readFileSync(dotenvPath, 'utf-8');
-      const hostMatch = content.match(/HOST=(.+)/);
       const portMatch = content.match(/PORT=(.+)/);
 
-      if (hostMatch) host = hostMatch[1].trim();
       if (portMatch) port = parseInt(portMatch[1].trim(), 10);
       break;
     }
