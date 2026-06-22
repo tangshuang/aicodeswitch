@@ -100,7 +100,7 @@ function notifyDarwin(opts: NotifyOptions): void {
   const app = ensureApplet();
   if (app) {
     // 通知由 applet 发出 → 图标 = 我们的 Logo
-    execFile('osascript', [app, '--', opts.title, opts.body, opts.subtitle ?? ''], { windowsHide: true }, () => { /* ignore */ });
+    execFile('osascript', [app, opts.title, opts.body, opts.subtitle ?? ''], { windowsHide: true }, () => { /* ignore */ });
     return;
   }
   // 回退：osascript（图标为空占位）
