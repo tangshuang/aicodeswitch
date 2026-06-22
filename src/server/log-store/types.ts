@@ -54,6 +54,55 @@ export interface LogStoreQueryOpts {
   since?: number;
 }
 
+/**
+ * 时间线索引单条描述符。在字节偏移定位基础上额外携带 4 个高频筛选字段，
+ * 让「带筛选的列表」也能走索引（零全量扫描、零 JSON.parse）；
+ * 关键词搜索仍需扫描正文，故不在此存储 body。
+ */
+export interface TimelineEntry {
+  /** 文件名（namespace 内） */
+  file: string;
+  /** 行起始字节偏移 */
+  offset: number;
+  /** 行字节长度（不含结尾 \n） */
+  length: number;
+  /** 日志时间戳 */
+  ts: number;
+  /** 日志 id（UUID），用于 tombstone 过滤 */
+  id: string;
+  /** 以下为可选筛选字段，与 RequestLog 同名字段对齐 */
+  targetType?: string;
+  vendorId?: string;
+  targetServiceId?: string;
+  targetModel?: string;
+  routeId?: string;
+}
+
+/** 日志字段筛选条件（全部为可选，命中即 AND 组合） */
+export interface LogFilter {
+  targetType?: string;
+  vendorId?: string;
+  targetServiceId?: string;
+  targetModel?: string;
+  routeId?: string;
+}
+
+/** 统一查询入参：字段筛选 + 关键词 + 时间窗 + 分页 */
+export interface LogQueryOpts {
+  filters?: LogFilter;
+  keyword?: string;
+  since?: number;
+  until?: number;
+  limit: number;
+  offset: number;
+}
+
+/** 统一查询返回：当前页正文 + 全量命中总数 */
+export interface LogQueryResult {
+  data: RequestLog[];
+  total: number;
+}
+
 /** append 返回的定位信息，供调用方记录 */
 export interface AppendResult {
   id: string;

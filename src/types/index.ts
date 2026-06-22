@@ -194,6 +194,7 @@ export interface RequestLog {
   // 新增字段 - 用于日志筛选和详情展示
   contentType?: ContentType;                       // 请求类型（规则内容类型）
   ruleId?: string;                                 // 使用的规则ID
+  routeId?: string;                                // 使用的路由ID
   targetType?: ToolType;                         // 客户端类型
   targetServiceId?: string;                        // API服务ID
   targetServiceName?: string;                      // API服务名
@@ -237,6 +238,7 @@ export interface ErrorLog {
 
   // 请求日志中的详细信息字段
   ruleId?: string;                                 // 使用的规则ID
+  routeId?: string;                                // 使用的路由ID
   targetType?: ToolType;                         // 客户端类型
   targetServiceId?: string;                        // API服务ID
   targetServiceName?: string;                      // API服务名

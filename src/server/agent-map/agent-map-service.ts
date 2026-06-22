@@ -26,7 +26,7 @@ import { resolveSessionMeta } from './session-meta';
 import { notify } from '../notifier';
 
 type DbManagerLike = {
-  getSessions?: (targetType?: ToolType, limit?: number, offset?: number) => Promise<any[]>;
+  getSessions?: (opts?: any, limit?: number, offset?: number) => Promise<any[]>;
   getLogsBySessionId?: (sessionId: string, limit?: number, since?: number) => Promise<RequestLog[]>;
   // 批量回填多会话近期日志（跨会话合并分片读取），用于启动重建，避免重复解析同一分片
   getRecentLogsBySessions?: (

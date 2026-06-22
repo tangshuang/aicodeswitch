@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
-import type { RequestLog, Session } from '../../types';
+import type { RequestLog, Session, Vendor, APIService, Route } from '../../types';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { Pagination } from '../components/Pagination';
@@ -28,7 +28,17 @@ function SessionsPage() {
 
   // 搜索和筛选
   const [searchQuery, setSearchQuery] = useState('');
+  const [appliedSearchQuery, setAppliedSearchQuery] = useState('');
   const [filterTargetType, setFilterTargetType] = useState('');
+  const [filterVendorId, setFilterVendorId] = useState('');
+  const [filterServiceId, setFilterServiceId] = useState('');
+  const [filterModel, setFilterModel] = useState('');
+  const [filterRouteId, setFilterRouteId] = useState('');
+
+  // 筛选下拉选项数据
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [services, setServices] = useState<APIService[]>([]);
+  const [routes, setRoutes] = useState<Route[]>([]);
 
   // 自动刷新
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -37,9 +47,26 @@ function SessionsPage() {
   const [routeBindingSession, setRouteBindingSession] = useState<Session | null>(null);
   const [clearSessionsOpen, setClearSessionsOpen] = useState(false);
 
+  // 用 ref 保存最新查询参数，供自动刷新/手动刷新/回车直接调用 loadSessions 时读取
+  const paramsRef = useRef({
+    sessionsPage, sessionsPageSize, appliedSearchQuery,
+    filterTargetType, filterVendorId, filterServiceId, filterModel, filterRouteId,
+  });
+  paramsRef.current = {
+    sessionsPage, sessionsPageSize, appliedSearchQuery,
+    filterTargetType, filterVendorId, filterServiceId, filterModel, filterRouteId,
+  };
+
   useEffect(() => {
     loadSessions();
-  }, [sessionsPage, sessionsPageSize]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionsPage, sessionsPageSize, appliedSearchQuery,
+      filterTargetType, filterVendorId, filterServiceId, filterModel, filterRouteId]);
+
+  useEffect(() => {
+    loadFilterOptions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 自动刷新倒计时逻辑
   useEffect(() => {
@@ -63,29 +90,42 @@ function SessionsPage() {
       if (intervalId) clearInterval(intervalId);
       if (countdownId) clearInterval(countdownId);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRefresh, sessionsPage, sessionsPageSize]);
 
-  // 客户端筛选
-  const filteredSessions = sessions.filter(session => {
-    if (filterTargetType && session.targetType !== filterTargetType) return false;
-    if (searchQuery.trim()) {
-      const query = searchQuery.trim().toLowerCase();
-      const title = (session.title || '').toLowerCase();
-      const id = session.id.toLowerCase();
-      if (!title.includes(query) && !id.includes(query)) return false;
+  const loadFilterOptions = async () => {
+    try {
+      const [vendorsData, servicesData, routesData] = await Promise.all([
+        api.getVendors(),
+        api.getAPIServices(),
+        api.getRoutes(),
+      ]);
+      setVendors(vendorsData);
+      setServices(servicesData);
+      setRoutes(routesData);
+    } catch (error) {
+      console.error('Failed to load filter options:', error);
     }
-    return true;
-  });
+  };
 
   const loadSessions = async () => {
+    const p = paramsRef.current;
     try {
-      const offset = (sessionsPage - 1) * sessionsPageSize;
-      const [data, count] = await Promise.all([
-        api.getSessions(sessionsPageSize, offset),
-        api.getSessionsCount()
-      ]);
-      setSessions(data);
-      setSessionsTotal(count.count);
+      const offset = (p.sessionsPage - 1) * p.sessionsPageSize;
+      const result = await api.getSessions({
+        filters: {
+          targetType: p.filterTargetType || undefined,
+          vendorId: p.filterVendorId || undefined,
+          serviceId: p.filterServiceId || undefined,
+          model: p.filterModel || undefined,
+          routeId: p.filterRouteId || undefined,
+        },
+        keyword: p.appliedSearchQuery.trim() || undefined,
+        limit: p.sessionsPageSize,
+        offset,
+      });
+      setSessions(result.sessions);
+      setSessionsTotal(result.total);
     } catch (error) {
       console.error('Failed to load sessions:', error);
     }
@@ -115,6 +155,39 @@ function SessionsPage() {
     if (targetType === 'claude-code') return <span className="badge badge-claude-code">Claude Code</span>;
     else if (targetType === 'codex') return <span className="badge badge-codex">Codex</span>;
     return <span className="badge">{targetType}</span>;
+  };
+
+  // 筛选下拉联动
+  const handleVendorChange = (vendorId: string) => {
+    setFilterVendorId(vendorId);
+    setFilterServiceId('');
+    setFilterModel('');
+    setSessionsPage(1);
+  };
+  const handleServiceChange = (serviceId: string) => {
+    setFilterServiceId(serviceId);
+    setFilterModel('');
+    setSessionsPage(1);
+  };
+  const getFilteredServices = () => {
+    if (!filterVendorId) return [];
+    return services.filter(s => s.vendorId === filterVendorId);
+  };
+  const getAvailableModels = () => {
+    if (!filterServiceId) return [];
+    const service = services.find(s => s.id === filterServiceId);
+    return service?.supportedModels || [];
+  };
+  const hasAnyFilter = !!(appliedSearchQuery || filterTargetType || filterVendorId || filterServiceId || filterModel || filterRouteId);
+  const clearAllFilters = () => {
+    setSearchQuery('');
+    setAppliedSearchQuery('');
+    setFilterTargetType('');
+    setFilterVendorId('');
+    setFilterServiceId('');
+    setFilterModel('');
+    setFilterRouteId('');
+    setSessionsPage(1);
   };
 
   const exportSessionAsJson = (session: { id: string; title?: string; targetType: string; firstRequestAt: number; lastRequestAt: number; requestCount: number; totalTokens: number; model?: string; vendorName?: string; serviceName?: string }, logs: RequestLog[], viewMode: 'logs' | 'chat') => {
@@ -247,6 +320,16 @@ function SessionsPage() {
   const handleSessionsPageChange = (page: number) => setSessionsPage(page);
   const handleSessionsPageSizeChange = (size: number) => { setSessionsPageSize(size); setSessionsPage(1); };
 
+  const filterSelectStyle: React.CSSProperties = {
+    padding: '6px 10px',
+    borderRadius: '8px',
+    border: '1px solid var(--border-primary)',
+    background: 'var(--bg-card)',
+    color: 'var(--text-primary)',
+    minWidth: '140px',
+  };
+  const filterLabelStyle: React.CSSProperties = { fontWeight: 'bold', color: 'var(--text-primary)' };
+
   return (
     <div className="sessions-page">
       <div className="page-header">
@@ -264,71 +347,6 @@ function SessionsPage() {
         <div className="toolbar">
           <h3>会话列表</h3>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-            {/* 搜索框 */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <input
-                type="text"
-                placeholder="搜索标题或ID..."
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setSessionsPage(1);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') loadSessions();
-                }}
-                style={{
-                  padding: '6px 12px',
-                  border: '1px solid var(--border-primary)',
-                  borderRadius: '6px',
-                  fontSize: '14px',
-                  width: '200px',
-                  backgroundColor: 'var(--input-bg)',
-                  color: 'var(--text-primary)'
-                }}
-              />
-              {searchQuery && (
-                <button
-                  className="btn btn-sm btn-secondary"
-                  onClick={() => { setSearchQuery(''); setSessionsPage(1); }}
-                >清除</button>
-              )}
-            </div>
-
-            {/* 来源类型筛选 */}
-            <select
-              value={filterTargetType}
-              onChange={(e) => {
-                setFilterTargetType(e.target.value);
-                setSessionsPage(1);
-              }}
-              style={{
-                padding: '6px 12px',
-                border: '1px solid var(--border-primary)',
-                borderRadius: '6px',
-                fontSize: '14px',
-                backgroundColor: 'var(--input-bg)',
-                color: 'var(--text-primary)'
-              }}
-            >
-              <option value="">全部类型</option>
-              <option value="claude-code">Claude Code</option>
-              <option value="codex">Codex</option>
-            </select>
-
-            {/* 清除筛选 */}
-            {(searchQuery || filterTargetType) && (
-              <button
-                className="btn btn-sm"
-                style={{ backgroundColor: '#e67e22', color: 'white', border: 'none' }}
-                onClick={() => {
-                  setSearchQuery('');
-                  setFilterTargetType('');
-                  setSessionsPage(1);
-                }}
-              >清除筛选</button>
-            )}
-
             {/* 自动刷新 */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <input
@@ -352,10 +370,153 @@ function SessionsPage() {
           </div>
         </div>
 
+        {/* 筛选行：字段筛选 + 搜索框（位于末尾） */}
+        <div style={{
+          padding: '15px',
+          background: 'var(--bg-secondary)',
+          borderRadius: '12px',
+          marginBottom: '20px',
+          display: 'flex',
+          gap: '15px',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          border: '1px solid var(--border-primary)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <label style={filterLabelStyle}>来源类型:</label>
+            <select
+              value={filterTargetType}
+              onChange={(e) => { setFilterTargetType(e.target.value); setSessionsPage(1); }}
+              style={filterSelectStyle}
+            >
+              <option value="">全部</option>
+              <option value="claude-code">Claude Code</option>
+              <option value="codex">Codex</option>
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <label style={filterLabelStyle}>供应商:</label>
+            <select
+              value={filterVendorId}
+              onChange={(e) => handleVendorChange(e.target.value)}
+              style={filterSelectStyle}
+            >
+              <option value="">全部供应商</option>
+              {vendors.map(vendor => (
+                <option key={vendor.id} value={vendor.id}>{vendor.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <label style={filterLabelStyle}>API服务:</label>
+            <select
+              value={filterServiceId}
+              onChange={(e) => handleServiceChange(e.target.value)}
+              disabled={!filterVendorId}
+              style={{
+                ...filterSelectStyle,
+                background: filterVendorId ? 'var(--bg-card)' : 'var(--bg-secondary)',
+                cursor: filterVendorId ? 'pointer' : 'not-allowed',
+                opacity: filterVendorId ? 1 : 0.6,
+              }}
+            >
+              <option value="">全部服务</option>
+              {getFilteredServices().map(service => (
+                <option key={service.id} value={service.id}>{service.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <label style={filterLabelStyle}>模型:</label>
+            <select
+              value={filterModel}
+              onChange={(e) => { setFilterModel(e.target.value); setSessionsPage(1); }}
+              disabled={!filterServiceId}
+              style={{
+                ...filterSelectStyle,
+                background: filterServiceId ? 'var(--bg-card)' : 'var(--bg-secondary)',
+                cursor: filterServiceId ? 'pointer' : 'not-allowed',
+                opacity: filterServiceId ? 1 : 0.6,
+              }}
+            >
+              <option value="">全部模型</option>
+              {getAvailableModels().map(model => (
+                <option key={model} value={model}>{model}</option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <label style={filterLabelStyle}>路由:</label>
+            <select
+              value={filterRouteId}
+              onChange={(e) => { setFilterRouteId(e.target.value); setSessionsPage(1); }}
+              style={filterSelectStyle}
+            >
+              <option value="">全部路由</option>
+              {routes.map(route => (
+                <option key={route.id} value={route.id}>{route.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {hasAnyFilter && (
+            <button
+              onClick={clearAllFilters}
+              style={{
+                padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '14px',
+                border: '1px solid var(--accent-danger)', background: 'var(--accent-danger)', color: 'white',
+              }}
+            >清除筛选</button>
+          )}
+
+          {/* 搜索框：跟在「清除筛选」之后，同一容器自然换行；点击「搜索」才发起请求 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="text"
+              placeholder="搜索标题或ID..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  setAppliedSearchQuery(searchQuery);
+                  setSessionsPage(1);
+                }
+              }}
+              style={{
+                padding: '6px 12px',
+                border: '1px solid var(--border-primary)',
+                borderRadius: '8px',
+                fontSize: '14px',
+                width: '320px',
+                background: 'var(--bg-card)',
+                color: 'var(--text-primary)'
+              }}
+            />
+            <button
+              onClick={() => { setAppliedSearchQuery(searchQuery); setSessionsPage(1); }}
+              style={{
+                padding: '6px 16px', borderRadius: '8px', cursor: 'pointer', fontSize: '14px',
+                border: 'none', background: 'var(--accent-primary, #3498db)', color: 'white',
+              }}
+            >搜索</button>
+            {(searchQuery || appliedSearchQuery) && (
+              <button
+                onClick={() => { setSearchQuery(''); setAppliedSearchQuery(''); setSessionsPage(1); }}
+                style={{
+                  padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px',
+                  border: '1px solid var(--border-primary)', background: 'var(--bg-card)', color: 'var(--text-primary)',
+                }}
+              >清空</button>
+            )}
+          </div>
+        </div>
+
         {sessions.length === 0 ? (
-          <div className="empty-state"><p>暂无会话记录</p></div>
-        ) : filteredSessions.length === 0 ? (
-          <div className="empty-state"><p>没有匹配的会话</p></div>
+          <div className="empty-state"><p>{hasAnyFilter ? '没有匹配的会话' : '暂无会话记录'}</p></div>
         ) : (
           <>
             <table>
@@ -372,7 +533,7 @@ function SessionsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredSessions.map((session) => (
+                {sessions.map((session) => (
                   <tr
                     key={session.id}
                     onClick={() => handleSessionClick(session)}

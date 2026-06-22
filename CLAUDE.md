@@ -606,6 +606,9 @@ aicos version            # Show current version information
   - Tool requests are logged across all server-handled paths (proxy/stream/fallback/early-error)
   - `tags` include relay status per request: `通过中转` or `未通过中转`
   - Local count_tokens direct-return requests include tag: `系统计算Token直返`
+  - **存储与查询**：请求日志用 NDJSON 分片存储（`log-store/{namespace}/*.ndjson`，namespace 为 `global` 或 `key:{keyId}`），sidecar 索引包括 `shards-index.json` / `session-index.json` / `tombstones.json` / **`timeline-index.json`**（时间线索引）
+    - **时间线索引**（`TimelineEntry[]`）：常驻内存的轻量描述符（`{file, offset, length, ts, id, targetType, vendorId, targetServiceId, targetModel}`），append 顺序维护、防抖落盘。`getRecent` / `query` 无关键词时走索引切片（零扫描、仅 hydrate 当前页），深翻页常量化；sidecar 缺失/过期时 `loadNsState` 触发后台一次性 `rebuildTimeline`，期间回退扫描。
+    - **统一查询** `LogStore.query(ns, {filters, keyword, since, until, limit, offset})` → `{data, total}`：字段筛选无关键词走索引、有关键词回退全量扫描。`GET /api/logs` 接收 `targetType/vendorId/serviceId/model/keyword` 并返回 `{logs, total}`。
 - Access logs: System access records
 - Error logs: Error and exception records with comprehensive context
   - **Error Log Details**:

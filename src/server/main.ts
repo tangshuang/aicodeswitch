@@ -1738,8 +1738,27 @@ const registerRoutes = async (dbManager: FileSystemDatabaseManager, proxyServer:
       const rawOffset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : NaN;
       const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
       const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
-      const logs = await dbManager.getLogs(limit, offset);
-      res.json(logs);
+      const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+      const keyword = str(req.query.keyword) || str(req.query.query);
+      const filters = {
+        targetType: str(req.query.targetType) || undefined,
+        vendorId: str(req.query.vendorId) || undefined,
+        targetServiceId: str(req.query.serviceId) || str(req.query.targetServiceId) || undefined,
+        targetModel: str(req.query.model) || str(req.query.targetModel) || undefined,
+        routeId: str(req.query.routeId) || undefined,
+      };
+      const hasAnyFilter = keyword || filters.targetType || filters.vendorId || filters.targetServiceId || filters.targetModel || filters.routeId;
+      if (hasAnyFilter) {
+        const result = await dbManager.queryLogs({ filters, keyword, limit, offset });
+        res.json({ logs: result.data, total: result.total });
+      } else {
+        // 无筛选：仍返回 total，避免前端额外请求 count
+        const [logs, total] = await Promise.all([
+          dbManager.getLogs(limit, offset),
+          dbManager.getLogsCount(),
+        ]);
+        res.json({ logs, total });
+      }
     })
   );
   app.delete(
@@ -1757,8 +1776,26 @@ const registerRoutes = async (dbManager: FileSystemDatabaseManager, proxyServer:
       const rawOffset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : NaN;
       const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
       const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
-      const logs = await dbManager.getErrorLogs(limit, offset);
-      res.json(logs);
+      const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+      const filters = {
+        targetType: str(req.query.targetType) || undefined,
+        vendorId: str(req.query.vendorId) || undefined,
+        serviceId: str(req.query.serviceId) || str(req.query.targetServiceId) || undefined,
+        model: str(req.query.model) || str(req.query.targetModel) || undefined,
+        routeId: str(req.query.routeId) || undefined,
+      };
+      const keyword = str(req.query.keyword) || str(req.query.query);
+      const hasAnyFilter = keyword || filters.targetType || filters.vendorId || filters.serviceId || filters.model || filters.routeId;
+      if (hasAnyFilter) {
+        const result = await dbManager.queryErrorLogs({ filters, keyword, limit, offset });
+        res.json({ logs: result.data, total: result.total });
+      } else {
+        const [logs, total] = await Promise.all([
+          dbManager.getErrorLogs(limit, offset),
+          dbManager.getErrorLogsCount(),
+        ]);
+        res.json({ logs, total });
+      }
     })
   );
   app.delete(
@@ -2804,8 +2841,21 @@ ${instruction}
       const rawOffset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : NaN;
       const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
       const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
-      const sessions = await dbManager.getSessions(undefined, limit, offset);
-      res.json(sessions);
+      const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+      const opts = {
+        targetType: str(req.query.targetType) || undefined,
+        keyword: str(req.query.keyword) || str(req.query.query) || undefined,
+        vendorId: str(req.query.vendorId) || undefined,
+        serviceId: str(req.query.serviceId) || undefined,
+        model: str(req.query.model) || undefined,
+        routeId: str(req.query.routeId) || undefined,
+      };
+      const hasFilter = opts.targetType || opts.keyword || opts.vendorId || opts.serviceId || opts.model || opts.routeId;
+      const [sessions, total] = await Promise.all([
+        dbManager.getSessions(hasFilter ? opts : undefined, limit, offset),
+        dbManager.getSessionsCount(hasFilter ? opts : undefined),
+      ]);
+      res.json({ sessions, total });
     })
   );
 

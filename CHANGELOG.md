@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-06-23: 请求日志/会话列表加载提速 + 筛选后端化 + 搜索框位置调整
+
+### 优化
+- **请求日志列表加载提速**：新增「时间线索引」——为每个 namespace 维护常驻内存的轻量描述符数组（含 `targetType/vendorId/targetServiceId/targetModel` 筛选字段），持久化为 `timeline-index.json` sidecar，重启不必全量重扫。`getRecent` 退化为「数组切片 → 仅 hydrate 当前页」，深翻页不再随 offset 线性增长（此前需逐行 `JSON.parse` 最新分片直到凑够 `offset+limit` 条）。冷启动 sidecar 缺失/过期时后台一次性重建，期间回退扫描。
+- **请求日志筛选后端化**：此前 4 个筛选下拉框为纯前端、只过滤当前页（后页命中项永远看不到）。新增统一查询入口 `LogStore.query`：无关键词时走时间线索引（零扫描）、有关键词时回退扫描；`GET /api/logs` 支持 `targetType/vendorId/serviceId/model/routeId/keyword` 参数并随响应返回 `total`，前端删除客户端 `filterRequestLogs` 与冗余的 count 调用。
+- **请求日志新增「路由」筛选**：`RequestLog` 新增 `routeId` 字段，在 `proxyRequest` / `proxyRequestForApiPath` 各日志写入点填充 `route?.id`；时间线索引描述符同步携带 `routeId`，支持按路由筛选。
+- **会话列表筛选后端化 + 补齐筛选器**：`getSessions/getSessionsCount` 扩展为支持 `targetType/keyword/vendorId/serviceId/model/routeId` 字段筛选；会话页新增「供应商/API服务/模型/路由」下拉框，与日志页对齐，全部走后端。
+- **错误日志筛选/搜索同步**：`ErrorLog` 新增 `routeId` 字段（错误日志写入处填充）；新增 `queryErrorLogs` 内存查询（字段筛选 + 关键词 + total）；`GET /api/error-logs` 支持 `targetType/vendorId/serviceId/model/routeId/keyword` 并返回 `{logs, total}`；错误日志 tab 复用请求日志的同款筛选下拉框与搜索交互。
+
+### 调整
+- 请求日志/会话的「搜索」改为**点击「搜索」按钮/回车才发起请求**（不再输入实时请求）；搜索框与筛选项置于同一 flex 容器，跟在「清除筛选」之后自然换行；新增「清空」按钮一键清空搜索词。
+- 统一两个页面「清除筛选」按钮样式（danger 红色）。
+- 日志页 tab 角标总数与分页 total 拆分：角标显示未过滤总数（独立拉取，初始即有值，不再为 0），分页 total 为过滤后的命中数。
+- 每次列表请求合并返回 `total`，省去前端额外一次 count 往返；前端对旧版服务（返回裸数组）做了兼容，会自动补 count 以保证分页正确。
+
 ## 2026-06-22: 任务雷达 popover 新增「会话详情」入口 + 限高 80vh
 
 ### 新增

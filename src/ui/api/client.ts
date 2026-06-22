@@ -56,6 +56,18 @@ interface BackendAPI {
   getLogsCount: () => Promise<{ count: number }>;
   searchLogs: (query: string, limit: number, offset: number) => Promise<RequestLog[]>;
   searchLogsCount: (query: string) => Promise<{ count: number }>;
+  queryLogs: (params: {
+    filters?: { targetType?: string; vendorId?: string; serviceId?: string; model?: string; routeId?: string };
+    keyword?: string;
+    limit: number;
+    offset: number;
+  }) => Promise<{ logs: RequestLog[]; total: number }>;
+  queryErrorLogs: (params: {
+    filters?: { targetType?: string; vendorId?: string; serviceId?: string; model?: string; routeId?: string };
+    keyword?: string;
+    limit: number;
+    offset: number;
+  }) => Promise<{ logs: ErrorLog[]; total: number }>;
 
   getErrorLogs: (limit: number, offset: number) => Promise<ErrorLog[]>;
   clearErrorLogs: () => Promise<boolean>;
@@ -112,7 +124,12 @@ interface BackendAPI {
   }>;
 
   // Sessions 相关
-  getSessions: (limit?: number, offset?: number) => Promise<Session[]>;
+  getSessions: (params?: {
+    filters?: { targetType?: string; vendorId?: string; serviceId?: string; model?: string; routeId?: string };
+    keyword?: string;
+    limit?: number;
+    offset?: number;
+  }) => Promise<{ sessions: Session[]; total: number }>;
   getSessionsCount: () => Promise<{ count: number }>;
   getSession: (id: string) => Promise<Session | null>;
   getSessionLogs: (id: string, limit?: number) => Promise<RequestLog[]>;
@@ -350,6 +367,64 @@ export const api: BackendAPI = {
 
   searchLogs: (query, limit, offset) => requestJson(buildUrl('/api/logs/search', { query, limit, offset })),
   searchLogsCount: (query) => requestJson<{ count: number }>(buildUrl('/api/logs/search/count', { query })),
+  queryLogs: async ({ filters, keyword, limit, offset }) => {
+    const raw = await requestJson<unknown>(
+      buildUrl('/api/logs', {
+        targetType: filters?.targetType,
+        vendorId: filters?.vendorId,
+        serviceId: filters?.serviceId,
+        model: filters?.model,
+        routeId: filters?.routeId,
+        keyword,
+        limit,
+        offset,
+      })
+    );
+    // 新格式 { logs, total }
+    if (!Array.isArray(raw)) {
+      const obj = raw as { logs?: RequestLog[]; total?: number };
+      return { logs: obj.logs ?? [], total: obj.total ?? 0 };
+    }
+    // 旧格式（裸数组，旧版服务）：补一次 count 以保证分页正确
+    const logs = raw as RequestLog[];
+    let total = logs.length;
+    try {
+      const hasFilter = !!(filters && (filters.targetType || filters.vendorId || filters.serviceId || filters.model || filters.routeId));
+      if (!hasFilter) {
+        const c = await requestJson<{ count: number }>(buildUrl('/api/logs/count'));
+        total = c.count;
+      }
+    } catch { /* 旧版服务无 count 时退化为本页条数 */ }
+    return { logs, total };
+  },
+  queryErrorLogs: async ({ filters, keyword, limit, offset }) => {
+    const raw = await requestJson<unknown>(
+      buildUrl('/api/error-logs', {
+        targetType: filters?.targetType,
+        vendorId: filters?.vendorId,
+        serviceId: filters?.serviceId,
+        model: filters?.model,
+        routeId: filters?.routeId,
+        keyword,
+        limit,
+        offset,
+      })
+    );
+    if (!Array.isArray(raw)) {
+      const obj = raw as { logs?: ErrorLog[]; total?: number };
+      return { logs: obj.logs ?? [], total: obj.total ?? 0 };
+    }
+    const logs = raw as ErrorLog[];
+    let total = logs.length;
+    try {
+      const hasFilter = !!(filters && (filters.targetType || filters.vendorId || filters.serviceId || filters.model || filters.routeId)) || !!keyword;
+      if (!hasFilter) {
+        const c = await requestJson<{ count: number }>(buildUrl('/api/error-logs/count'));
+        total = c.count;
+      }
+    } catch { /* 旧版服务无 count 时退化为本页条数 */ }
+    return { logs, total };
+  },
   searchErrorLogs: (query, limit, offset) => requestJson(buildUrl('/api/error-logs/search', { query, limit, offset })),
   searchErrorLogsCount: (query) => requestJson<{ count: number }>(buildUrl('/api/error-logs/search/count', { query })),
 
@@ -420,7 +495,36 @@ export const api: BackendAPI = {
   getCodexConfigStatus: () => requestJson(buildUrl('/api/config-status/codex')),
 
   // Sessions 相关
-  getSessions: (limit, offset) => requestJson(buildUrl('/api/sessions', { limit, offset })),
+  getSessions: async ({ filters, keyword, limit, offset } = {}) => {
+    const raw = await requestJson<unknown>(
+      buildUrl('/api/sessions', {
+        targetType: filters?.targetType,
+        vendorId: filters?.vendorId,
+        serviceId: filters?.serviceId,
+        model: filters?.model,
+        routeId: filters?.routeId,
+        keyword,
+        limit,
+        offset,
+      })
+    );
+    // 新格式 { sessions, total }
+    if (!Array.isArray(raw)) {
+      const obj = raw as { sessions?: Session[]; total?: number };
+      return { sessions: obj.sessions ?? [], total: obj.total ?? 0 };
+    }
+    // 旧格式（裸数组，旧版服务）：补一次 count 以保证分页正确
+    const sessions = raw as Session[];
+    let total = sessions.length;
+    try {
+      const hasFilter = !!(filters && (filters.targetType || filters.vendorId || filters.serviceId || filters.model || filters.routeId)) || !!keyword;
+      if (!hasFilter) {
+        const c = await requestJson<{ count: number }>(buildUrl('/api/sessions/count'));
+        total = c.count;
+      }
+    } catch { /* 旧版服务无 count 时退化为本页条数 */ }
+    return { sessions, total };
+  },
   getSessionsCount: () => requestJson<{ count: number }>(buildUrl('/api/sessions/count')),
   getSession: (id) => requestJson<Session | null>(buildUrl(`/api/sessions/${id}`)),
   getSessionLogs: (id, limit) => requestJson(buildUrl(`/api/sessions/${id}/logs`, { limit })),

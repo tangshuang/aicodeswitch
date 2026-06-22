@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import crypto from 'crypto';
 import CryptoJS from 'crypto-js';
 import { LogStore } from './log-store';
+import type { LogQueryOpts, LogQueryResult } from './log-store/types';
 import type {
   Vendor,
   APIService,
@@ -1508,6 +1509,14 @@ export class FileSystemDatabaseManager {
     return this.requireLogStore().searchCount('global', query);
   }
 
+  /**
+   * 统一日志查询：字段筛选 + 关键词 + 分页 + 全量命中总数。
+   * 无关键词时走时间线索引（零扫描）；有关键词时回退扫描。
+   */
+  async queryLogs(opts: LogQueryOpts): Promise<LogQueryResult> {
+    return this.requireLogStore().query('global', opts);
+  }
+
   private truncateForErrorLog(value: any): string | undefined {
     if (value === undefined || value === null) return undefined;
     const str = typeof value === 'string' ? value : JSON.stringify(value);
@@ -1551,6 +1560,34 @@ export class FileSystemDatabaseManager {
     const count = this.errorLogs.length;
     this.errorLogsCountCache = { count, timestamp: now };
     return count;
+  }
+
+  /**
+   * 统一错误日志查询：字段筛选 + 关键词 + 分页 + 全量命中总数。
+   * 错误日志常驻内存，纯内存过滤。
+   */
+  async queryErrorLogs(opts: {
+    filters?: { targetType?: string; vendorId?: string; serviceId?: string; model?: string; routeId?: string };
+    keyword?: string;
+    limit: number;
+    offset: number;
+  }): Promise<{ data: ErrorLog[]; total: number }> {
+    const filters = opts.filters;
+    const keyword = (opts.keyword || '').toLowerCase().trim();
+    const filtered = this.errorLogs.filter(log => {
+      if (filters?.targetType && log.targetType !== filters.targetType) return false;
+      if (filters?.vendorId && log.vendorId !== filters.vendorId) return false;
+      if (filters?.serviceId && log.targetServiceId !== filters.serviceId) return false;
+      if (filters?.model && log.targetModel !== filters.model) return false;
+      if (filters?.routeId && log.routeId !== filters.routeId) return false;
+      if (keyword && !this.errorLogMatchesQuery(log, keyword)) return false;
+      return true;
+    });
+    const sorted = filtered.sort((a, b) => b.timestamp - a.timestamp);
+    return {
+      data: sorted.slice(opts.offset, opts.offset + opts.limit),
+      total: filtered.length,
+    };
   }
 
   /**
@@ -2407,24 +2444,65 @@ export class FileSystemDatabaseManager {
     return true;
   }
 
+  /**
+   * 查询会话列表。支持字段筛选（targetType/vendorId/serviceId/model/routeId）
+   * 与关键词搜索（命中 title/id）。会话常驻内存，筛选为纯内存过滤。
+   * 兼容旧调用：第一个参数传 undefined 等价于无筛选。
+   */
   async getSessions(
-    targetType?: 'claude-code' | 'codex',
+    opts?: {
+      targetType?: string;
+      keyword?: string;
+      vendorId?: string;
+      serviceId?: string;
+      model?: string;
+      routeId?: string;
+    },
     limit: number = 100,
     offset: number = 0
   ): Promise<Session[]> {
-    let filtered = targetType
-      ? this.sessions.filter(s => s.targetType === targetType)
-      : this.sessions;
-
-    filtered = filtered.sort((a, b) => b.lastRequestAt - a.lastRequestAt);
+    const filtered = this.applySessionFilters(this.sessions, opts)
+      .sort((a, b) => b.lastRequestAt - a.lastRequestAt);
     return filtered.slice(offset, offset + limit);
   }
 
-  async getSessionsCount(targetType?: 'claude-code' | 'codex'): Promise<number> {
-    if (targetType) {
-      return this.sessions.filter(s => s.targetType === targetType).length;
+  async getSessionsCount(opts?: {
+    targetType?: string;
+    keyword?: string;
+    vendorId?: string;
+    serviceId?: string;
+    model?: string;
+    routeId?: string;
+  }): Promise<number> {
+    return this.applySessionFilters(this.sessions, opts).length;
+  }
+
+  private applySessionFilters(
+    sessions: Session[],
+    opts?: {
+      targetType?: string;
+      keyword?: string;
+      vendorId?: string;
+      serviceId?: string;
+      model?: string;
+      routeId?: string;
     }
-    return this.sessions.length;
+  ): Session[] {
+    if (!opts) return [...sessions];
+    const keyword = opts.keyword?.trim().toLowerCase();
+    return sessions.filter(s => {
+      if (opts.targetType && s.targetType !== opts.targetType) return false;
+      if (opts.vendorId && s.vendorId !== opts.vendorId) return false;
+      if (opts.serviceId && s.serviceId !== opts.serviceId) return false;
+      if (opts.model && s.model !== opts.model) return false;
+      if (opts.routeId && s.routeId !== opts.routeId) return false;
+      if (keyword) {
+        const title = (s.title || '').toLowerCase();
+        const id = (s.id || '').toLowerCase();
+        if (!title.includes(keyword) && !id.includes(keyword)) return false;
+      }
+      return true;
+    });
   }
 
   /**

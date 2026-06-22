@@ -19,6 +19,10 @@ import type {
   Namespace,
   ShardMeta,
   SessionRef,
+  TimelineEntry,
+  LogFilter,
+  LogQueryOpts,
+  LogQueryResult,
   LogStoreQueryOpts,
   AppendResult,
 } from './types';
@@ -58,6 +62,21 @@ function utcDate(ts: number): string {
   return new Date(ts).toISOString().split('T')[0];
 }
 
+/** 判断一条记录（描述符或已解析日志）是否命中字段筛选条件（AND 组合） */
+function matchEntry(rec: { targetType?: string; vendorId?: string; targetServiceId?: string; targetModel?: string; routeId?: string }, filters: LogFilter): boolean {
+  if (filters.targetType && rec.targetType !== filters.targetType) return false;
+  if (filters.vendorId && rec.vendorId !== filters.vendorId) return false;
+  if (filters.targetServiceId && rec.targetServiceId !== filters.targetServiceId) return false;
+  if (filters.targetModel && rec.targetModel !== filters.targetModel) return false;
+  if (filters.routeId && rec.routeId !== filters.routeId) return false;
+  return true;
+}
+
+/** 筛选条件是否非空 */
+function hasFilters(filters?: LogFilter): boolean {
+  return !!(filters && (filters.targetType || filters.vendorId || filters.targetServiceId || filters.targetModel || filters.routeId));
+}
+
 function nsDirName(ns: Namespace): string {
   // 'global' -> 'global'；'key:{keyId}' -> 直接用 keyId 作目录名（keyId 本身已带 key_ 前缀，避免 key-key_ 重复）
   return ns === 'global' ? 'global' : ns.slice('key:'.length);
@@ -70,6 +89,10 @@ interface NsState {
   shards: ShardMeta[];
   sessionRefs: Map<string, SessionRef[]>;
   tombstones: Set<string>;
+  /** 时间线索引：全部日志的轻量描述符（含筛选字段），append 顺序（最旧在前） */
+  timeline: TimelineEntry[];
+  /** 时间线索引是否就绪；冷启动重建完成前为 false，期间查询回退扫描 */
+  timelineReady: boolean;
   appendLocks: Map<string, Promise<unknown>>;
   flushTimer: ReturnType<typeof setTimeout> | null;
   dirtyCount: number;
@@ -135,6 +158,8 @@ export class LogStore {
         shards: [],
         sessionRefs: new Map(),
         tombstones: new Set(),
+        timeline: [],
+        timelineReady: false,
         appendLocks: new Map(),
         flushTimer: null,
         dirtyCount: 0,
@@ -168,7 +193,68 @@ export class LogStore {
     } catch {
       st.tombstones = new Set();
     }
+    // 时间线索引：加载 sidecar 并做 count 一致性校验
+    const expectedCount = st.shards.reduce((sum, s) => sum + s.count, 0);
+    let loaded: TimelineEntry[] | null = null;
+    try {
+      const tlRaw = await fs.readFile(path.join(st.dir, 'timeline-index.json'), 'utf-8');
+      const parsed = JSON.parse(tlRaw);
+      if (Array.isArray(parsed)) loaded = parsed;
+    } catch {
+      loaded = null;
+    }
+    if (loaded && loaded.length === expectedCount) {
+      st.timeline = loaded;
+      st.timelineReady = true;
+    } else {
+      // sidecar 缺失/过期：置空，后台重建；期间查询回退扫描
+      st.timeline = [];
+      st.timelineReady = false;
+      if (expectedCount > 0) {
+        void this.rebuildTimeline(st);
+      } else {
+        st.timelineReady = true; // 空库视为就绪
+      }
+    }
     st.loaded = true;
+  }
+
+  /**
+   * 后台一次性重建时间线索引：按 startTime 升序遍历分片，逐行取 id/ts/筛选字段。
+   * 仅在 sidecar 缺失/过期时触发；重建完成后 flush 落盘。
+   */
+  private async rebuildTimeline(st: NsState): Promise<void> {
+    try {
+      const sorted = [...st.shards].sort((a, b) => a.startTime - b.startTime);
+      const timeline: TimelineEntry[] = [];
+      for (const shard of sorted) {
+        for await (const ln of this.readLines(st, shard.filename)) {
+          let log: any;
+          try {
+            log = JSON.parse(ln.text);
+          } catch {
+            continue;
+          }
+          timeline.push({
+            file: shard.filename,
+            offset: ln.offset,
+            length: ln.length,
+            ts: log.timestamp || 0,
+            id: log.id,
+            targetType: log.targetType,
+            vendorId: log.vendorId,
+            targetServiceId: log.targetServiceId,
+            targetModel: log.targetModel,
+            routeId: log.routeId,
+          });
+        }
+      }
+      st.timeline = timeline;
+      st.timelineReady = true;
+      this.scheduleFlush(st);
+    } catch {
+      // 重建失败：保持 timelineReady=false，查询继续走扫描回退
+    }
   }
 
   // ============ 写入 ============
@@ -225,6 +311,20 @@ export class LogStore {
         }
         arr.push(ref);
       }
+      // 时间线索引：append 顺序 push（最旧在前），查询时反向遍历
+      st.timeline.push({
+        file: filename,
+        offset,
+        length: line.length - 1,
+        ts: log.timestamp,
+        id,
+        targetType: log.targetType,
+        vendorId: log.vendorId,
+        targetServiceId: log.targetServiceId,
+        targetModel: log.targetModel,
+        routeId: log.routeId,
+      });
+      st.timelineReady = true;
       this.scheduleFlush(st);
       const res: AppendResult = { id, namespace: ns, file: filename, offset, length: line.length - 1 };
       return res;
@@ -253,9 +353,28 @@ export class LogStore {
     return st.shards.reduce((sum, s) => sum + s.count, 0);
   }
 
-  /** 最近日志（newest-first，分页）。流式扫描，内存仅持描述符 + 当前页。 */
+  /** 最近日志（newest-first，分页）。优先走时间线索引（零扫描），未就绪时回退扫描。 */
   async getRecent(ns: Namespace, opts: LogStoreQueryOpts = {}): Promise<RequestLog[]> {
     const st = await this.ensureNs(ns);
+    if (!st.timelineReady) return this.getRecentScan(st, opts);
+    const limit = opts.limit ?? 100;
+    const offset = opts.offset ?? 0;
+    const since = opts.since;
+    const page: TimelineEntry[] = [];
+    let skipped = 0;
+    // timeline 为 append 顺序（最旧在前），反向遍历得到 newest-first
+    for (let i = st.timeline.length - 1; i >= 0 && page.length < limit; i--) {
+      const r = st.timeline[i];
+      if (since != null && r.ts < since) break; // newest-first：一旦早于 since 即终止
+      if (st.tombstones.has(r.id)) continue;
+      if (skipped < offset) { skipped++; continue; }
+      page.push(r);
+    }
+    return this.hydrate(st, page);
+  }
+
+  /** getRecent 的扫描回退实现（冷启动索引未就绪时使用） */
+  private async getRecentScan(st: NsState, opts: LogStoreQueryOpts): Promise<RequestLog[]> {
     const limit = opts.limit ?? 100;
     const offset = opts.offset ?? 0;
     const since = opts.since;
@@ -280,6 +399,79 @@ export class LogStore {
     collected.sort((a, b) => b.ts - a.ts);
     const page = collected.slice(offset, offset + limit);
     return this.hydrate(st, page);
+  }
+
+  /**
+   * 统一查询：字段筛选 + 关键词 + 时间窗 + 分页 + 全量命中总数。
+   * - 无关键词且索引就绪：走快路径，在描述符上直接筛选（零全量扫描、零 JSON.parse）。
+   * - 有关键词或索引未就绪：回退扫描，match 谓词同时检查字段筛选与正文子串。
+   */
+  async query(ns: Namespace, opts: LogQueryOpts): Promise<LogQueryResult> {
+    const st = await this.ensureNs(ns);
+    const limit = opts.limit;
+    const offset = opts.offset;
+    const filters = opts.filters;
+    const keyword = (opts.keyword || '').toLowerCase().trim();
+
+    // 快路径：无关键词且索引就绪
+    if (!keyword && st.timelineReady) {
+      const need = offset + limit;
+      const page: TimelineEntry[] = [];
+      let total = 0;
+      for (let i = st.timeline.length - 1; i >= 0; i--) {
+        const r = st.timeline[i];
+        if (opts.since != null && r.ts < opts.since) break;
+        if (opts.until != null && r.ts > opts.until) continue;
+        if (st.tombstones.has(r.id)) continue;
+        if (hasFilters(filters) && !matchEntry(r, filters!)) continue;
+        total++;
+        if (page.length < need) page.push(r);
+      }
+      const slice = page.slice(offset, offset + limit);
+      const data = await this.hydrate(st, slice);
+      return { data, total };
+    }
+
+    // 慢路径：扫描（关键词必须查正文，或索引未就绪）
+    return this.queryScan(st, opts, keyword);
+  }
+
+  /** query 的扫描回退实现 */
+  private async queryScan(st: NsState, opts: LogQueryOpts, keyword: string): Promise<LogQueryResult> {
+    const limit = opts.limit;
+    const offset = opts.offset;
+    const filters = opts.filters;
+    const need = offset + limit;
+    const page: LineRef[] = [];
+    let total = 0;
+    const sorted = [...st.shards].sort((a, b) => b.endTime - a.endTime);
+    for (const shard of sorted) {
+      if (opts.since != null && shard.endTime < opts.since) break;
+      if (opts.until != null && shard.startTime > opts.until) continue;
+      for await (const ln of this.readLines(st, shard.filename)) {
+        // 关键词先在原始文本上做廉价 substring 命中
+        if (keyword && !ln.text.toLowerCase().includes(keyword)) continue;
+        let log: any;
+        try {
+          log = JSON.parse(ln.text);
+        } catch {
+          continue;
+        }
+        const ts = log.timestamp || 0;
+        if (opts.since != null && ts < opts.since) continue;
+        if (opts.until != null && ts > opts.until) continue;
+        if (st.tombstones.has(log.id)) continue;
+        if (hasFilters(filters) && !matchEntry(log, filters!)) continue;
+        total++;
+        if (page.length < need) {
+          page.push({ file: shard.filename, offset: ln.offset, length: ln.length, ts, id: log.id });
+        }
+      }
+    }
+    page.sort((a, b) => b.ts - a.ts);
+    const slice = page.slice(offset, offset + limit);
+    const data = await this.hydrate(st, slice);
+    return { data, total };
   }
 
   async getBySession(ns: Namespace, sessionId: string, opts: LogStoreQueryOpts = {}): Promise<RequestLog[]> {
@@ -531,6 +723,8 @@ export class LogStore {
     st.shards = [];
     st.sessionRefs.clear();
     st.tombstones.clear();
+    st.timeline = [];
+    st.timelineReady = true;
     await this.flushNow(st);
   }
 
@@ -554,6 +748,10 @@ export class LogStore {
       const remaining = refs.filter(r => !deleted.has(r.file));
       if (remaining.length === 0) st.sessionRefs.delete(sid);
       else if (remaining.length < refs.length) st.sessionRefs.set(sid, remaining);
+    }
+    // 清理时间线索引中指向已删文件的描述符
+    if (st.timeline.length > 0) {
+      st.timeline = st.timeline.filter(r => !deleted.has(r.file));
     }
     await this.flushNow(st);
     return toDelete.length;
@@ -669,12 +867,15 @@ export class LogStore {
     const tmp1 = path.join(st.dir, '.tmp-shards-index.json');
     const tmp2 = path.join(st.dir, '.tmp-session-index.json');
     const tmp3 = path.join(st.dir, '.tmp-tombstones.json');
+    const tmp4 = path.join(st.dir, '.tmp-timeline-index.json');
     await fs.writeFile(tmp1, JSON.stringify(st.shards));
     await fs.rename(tmp1, path.join(st.dir, 'shards-index.json'));
     await fs.writeFile(tmp2, JSON.stringify(Array.from(st.sessionRefs.entries())));
     await fs.rename(tmp2, path.join(st.dir, 'session-index.json'));
     await fs.writeFile(tmp3, JSON.stringify(Array.from(st.tombstones)));
     await fs.rename(tmp3, path.join(st.dir, 'tombstones.json'));
+    await fs.writeFile(tmp4, JSON.stringify(st.timeline));
+    await fs.rename(tmp4, path.join(st.dir, 'timeline-index.json'));
   }
 
   /**
@@ -768,7 +969,7 @@ export class LogStore {
     if (!hasData) {
       for (const ns of this.listNamespaces()) {
         const dir = path.join(this.rootDir, nsDirName(ns));
-        for (const idxFile of ['shards-index.json', 'session-index.json', 'tombstones.json']) {
+        for (const idxFile of ['shards-index.json', 'session-index.json', 'tombstones.json', 'timeline-index.json']) {
           try {
             await fs.unlink(path.join(dir, idxFile));
           } catch {
