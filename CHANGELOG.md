@@ -14,8 +14,8 @@
 ### 改进
 - 任务地图节点详情「活动路径」此前会出现较多重复消息：同一句 prompt 在工具循环/客户端重试/末条 user 同时含 text+tool_result 时反复出现；连续相同的工具调用（如多次 `Read`/`Grep`）各占一行。
 - 后端 `agent-map-service.ts`：`RuntimeState` 新增 `lastPromptSummary`，`onFinalized` 改为跨轮次 prompt 去重——只要本轮 prompt 文本与该会话「最近一次真正写入的 prompt」相同即丢弃，不再受「上一条事件必须是 prompt」限制。
-- 前端 `AgentMapPage.tsx` `ActivityPathGraph`：对相邻同 kind+toolName+summary 的事件做游程折叠，合并为单行并显示「×N」徽标，点击可展开查看每次时间；连续相同的 `tool_use`/`response`/`prompt` 均受益。
-- 新增样式 `.am-path-count` / `.am-path-run` / `.am-path-run-item`（`App.css`），未使用 GPU 相关属性。
+- 前端 `AgentMapPage.tsx` `ActivityPathGraph`：对相邻同 kind+toolName+summary 的事件做游程折叠，合并为单行并显示「×N」徽标（纯静态展示，无展开交互）；连续相同的 `tool_use`/`response`/`prompt` 均受益。同时移除原有点击行展开 `tool_use` 详情的逻辑，活动路径/活动流不再展开任何内容。
+- 新增样式 `.am-path-count`（`App.css`），未使用 GPU 相关属性。
 
 ## 2026-06-22: Agent Map 一轮结束精确识别（响应 turn-end 信号）+ 通知权限「禁止」兜底
 

@@ -2802,16 +2802,6 @@ div:hover > .route-icon-popover {
 }
 .am-path-toggle { color: var(--text-muted); flex-shrink: 0; }
 .am-clickable { cursor: pointer; }
-.am-path-run { margin: 4px 0 0; display: flex; flex-direction: column; gap: 2px; }
-.am-path-run-item {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-.am-path-run-time { font-size: 10px; flex-shrink: 0; }
-.am-path-run-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .am-path-detail {
   margin: 4px 0 0;
   padding: 6px 8px;

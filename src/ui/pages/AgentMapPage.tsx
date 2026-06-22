@@ -280,75 +280,43 @@ function TrendChart({ events, start, end }: { events: ActivityEvent[]; start: nu
 // ============================ 活动路径子图（详情） ============================
 
 function ActivityPathGraph({ events }: { events: ActivityEvent[] }) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   if (events.length === 0) {
     return <div className="am-empty">暂无活动记录（发起一次请求后会出现）</div>;
   }
   const sorted = [...events].sort((a, b) => b.ts - a.ts);
 
   // 游程折叠：相邻且 kind+toolName+summary 相同的事件合并为一组，
-  // 渲染成单行 + 「×N」徽标，点开可看每次时间。消除连续相同工具调用等视觉重复。
-  const groups: { key: string; kind: ActivityEvent['kind']; toolName?: string; summary: string; items: ActivityEvent[] }[] = [];
+  // 渲染成单行 + 「×N」徽标（纯静态展示，无展开交互）。消除连续相同工具调用等视觉重复。
+  const groups: { key: string; kind: ActivityEvent['kind']; toolName?: string; summary: string; count: number; ts: number }[] = [];
   for (const e of sorted) {
     const gkey = `${e.kind}|${e.toolName || ''}|${e.summary || ''}`;
     const last = groups[groups.length - 1];
-    if (last && last.key === gkey) last.items.push(e);
-    else groups.push({ key: gkey, kind: e.kind, toolName: e.toolName, summary: e.summary || e.kind, items: [e] });
+    if (last && last.key === gkey) { last.count += 1; continue; }
+    groups.push({ key: gkey, kind: e.kind, toolName: e.toolName, summary: e.summary || e.kind, count: 1, ts: e.ts });
   }
-
-  const toggle = (id: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
 
   return (
     <div className="am-path">
       {groups.map((g, i) => {
-        const isTool = g.kind === 'tool_use';
-        const isGroup = g.items.length > 1;
-        const gid = `g${i}`;
-        const interactive = isGroup || isTool;
-        const isOpen = expanded.has(gid);
         const icon = g.kind === 'prompt' ? '💬'
           : g.kind === 'thinking' ? '💭'
           : g.kind === 'error' ? '⚠️'
           : g.kind === 'response' ? '💬'
           : TOOL_ICON[g.toolName || ''] || '•';
         return (
-          <div key={gid} className={`am-path-item am-path-item--${g.kind}`}>
+          <div key={g.key + i} className={`am-path-item am-path-item--${g.kind}`}>
             <div className="am-path-rail">
               <div className="am-path-dot" />
               {i < groups.length - 1 && <div className="am-path-line" />}
             </div>
             <div className="am-path-body">
-              <div
-                className={`am-path-head${interactive ? ' am-clickable' : ''}`}
-                onClick={() => interactive && toggle(gid)}
-              >
+              <div className="am-path-head">
                 <span className="am-path-icon">{icon}</span>
                 <span className="am-path-summary">{g.summary}</span>
-                <span className="am-path-time">{new Date(g.items[0].ts).toLocaleTimeString()}</span>
-                {isGroup && <span className="am-path-count">×{g.items.length}</span>}
-                {interactive && <span className="am-path-toggle">{isOpen ? '▾' : '▸'}</span>}
+                <span className="am-path-time">{new Date(g.ts).toLocaleTimeString()}</span>
+                {g.count > 1 && <span className="am-path-count">×{g.count}</span>}
               </div>
-              {isGroup && isOpen && (
-                <div className="am-path-run">
-                  {g.items.map(e => (
-                    <div key={e.id} className="am-path-run-item">
-                      <span className="am-path-run-time">{new Date(e.ts).toLocaleTimeString()}</span>
-                      <span className="am-path-run-text">{e.summary || g.kind}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {isTool && !isGroup && isOpen && (
-                <pre className="am-path-detail">{g.summary}</pre>
-              )}
-              {g.kind === 'prompt' && !isGroup && (
+              {g.kind === 'prompt' && (
                 <div className="am-path-prompt">{g.summary}</div>
               )}
             </div>
