@@ -460,6 +460,8 @@ export class AgentMapService extends EventEmitter {
   private maybeNotifyTurnEnd(prevStatus: SessionStatus, st: RuntimeState) {
     if (!this.notifyEnabled) return;
     if (prevStatus !== 'active' || st.status !== 'idle') return;
+    // 499 = 用户主动放弃停止任务，属于预期行为，不弹系统通知
+    if (st.lastStatusCode === 499) return;
     const agentName = st.agent === 'codex' ? 'Codex' : 'Claude Code';
     notify({
       title: `✅ AICodeSwitch · ${agentName}`,

@@ -1,11 +1,24 @@
 # Changelog
 
+## 2026-06-22: 重设计稳健的日志迁移逻辑（logId 去重 + 内容感知 gate）
+
+### 修复
+- 上版迁移在「用户删了 `log-store/global/*.ndjson` 数据文件但留下 `.legacy-migrated` 标记」时直接跳过迁移，导致重启后日志全没——标记只证明「曾经迁移过」，不证明「store 现在还有数据」。
+- `LogStore.migrateLegacy` 重写为**幂等 + 非破坏性 + 内容感知**：
+  - **gate 看真实数据**：仅当 `标记缺失 OR storeHasData()=false` 才迁移。`storeHasData` 扫实际 `*.ndjson` 文件（不信 shards-index.json 元数据，防「索引在、文件没了」）。正常重启（标记在 + 数据在）跳过，不扫源。
+  - **logId 去重取代破坏性 wipe**：进入迁移时为每个有数据的 namespace 用 `collectIds` 建已存在 idSet，迁移时 `idSet.has(id)` 则跳过。「部分残留/中断续跑/标记过期重跑」均不产生重复。
+  - **stale 索引清理**：store 无数据文件时，先删掉残留的 `shards-index.json`/`session-index.json`/`tombstones.json` + 清内存态，避免幽灵索引。
+  - 标记改名 `.log-store-migration`（兼容删除旧 `.legacy-migrated`），内容记录 `{version, finishedAt, sources}` 便于排查；仍需 `storeHasData()` 为真才在下次跳过。
+  - 不碰源头 `logs/`、`key-logs/`（始终只读）。
+- 状态矩阵全覆盖（有/无数据 × 有/无标记 × 部分/完全），任意状态结果一致、无重复、无丢失。
+
 ## 2026-06-22: 任务地图修复 499（主动放弃）状态不一致
 
 ### 修复
 - 点击「放弃停止任务」产生 499（客户端主动断开）时，任务地图节点不变化、全局活动流却冒出 ⚠️「请求失败 (499)」的矛盾：根因是节点状态引擎仅把 `>= 500` 视为 error，而活动流对任意 `>= 400` 都发 error 事件，499 恰好落在两者之间
 - 现将 499 统一视为「已取消」（与 proxy 既有的 `markRuleIdle` 约定一致）：活动流改发中性 `cancelled` 事件（🚫「已取消 (499)」，灰色，不计入 errorSessions），节点状态立即从 active 停止脉冲转为 idle、过 idleWindow 再 completed
-- 改动文件：`src/types/index.ts`（`ActivityEvent.kind` 新增 `cancelled`）、`src/server/agent-map/activity-extractor.ts`（499 分支）、`src/server/agent-map/agent-map-service.ts`（`inferStatus` 新增 499 分支）、`src/ui/pages/AgentMapPage.tsx`（渲染 cancelled 图标）、`src/ui/styles/App.css`（中性样式）
+- 499 引发的 active→idle 迁移不弹 OS 系统通知（`maybeNotifyTurnEnd` 在 `lastStatusCode===499` 时跳过），避免用户主动放弃任务却被「任务已暂停」通知打扰
+- 改动文件：`src/types/index.ts`（`ActivityEvent.kind` 新增 `cancelled`）、`src/server/agent-map/activity-extractor.ts`（499 分支）、`src/server/agent-map/agent-map-service.ts`（`inferStatus` 新增 499 分支 + `maybeNotifyTurnEnd` 跳过 499）、`src/ui/pages/AgentMapPage.tsx`（渲染 cancelled 图标）、`src/ui/styles/App.css`（中性样式）
 
 
 ## 2026-06-22: dev 模式 server 就绪后再启动 UI
