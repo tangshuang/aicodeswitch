@@ -453,7 +453,7 @@ export class AgentMapService extends EventEmitter {
 
   /** 发一条测试通知（供 UI「测试」按钮验证 OS 是否真弹） */
   notifyTest() {
-    notify({ title: '✅ 测试通知', body: 'AICodeSwitch 通知可用' });
+    notify({ title: '🔔 AICodeSwitch', body: '测试通知：通知功能可用' });
   }
 
   /** active → idle 迁移时，只要开关开启就弹 OS 通知（一轮工作结束）。不再看页面是否后台。 */
@@ -462,8 +462,8 @@ export class AgentMapService extends EventEmitter {
     if (prevStatus !== 'active' || st.status !== 'idle') return;
     const agentName = st.agent === 'codex' ? 'Codex' : 'Claude Code';
     notify({
-      title: `✅ ${agentName} · 一轮工作结束`,
-      body: st.title || st.lastActivitySummary || '任务已暂停，等待下一步',
+      title: `✅ AICodeSwitch · ${agentName}`,
+      body: `一轮工作结束：${st.title || st.lastActivitySummary || '任务已暂停，等待下一步'}`,
     });
   }
 
