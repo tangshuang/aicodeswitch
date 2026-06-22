@@ -494,6 +494,11 @@ export class AgentMapService extends EventEmitter {
       return { status: 'error', reason: `upstream ${args.lastStatusCode}` };
     }
     const elapsed = args.now - args.lastRequestAt;
+    // 499 = 客户端主动断开（用户放弃停止任务）：视为「已取消」，立即停止脉冲进入 idle，过 idleWindow 再 completed
+    if (args.lastStatusCode === 499) {
+      if (elapsed <= this.idleWindowMs) return { status: 'idle', reason: 'client cancelled' };
+      return { status: 'completed', reason: 'cancelled earlier' };
+    }
     // 精确信号：本轮响应明确「结束」→ 立即停止脉冲，进入 idle（超时再 completed）
     if (args.turnEnd === true) {
       if (elapsed <= this.idleWindowMs) return { status: 'idle', reason: 'turn ended' };

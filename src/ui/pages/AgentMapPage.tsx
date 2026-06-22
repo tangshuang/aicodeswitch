@@ -301,6 +301,7 @@ function ActivityPathGraph({ events }: { events: ActivityEvent[] }) {
         const icon = g.kind === 'prompt' ? '💬'
           : g.kind === 'thinking' ? '💭'
           : g.kind === 'error' ? '⚠️'
+          : g.kind === 'cancelled' ? '🚫'
           : g.kind === 'response' ? '💬'
           : TOOL_ICON[g.toolName || ''] || '•';
         return (
@@ -345,7 +346,7 @@ function ActivityFeed({ events, onSelectSession }: { events: ActivityEvent[]; on
           <span className="am-feed-time">{new Date(e.ts).toLocaleTimeString()}</span>
           <AgentIcon agent={e.agent} size={13} className="am-feed-agent" />
           <span className="am-feed-icon">
-            {e.kind === 'prompt' ? '💬' : e.kind === 'error' ? '⚠️' : TOOL_ICON[e.toolName || ''] || '•'}
+            {e.kind === 'prompt' ? '💬' : e.kind === 'error' ? '⚠️' : e.kind === 'cancelled' ? '🚫' : TOOL_ICON[e.toolName || ''] || '•'}
           </span>
           <span className="am-feed-summary">{e.summary}</span>
         </div>

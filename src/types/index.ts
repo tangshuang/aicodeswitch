@@ -462,7 +462,7 @@ export interface ActivityEvent {
   source?: 'global' | 'access-key';                  // 会话来源
   keyId?: string;                                    // source=access-key 时的密钥 ID
   keyName?: string;
-  kind: 'prompt' | 'thinking' | 'tool_use' | 'tool_result' | 'response' | 'error';
+  kind: 'prompt' | 'thinking' | 'tool_use' | 'tool_result' | 'response' | 'error' | 'cancelled';
   toolName?: string;                                 // Read/Edit/Bash/Grep/WebFetch...
   summary: string;                                   // 一行摘要
   tokensDelta?: number;                              // 本轮 token 增量

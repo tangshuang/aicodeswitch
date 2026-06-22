@@ -345,8 +345,10 @@ export function extractActivityEvents(input: ExtractInput): ActivityEvent[] {
     events.push({ ...base, id: nextId(input.timestamp), ...a } as ActivityEvent);
   }
 
-  // 错误
-  if (input.statusCode && input.statusCode >= 400) {
+  // 499 = 客户端主动断开（用户放弃停止任务），视为「已取消」而非错误
+  if (input.statusCode === 499) {
+    events.push({ ...base, id: nextId(input.timestamp), kind: 'cancelled', summary: '已取消 (499)' });
+  } else if (input.statusCode && input.statusCode >= 400) {
     events.push({ ...base, id: nextId(input.timestamp), kind: 'error', summary: `请求失败 (${input.statusCode})` });
   }
 

@@ -2773,6 +2773,7 @@ div:hover > .route-icon-popover {
 }
 .am-path-item--tool_use .am-path-dot { background: var(--accent-primary); }
 .am-path-item--error .am-path-dot { background: var(--accent-danger); }
+.am-path-item--cancelled .am-path-dot { background: var(--text-route-muted); }
 .am-path-item--prompt .am-path-dot { background: var(--accent-warning); }
 .am-path-line {
   width: 2px;
@@ -2903,6 +2904,7 @@ div:hover > .route-icon-popover {
 }
 .am-feed-row--tool_use .am-feed-summary { color: var(--accent-primary); }
 .am-feed-row--error .am-feed-summary { color: var(--accent-danger); }
+.am-feed-row--cancelled .am-feed-summary { color: var(--text-secondary); }
 
 /* ==================== Agent Map：缩放 / 时间筛选 / 直方图 ==================== */
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-06-22: 任务地图修复 499（主动放弃）状态不一致
+
+### 修复
+- 点击「放弃停止任务」产生 499（客户端主动断开）时，任务地图节点不变化、全局活动流却冒出 ⚠️「请求失败 (499)」的矛盾：根因是节点状态引擎仅把 `>= 500` 视为 error，而活动流对任意 `>= 400` 都发 error 事件，499 恰好落在两者之间
+- 现将 499 统一视为「已取消」（与 proxy 既有的 `markRuleIdle` 约定一致）：活动流改发中性 `cancelled` 事件（🚫「已取消 (499)」，灰色，不计入 errorSessions），节点状态立即从 active 停止脉冲转为 idle、过 idleWindow 再 completed
+- 改动文件：`src/types/index.ts`（`ActivityEvent.kind` 新增 `cancelled`）、`src/server/agent-map/activity-extractor.ts`（499 分支）、`src/server/agent-map/agent-map-service.ts`（`inferStatus` 新增 499 分支）、`src/ui/pages/AgentMapPage.tsx`（渲染 cancelled 图标）、`src/ui/styles/App.css`（中性样式）
+
+
 ## 2026-06-22: dev 模式 server 就绪后再启动 UI
 
 ### 改进
