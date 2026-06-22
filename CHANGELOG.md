@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-06-22: 修复 LogStore 迁移重复 + AccessKey 目录命名
+
+### 修复
+- 会话详情拉不到日志/对话记录：根因是旧→NDJSON 迁移在重启时**重复执行**——`.legacy-migrated` 标记缺失 + 旧分片归档条件过严（`written === arr.length`，任一坏数据就永不归档），导致每次启动都把旧日志重新追加一遍，`log-store/global/` 累积成 432 个 ~50MB 文件（约 21GB 重复数据），session 索引随之错乱。
+- `LogStore.migrateLegacy` 改为：① 标记缺失时**自愈清空**已有 namespace 目录后从源头（`logs/`、`key-logs/` 仍完整未动）重新迁移，保证幂等无重复；② 迁移改在 **main.ts 服务 listen 之前**执行，避免「清空重迁」与实时写入竞争；③ **不移动/删除旧文件**——`~/.aicodeswitch/fs-db/logs` 原地保留，由用户确认新存储正常后手动删除（见 UPGRADE.md）。
+- AccessKey 日志 namespace 目录改名：`key-key_<id>` → `key_<id>`（keyId 本身已带 `key_` 前缀，去掉冗余的 `key-`）。`nsDirName` 与 `init` 扫描逻辑同步调整。
+
+### 影响
+- 升级后首次启动会自动清空并重建 `log-store/`（从旧 `logs/`、`key-logs/` 重迁一次即完成并写入 `.legacy-migrated` 标记），之后会话详情恢复正常。
+- 旧 `logs/`、`key-logs/` 目录**原地保留**；运行一段时间确认正常后，可手动删除以释放空间。
+
 ## 2026-06-22: 服务监听地址改为 AUTH 驱动；本地工具/UI 地址统一 127.0.0.1
 
 ### 改进

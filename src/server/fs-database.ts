@@ -182,14 +182,12 @@ export class FileSystemDatabaseManager {
   }
 
   /**
-   * 执行延迟的维护任务（启动后异步执行，不阻塞服务启动）
-   * 现在主要是：旧 JSON 日志 → NDJSON 一次性迁移 + 保留期清理。
-   * 日志索引/分片一致性校验已交给 LogStore（追加写下无需校验）。
+   * 执行延迟的维护任务（启动后异步执行，不阻塞服务启动）。
+   * 旧数据迁移已在 main.ts 中 pre-listen 完成；这里只做保留期清理。
    */
   async deferredMaintenance(): Promise<void> {
     if (!this.logStore) return;
     try {
-      await this.logStore.migrateLegacy(this.dataPath);
       await this.logStore.retain('global', this.LOG_RETENTION_DAYS);
       console.log('[Database] LogStore deferred maintenance completed');
     } catch (err) {

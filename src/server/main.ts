@@ -4190,6 +4190,13 @@ const start = async () => {
   // 创建并初始化共享 LogStore（追加写 NDJSON），注入 dbManager
   const logStore = createLogStore(dataDir);
   await logStore.init();
+  // 在服务对外提供流量前完成旧 JSON → NDJSON 迁移（含自愈：标记缺失时清空重迁，避免重复）。
+  // 必须在 listen 之前，防止迁移的「清空重迁」与实时写入竞争。
+  try {
+    await logStore.migrateLegacy(dataDir);
+  } catch (err) {
+    console.error('[Server] LogStore legacy migration failed:', err);
+  }
   dbManager.setLogStore(logStore);
 
   // Agent Map 服务接入 dbManager（种子化已有 Session + 启动状态清扫定时器）

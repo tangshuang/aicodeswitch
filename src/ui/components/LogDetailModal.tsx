@@ -217,7 +217,6 @@ function RequestLogDetail({ log }: { log: RequestLog }) {
       )}
       {(() => {
         const assembledBody = assembleResponseBody(log);
-        console.log('[RequestLogDetail] assembledBody:', assembledBody);
         if (!assembledBody) {
           return (
             <div className="form-group">
