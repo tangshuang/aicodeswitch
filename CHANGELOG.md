@@ -1,5 +1,56 @@
 # Changelog
 
+## 2026-06-18: Leader（Claude Code）改用 Claude Agent SDK 驱动，彻底修复无输出
+
+### 变更
+- **根因**：手动 `spawn claude --print --output-format stream-json` + stdin 喂 prompt 在 server 运行时下存在无法稳定规避的 async stdin 管道问题（claude 读完全部 prompt 后 exit 1、零输出），外部无法复现
+- **方案**：Leader 的 Claude 路径改由 **Claude Agent SDK**（`@anthropic-ai/claude-agent-sdk`）的 `query()` 驱动——SDK 自管子进程/协议/流式，彻底消除手动 spawn 耦合
+  - 逐字流式：SDK `stream_event`(content_block_delta/text_delta) → onText
+  - 代理路由：`settingSources:['user','project']` 读 `~/.claude/settings.json` 的 `ANTHROPIC_BASE_URL`（依赖本日早些 `0.0.0.0→127.0.0.1` 修复）
+  - MCP：`mcpServers` 内联拉起 ato-leader stdio（`strictMcpConfig`），不再依赖 `~/.claude.json` 注册
+  - 权限：`canUseTool` 接 `PermissionJudge`（替代失效的 `--permission-prompt-tool`）；默认 bypass 自由运行
+  - 会话：`system/init` 的 session_id → onSessionId；超时/取消用 `abortController`
+  - 原始 CLI 通道：SDK `stderr` 回调 → onCli
+- 移除：runner 的 spawn/stdin/stream-json 手解析/`--verbose`/`--include-partial-messages`/诊断脚手架（dlog/控制实验/env 快照）
+- manager：`streamLeader` 传入 `judge`；移除已失效的 `~/.claude.json` permission 预检
+- mcp-server：移除已废弃的 `permission_request` 工具（权限改走 SDK canUseTool）
+- 新增 `leader/ato-tools.ts`：解析 ato-leader stdio MCP 启动命令
+- 新增依赖：`@anthropic-ai/claude-agent-sdk`、`@modelcontextprotocol/sdk`、`zod`
+- Codex 路径暂保留 `codex exec` CLI spawn，待 Codex SDK 代理路由验证后迁移
+- 影响文件：`leader/runner.ts`、`leader/manager.ts`、`leader/mcp-server.ts`、`leader/ato-tools.ts`(新)、`package.json`
+
+## 2026-06-18: 修复代理 base URL 写成 0.0.0.0 导致 claude/codex 回调挂起（Leader 无输出根因）
+
+### 变更
+- **根因**：`main.ts` 用监听 host（默认 `0.0.0.0`）拼写入本地工具配置的 base URL（`ANTHROPIC_BASE_URL` / codex `base_url`）。`0.0.0.0` 是「绑定所有网卡」的通配地址，仅用于 `app.listen`，客户端 connect 到它会挂起/失败（Windows 尤甚）。导致 claude/codex 启动后回调代理取模型时无限挂起，Leader 表现为"(主 Agent 未返回内容)"、CLI 无输出
+- **修复**：新增 `clientHost`（host 为 `0.0.0.0`/`::`/空时回退 `127.0.0.1`），写入 `~/.claude/settings.json` 与 `~/.codex/config.toml` 的 base URL 一律用 `clientHost`；监听仍用原 `host`
+- 与既有 `config-metadata.ts` 检测正则（要求 base URL 含 `127.0.0.1`/`localhost`）一致，重启后旧 `0.0.0.0` 配置会被自动判定为「未覆盖」并重写为 `127.0.0.1`
+- 影响文件：`src/server/main.ts`
+
+## 2026-06-18: 修复 Leader Agent 无输出（"(主 Agent 未返回文本)"）
+
+### 变更
+- **根因修复**：Leader/子 Agent 的 claude spawn 补 `--verbose`（`--print --output-format stream-json` 在 claude 2.1.37 强制要求 `--verbose`，缺失则 exit 1、零输出，是"(主 Agent 未返回文本)"的直接原因）
+- 补 `--include-partial-messages` 并在 runner 新增 `stream_event`/`content_block_delta`/`text_delta` 解析（路径 `evt.event.delta.text`），恢复**逐字流式**渲染（原先仅 --verbose 时只发 1 个终态快照，UI 无逐字效果）
+- **修复双消息 bug**：runner 出错时只触发 `onError`，不再叠加 `onDone` 的"(主 Agent 未返回文本)"占位消息（新增 `errored` 标志门控 `onDone`）
+- **权限裁决默认关闭**：`--permission-prompt-tool mcp__ato-leader__permission_request` 在 claude 2.1.37 启动期校验拿不到 MCP 工具（实测全局/项目/`--mcp-config` 三种配置均 "Available MCP tools: none" + exit 1），故 `permission.ts` 默认 `enabled` 改为显式 opt-in，runner/adapters 移除该 flag 注入；PermissionJudge/MCP 工具/路由代码全部保留待后续修复
+- 影响文件：`leader/runner.ts`、`leader/permission.ts`、`orchestrator/adapters.ts`
+
+## 2026-06-18: 重构 Leader CLI 输出（移除调试面板，改为每条 agent 消息内嵌 CLI 上下文）
+
+### 变更
+- 移除首页右侧独立的「调试输出」面板（全局累加 `debugLines` 的设计废弃）
+- 每条 assistant 消息新增：**时间**、**agent 类型徽标**（Claude Code / Codex）、**CLI 开关**——点击展开终端风格区域，实时刷新该轮 spawn 的 CLI stdout/stderr，对话完成后可查看完整 CLI 上下文
+- CLI 输出**持久化**到 `conversation.jsonl`（`cli` 字段），刷新/重启后历史轮次仍可回看；按每轮上限 head+tail 截断（带截断标记）控体积，实时流不截断
+- 流式中 CLI 开关显示脉冲圆点表示「实时」；出错时强制展开便于排查
+
+### 技术细节
+- 后端新增独立 `onCli` 通道（`{s:'stdout'|'stderr';t:string}`），仅从 4 个原始 stdout/stderr 站点喂数据；Claude 不再做 raw + 重序列化双发
+- runner 中其余 ~26 处 `onDebug`（生命周期诊断）改为服务端 `console.error`，不再上 SSE、不再进 UI
+- SSE 事件类型：移除 `debug`，新增 `cli`（保留 status/text/tool/done/error）
+- `memory.ts`：`ConversationMessage` 增 `cli?`/`leaderTool?`，新增 `LeaderCliEntry` 类型与 `capCli()`/`CLI_PERSIST_BUDGET`
+- 前端：`client.ts` `onDebug`→`onCli`；`HomePage.tsx` 用 ref 累加 tools/cli（修复原先 await 后读 state 闭包旧值导致完成消息丢失 tools 的隐患）
+
 ## 2026-06-18: Leader 主 Agent 新增多会话管理
 
 ### 新增

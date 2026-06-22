@@ -76,7 +76,9 @@ export function loadPermissionConfig(): PermissionConfig {
   const raw = loadLeaderConfig() as any;
   const p = raw.permission;
   return {
-    enabled: p?.enabled !== false,
+    // 默认关闭：--permission-prompt-tool 在 claude 2.1.37 启动期拿不到 MCP 工具，
+    // 注入即 exit 1，故改为显式 opt-in（仅当 claude 侧修复后再手动启用）
+    enabled: p?.enabled === true,
     allowPatterns: p?.allowPatterns ?? DEFAULT_ALLOW,
     denyPatterns: p?.denyPatterns ?? DEFAULT_DENY,
     humanGateMedium: p?.humanGateMedium === true,

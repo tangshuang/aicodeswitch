@@ -19,12 +19,25 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
+/** CLI 原始输出条目（stdout/stderr 的一个片段） */
+export interface LeaderCliEntry {
+  s: 'stdout' | 'stderr';
+  t: string;
+}
+
+/** 每轮 CLI 输出持久化时的字节预算（超出按 head+tail 截断，带截断标记） */
+export const CLI_PERSIST_BUDGET = 64 * 1024;
+
 export interface ConversationMessage {
   ts: number;
   role: 'user' | 'assistant';
   content: string;
   /** 本条 assistant 消息触发的工具调用（可选） */
   tools?: Array<{ kind?: string; name?: string; input?: unknown; content?: unknown; result?: unknown }>;
+  /** 产生本条 assistant 消息的主 Agent 类型（老消息缺省时回退到会话级 leaderTool） */
+  leaderTool?: 'claude-code' | 'codex';
+  /** 本轮 CLI 进程的原始 stdout/stderr（仅持久化时做 head+tail 截断；实时流不截断） */
+  cli?: LeaderCliEntry[];
 }
 
 /** 会话元信息（写入 sessions/index.json） */
@@ -286,6 +299,57 @@ export function clearConversation(sessionId: string): void {
   ensureLeaderDirs();
   fs.mkdirSync(sessionDir(sessionId), { recursive: true });
   fs.writeFileSync(sessionConversationPath(sessionId), '', 'utf-8');
+}
+
+/**
+ * 对 CLI 原始输出做 head+tail 截断（仅持久化时调用，控制 conversation.jsonl 体积）。
+ * 总字符 ≤ budget 原样返回；否则保留 head≈60% + tail≈40%，中间插入一条截断标记。
+ * 条目数超 maxEntries 时同样 head+tail 截断。
+ */
+export function capCli(
+  entries: LeaderCliEntry[],
+  budget = CLI_PERSIST_BUDGET,
+  maxEntries = 5000
+): LeaderCliEntry[] {
+  if (!entries.length) return entries;
+  // 先按条目数硬截断
+  let working = entries;
+  if (entries.length > maxEntries) {
+    const headN = Math.ceil(maxEntries * 0.6);
+    const tailN = maxEntries - headN - 1;
+    const omitted = entries.length - headN - tailN;
+    working = [
+      ...entries.slice(0, headN),
+      { s: 'stdout', t: `… [truncated ${omitted} entries omitted] …` },
+      ...entries.slice(entries.length - tailN),
+    ];
+  }
+  const totalChars = working.reduce((n, e) => n + e.t.length, 0);
+  if (totalChars <= budget) return working;
+  // 按字符预算 head+tail 截断
+  const headBudget = Math.floor(budget * 0.6);
+  const tailBudget = budget - headBudget;
+  const head: LeaderCliEntry[] = [];
+  let headChars = 0;
+  for (const e of working) {
+    if (headChars + e.t.length > headBudget) break;
+    head.push(e);
+    headChars += e.t.length;
+  }
+  const tail: LeaderCliEntry[] = [];
+  let tailChars = 0;
+  for (let i = working.length - 1; i >= 0; i--) {
+    const e = working[i];
+    if (tailChars + e.t.length > tailBudget) break;
+    tail.unshift(e);
+    tailChars += e.t.length;
+  }
+  const omitted = totalChars - headChars - tailChars;
+  return [
+    ...head,
+    { s: 'stdout', t: `… [truncated ${omitted} chars / ${working.length - head.length - tail.length} lines omitted] …` },
+    ...tail,
+  ];
 }
 
 // ─── 会话 artifacts（关联的 CLI 会话文件）─────────────────────────────

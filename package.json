@@ -57,7 +57,9 @@
     }
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.181",
     "@iarna/toml": "^2.2.5",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/jsonwebtoken": "^9.0.10",
     "axios": "^1.6.7",
     "boxen": "^5.1.2",
@@ -69,9 +71,11 @@
     "https-proxy-agent": "^7.0.6",
     "jsonwebtoken": "^9.0.3",
     "ora": "^5.4.1",
-    "ws": "^8.19.0"
+    "ws": "^8.19.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@openai/codex-sdk": "^0.141.0",
     "@tauri-apps/cli": "^2.0.0",
     "@types/cors": "^2.8.17",
     "@types/crypto-js": "^4.2.2",

@@ -8,7 +8,7 @@
  */
 import type { Express, Request, Response } from 'express';
 import type { LeaderManager } from './manager';
-import type { ToolEvent } from './runner';
+import type { CliEntry, ToolEvent } from './runner';
 
 function sseData(res: Response, payload: unknown): boolean {
   if (res.writableEnded) return false;
@@ -46,14 +46,7 @@ export function registerLeaderRoutes(app: Express, manager: LeaderManager): void
       status: (t) => { if (!closed) sseData(res, { type: 'status', text: t }); },
       text: (delta) => { if (!closed) sseData(res, { type: 'text', delta }); },
       tool: (e: ToolEvent) => { if (!closed) sseData(res, { type: 'tool', tool: e }); },
-      debug: (entry) => {
-        if (closed) {
-          console.error(`[leader:routes] SSE debug dropped (closed=true): ${entry.message?.slice(0, 100)}`);
-          return;
-        }
-        const ok = sseData(res, { type: 'debug', debug: entry });
-        if (!ok) console.error(`[leader:routes] SSE debug write FAILED (writableEnded=${res.writableEnded}): ${entry.message?.slice(0, 100)}`);
-      },
+      cli: (e: CliEntry) => { if (!closed) sseData(res, { type: 'cli', cli: e }); },
       done: (full) => {
         if (!closed) { sseData(res, { type: 'done', full }); }
         if (!res.writableEnded) res.end();

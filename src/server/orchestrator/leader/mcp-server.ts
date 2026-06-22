@@ -107,40 +107,6 @@ const TOOLS: ToolDef[] = [
     run: () => httpCall('GET', '/api/orchestrator/adapters/check'),
   },
   {
-    // Claude Code 经 --permission-prompt-tool 调用此工具做权限裁决。
-    // 入参字段名以实测为准，这里做容错：tool_name|toolName|name，input|arguments。
-    name: 'permission_request',
-    description: '权限裁决：判断是否允许执行某个工具调用。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        tool_name: { type: 'string' },
-        toolName: { type: 'string' },
-        name: { type: 'string' },
-        input: { type: 'object' },
-        arguments: { type: 'object' },
-      },
-    },
-    run: async (a) => {
-      const toolName = String(a.tool_name || a.toolName || a.name || 'Unknown');
-      const input = a.input ?? a.arguments ?? {};
-      // 用带显式长超时的 fetch（服务端可能等人类确认），避免 undici 默认超时
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (TOKEN) headers['Access-Token'] = TOKEN;
-      const res = await fetch(`${BASE}/api/orchestrator/leader/permission`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ tool_name: toolName, input }),
-        signal: AbortSignal.timeout(5 * 60 * 1000),
-      });
-      const txt = await res.text();
-      let json: any = null;
-      try { json = txt ? JSON.parse(txt) : null; } catch { json = { behavior: 'deny', message: txt }; }
-      if (!res.ok && !json?.behavior) throw new Error(`HTTP ${res.status}: ${txt}`);
-      return json || { behavior: 'deny', message: '权限裁决返回为空' };
-    },
-  },
-  {
     name: 'memory_read',
     description: '读取长期记忆文件：profile（用户画像/偏好）或 scratchpad（工作记忆/TODO）。',
     inputSchema: {

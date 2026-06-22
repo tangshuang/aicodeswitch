@@ -78,6 +78,10 @@ if (fs.existsSync(dotenvPath)) {
 
 const host = process.env.HOST || '0.0.0.0';
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
+// 写入本地工具配置（~/.claude/settings.json、~/.codex/config.toml）的 base URL 必须用客户端可连接地址；
+// 0.0.0.0 / :: 是「绑定所有网卡」的通配地址，仅用于监听（app.listen），客户端 connect 到它会挂起/失败
+// （Windows 上尤为明显，会导致 claude/codex 回调代理取模型时无限挂起）。
+const clientHost = !host || host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host;
 
 let globalProxyConfig: { enabled: boolean; url: string; username?: string; password?: string } | null = null;
 
@@ -348,7 +352,7 @@ const writeClaudeConfig = async (
     // 构建代理配置
     const claudeSettingsEnv: Record<string, any> = {
       ANTHROPIC_AUTH_TOKEN: "api_key",
-      ANTHROPIC_BASE_URL: `http://${host}:${port}/claude-code`,
+      ANTHROPIC_BASE_URL: `http://${clientHost}:${port}/claude-code`,
       API_TIMEOUT_MS: "3000000",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
       CLAUDE_CODE_MAX_RETRIES: 3
@@ -545,7 +549,7 @@ const writeCodexConfig = async (
       model_providers: {
         aicodeswitch: {
           name: "aicodeswitch",
-          base_url: `http://${host}:${process.env.PORT ? parseInt(process.env.PORT, 10) : 4567}/codex`,
+          base_url: `http://${clientHost}:${process.env.PORT ? parseInt(process.env.PORT, 10) : 4567}/codex`,
           wire_api: "responses",
           stream_max_retries: 3,
           stream_retry_backoff: "fixed"

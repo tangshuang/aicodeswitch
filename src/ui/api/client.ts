@@ -245,7 +245,7 @@ interface BackendAPI {
       onTool?: (e: AtoLeaderToolEvent) => void;
       onStatus?: (text: string) => void;
       onError?: (message: string) => void;
-      onDebug?: (entry: { kind: string; message: string }) => void;
+      onCli?: (e: { s: 'stdout' | 'stderr'; t: string }) => void;
     }
   ) => Promise<string>;
 }
@@ -769,8 +769,8 @@ export const api: BackendAPI = {
           handlers.onStatus?.(evt.text);
         } else if (evt.type === 'error') {
           handlers.onError?.(evt.message);
-        } else if (evt.type === 'debug') {
-          handlers.onDebug?.(evt.debug);
+        } else if (evt.type === 'cli' && evt.cli) {
+          handlers.onCli?.(evt.cli);
         } else if (evt.type === 'done') {
           if (typeof evt.full === 'string') full = evt.full;
         }

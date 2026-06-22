@@ -6,7 +6,6 @@
  */
 import { spawn, spawnSync } from 'child_process';
 import path from 'path';
-import { loadPermissionConfig } from './leader/permission';
 import { resolveCli, isCliAvailable } from './cli-resolver';
 import fs from 'fs';
 import type {
@@ -202,10 +201,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // claude --print 读取 stdin 作为 prompt，输出 stream-json
     const env = { ...process.env, ...opts.env } as Record<string, string>;
     const stdinInput = await fs.promises.readFile(opts.contextFilePath, 'utf-8').catch(() => '');
-    const args = ['--print', '--output-format', 'stream-json'];
-    if (loadPermissionConfig().enabled) {
-      args.push('--permission-mode', 'default', '--permission-prompt-tool', 'mcp__ato-leader__permission_request');
-    }
+    // --print + --output-format stream-json 必须搭配 --verbose（否则 claude 直接 exit 1）
+    const args = ['--print', '--output-format', 'stream-json', '--verbose'];
     const resolved = resolveCli('claude');
     return runProcess(
       resolved.command,

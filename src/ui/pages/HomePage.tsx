@@ -4,7 +4,7 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { api } from '../api/client';
 import { useConfirm } from '../components/Confirm';
-import type { AtoChatMessage, AtoLeaderToolEvent, AtoLeaderSession } from '../../types';
+import type { AtoChatMessage, AtoLeaderToolEvent, AtoLeaderSession, LeaderCliEntry } from '../../types';
 
 dayjs.extend(relativeTime);
 
@@ -18,7 +18,7 @@ function ToolChip({ tool }: { tool: AtoLeaderToolEvent }) {
         onClick={() => setOpen((v) => !v)}
         style={{
           fontSize: 12, padding: '2px 10px', borderRadius: 10,
-          border: '1px solid var(--border-color)', background: 'var(--bg-secondary)',
+          border: '1px solid var(--border-primary)', background: 'var(--bg-secondary)',
           cursor: 'pointer', color: 'var(--text-secondary)',
         }}
       >
@@ -27,7 +27,7 @@ function ToolChip({ tool }: { tool: AtoLeaderToolEvent }) {
       {open && (
         <pre style={{
           margin: '4px 0 0', padding: 8, fontSize: 12, maxHeight: 200, overflow: 'auto',
-          background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 6,
+          background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: 6,
           whiteSpace: 'pre-wrap', wordBreak: 'break-word',
         }}>
           {typeof detail === 'string' ? detail : JSON.stringify(detail, null, 2)}
@@ -42,6 +42,15 @@ function SendIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
       <line x1="12" y1="19" x2="12" y2="5" />
       <polyline points="5 12 12 5 19 12" />
+    </svg>
+  );
+}
+
+function TerminalIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" y1="19" x2="20" y2="19" />
     </svg>
   );
 }
@@ -65,19 +74,75 @@ function PanelToggleIcon({ open, side }: { open: boolean; side: 'left' | 'right'
   );
 }
 
+function AgentBadge({ tool }: { tool: 'claude-code' | 'codex' }) {
+  return (
+    <span className={`leader-agent-badge leader-agent-badge--${tool}`}>
+      {tool === 'codex' ? 'Codex' : 'Claude Code'}
+    </span>
+  );
+}
+
+/** 每条 agent 消息内嵌的 CLI 输出区：等宽终端风格，stdout 普通色 / stderr 红，stdout 行 best-effort JSON 美化 */
+function CliOutput({ entries, live }: { entries: LeaderCliEntry[]; live?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // 流式时自动贴底
+    if (live && ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+  }, [entries.length, live]);
+  if (!entries.length) {
+    return <div className="leader-cli-output leader-cli-output--empty">（无 CLI 输出）</div>;
+  }
+  return (
+    <div className="leader-cli-output" ref={ref}>
+      {entries.map((e, i) => {
+        let text = e.t;
+        if (e.s === 'stdout') {
+          // stdout 行若是 JSON（如 claude stream-json）则美化，便于阅读；否则原样
+          const trimmed = e.t.trim();
+          if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+            try {
+              const parsed = JSON.parse(trimmed);
+              if (parsed && typeof parsed === 'object') text = JSON.stringify(parsed, null, 2);
+            } catch { /* keep raw */ }
+          }
+        }
+        return (
+          <div key={i} className={`leader-cli-line${e.s === 'stderr' ? ' leader-cli-line--stderr' : ''}`}>
+            {text}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function HomePage() {
   const [messages, setMessages] = useState<AtoChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [streamingTools, setStreamingTools] = useState<AtoLeaderToolEvent[]>([]);
+  const [streamingCli, setStreamingCli] = useState<LeaderCliEntry[]>([]);
+  const [streamStartTs, setStreamStartTs] = useState(0);
   const [status, setStatus] = useState('');
   const [leaderTool, setLeaderTool] = useState<'claude-code' | 'codex'>('claude-code');
   const [toolAvailable, setToolAvailable] = useState<boolean | null>(null);
   const [pendingPerms, setPendingPerms] = useState<Array<{ id: string; toolName: string; input: unknown; risk: string; reason?: string; createdAt: number }>>([]);
-  const [showDebug, setShowDebug] = useState(false);
-  const [debugAnimating, setDebugAnimating] = useState(false);
-  const [debugLines, setDebugLines] = useState<string[]>([]);
+
+  // 每消息 CLI 区展开状态：历史消息用 ts 作 key（避免重载/切会话/删消息索引错位）；流式气泡单独一个布尔
+  const [expandedCliTs, setExpandedCliTs] = useState<number | null>(null);
+  const [streamingCliOpen, setStreamingCliOpenState] = useState(false);
+  const streamingCliOpenRef = useRef(false);
+  const setStreamingCliOpen = (v: boolean) => {
+    streamingCliOpenRef.current = v;
+    setStreamingCliOpenState(v);
+  };
+
+  // 流式累加 buffer（await 后读 state 是闭包旧值，故用 ref 保证完成消息拿到完整 tools/cli）
+  const cliBufRef = useRef<LeaderCliEntry[]>([]);
+  const toolBufRef = useRef<AtoLeaderToolEvent[]>([]);
+  // 捕获 SSE error 帧（不抛异常，需主动记录才能在完成消息里展示）
+  const errRef = useRef<string | null>(null);
 
   // 会话管理
   const [sessions, setSessions] = useState<AtoLeaderSession[]>([]);
@@ -148,48 +213,66 @@ export default function HomePage() {
     setInput('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
+    // 清空本轮 buffer 与流式状态
+    cliBufRef.current = [];
+    toolBufRef.current = [];
+    errRef.current = null;
     setMessages((prev) => [...prev, { ts: Date.now(), role: 'user', content: text }]);
     setSending(true);
     setStreamingText('');
     setStreamingTools([]);
+    setStreamingCli([]);
+    setStreamingCliOpen(false);
+    setStreamStartTs(Date.now());
     setStatus('思考中…');
 
     try {
       const full = await api.atoLeaderMessage(text, {
         onText: (delta) => setStreamingText((prev) => prev + delta),
-        onTool: (e) => setStreamingTools((prev) => [...prev, e]),
+        onTool: (e) => { toolBufRef.current.push(e); setStreamingTools((prev) => [...prev, e]); },
         onStatus: (s) => setStatus(s),
-        onDebug: (entry) => {
-          setDebugLines((prev) => {
-            const next = [...prev, `[${entry.kind}] ${entry.message}`];
-            if (next.length > 2000) return next.slice(-2000);
-            return next;
-          });
-        },
-        onError: (msg) => {
-          setShowDebug(true);
-          setDebugLines((prev) => {
-            const next = [...prev, `[error] ${msg}`];
-            return next.length > 2000 ? next.slice(-2000) : next;
-          });
-        },
+        onCli: (e) => { cliBufRef.current.push(e); setStreamingCli((prev) => [...prev, e]); },
+        onError: (msg) => { errRef.current = msg; setStreamingCliOpen(true); },
       });
+      const finalTs = Date.now();
+      const capturedTools = toolBufRef.current;
+      const capturedCli = cliBufRef.current;
+      const errMsg = errRef.current;
+      // SSE error 帧不抛异常，这里把错误写进完成消息（与后端持久化的 [错误] 内容一致）
+      const content = errMsg ? `[错误] ${errMsg}` : (full || '(主 Agent 未返回内容)');
       setMessages((prev) => [
         ...prev,
         {
-          ts: Date.now(),
+          ts: finalTs,
           role: 'assistant',
-          content: full || '(主 Agent 未返回内容)',
-          tools: streamingTools.length > 0 ? streamingTools : undefined,
+          content,
+          tools: capturedTools.length > 0 ? capturedTools : undefined,
+          leaderTool,
+          cli: capturedCli.length > 0 ? capturedCli : undefined,
         },
       ]);
+      // 流式 CLI 区若打开，或出错需排查，则展开完成的消息（用 ts 作 key）
+      if (streamingCliOpenRef.current || errMsg) setExpandedCliTs(finalTs);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setMessages((prev) => [...prev, { ts: Date.now(), role: 'assistant', content: `⚠️ ${msg}` }]);
+      const finalTs = Date.now();
+      setMessages((prev) => [
+        ...prev,
+        {
+          ts: finalTs,
+          role: 'assistant',
+          content: `⚠️ ${msg}`,
+          leaderTool,
+          cli: cliBufRef.current.length > 0 ? cliBufRef.current : undefined,
+        },
+      ]);
+      // 出错时强制展开，便于查看 CLI 上下文排查
+      setExpandedCliTs(finalTs);
     } finally {
       setSending(false);
       setStreamingText('');
       setStreamingTools([]);
+      setStreamingCli([]);
       setStatus('');
       // 同步会话列表（title/updatedAt 可能变化，或首条消息触发懒建会话）
       void refreshSessions();
@@ -203,6 +286,7 @@ export default function HomePage() {
       setMessages([]);
       setStreamingText('');
       setStreamingTools([]);
+      setStreamingCli([]);
       await refreshSessions();
     } catch { /* ignore */ }
   };
@@ -216,6 +300,8 @@ export default function HomePage() {
       setMessages(msgs);
       setStreamingText('');
       setStreamingTools([]);
+      setStreamingCli([]);
+      setExpandedCliTs(null);
     } catch { /* ignore */ }
   };
 
@@ -238,6 +324,8 @@ export default function HomePage() {
         setMessages(msgs);
         setStreamingText('');
         setStreamingTools([]);
+        setStreamingCli([]);
+        setExpandedCliTs(null);
       }
     } catch { /* ignore */ }
   };
@@ -249,16 +337,6 @@ export default function HomePage() {
       return next;
     });
     setPanelAnimating(true);
-  };
-
-  const toggleDebug = () => {
-    setShowDebug((v) => !v);
-    setDebugAnimating(true);
-  };
-
-  const closeDebug = () => {
-    setShowDebug(false);
-    setDebugAnimating(true);
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -289,7 +367,7 @@ export default function HomePage() {
         {pendingPerms.map((p) => (
           <div key={p.id} style={{
             padding: 12, marginBottom: 8, borderRadius: 12,
-            border: '1px solid var(--border-color)', background: 'var(--bg-primary)',
+            border: '1px solid var(--border-primary)', background: 'var(--bg-primary)',
             borderLeft: `3px solid ${p.risk === 'high' ? 'var(--accent-danger)' : p.risk === 'medium' ? '#d97706' : 'var(--accent-primary)'}`,
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -349,17 +427,35 @@ export default function HomePage() {
       return (
         <div key={i} className="leader-msg leader-msg--user">
           <div className="leader-bubble">{m.content}</div>
+          <div className="leader-msg-time leader-msg-time--user">{dayjs(m.ts).format('HH:mm')}</div>
         </div>
       );
     }
+    const agentTool = m.leaderTool ?? leaderTool;
+    const cliOpen = expandedCliTs === m.ts;
     return (
       <div key={i} className="leader-msg leader-msg--assistant">
+        <div className="leader-msg-meta">
+          <AgentBadge tool={agentTool} />
+          <button
+            className={`leader-cli-toggle${cliOpen ? ' is-open' : ''}${m.cli && m.cli.length > 0 ? ' has-output' : ''}`}
+            onClick={() => setExpandedCliTs((prev) => (prev === m.ts ? null : m.ts))}
+            title={cliOpen ? '收起 CLI 输出' : '查看 CLI 输出'}
+          >
+            <TerminalIcon />
+            <span className="leader-cli-toggle-label">CLI</span>
+            {m.cli && m.cli.length > 0 ? <span className="leader-cli-toggle-count">{m.cli.length}</span> : null}
+            <span className="leader-cli-toggle-live" />
+          </button>
+          <span className="leader-msg-time">{dayjs(m.ts).format('HH:mm')}</span>
+        </div>
         {m.tools && m.tools.length > 0 && (
           <div className="leader-tools-inline">
             {m.tools.map((t, j) => <ToolChip key={j} tool={t as AtoLeaderToolEvent} />)}
           </div>
         )}
         <div className="markdown-content"><ReactMarkdown>{m.content}</ReactMarkdown></div>
+        {cliOpen && <CliOutput entries={m.cli ?? []} />}
       </div>
     );
   };
@@ -375,22 +471,6 @@ export default function HomePage() {
       <PanelToggleIcon open={panelOpen} side="left" />
     </button>
   );
-
-  // 调试面板展开按钮：浮动在聊天窗口右侧外部；面板展开后隐藏（用面板内的关闭按钮收起）
-  const renderDebugToggle = () => {
-    const visible = !showDebug && !debugAnimating;
-    return (
-      <button
-        className="leader-debug-toggle leader-debug-toggle--float"
-        onClick={toggleDebug}
-        style={{ display: visible ? 'flex' : 'none' }}
-        title="展开调试面板"
-        aria-label="展开调试面板"
-      >
-        <PanelToggleIcon open={false} side="right" />
-      </button>
-    );
-  };
 
   const renderSessionPanel = () => {
     // 收起态或动画中保持 overflow:hidden；完全展开后移除，避免裁切
@@ -448,54 +528,6 @@ export default function HomePage() {
     );
   };
 
-  const renderDebugPanel = () => {
-    const clipped = !showDebug || debugAnimating;
-    const cls = [
-      'leader-debug-panel',
-      showDebug ? '' : 'is-collapsed',
-      clipped ? 'is-clipped' : '',
-    ].filter(Boolean).join(' ');
-    return (
-      <aside
-        className={cls}
-        onTransitionEnd={(e) => { if (e.propertyName === 'width') setDebugAnimating(false); }}
-      >
-        <div className="leader-debug-panel-inner">
-          <div className="leader-debug-header">
-            <span>调试输出</span>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button
-                className="btn btn-sm"
-                onClick={() => setDebugLines([])}
-                style={{ fontSize: 11, padding: '2px 8px' }}
-              >
-                清空
-              </button>
-              <button
-                className="leader-debug-close"
-                onClick={closeDebug}
-                title="关闭"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-          <div className="leader-debug-output">
-            {debugLines.length === 0 ? (
-              <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>等待输出…</span>
-            ) : (
-              debugLines.map((line, i) => (
-                <div key={i} className="leader-debug-line">
-                  {line}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </aside>
-    );
-  };
-
   const renderChat = () => {
     const hasConversation = messages.length > 0 || sending;
     if (!hasConversation) {
@@ -518,6 +550,20 @@ export default function HomePage() {
           {messages.map(renderMessage)}
           {sending && (
             <div className="leader-msg leader-msg--assistant">
+              <div className="leader-msg-meta">
+                <AgentBadge tool={leaderTool} />
+                <button
+                  className={`leader-cli-toggle${streamingCliOpen ? ' is-open' : ''}${streamingCli.length > 0 ? ' is-live' : ''}`}
+                  onClick={() => setStreamingCliOpen(!streamingCliOpen)}
+                  title={streamingCliOpen ? '收起实时 CLI 输出' : '查看实时 CLI 输出'}
+                >
+                  <TerminalIcon />
+                  <span className="leader-cli-toggle-label">CLI</span>
+                  {streamingCli.length > 0 ? <span className="leader-cli-toggle-count">{streamingCli.length}</span> : null}
+                  <span className="leader-cli-toggle-live" />
+                </button>
+                <span className="leader-msg-time">{streamStartTs ? dayjs(streamStartTs).format('HH:mm') : ''}</span>
+              </div>
               {streamingTools.length > 0 && (
                 <div className="leader-tools-inline">
                   {streamingTools.map((t, j) => <ToolChip key={j} tool={t} />)}
@@ -528,6 +574,7 @@ export default function HomePage() {
               ) : (
                 <div className="leader-status">{status || '思考中…'}<span className="ato-cursor">▍</span></div>
               )}
+              {streamingCliOpen && <CliOutput entries={streamingCli} live />}
             </div>
           )}
         </div>
@@ -540,14 +587,12 @@ export default function HomePage() {
 
   return (
     <div className="leader-home">
-      {renderDebugToggle()}
       {renderSessionPanel()}
       <div className="leader-main">
         <div className="leader-top-left">{renderPanelToggle()}</div>
         {renderPending()}
         {renderChat()}
       </div>
-      {renderDebugPanel()}
     </div>
   );
 }

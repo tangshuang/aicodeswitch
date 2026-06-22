@@ -14,10 +14,11 @@ import {
   loadArtifacts, saveArtifacts, appendArtifact, deleteSessionData,
   deriveTitleFromFirstMessage, migrateLegacyConversationIfNeeded,
   loadLeaderConfig, saveLeaderConfig, LEADER_PATHS, type LeaderConfig, type SessionMeta,
+  capCli, type LeaderCliEntry,
 } from './memory';
 import { buildLeaderPrompt } from './prompt';
-import { isToolAvailable, streamLeader, type LeaderTool, type StreamHandle, type ToolEvent } from './runner';
-import { PermissionJudge, loadPermissionConfig } from './permission';
+import { isToolAvailable, streamLeader, type LeaderTool, type StreamHandle, type ToolEvent, type CliEntry } from './runner';
+import { PermissionJudge } from './permission';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -28,7 +29,8 @@ export interface LeaderSink {
   status?: (text: string) => void;
   done: (full: string) => void;
   error: (message: string) => void;
-  debug?: (entry: { kind: 'event' | 'stdout' | 'stderr'; message: string }) => void;
+  /** 原始 CLI stdout/stderr 片段（前端每消息 CLI 区实时展示） */
+  cli?: (e: CliEntry) => void;
 }
 
 /** 递归收集目录下所有 .jsonl 绝对路径 */
@@ -200,31 +202,10 @@ export class LeaderManager {
     appendConversation(turnSessionId, { ts: Date.now(), role: 'user', content: text });
     const prompt = buildLeaderPrompt(text, loadConversation(turnSessionId));
     const tools: ToolEvent[] = [];
+    const cliEntries: LeaderCliEntry[] = [];
     let capturedClaudeId: string | null = null;
     const codexBefore = tool === 'codex' ? snapshotCodexSessionFiles() : null;
     sink.status?.(`主 Agent（${tool === 'codex' ? 'Codex' : 'Claude Code'}）思考中…`);
-
-    // 预检：若启用 permission，检查 ato-leader MCP 是否注册到 ~/.claude.json
-    if (tool !== 'codex' && loadPermissionConfig().enabled) {
-      try {
-        const claudeJsonPath = path.join(os.homedir(), '.claude.json');
-        const raw = fs.readFileSync(claudeJsonPath, 'utf8');
-        const cj = JSON.parse(raw);
-        const mcp = cj?.mcpServers?.['ato-leader'];
-        if (!mcp) {
-          sink.debug?.({ kind: 'stderr', message: '[preflight] ⚠️ ~/.claude.json 中未找到 mcpServers["ato-leader"]！claude 会因 --permission-prompt-tool 找不到 MCP 而挂起或报错' });
-        } else {
-          const lastArg = mcp.args?.[mcp.args.length - 1];
-          const entryExists = lastArg ? fs.existsSync(lastArg) : false;
-          sink.debug?.({ kind: 'event', message: `[preflight] MCP ato-leader registered: command=${mcp.command} args=${JSON.stringify(mcp.args || [])} entry=${lastArg || '(none)'} exists=${entryExists}` });
-          if (!entryExists) {
-            sink.debug?.({ kind: 'stderr', message: `[preflight] ⚠️ MCP 入口文件不存在：${lastArg}。claude 会挂起或报错！请重启服务以重新注册。` });
-          }
-        }
-      } catch (e) {
-        sink.debug?.({ kind: 'stderr', message: `[preflight] 读取 ~/.claude.json 失败：${e instanceof Error ? e.message : String(e)}` });
-      }
-    }
 
     const persistArtifacts = () => {
       // Claude：记录 session_id（用于精确删除 ~/.claude/projects/*/<id>.jsonl）
@@ -256,7 +237,7 @@ export class LeaderManager {
     const handle = streamLeader(
       tool,
       prompt,
-      { cwd: LEADER_PATHS.workspace, timeoutMs: 10 * 60 * 1000 },
+      { cwd: LEADER_PATHS.workspace, timeoutMs: 10 * 60 * 1000, judge: this.judge },
       {
         onText: (delta) => sink.text(delta),
         onTool: (e) => {
@@ -264,7 +245,10 @@ export class LeaderManager {
           sink.tool(e);
         },
         onSessionId: (id) => { capturedClaudeId = id; },
-        onDebug: (entry) => sink.debug?.(entry),
+        onCli: (entry) => {
+          cliEntries.push(entry);
+          sink.cli?.(entry);
+        },
         onDone: (full) => {
           const content = full || '(主 Agent 未返回文本)';
           appendConversation(turnSessionId, {
@@ -272,6 +256,8 @@ export class LeaderManager {
             role: 'assistant',
             content,
             tools: tools.length > 0 ? tools : undefined,
+            leaderTool: tool,
+            cli: capCli(cliEntries),
           });
           finalizeTurn();
           persistArtifacts();
@@ -280,8 +266,14 @@ export class LeaderManager {
           sink.done(content);
         },
         onError: (err) => {
-          sink.debug?.({ kind: 'stderr', message: '[runner error] ' + err });
-          appendConversation(turnSessionId, { ts: Date.now(), role: 'assistant', content: `[错误] ${err}` });
+          console.warn('[leader:manager] [runner error] ' + err);
+          appendConversation(turnSessionId, {
+            ts: Date.now(),
+            role: 'assistant',
+            content: `[错误] ${err}`,
+            leaderTool: tool,
+            cli: capCli(cliEntries),
+          });
           finalizeTurn();
           persistArtifacts(); // 早错但可能已写 session 文件，仍记录
           this.active = null;

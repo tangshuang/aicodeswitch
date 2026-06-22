@@ -967,11 +967,20 @@ export interface AtoCreateTeamRequest {
 }
 
 // ===================== ATO Leader 对话 =====================
+/** CLI 原始输出条目（stdout/stderr 的一个片段） */
+export interface LeaderCliEntry {
+  s: 'stdout' | 'stderr';
+  t: string;
+}
 export interface AtoChatMessage {
   ts: number;
   role: 'user' | 'assistant';
   content: string;
   tools?: Array<{ kind?: string; name?: string; input?: unknown; content?: unknown }>;
+  /** 产生本条消息的主 Agent 类型（老消息缺省时回退到当前会话 leaderTool） */
+  leaderTool?: 'claude-code' | 'codex';
+  /** 本轮 CLI 进程的原始 stdout/stderr（刷新/重启后仍可回看） */
+  cli?: LeaderCliEntry[];
 }
 export interface AtoLeaderToolEvent {
   kind: 'tool_use' | 'tool_result';
