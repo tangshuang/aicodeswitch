@@ -24,9 +24,9 @@ function escApple(s: string): string {
   return String(s ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
-// terminal-notifier 存在性（带缓存）。它是 macOS 上唯一能「点击通知不打开任何东西」的可靠手段：
+// terminal-notifier 存在性（带缓存）。它是 macOS 上唯一能「点击通知可控」的可靠手段：
 // osascript 的 display notification 点击必激活脚本宿主（Script Editor/文本阅读器），无法关闭；
-// terminal-notifier 默认点击 = 仅消失、无动作。
+// terminal-notifier 点击可经 -open 打开我们指定的 URL（默认无 URL 则点击=仅消失、无动作）。
 let hasTN: boolean | undefined;
 function hasTerminalNotifier(): boolean {
   if (hasTN !== undefined) return hasTN;
@@ -37,11 +37,18 @@ function hasTerminalNotifier(): boolean {
   return hasTN;
 }
 
+// 点击通知要打开的 URL（由 main.ts 在服务启动后设置，指向 AICodeSwitch 任务地图页）。
+// 仅 terminal-notifier 路径生效；osascript 无法控制点击行为。
+let appOpenUrl: string | null = null;
+export function setNotifierAppUrl(url: string | null) { appOpenUrl = url; }
+
 function notifyDarwin(opts: NotifyOptions): void {
-  // 优先 terminal-notifier：点击通知不触发任何动作（满足「点击不要有任何动作」）。
+  // 优先 terminal-notifier：可控制点击行为。设了 appOpenUrl 则点击打开该 URL（我们的页面），
+  // 否则点击仅消失、无动作。
   if (hasTerminalNotifier()) {
     const args = ['-title', opts.title, '-message', opts.body, '-ignoreDn'];
     if (opts.subtitle) args.push('-subtitle', opts.subtitle);
+    if (appOpenUrl) args.push('-open', appOpenUrl);
     execFile('terminal-notifier', args, { windowsHide: true }, () => { /* ignore */ });
     return;
   }

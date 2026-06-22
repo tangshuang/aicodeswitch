@@ -14,6 +14,7 @@ import { ServicePerformanceTracker } from './performance-tracker';
 import type { FileSystemDatabaseManager } from './fs-database';
 import { createLogStore } from './log-store';
 import { agentMapService, registerAgentMapRoutes } from './agent-map';
+import { setNotifierAppUrl } from './notifier';
 import type {
   AppConfig,
   APIService,
@@ -4355,6 +4356,8 @@ const start = async () => {
       ? ` (listening on all interfaces, port ${port})`
       : '';
     console.log(`Admin server running on http://${clientHost}:${port}${listenInfo}`);
+    // 点击 OS 通知时打开任务地图页（仅 terminal-notifier 路径生效；osascript 无法控制点击）
+    setNotifierAppUrl(`http://${clientHost}:${port}/#/agent-map`);
     console.timeEnd('[Server] step "listen"');
 
     // 启动后异步执行延迟维护任务（分片校验/修复、日志清理、会话索引构建）
