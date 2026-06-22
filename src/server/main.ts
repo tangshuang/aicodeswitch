@@ -4278,10 +4278,24 @@ const start = async () => {
     res.status(500).json({ error: err.message || 'Internal server error' });
   });
 
-  const isPortUsable = await checkPortUsable(port);
+  // 端口检测：若被占用，可能是上一个进程仍在退出过程中（Ctrl+C 后 shutdown 尚未完全释放端口），
+  // 此处轮询等待其释放后再继续启动，避免与正在退出的旧进程发生端口冲突。
+  // 超时仍未释放才判定为真正的占用并报错退出。
+  const PORT_POLL_INTERVAL = 300;
+  const PORT_WAIT_TIMEOUT = 10000;
+  let isPortUsable = await checkPortUsable(port);
   if (!isPortUsable) {
-    console.error(`端口 ${port} 已被占用，无法启动服务。请执行 aicos stop 后重启。`);
-    process.exit(1);
+    console.warn(`端口 ${port} 当前被占用，可能是上一个服务进程仍在退出中，等待其释放...`);
+    const portDeadline = Date.now() + PORT_WAIT_TIMEOUT;
+    while (!isPortUsable && Date.now() < portDeadline) {
+      await new Promise(resolve => setTimeout(resolve, PORT_POLL_INTERVAL));
+      isPortUsable = await checkPortUsable(port);
+    }
+    if (!isPortUsable) {
+      console.error(`端口 ${port} 在 ${PORT_WAIT_TIMEOUT / 1000}s 后仍被占用，无法启动服务。请执行 aicos stop 后重启。`);
+      process.exit(1);
+    }
+    console.log(`端口 ${port} 已释放，继续启动...`);
   }
 
   console.time('[Server] step "listen"');
@@ -4351,6 +4365,13 @@ const start = async () => {
     shutdownPromise = (async () => {
       console.log(`[Server] Received ${signal}, shutting down...`);
 
+      // 立即停止监听以释放端口（同步关闭监听句柄，端口马上可用），
+      // 避免在漫长的清理流程期间端口仍被占用，导致此时重启产生 EADDRINUSE 冲突。
+      // 现有连接会继续处理直到完成或超时；其回调与下面的清理流程并行等待。
+      const serverClosedPromise = new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+
       // 服务终止前恢复配置文件（适用于 aicos stop 与 Ctrl+C）
       try {
         const claudeRestored = await restoreClaudeConfig();
@@ -4393,10 +4414,9 @@ const start = async () => {
       // 清理规则状态广播器（关闭 SSE 连接）
       rulesStatusBroadcaster.destroy();
 
+      // 等待监听句柄与现有连接关闭完成（最多 5s），确保端口彻底释放后再退出。
       await Promise.race([
-        new Promise<void>((resolve) => {
-          server.close(() => resolve());
-        }),
+        serverClosedPromise,
         new Promise<void>((resolve) => {
           setTimeout(resolve, 5000);
         })
