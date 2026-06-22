@@ -678,56 +678,148 @@ export class LogStore {
   }
 
   /**
-   * 一次性迁移旧 JSON 日志到 NDJSON（main.ts 在 listen 之前调用）。
+   * store 是否真的有数据文件（看实际 *.ndjson，不信 shards-index.json 元数据，
+   * 防「索引还在、数据文件被删」的误判）。
+   */
+  async storeHasData(): Promise<boolean> {
+    let ents: string[] = [];
+    try {
+      ents = await fs.readdir(this.rootDir);
+    } catch {
+      return false;
+    }
+    for (const name of ents) {
+      if (name === 'legacy-backup') continue;
+      if (name.startsWith('.')) continue;
+      const full = path.join(this.rootDir, name);
+      try {
+        const stat = await fs.stat(full);
+        if (!stat.isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      try {
+        const files = await fs.readdir(full);
+        if (files.some(f => f.endsWith('.ndjson'))) return true;
+      } catch {
+        // 忽略
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 流式收集某 namespace 已存在的全部 logId，供迁移去重。
+   * 仅在迁移启动时为「有数据的 namespace」调用一次；store 空则返回空 Set。
+   */
+  private async collectIds(ns: Namespace): Promise<Set<string>> {
+    const ids = new Set<string>();
+    try {
+      for await (const log of this.streamAll(ns)) {
+        if ((log as any).id) ids.add((log as any).id);
+      }
+    } catch {
+      // 忽略
+    }
+    return ids;
+  }
+
+  /**
+   * 稳健迁移旧 JSON 日志到 NDJSON（main.ts 在 listen 之前调用）。
    * - 主库：{dataPath}/logs.json（旧单文件）+ {dataPath}/logs/logs-*.json（旧分片）→ 'global'
    * - AccessKey：{dataPath}/key-logs/<keyId>/*.json（跳过 logs-index.json）→ 'key:{keyId}'
    *
-   * 每个旧文件：JSON.parse 数组 → 逐条 append（保留原 id，顺带重建 session 索引）。
-   * **不移动/删除旧文件**：`~/.aicodeswitch/fs-db/logs` 原地保留，由用户确认新存储正常后手动删除（见 UPGRADE.md）。
-   *
-   * 幂等保证：
-   * - `.legacy-migrated` 标记存在 → 直接跳过（已完成）。
-   * - 标记缺失（首次或上次中断）→ 自愈：清空已有 namespace 目录后从源头重新迁移，避免重复；完成后写标记。
+   * 设计（幂等 + 非破坏性 + 内容感知）：
+   * - gate：仅当 `标记缺失 OR store 实际无数据文件` 才进入迁移。正常重启（标记在 + 数据在）直接跳过，不扫源。
+   * - 去重：进入迁移时，先为每个有数据的 namespace 用 collectIds 建已存在 idSet，
+   *   迁移时 idSet.has(id) 则跳过。于是「部分残留/中断续跑/标记过期重跑」都不产生重复。
+   * - 非破坏性：不 wipe 任何目录；源头 logs/、key-logs/ 始终只读、永不移动/删除（见 UPGRADE.md）。
+   * - 标记 `.log-store-migration` 仅作「已完成」提示，不单独决定跳过——必须同时 storeHasData()。
    */
   async migrateLegacy(dataPath: string): Promise<{ global: number; keys: Record<string, number> }> {
     await fs.mkdir(this.rootDir, { recursive: true });
-    const marker = path.join(this.rootDir, '.legacy-migrated');
+
+    // 兼容：清理旧版本标记名
     try {
-      await fs.access(marker);
-      return { global: 0, keys: {} }; // 已迁移
+      await fs.unlink(path.join(this.rootDir, '.legacy-migrated'));
     } catch {
-      // 未迁移，继续
+      // 无旧标记，忽略
     }
 
-    // 自愈：标记缺失意味着上次迁移未完成（可能已产生重复数据）。
-    // 旧源头（logs/、key-logs/）原样保留不动，故清空已有 namespace 目录后从源头重新迁移，
-    // 保证幂等、无重复。必须在服务对外提供流量前调用（main.ts 中 pre-listen），避免与实时写入竞争。
-    // 顺带清理历史版本可能遗留的 legacy-backup 目录（当前版本不再归档旧文件）。
+    const marker = path.join(this.rootDir, '.log-store-migration');
+    let hasMarker = false;
     try {
-      const ents = await fs.readdir(this.rootDir);
-      for (const name of ents) {
-        if (name === 'global' || name === 'legacy-backup' || name.startsWith('key_') || name.startsWith('key-')) {
+      await fs.access(marker);
+      hasMarker = true;
+    } catch {
+      hasMarker = false;
+    }
+    const hasData = await this.storeHasData();
+
+    // 快速路径：标记在 + store 真有数据 → 已完成，跳过（不扫源）
+    if (hasMarker && hasData) {
+      return { global: 0, keys: {} };
+    }
+
+    console.log(`[LogStore] migrate: start (marker=${hasMarker}, hasData=${hasData})`);
+
+    // store 无实际数据文件时，可能残留指向已删文件的 stale 索引（shards-index.json 等）。
+    // 清掉这些索引 + 内存态，避免「索引说有、文件没有」的幽灵；.ndjson 本就不存在，无数据丢失风险。
+    if (!hasData) {
+      for (const ns of this.listNamespaces()) {
+        const dir = path.join(this.rootDir, nsDirName(ns));
+        for (const idxFile of ['shards-index.json', 'session-index.json', 'tombstones.json']) {
           try {
-            await fs.rm(path.join(this.rootDir, name), { recursive: true, force: true });
+            await fs.unlink(path.join(dir, idxFile));
           } catch {
             // 忽略
           }
         }
       }
-    } catch {
-      // 忽略
+      this.namespaces.clear();
     }
-    this.namespaces.clear();
+
+    // 为每个有数据的 namespace 建去重 idSet（防部分残留导致重复追加）
+    const idSets = new Map<Namespace, Set<string>>();
+    for (const ns of this.listNamespaces()) {
+      try {
+        const dir = path.join(this.rootDir, nsDirName(ns));
+        const files = await fs.readdir(dir);
+        if (files.some(f => f.endsWith('.ndjson'))) {
+          idSets.set(ns, await this.collectIds(ns));
+        }
+      } catch {
+        // 忽略
+      }
+    }
+
+    const ensureIdSet = (ns: Namespace): Set<string> => {
+      let s = idSets.get(ns);
+      if (!s) {
+        s = new Set();
+        idSets.set(ns, s);
+      }
+      return s;
+    };
 
     const result = { global: 0, keys: {} as Record<string, number> };
+    let sourceFiles = 0;
 
     const migrateFile = async (ns: Namespace, file: string): Promise<number> => {
+      // ★ 不变量：源头文件（logs/、key-logs/、logs.json）只读——本函数只 readFile，
+      //   绝不 unlink / rm / rename 任何源文件，也不把源文件移动到别处。
+      //   所有写入只落到 log-store/{namespace}/ 内。违反此约束会破坏用户数据可恢复性。
+      if (file.startsWith(this.rootDir)) {
+        console.error(`[LogStore] migrate: refuse to touch file inside log-store (${file}); source must be logs/ or key-logs/`);
+        return 0;
+      }
       let content: string;
       try {
         content = await fs.readFile(file, 'utf-8');
       } catch {
         return 0;
       }
+      sourceFiles++;
       // 旧分片可能含 \x00 损坏：截断到首个 NUL
       const nul = content.indexOf('\x00');
       if (nul !== -1) content = content.substring(0, nul);
@@ -739,24 +831,28 @@ export class LogStore {
         console.warn(`[LogStore] migrate: skip unparseable file ${file}`);
         return 0;
       }
+      const idSet = ensureIdSet(ns);
       let written = 0;
+      let skippedDup = 0;
       for (const log of arr) {
         if (!log || typeof log !== 'object') continue;
         if (!log.id) log.id = crypto.randomUUID();
         if (typeof log.timestamp !== 'number') log.timestamp = Date.now();
+        if (idSet.has(log.id)) {
+          skippedDup++;
+          continue; // 去重：已存在则跳过
+        }
         try {
           await this.append(ns, log as RequestLog);
+          idSet.add(log.id);
           written++;
         } catch (err) {
           console.error(`[LogStore] migrate: append failed in ${file}`, err);
         }
       }
-      if (written !== arr.length) {
-        console.warn(`[LogStore] migrate: count mismatch ${file} (parsed=${arr.length} written=${written})`);
+      if (skippedDup > 0) {
+        console.log(`[LogStore] migrate: ${file} dedup-skipped=${skippedDup} written=${written}`);
       }
-      // 注意：不移动/删除旧文件——保留 ~/.aicodeswitch/fs-db/logs 原地不动，
-      // 由用户确认新存储正常后手动删除（见 UPGRADE.md）。
-      // 幂等性由「标记缺失→自愈清空 log-store 重迁」+ 完成后写标记保证，无需逐文件归档。
       return written;
     };
 
@@ -812,20 +908,27 @@ export class LogStore {
       // 无 key-logs
     }
 
-    // 落盘 + 写标记
-    for (const st of this.namespaces.values()) {
+    // 落盘所有 namespace
+    for (const nss of this.namespaces.values()) {
       try {
-        await this.flushNow(st);
+        await this.flushNow(nss);
       } catch {
         // 忽略
       }
     }
-    await fs.writeFile(marker, String(Date.now()));
-    if (result.global > 0 || Object.keys(result.keys).length > 0) {
-      console.log(`[LogStore] migration done: global=${result.global} keys=${JSON.stringify(result.keys)}`);
+
+    // 写标记（记录版本/时间/源文件数，便于排查；仍需 storeHasData 才会在下次跳过）
+    await fs.writeFile(
+      marker,
+      JSON.stringify({ version: 1, finishedAt: Date.now(), sources: sourceFiles })
+    );
+
+    if (result.global > 0 || Object.keys(result.keys).length > 0 || !hasData) {
+      console.log(`[LogStore] migration done: global=${result.global} keys=${JSON.stringify(result.keys)} sources=${sourceFiles}`);
     }
     return result;
   }
+
 
   /** 关闭时强制落盘所有 namespace */
   async close(): Promise<void> {
