@@ -52,10 +52,10 @@ export function registerAgentMapRoutes(app: Express, service: AgentMapService) {
     res.json(service.getSnapshot().sessions);
   });
 
-  app.get('/api/agent-map/sessions/:id/events', (req, res) => {
+  app.get('/api/agent-map/sessions/:id/events', async (req, res) => {
     const sinceRaw = typeof req.query.since === 'string' ? parseInt(req.query.since, 10) : NaN;
     const since = Number.isFinite(sinceRaw) ? sinceRaw : undefined;
-    res.json(service.getSessionEvents(req.params.id, since));
+    res.json(await service.getSessionEvents(req.params.id, since));
   });
 
   // 按需解析会话的项目路径 + 原始标题（仅 global 来源会在本机解析；access-key 返回 source 标记）

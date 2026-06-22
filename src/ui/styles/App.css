@@ -2791,8 +2791,27 @@ div:hover > .route-icon-popover {
 .am-path-icon { flex-shrink: 0; }
 .am-path-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .am-path-time { font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
+.am-path-count {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+}
 .am-path-toggle { color: var(--text-muted); flex-shrink: 0; }
 .am-clickable { cursor: pointer; }
+.am-path-run { margin: 4px 0 0; display: flex; flex-direction: column; gap: 2px; }
+.am-path-run-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.am-path-run-time { font-size: 10px; flex-shrink: 0; }
+.am-path-run-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .am-path-detail {
   margin: 4px 0 0;
   padding: 6px 8px;

@@ -286,6 +286,16 @@ function ActivityPathGraph({ events }: { events: ActivityEvent[] }) {
   }
   const sorted = [...events].sort((a, b) => b.ts - a.ts);
 
+  // 游程折叠：相邻且 kind+toolName+summary 相同的事件合并为一组，
+  // 渲染成单行 + 「×N」徽标，点开可看每次时间。消除连续相同工具调用等视觉重复。
+  const groups: { key: string; kind: ActivityEvent['kind']; toolName?: string; summary: string; items: ActivityEvent[] }[] = [];
+  for (const e of sorted) {
+    const gkey = `${e.kind}|${e.toolName || ''}|${e.summary || ''}`;
+    const last = groups[groups.length - 1];
+    if (last && last.key === gkey) last.items.push(e);
+    else groups.push({ key: gkey, kind: e.kind, toolName: e.toolName, summary: e.summary || e.kind, items: [e] });
+  }
+
   const toggle = (id: string) => {
     setExpanded(prev => {
       const next = new Set(prev);
@@ -297,35 +307,49 @@ function ActivityPathGraph({ events }: { events: ActivityEvent[] }) {
 
   return (
     <div className="am-path">
-      {sorted.map((e, i) => {
-        const isTool = e.kind === 'tool_use';
-        const isOpen = expanded.has(e.id);
-        const icon = e.kind === 'prompt' ? '💬'
-          : e.kind === 'thinking' ? '💭'
-          : e.kind === 'error' ? '⚠️'
-          : e.kind === 'response' ? '💬'
-          : TOOL_ICON[e.toolName || ''] || '•';
+      {groups.map((g, i) => {
+        const isTool = g.kind === 'tool_use';
+        const isGroup = g.items.length > 1;
+        const gid = `g${i}`;
+        const interactive = isGroup || isTool;
+        const isOpen = expanded.has(gid);
+        const icon = g.kind === 'prompt' ? '💬'
+          : g.kind === 'thinking' ? '💭'
+          : g.kind === 'error' ? '⚠️'
+          : g.kind === 'response' ? '💬'
+          : TOOL_ICON[g.toolName || ''] || '•';
         return (
-          <div key={e.id} className={`am-path-item am-path-item--${e.kind}`}>
+          <div key={gid} className={`am-path-item am-path-item--${g.kind}`}>
             <div className="am-path-rail">
               <div className="am-path-dot" />
-              {i < sorted.length - 1 && <div className="am-path-line" />}
+              {i < groups.length - 1 && <div className="am-path-line" />}
             </div>
             <div className="am-path-body">
               <div
-                className={`am-path-head${isTool ? ' am-clickable' : ''}`}
-                onClick={() => isTool && toggle(e.id)}
+                className={`am-path-head${interactive ? ' am-clickable' : ''}`}
+                onClick={() => interactive && toggle(gid)}
               >
                 <span className="am-path-icon">{icon}</span>
-                <span className="am-path-summary">{e.summary || e.kind}</span>
-                <span className="am-path-time">{new Date(e.ts).toLocaleTimeString()}</span>
-                {isTool && <span className="am-path-toggle">{isOpen ? '▾' : '▸'}</span>}
+                <span className="am-path-summary">{g.summary}</span>
+                <span className="am-path-time">{new Date(g.items[0].ts).toLocaleTimeString()}</span>
+                {isGroup && <span className="am-path-count">×{g.items.length}</span>}
+                {interactive && <span className="am-path-toggle">{isOpen ? '▾' : '▸'}</span>}
               </div>
-              {isTool && isOpen && (
-                <pre className="am-path-detail">{e.summary}</pre>
+              {isGroup && isOpen && (
+                <div className="am-path-run">
+                  {g.items.map(e => (
+                    <div key={e.id} className="am-path-run-item">
+                      <span className="am-path-run-time">{new Date(e.ts).toLocaleTimeString()}</span>
+                      <span className="am-path-run-text">{e.summary || g.kind}</span>
+                    </div>
+                  ))}
+                </div>
               )}
-              {e.kind === 'prompt' && (
-                <div className="am-path-prompt">{e.summary}</div>
+              {isTool && !isGroup && isOpen && (
+                <pre className="am-path-detail">{g.summary}</pre>
+              )}
+              {g.kind === 'prompt' && !isGroup && (
+                <div className="am-path-prompt">{g.summary}</div>
               )}
             </div>
           </div>

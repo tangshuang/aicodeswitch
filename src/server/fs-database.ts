@@ -2015,24 +2015,31 @@ export class FileSystemDatabaseManager {
       return this.getLogs(limit, offset);
     }
 
-    const allMatches: RequestLog[] = [];
+    // 两阶段扫描：阶段一仅收集轻量描述符（filename + index + timestamp），
+    // 不保留完整 log 对象引用；每个分片处理完即释放，避免所有匹配正文同时驻留内存。
+    const matches: { filename: string; index: number; timestamp: number }[] = [];
     const sortedShards = [...this.logShardsIndex].sort((a, b) => b.endTime - a.endTime);
 
     // 遍历所有分片进行搜索
     for (const shard of sortedShards) {
       const shardLogs = await this.loadLogShard(shard.filename);
 
-      for (const log of shardLogs) {
+      for (let i = 0; i < shardLogs.length; i++) {
+        const log = shardLogs[i];
         if (this.logMatchesQuery(log, searchQuery)) {
-          allMatches.push(log);
+          matches.push({ filename: shard.filename, index: i, timestamp: log.timestamp });
         }
       }
+      // shardLogs 在下一轮重新赋值，可被 GC 回收
     }
 
-    // 按时间倒序排列并分页
-    return allMatches
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(offset, offset + limit);
+    // 按时间倒序后切页，仅对当前页回填完整正文
+    matches.sort((a, b) => b.timestamp - a.timestamp);
+    const page = matches.slice(offset, offset + limit);
+    const logs = await this.hydrateLogsFromRefs(page);
+    // 保持与 page 同序（倒序）
+    logs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    return logs;
   }
 
   /**
@@ -2238,23 +2245,27 @@ export class FileSystemDatabaseManager {
    * @returns 匹配的请求日志列表
    */
   async getClientClosedLogs(limit: number = 100, offset: number = 0): Promise<RequestLog[]> {
-    const allMatches: RequestLog[] = [];
+    // 两阶段扫描：阶段一仅收集描述符，避免所有 499 日志正文同时驻留内存
+    const matches: { filename: string; index: number; timestamp: number }[] = [];
     const sortedShards = [...this.logShardsIndex].sort((a, b) => b.endTime - a.endTime);
 
     // 递序遍历所有分片， collect 499 logs
     for (const shard of sortedShards) {
       const shardLogs = await this.loadLogShard(shard.filename);
-      for (const log of shardLogs) {
+      for (let i = 0; i < shardLogs.length; i++) {
+        const log = shardLogs[i];
         if (log.statusCode === 499) {
-          allMatches.push(log);
+          matches.push({ filename: shard.filename, index: i, timestamp: log.timestamp });
         }
       }
     }
 
-    // 按时间倒序排列并分页
-    return allMatches
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(offset, offset + limit);
+    // 按时间倒序后切页，仅对当前页回填完整正文
+    matches.sort((a, b) => b.timestamp - a.timestamp);
+    const page = matches.slice(offset, offset + limit);
+    const logs = await this.hydrateLogsFromRefs(page);
+    logs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    return logs;
   }
 
   /**
@@ -3067,47 +3078,144 @@ export class FileSystemDatabaseManager {
     return this.sessions.length;
   }
 
-  async getLogsBySessionId(sessionId: string, limit: number = 100): Promise<RequestLog[]> {
+  /**
+   * 按 refs 回填日志正文。按 filename 分组，每个分片只 loadLogShard 一次，
+   * 处理完即释放分片引用，避免大量分片正文同时驻留内存。
+   * 供 getLogsBySessionId / searchLogs / getClientClosedLogs 复用。
+   */
+  private async hydrateLogsFromRefs(refs: { filename: string; index: number }[]): Promise<RequestLog[]> {
+    if (refs.length === 0) return [];
+
+    // 按 filename 分组，避免重复加载同一分片
+    const shardMap = new Map<string, number[]>();
+    for (const ref of refs) {
+      let indices = shardMap.get(ref.filename);
+      if (!indices) {
+        indices = [];
+        shardMap.set(ref.filename, indices);
+      }
+      indices.push(ref.index);
+    }
+
+    const logs: RequestLog[] = [];
+    for (const [filename, indices] of shardMap) {
+      try {
+        const shardLogs = await this.loadLogShard(filename);
+        for (const idx of indices) {
+          if (idx >= 0 && idx < shardLogs.length) {
+            logs.push(shardLogs[idx]);
+          }
+        }
+      } catch {
+        // 分片文件可能已被清理，跳过
+      }
+      // shardLogs 在下一轮循环被重新赋值，可被 GC 回收
+    }
+    return logs;
+  }
+
+  async getLogsBySessionId(sessionId: string, limit: number = 100, since?: number): Promise<RequestLog[]> {
     const refs = this.sessionLogIndex.get(sessionId);
 
     // 有索引：仅加载相关分片，按 index 直接取值
     if (refs && refs.length > 0) {
-      // 按 filename 分组，避免重复加载同一分片
-      const shardMap = new Map<string, number[]>();
-      for (const ref of refs) {
-        let indices = shardMap.get(ref.filename);
-        if (!indices) {
-          indices = [];
-          shardMap.set(ref.filename, indices);
-        }
-        indices.push(ref.index);
-      }
+      // since 时间窗下推到索引层：先用 ref.timestamp 过滤，老分片完全不读
+      const filteredRefs = typeof since === 'number'
+        ? refs.filter(r => (r.timestamp || 0) >= since)
+        : refs;
+      if (filteredRefs.length === 0) return [];
 
-      const logs: RequestLog[] = [];
-      for (const [filename, indices] of shardMap) {
-        try {
-          const shardLogs = await this.loadLogShard(filename);
-          for (const idx of indices) {
-            if (idx >= 0 && idx < shardLogs.length) {
-              logs.push(shardLogs[idx]);
-            }
-          }
-        } catch {
-          // 分片文件可能已被清理，跳过
-        }
-      }
-
+      const logs = await this.hydrateLogsFromRefs(filteredRefs);
       return logs.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
     }
 
     // 无索引（兼容旧数据）：回退到全扫描
     const allLogs: RequestLog[] = [];
+    const cutoff = typeof since === 'number' ? since : -Infinity;
     for (const shard of this.logShardsIndex) {
+      // 若整片都早于 since，直接跳过，避免无谓解析
+      if (shard.endTime < cutoff) continue;
       const shardLogs = await this.loadLogShard(shard.filename);
-      const filtered = shardLogs.filter(log => this.isLogBelongsToSession(log, sessionId));
+      const filtered = shardLogs.filter(log =>
+        (log.timestamp || 0) >= cutoff && this.isLogBelongsToSession(log, sessionId)
+      );
       allLogs.push(...filtered);
     }
     return allLogs.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
+  }
+
+  /**
+   * 批量回填多个会话的近期日志，跨会话合并分片读取（每个分片只 loadLogShard 一次）。
+   * 用于 Agent Map 启动重建，避免「100 个会话各自独立读同一分片 100 次」的内存爆炸。
+   * 返回 Map<sessionId, RequestLog[]>（按 timestamp 倒序，受 perSessionLimit 截断）。
+   */
+  async getRecentLogsBySessions(
+    sessionIds: string[],
+    opts: { since?: number; perSessionLimit?: number } = {}
+  ): Promise<Map<string, RequestLog[]>> {
+    const result = new Map<string, RequestLog[]>();
+    if (sessionIds.length === 0) return result;
+
+    const since = opts.since;
+    const perSessionLimit = opts.perSessionLimit ?? 100;
+
+    // 1) 收集每个会话满足时间窗的 refs，并按 perSessionLimit 取最近 N 条
+    //    每个 ref 记下所属 sessionId，供后续分片读取时分发
+    type TaggedRef = { filename: string; index: number; ts: number; sessionId: string };
+    const tagged: TaggedRef[] = [];
+    for (const sid of sessionIds) {
+      const refs = this.sessionLogIndex.get(sid);
+      if (!refs || refs.length === 0) continue;
+      const filtered = typeof since === 'number'
+        ? refs.filter(r => (r.timestamp || 0) >= since)
+        : refs;
+      if (filtered.length === 0) continue;
+      filtered.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      const picked = filtered.slice(-perSessionLimit); // 取最近的 N 条
+      for (const r of picked) {
+        tagged.push({ filename: r.filename, index: r.index, ts: r.timestamp || 0, sessionId: sid });
+      }
+    }
+    if (tagged.length === 0) return result;
+
+    // 2) 按 filename 分组，每个分片只加载一次
+    const shardMap = new Map<string, TaggedRef[]>();
+    for (const t of tagged) {
+      let arr = shardMap.get(t.filename);
+      if (!arr) {
+        arr = [];
+        shardMap.set(t.filename, arr);
+      }
+      arr.push(t);
+    }
+
+    // 3) 逐分片加载、按 sessionId 分发；分片处理完即释放
+    const buckets = new Map<string, RequestLog[]>();
+    for (const [filename, tRefs] of shardMap) {
+      try {
+        const shardLogs = await this.loadLogShard(filename);
+        for (const t of tRefs) {
+          if (t.index >= 0 && t.index < shardLogs.length) {
+            const log = shardLogs[t.index];
+            let bucket = buckets.get(t.sessionId);
+            if (!bucket) {
+              bucket = [];
+              buckets.set(t.sessionId, bucket);
+            }
+            bucket.push(log);
+          }
+        }
+      } catch {
+        // 分片文件可能已被清理，跳过
+      }
+    }
+
+    // 4) 每个会话桶按 timestamp 倒序
+    for (const [sid, logs] of buckets) {
+      logs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      result.set(sid, logs);
+    }
+    return result;
   }
 
   /**

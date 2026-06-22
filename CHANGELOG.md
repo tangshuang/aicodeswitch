@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-06-22: 修复代理服务 OOM（收紧日志加载 + 全扫描查询内存加固）
+
+### 修复
+- 代理服务长时间运行后堆内存持续增长至 4GB 触发 `JavaScript heap out of memory` 崩溃。根因：启动时 Agent Map `rebuildRecentEvents` 为最近 100 个会话各回填最多 200 条完整日志，且同一日志分片被不同会话重复 `JSON.parse` 多达 100 次（每条日志带完整 `streamChunks`）；叠加 `searchLogs` / `getClientClosedLogs` 全扫描时把所有匹配正文累积进内存。
+- `agent-map-service.ts`：启动重建改为仅回填最近 1 小时内有活动的 global 会话、每会话上限 30 条；点节点按需重建取最近 24h；提取 `buildEventsFromLogs()` 复用。新增常量 `REBUILD_SINCE_MS`(1h) / `REBUILD_EVENTS_PER_SESSION`(30) / `ONDEMAND_SINCE_MS`(24h)。
+- `fs-database.ts`：`getLogsBySessionId` 新增 `since` 参数，时间过滤下推到索引层（`sessionLogIndex` ref 已带 timestamp，老分片完全不读）；新增 `getRecentLogsBySessions()` 批量跨会话回填（每分片只加载一次）；新增 `hydrateLogsFromRefs()` 复用 helper。
+- `fs-database.ts`：`searchLogs` / `getClientClosedLogs` 两阶段化——扫描阶段只持 `{filename,index,timestamp}` 轻量描述符，切页后仅对当前页回填完整正文，匹配正文不再同时驻留内存。
+- 存储格式不变：每条日志的完整 `streamChunks` 仍照常落盘，日志详情页可见性不受影响。
+
+## 2026-06-22: 优化任务雷达「活动路径」重复消息
+
+### 改进
+- 任务地图节点详情「活动路径」此前会出现较多重复消息：同一句 prompt 在工具循环/客户端重试/末条 user 同时含 text+tool_result 时反复出现；连续相同的工具调用（如多次 `Read`/`Grep`）各占一行。
+- 后端 `agent-map-service.ts`：`RuntimeState` 新增 `lastPromptSummary`，`onFinalized` 改为跨轮次 prompt 去重——只要本轮 prompt 文本与该会话「最近一次真正写入的 prompt」相同即丢弃，不再受「上一条事件必须是 prompt」限制。
+- 前端 `AgentMapPage.tsx` `ActivityPathGraph`：对相邻同 kind+toolName+summary 的事件做游程折叠，合并为单行并显示「×N」徽标，点击可展开查看每次时间；连续相同的 `tool_use`/`response`/`prompt` 均受益。
+- 新增样式 `.am-path-count` / `.am-path-run` / `.am-path-run-item`（`App.css`），未使用 GPU 相关属性。
+
 ## 2026-06-22: Agent Map 一轮结束精确识别（响应 turn-end 信号）+ 通知权限「禁止」兜底
 
 ### 改进

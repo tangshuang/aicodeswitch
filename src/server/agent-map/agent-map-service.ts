@@ -16,6 +16,7 @@ import { EventEmitter } from 'events';
 import type {
   ActivityEvent,
   AgentMapStats,
+  RequestLog,
   SessionMapItem,
   SessionStatus,
   ToolType,
@@ -26,6 +27,12 @@ import { notify } from '../notifier';
 
 type DbManagerLike = {
   getSessions?: (targetType?: ToolType, limit?: number, offset?: number) => Promise<any[]>;
+  getLogsBySessionId?: (sessionId: string, limit?: number, since?: number) => Promise<RequestLog[]>;
+  // 批量回填多会话近期日志（跨会话合并分片读取），用于启动重建，避免重复解析同一分片
+  getRecentLogsBySessions?: (
+    sessionIds: string[],
+    opts?: { since?: number; perSessionLimit?: number }
+  ) => Promise<Map<string, RequestLog[]>>;
 };
 
 interface RuntimeState {
@@ -49,6 +56,7 @@ interface RuntimeState {
   projectPath?: string;
   metaResolved?: boolean; // 是否已尝试解析本地会话元信息（避免重复扫盘）
   lastTurnEnd?: boolean | null; // 末轮响应是否表示「一轮结束」（精确信号，见 detectTurnEnd）
+  lastPromptSummary?: string; // 最近一次真正写入的 prompt 文本，用于跨轮次去重
 }
 
 export interface FinalizeContext {
@@ -73,6 +81,11 @@ const SWEEP_INTERVAL_MS = 15_000;      // 每 15s 扫描一次状态迁移
 const MAX_EVENTS_PER_SESSION = 200;
 const MAX_GLOBAL_EVENTS = 500;
 const RECENT_WINDOW_FOR_STATS_MS = 60_000;
+// 启动重建：只回填最近 1h 内有活动的会话，每会话最多回填 N 条事件，避免重复解析大量历史分片
+const REBUILD_SINCE_MS = 60 * 60_000;
+const REBUILD_EVENTS_PER_SESSION = 30;
+// 点节点按需重建：取更宽松的窗口，保证老节点点开后仍能看到近期活动路径
+const ONDEMAND_SINCE_MS = 24 * 60 * 60_000;
 
 export class AgentMapService extends EventEmitter {
   private db: DbManagerLike | null = null;
@@ -80,9 +93,8 @@ export class AgentMapService extends EventEmitter {
   private sessionEvents = new Map<string, ActivityEvent[]>();
   private globalEvents: ActivityEvent[] = [];
   private sweepTimer: NodeJS.Timeout | null = null;
-  // 任务结束 OS 通知（服务端交付，前端上报开关 + 页面后台态）
+  // 任务结束 OS 通知（服务端交付）。开关开启后始终弹，不再区分页面是否后台。
   private notifyEnabled = false;
-  private pageHidden = true; // 默认 true：前端未上报/Tab 关闭时按「不在看」处理 → 允许弹
 
   // 阈值可调（供测试/配置覆盖）
   public readonly activeWindowMs = ACTIVE_WINDOW_MS;
@@ -140,8 +152,123 @@ export class AgentMapService extends EventEmitter {
         });
       }
       this.broadcastStats();
+      // 从 Session Log 重建最近一批会话的活动事件（填充全局活动流 + 详情路径），见 rebuildSessionEvents
+      this.rebuildRecentEvents().catch(err => console.error('[AgentMap] rebuildRecentEvents error:', err));
     } catch (err) {
       console.error('[AgentMap] seedFromDb error:', err);
+    }
+  }
+
+  /**
+   * 从已加载的请求日志现算活动事件（与 onFinalized 同源解析，含连续相同 prompt 去重）。
+   * 不再触发任何 DB 读取，供 rebuildSessionEvents / rebuildRecentEvents 复用。
+   */
+  private buildEventsFromLogs(sessionId: string, agent: ToolType, logs: RequestLog[]): ActivityEvent[] {
+    if (!Array.isArray(logs) || logs.length === 0) return [];
+    const sorted = [...logs].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    const out: ActivityEvent[] = [];
+    for (const log of sorted) {
+      const usage = (log as any).usage;
+      const tokensDelta = usage?.totalTokens || ((usage?.inputTokens || 0) + (usage?.outputTokens || 0));
+      const input: ExtractInput = {
+        sessionId,
+        agent,
+        timestamp: log.timestamp,
+        source: 'global',
+        body: log.body,
+        downstreamResponseBody: log.downstreamResponseBody,
+        responseBody: log.responseBody,
+        statusCode: log.statusCode,
+        tokensDelta,
+      };
+      const evs = extractActivityEvents(input);
+      // 连续相同 prompt 去重（与 onFinalized 一致）
+      for (const e of evs) {
+        if (e.kind === 'prompt' && out.length > 0) {
+          const last = out[out.length - 1];
+          if (last.kind === 'prompt' && last.summary === e.summary) continue;
+        }
+        out.push(e);
+      }
+    }
+    if (out.length > MAX_EVENTS_PER_SESSION) out.splice(0, out.length - MAX_EVENTS_PER_SESSION);
+    return out;
+  }
+
+  /**
+   * 从某会话的请求日志现算重建活动事件（与 onFinalized 同源解析，含连续相同 prompt 去重）。
+   * 用于重启后恢复活动路径/全局活动流；失败或无日志返回 []。
+   * since 下推到 DB 层，先用索引 ref 的时间戳过滤，老分片完全不读。
+   */
+  private async rebuildSessionEvents(sessionId: string, agent: ToolType, since?: number): Promise<ActivityEvent[]> {
+    if (!this.db?.getLogsBySessionId) return [];
+    try {
+      const logs = await this.db.getLogsBySessionId(sessionId, MAX_EVENTS_PER_SESSION, since);
+      return this.buildEventsFromLogs(sessionId, agent, logs);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 启动时为最近 1 小时内有活动的 global 会话重建活动事件，填充全局活动流（fire-and-forget）。
+   * 通过 getRecentLogsBySessions 跨会话合并分片读取，每个分片只 loadLogShard 一次，
+   * 避免「每会话独立读同一分片」导致的重复解析与内存爆炸。
+   */
+  private async rebuildRecentEvents() {
+    if (!this.db) return;
+    const now = Date.now();
+    const since = now - REBUILD_SINCE_MS;
+    const recentStates = Array.from(this.states.values())
+      .filter(st => st.source === 'global' && st.lastRequestAt >= since)
+      .sort((a, b) => b.lastRequestAt - a.lastRequestAt);
+
+    if (recentStates.length === 0) {
+      this.emit('stats', this.computeStats());
+      return;
+    }
+
+    let logsBySession: Map<string, RequestLog[]>;
+    if (this.db.getRecentLogsBySessions) {
+      // 批量回填：跨会话分片去重
+      logsBySession = await this.db.getRecentLogsBySessions(
+        recentStates.map(st => st.sessionId),
+        { since, perSessionLimit: REBUILD_EVENTS_PER_SESSION }
+      );
+    } else if (this.db.getLogsBySessionId) {
+      // 兼容降级：逐会话回填（仍带 since 时间窗过滤）
+      logsBySession = new Map();
+      for (const st of recentStates) {
+        try {
+          const logs = await this.db.getLogsBySessionId(st.sessionId, REBUILD_EVENTS_PER_SESSION, since);
+          if (logs.length > 0) logsBySession.set(st.sessionId, logs);
+        } catch {
+          // 忽略单会话失败
+        }
+      }
+    } else {
+      this.emit('stats', this.computeStats());
+      return;
+    }
+
+    for (const st of recentStates) {
+      const logs = logsBySession.get(st.sessionId);
+      if (!logs || logs.length === 0) continue;
+      const evs = this.buildEventsFromLogs(st.sessionId, st.agent, logs);
+      if (evs.length > 0) {
+        this.sessionEvents.set(st.sessionId, evs);
+        this.globalEvents.push(...evs);
+      }
+    }
+    if (this.globalEvents.length > MAX_GLOBAL_EVENTS) {
+      this.globalEvents.splice(0, this.globalEvents.length - MAX_GLOBAL_EVENTS);
+    }
+    this.globalEvents.sort((a, b) => a.ts - b.ts);
+    this.emit('stats', this.computeStats()); // 通知已连接客户端活动流已就绪
+    // 把重建出的最近 100 条全局活动按时间正序回放给已连接客户端（前端 onActivity 会倒序 prepend，正好 newest 在顶）
+    // 解决「客户端在 rebuild 完成前就连上、init 快照里 feed 为空」的时序问题
+    for (const e of this.globalEvents.slice(-100)) {
+      this.emit('activity', e);
     }
   }
 
@@ -206,15 +333,21 @@ export class AgentMapService extends EventEmitter {
       tokensDelta: ctx.tokensDelta,
     };
     const rawEvents = extractActivityEvents(extractInput);
-    // 去重：若本轮首个 prompt 与该会话上一条已记录的 prompt 文本相同，则丢弃该 prompt
-    // （防止重发 / 重试等同一条提问在活动流/路径里重复）
-    const prev = this.sessionEvents.get(ctx.sessionId);
-    const lastRecorded = prev && prev.length ? prev[prev.length - 1] : null;
-    const events = (lastRecorded && lastRecorded.kind === 'prompt'
-      && rawEvents.length > 0 && rawEvents[0].kind === 'prompt'
-      && rawEvents[0].summary === lastRecorded.summary)
-      ? rawEvents.slice(1)
-      : rawEvents;
+    // 跨轮次 prompt 去重：若本轮 prompt 与该会话「最近一次真正写入的 prompt」文本相同，则丢弃。
+    // 比旧逻辑（仅当上一条已记录事件本身也是相同 prompt 才丢）更稳：无论两条相同提问之间
+    // 夹了多少 tool_use / response（工具循环 / 客户端重试 / 末条 user 同时含 text+tool_result）都能命中。
+    const existingState = this.states.get(ctx.sessionId);
+    const prevPromptSummary = existingState?.lastPromptSummary;
+    const firstPromptIdx = rawEvents.findIndex(e => e.kind === 'prompt');
+    let events = rawEvents;
+    let recordedPromptSummary = prevPromptSummary;
+    if (firstPromptIdx >= 0
+      && prevPromptSummary
+      && rawEvents[firstPromptIdx].summary === prevPromptSummary) {
+      events = rawEvents.filter((_, i) => i !== firstPromptIdx);
+    } else if (firstPromptIdx >= 0) {
+      recordedPromptSummary = rawEvents[firstPromptIdx].summary;
+    }
     const { summary, toolName } = deriveLastActivity(events);
 
     const now = Date.now();
@@ -241,6 +374,7 @@ export class AgentMapService extends EventEmitter {
     if (ctx.keyId) st.keyId = ctx.keyId;
     if (ctx.keyName) st.keyName = ctx.keyName;
     if (ctx.title && !st.title) st.title = ctx.title;
+    st.lastPromptSummary = recordedPromptSummary;
     st.lastRequestAt = ctx.timestamp;
     st.requestCount += 1;
     if (ctx.tokensDelta) st.totalTokens += ctx.tokensDelta;
@@ -313,7 +447,8 @@ export class AgentMapService extends EventEmitter {
   // ============ 任务结束 OS 通知 ============
 
   setNotifyEnabled(enabled: boolean) { this.notifyEnabled = !!enabled; }
-  setPageHidden(hidden: boolean) { this.pageHidden = !!hidden; }
+  /** 兼容旧端点：不再区分前后台，调用为 no-op（开关开启后始终弹） */
+  setPageHidden(_hidden: boolean) { /* no-op */ }
   getNotifyEnabled() { return this.notifyEnabled; }
 
   /** 发一条测试通知（供 UI「测试」按钮验证 OS 是否真弹） */
@@ -321,9 +456,9 @@ export class AgentMapService extends EventEmitter {
     notify({ title: '✅ 测试通知', body: 'AICodeSwitch 通知可用' });
   }
 
-  /** active → idle 迁移时，若开关开且页面在后台，弹 OS 通知（一轮工作结束） */
+  /** active → idle 迁移时，只要开关开启就弹 OS 通知（一轮工作结束）。不再看页面是否后台。 */
   private maybeNotifyTurnEnd(prevStatus: SessionStatus, st: RuntimeState) {
-    if (!this.notifyEnabled || !this.pageHidden) return;
+    if (!this.notifyEnabled) return;
     if (prevStatus !== 'active' || st.status !== 'idle') return;
     const agentName = st.agent === 'codex' ? 'Codex' : 'Claude Code';
     notify({
@@ -419,10 +554,23 @@ export class AgentMapService extends EventEmitter {
     };
   }
 
-  getSessionEvents(sessionId: string, since?: number): ActivityEvent[] {
-    const arr = this.sessionEvents.get(sessionId) || [];
-    if (since == null) return arr.slice(-MAX_EVENTS_PER_SESSION);
-    return arr.filter(e => e.ts > since);
+  async getSessionEvents(sessionId: string, since?: number): Promise<ActivityEvent[]> {
+    let arr = this.sessionEvents.get(sessionId);
+    // 按需重建：缓冲为空、会话存在、且能读日志 → 从 Session Log 现算（重启后点开老节点）
+    if ((!arr || arr.length === 0) && this.states.has(sessionId) && this.db?.getLogsBySessionId) {
+      const st = this.states.get(sessionId)!;
+      if (st.source === 'global') {
+        // 按需重建：取最近 24h，既保证老节点点开后能看到活动路径，又避免解析全部历史
+        const evs = await this.rebuildSessionEvents(sessionId, st.agent, Date.now() - ONDEMAND_SINCE_MS);
+        if (evs.length > 0) {
+          this.sessionEvents.set(sessionId, evs);
+          arr = evs;
+        }
+      }
+    }
+    const base = arr || [];
+    if (since == null) return base.slice(-MAX_EVENTS_PER_SESSION);
+    return base.filter(e => e.ts > since);
   }
 
   getRecentGlobalEvents(limit: number): ActivityEvent[] {

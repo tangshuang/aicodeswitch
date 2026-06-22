@@ -700,59 +700,79 @@ export const api: BackendAPI = {
   streamAgentMap: (handlers) => {
     const controller = new AbortController();
     const token = localStorage.getItem('auth_token');
-    (async () => {
-      try {
-        const resp = await fetch('/api/agent-map/stream', {
-          method: 'GET',
-          signal: controller.signal,
-          headers: {
-            'Accept': 'text/event-stream',
-            ...(token ? { 'Access-Token': token } : {}),
-          },
-        });
-        if (!resp.ok || !resp.body) {
-          handlers.onError?.(new Error(`HTTP ${resp.status}`));
-          return;
-        }
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = '';
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          // SSE 帧以双换行分隔
-          let idx;
-          while ((idx = buf.indexOf('\n\n')) !== -1) {
-            const frame = buf.slice(0, idx);
-            buf = buf.slice(idx + 2);
-            const dataLine = frame.split('\n').find(l => l.startsWith('data:'));
-            if (!dataLine) continue;
-            const payload = dataLine.slice(5).trim();
-            if (!payload) continue;
-            let msg: any;
-            try { msg = JSON.parse(payload); } catch { continue; }
-            switch (msg.type) {
-              case 'init':
-                handlers.onInit?.({
-                  type: 'init',
-                  sessions: msg.sessions || [],
-                  events: msg.events || [],
-                  stats: msg.stats,
-                  serverTime: msg.serverTime,
-                });
-                break;
-              case 'session-update': handlers.onSessionUpdate?.(msg.session); break;
-              case 'activity': handlers.onActivity?.(msg.event); break;
-              case 'stats': handlers.onStats?.(msg.stats); break;
-              // heartbeat 忽略
-            }
+    let stopped = false;
+    let attempt = 0;
+
+    // 一次连接 + 读循环；正常结束或抛错由外层 loop 决定是否重连
+    const runOnce = async () => {
+      const resp = await fetch('/api/agent-map/stream', {
+        method: 'GET',
+        signal: controller.signal,
+        headers: {
+          'Accept': 'text/event-stream',
+          ...(token ? { 'Access-Token': token } : {}),
+        },
+      });
+      if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        // SSE 帧以双换行分隔
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const dataLine = frame.split('\n').find(l => l.startsWith('data:'));
+          if (!dataLine) continue;
+          const payload = dataLine.slice(5).trim();
+          if (!payload) continue;
+          let msg: any;
+          try { msg = JSON.parse(payload); } catch { continue; }
+          switch (msg.type) {
+            case 'init':
+              handlers.onInit?.({
+                type: 'init',
+                sessions: msg.sessions || [],
+                events: msg.events || [],
+                stats: msg.stats,
+                serverTime: msg.serverTime,
+              });
+              break;
+            case 'session-update': handlers.onSessionUpdate?.(msg.session); break;
+            case 'activity': handlers.onActivity?.(msg.event); break;
+            case 'stats': handlers.onStats?.(msg.stats); break;
+            // heartbeat 忽略
           }
         }
-      } catch (err: any) {
-        if (err?.name !== 'AbortError') handlers.onError?.(err);
+      }
+    };
+
+    // 自动重连：连接断开（done/error）后，按指数退避重试，直到用户 abort
+    (async () => {
+      while (!stopped) {
+        try {
+          await runOnce();
+          attempt = 0; // 成功连上并正常结束 → 重置退避
+        } catch (err: any) {
+          if (err?.name === 'AbortError') return; // 用户主动断开
+          handlers.onError?.(err);
+        }
+        if (stopped) break;
+        attempt = Math.min(attempt + 1, 5);
+        const delay = Math.min(1000 * 2 ** (attempt - 1), 15000); // 1s → 2s → 4s → 8s → 15s 封顶
+        await new Promise(r => setTimeout(r, delay));
       }
     })();
-    return { abort: () => controller.abort() };
+
+    return {
+      abort: () => {
+        stopped = true;
+        controller.abort();
+      },
+    };
   },
 };
