@@ -12,6 +12,7 @@ import { AccessKeyManager } from './access-keys/manager';
 import { PolicyManager } from './access-keys/policy-manager';
 import { ServicePerformanceTracker } from './performance-tracker';
 import type { FileSystemDatabaseManager } from './fs-database';
+import { agentMapService, registerAgentMapRoutes } from './agent-map';
 import type {
   AppConfig,
   APIService,
@@ -1657,6 +1658,9 @@ const registerRoutes = async (dbManager: FileSystemDatabaseManager, proxyServer:
       });
     })
   );
+
+  // Agent Map（任务可视化节点地图）路由：SSE 实时流 + REST 快照/事件
+  registerAgentMapRoutes(app, agentMapService);
 
   // 清除规则的错误状态（广播 idle 状态给所有客户端）
   app.post(
@@ -4173,6 +4177,9 @@ const start = async () => {
   // 自动检测数据库类型并执行迁移（如果需要）
   console.time('[Server] step "database-init"');
   const dbManager = await DatabaseFactory.createAuto(dataDir, legacyDataDir) as FileSystemDatabaseManager;
+
+  // Agent Map 服务接入 dbManager（种子化已有 Session + 启动状态清扫定时器）
+  agentMapService.attach(dbManager);
   console.timeEnd('[Server] step "database-init"');
 
   // 服务启动时自动同步配置文件（适用于 CLI 和 dev:server）

@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 import { HashRouter as Router, Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import { api } from './api/client';
-import HomePage from './pages/HomePage';
 import VendorsPage from './pages/VendorsPage';
 import RouteGroupsPage from './pages/RoutesPage';
 import LogsPage from './pages/LogsPage';
@@ -15,6 +14,7 @@ import SkillsPage from './pages/SkillsPage';
 import MCPPage from './pages/MCPPage';
 import AccessKeysPage from './pages/AccessKeysPage';
 import AccessKeyDetailPage from './pages/AccessKeyDetailPage';
+import AgentMapPage from './pages/AgentMapPage';
 import { ToastContainer } from './components/Toast';
 import { ConfirmProvider } from './components/Confirm';
 import ToolsInstallModal from './components/ToolsInstallModal';
@@ -428,11 +428,6 @@ function AppContent() {
         <div className="nav-menu-wrap">
         <ul className="nav-menu" ref={navMenuRef}>
           <li>
-            <NavItemWithTooltip text="首页 (ATO 团队)" showTooltip={sidebarCollapsed}>
-              <NavLink to="/"><span className="nav-icon">🤖</span><span className="nav-text">首页 (ATO 团队)</span></NavLink>
-            </NavItemWithTooltip>
-          </li>
-          <li>
             <NavItemWithTooltip text="路由管理" showTooltip={sidebarCollapsed}>
               <NavLink to="/routes"><span className="nav-icon">🌏</span><span className="nav-text">路由管理</span></NavLink>
             </NavItemWithTooltip>
@@ -463,6 +458,11 @@ function AppContent() {
             </>
           )}
           <li className="nav-divider"><hr style={{ border: 'none', borderTop: '1px solid var(--border-primary)', margin: '4px 8px' }} /></li>
+          <li>
+            <NavItemWithTooltip text="任务雷达" showTooltip={sidebarCollapsed}>
+              <NavLink to="/agent-map"><span className="nav-icon">🗺️</span><span className="nav-text">任务雷达</span></NavLink>
+            </NavItemWithTooltip>
+          </li>
           <li>
             <NavItemWithTooltip text="数据统计" showTooltip={sidebarCollapsed}>
               <NavLink to="/statistics"><span className="nav-icon">📊</span><span className="nav-text">数据统计</span></NavLink>
@@ -549,7 +549,8 @@ function AppContent() {
       </nav>
       <main className="main-content">
           <Routes>
-            <Route path="/" element={<HomePage />} />
+            <Route path="/" element={<Navigate to="/agent-map" replace />} />
+            <Route path="/agent-map" element={<AgentMapPage />} />
             <Route path="/statistics" element={<StatisticsPage />} />
             <Route path="/routes" element={<RouteGroupsPage />} />
             <Route path="/vendors" element={<VendorsPage />} />

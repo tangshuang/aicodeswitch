@@ -431,7 +431,94 @@ export interface Session {
   highIqEnabledAt?: number;// 启用高智商模式的时间戳
   routeId?: string;        // 绑定的路由ID（可选，未绑定为 undefined）
   routeName?: string;      // 绑定的路由名称（冗余字段，用于 UI 快速显示）
+
+  // —— Agent Map 任务可视化（活跃度自动推断，可选字段，兼容旧数据） ——
+  status?: SessionStatus;            // 任务状态（active/idle/completed/error），由活跃度自动推断
+  statusReason?: string;             // 状态推断依据（调试 / UI tooltip）
+  lastActivitySummary?: string;      // 最近一次工具 / 响应摘要，用于地图节点副标
+  lastToolName?: string;             // 最近一次工具调用名（Read/Edit/Bash...）
+  lastStatusCode?: number;           // 最近一次请求的 HTTP 状态码
 }
+
+// ==================== Agent Map（任务可视化节点地图） ====================
+
+/**
+ * Session 任务状态（基于活跃度自动推断，无需用户手动标记）
+ * - active：最近 N 秒内有请求 或 当前有在途请求
+ * - idle：超过 N 秒无新请求，但近 M 分钟内有过活动
+ * - completed：超过 M 分钟无活动 且 末轮正常结束
+ * - error：末次请求失败（5xx / 流式中断）
+ */
+export type SessionStatus = 'active' | 'idle' | 'completed' | 'error';
+
+/**
+ * 活动事件：从代理日志中抽取的细粒度节点，用于地图副标、活动路径子图、全局活动流
+ */
+export interface ActivityEvent {
+  id: string;
+  ts: number;
+  sessionId: string;
+  agent: ToolType;                                   // claude-code / codex
+  source?: 'global' | 'access-key';                  // 会话来源
+  keyId?: string;                                    // source=access-key 时的密钥 ID
+  keyName?: string;
+  kind: 'prompt' | 'thinking' | 'tool_use' | 'tool_result' | 'response' | 'error';
+  toolName?: string;                                 // Read/Edit/Bash/Grep/WebFetch...
+  summary: string;                                   // 一行摘要
+  tokensDelta?: number;                              // 本轮 token 增量
+  statusCode?: number;
+}
+
+/**
+ * Agent Map 画布上的一个 Session 节点（运行时聚合态，不持久化）
+ */
+export interface SessionMapItem {
+  sessionId: string;
+  agent: ToolType;
+  source: 'global' | 'access-key';
+  keyId?: string;
+  keyName?: string;
+  title?: string;
+  status: SessionStatus;
+  statusReason?: string;
+  firstRequestAt: number;
+  lastRequestAt: number;
+  requestCount: number;
+  totalTokens: number;
+  lastToolName?: string;
+  lastActivitySummary?: string;
+  lastStatusCode?: number;
+  lastModel?: string;
+  inFlight: number;                                  // 当前在途请求数
+  projectPath?: string;                              // 项目路径（仅 global 来源可解析；access-key 无）
+}
+
+/** SSE 推送的 init 快照 */
+export interface AgentMapInitPayload {
+  type: 'init';
+  sessions: SessionMapItem[];
+  events: ActivityEvent[];                           // 全局最近活动（倒序）
+  stats: AgentMapStats;
+  serverTime: number;
+}
+
+export interface AgentMapStats {
+  totalSessions: number;
+  activeSessions: number;
+  idleSessions: number;
+  completedSessions: number;
+  errorSessions: number;
+  inFlightRequests: number;
+  recentToolCalls: number;                           // 近 1 分钟工具调用数
+  recentTokens: number;                              // 近 1 分钟 token 吞吐
+}
+
+/** SSE 增量事件 */
+export type AgentMapStreamEvent =
+  | { type: 'session-update'; session: SessionMapItem }
+  | { type: 'activity'; event: ActivityEvent }
+  | { type: 'stats'; stats: AgentMapStats }
+  | { type: 'heartbeat'; timestamp: number };
 
 /** 统计数据 */
 export interface Statistics {

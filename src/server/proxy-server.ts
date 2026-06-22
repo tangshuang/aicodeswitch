@@ -12,6 +12,7 @@ import { ChunkCollectorTransform, SSEEventCollectorTransform, type SSEEvent } fr
 import { StreamTimingTransform } from './transformers/stream-timing-transform';
 import type { ServicePerformanceTracker } from './performance-tracker';
 import { rulesStatusBroadcaster } from './rules-status-service';
+import { agentMapService } from './agent-map';
 import {
   transformRequest as convertRequest,
   transformResponse as convertResponse,
@@ -3812,6 +3813,14 @@ export class ProxyServer {
     const targetType = this.inferToolFromRequest(req);
     const sessionId = this.defaultExtractSessionId(req, targetType) || '-';
 
+    // Agent Map：在途请求注册（active 状态判定依据）
+    const _accessKeyCtxAtStart = (req as any)._accessKeyCtx as { accessKey: AccessKey; policy: Policy } | undefined;
+    agentMapService.startRequest(sessionId, targetType, {
+      source: _accessKeyCtxAtStart ? 'access-key' : 'global',
+      keyId: _accessKeyCtxAtStart?.accessKey?.id,
+      keyName: _accessKeyCtxAtStart?.accessKey?.name,
+    });
+
     const vendor = this.dbManager.getVendorByServiceId(service.id);
     console.log(`\x1b[32m[Request Start]\x1b[0m client=${targetType}, session=${sessionId}, rule=${rule.id}(${rule.contentType}), vendor=${vendor?.name || '-'}, service=${service.name}, model=${rule.targetModel || req.body?.model || '-'}`);
     const failoverEnabled = options?.failoverEnabled === true;
@@ -3999,6 +4008,30 @@ export class ProxyServer {
         service, vendorId: vendor?.id, vendorName: vendor?.name,
         model: rule.targetModel || req.body?.model,
       });
+
+      // Agent Map：在途请求注销 + 活动/状态采集广播（独立于 enableLogging，仅执行一次）
+      if (!res.locals._agentMapRecorded) {
+        res.locals._agentMapRecorded = true;
+        agentMapService.endRequest(sessionId);
+        const _akCtx = (req as any)._accessKeyCtx as { accessKey: AccessKey; policy: Policy } | undefined;
+        const _tokensDelta = usageForLog?.totalTokens ||
+          ((usageForLog?.inputTokens || 0) + (usageForLog?.outputTokens || 0));
+        agentMapService.onFinalized({
+          sessionId,
+          agent: targetType,
+          source: _akCtx ? 'access-key' : 'global',
+          keyId: _akCtx?.accessKey?.id,
+          keyName: _akCtx?.accessKey?.name,
+          title: this.defaultExtractSessionTitle(req, sessionId),
+          timestamp: Date.now(),
+          statusCode,
+          model: rule.targetModel || req.body?.model,
+          tokensDelta: _tokensDelta,
+          body: req.body,
+          downstreamResponseBody: downstreamResponseBodyForLog ?? responseBodyForLog,
+          responseBody: responseBodyForLog,
+        });
+      }
 
       const isError = statusCode >= 400;
       if (isError) {

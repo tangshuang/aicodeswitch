@@ -2497,3 +2497,731 @@ table th {
 div:hover > .route-icon-popover {
   opacity: 1;
 }
+
+/* ==================== Agent Map（任务可视化节点地图） ==================== */
+
+.am-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 12px;
+  gap: 12px;
+  box-sizing: border-box;
+  position: relative;
+}
+
+.am-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  flex-wrap: wrap;
+  background: var(--bg-card);
+}
+.am-title { display: flex; align-items: center; gap: 10px; }
+.am-title h2 { margin: 0; font-size: 18px; }
+.am-conn { font-size: 12px; color: var(--text-muted); }
+.am-conn--on { color: var(--accent-success); }
+.am-stats {
+  display: flex;
+  gap: 14px;
+  flex: 1;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.am-stat b { color: var(--text-light); margin-left: 4px; }
+.am-stat--active b { color: var(--accent-primary); }
+.am-stat--error b { color: var(--accent-danger); }
+.am-stat--idle b { color: var(--accent-warning); }
+.am-stat--completed b { color: var(--text-muted); }
+.am-actions { display: flex; gap: 8px; }
+.am-btn {
+  padding: 5px 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-light);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.am-btn:hover { background: var(--bg-hover); }
+.am-btn--ghost { background: transparent; }
+
+.am-main {
+  flex: 1;
+  display: flex;
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.am-canvas-wrap {
+  flex: 1;
+  position: relative;
+  background: var(--bg-primary);
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+}
+.am-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 连线 */
+.am-link { stroke-width: 1; opacity: 0.25; }
+.am-link--active { stroke: var(--accent-primary); }
+
+/* 节点 */
+.am-node { transition: opacity 0.2s; }
+.am-node-glow {
+  fill: none;
+  stroke-width: 0;
+  opacity: 0;
+}
+.am-node-circle {
+  fill: var(--bg-card);
+  stroke: var(--border-color);
+  stroke-width: 2;
+  transition: stroke 0.2s, fill 0.2s;
+}
+.am-node-emoji {
+  font-size: 20px;
+  pointer-events: none;
+  user-select: none;
+}
+.am-node-title {
+  font-size: 11px;
+  fill: var(--text-light);
+  pointer-events: none;
+  user-select: none;
+}
+.am-node-activity {
+  font-size: 10px;
+  fill: var(--text-muted);
+  pointer-events: none;
+  user-select: none;
+}
+.am-node-source {
+  font-size: 9px;
+  fill: var(--accent-secondary);
+  pointer-events: none;
+  user-select: none;
+}
+.am-node-busy-dot {
+  fill: var(--accent-warning);
+  stroke: var(--bg-card);
+  stroke-width: 1.5;
+}
+
+/* 状态着色 */
+.am-node--active .am-node-circle { stroke: var(--accent-primary); fill: color-mix(in srgb, var(--accent-primary) 18%, var(--bg-card)); }
+.am-node--active .am-node-glow { stroke: var(--accent-primary); stroke-width: 3; opacity: 0.5; animation: am-pulse 2s ease-in-out infinite; }
+.am-node--active .am-node-emoji { fill: var(--accent-primary); }
+.am-node--idle .am-node-circle { stroke: var(--accent-warning); fill: color-mix(in srgb, var(--accent-warning) 12%, var(--bg-card)); }
+.am-node--error .am-node-circle { stroke: var(--accent-danger); fill: color-mix(in srgb, var(--accent-danger) 18%, var(--bg-card)); }
+.am-node--error .am-node-glow { stroke: var(--accent-danger); stroke-width: 3; opacity: 0.5; animation: am-pulse 1.2s ease-in-out infinite; }
+.am-node--completed { opacity: 0.55; }
+.am-node--completed .am-node-circle { stroke: var(--border-secondary); stroke-dasharray: 3 3; }
+.am-node--selected .am-node-circle { stroke-width: 4; }
+.am-node--busy .am-node-circle { animation: am-pulse 1s ease-in-out infinite; }
+
+@keyframes am-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50% { opacity: 0.8; transform: scale(1.08); }
+}
+
+/* 图例 */
+.am-legend {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-card);
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+}
+.am-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.am-dot--active { background: var(--accent-primary); }
+.am-dot--idle { background: var(--accent-warning); }
+.am-dot--completed { background: var(--border-secondary); }
+.am-dot--error { background: var(--accent-danger); }
+
+/* 空画布 */
+.am-empty-canvas {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  text-align: center;
+}
+.am-empty-icon { font-size: 64px; margin-bottom: 12px; opacity: 0.6; }
+.am-empty-hint { font-size: 12px; opacity: 0.8; }
+
+/* 详情面板 */
+.am-detail {
+  width: 380px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.am-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color);
+}
+.am-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-weight: 600;
+}
+.am-badge svg { flex-shrink: 0; }
+.am-badge--active { background: color-mix(in srgb, var(--accent-primary) 20%, transparent); color: var(--accent-primary); }
+.am-badge--idle { background: color-mix(in srgb, var(--accent-warning) 20%, transparent); color: var(--accent-warning); }
+.am-badge--completed { background: var(--bg-secondary); color: var(--text-muted); }
+.am-badge--error { background: color-mix(in srgb, var(--accent-danger) 20%, transparent); color: var(--accent-danger); }
+.am-detail-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1;
+}
+.am-detail-title {
+  margin: 0;
+  padding: 10px 14px 4px;
+  font-size: 14px;
+}
+.am-detail-meta {
+  padding: 0 14px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  display: grid;
+  gap: 4px;
+}
+.am-detail-meta b { color: var(--text-light); font-weight: 600; }
+.am-detail-inflight { color: var(--accent-warning); margin-top: 4px; }
+.am-detail-section-title {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border-color);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.am-detail-footer {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-color);
+  margin-top: auto;
+}
+
+/* 活动路径子图 */
+.am-path {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 14px;
+}
+.am-path-item {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.am-path-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 14px;
+  flex-shrink: 0;
+  padding-top: 4px;
+}
+.am-path-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent-secondary);
+  flex-shrink: 0;
+}
+.am-path-item--tool_use .am-path-dot { background: var(--accent-primary); }
+.am-path-item--error .am-path-dot { background: var(--accent-danger); }
+.am-path-item--prompt .am-path-dot { background: var(--accent-warning); }
+.am-path-line {
+  width: 2px;
+  flex: 1;
+  background: var(--border-color);
+  min-height: 14px;
+}
+.am-path-body { flex: 1; min-width: 0; padding-bottom: 6px; }
+.am-path-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-light);
+}
+.am-path-icon { flex-shrink: 0; }
+.am-path-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.am-path-time { font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
+.am-path-toggle { color: var(--text-muted); flex-shrink: 0; }
+.am-clickable { cursor: pointer; }
+.am-path-detail {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow: auto;
+}
+.am-path-prompt {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.am-empty { padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px; }
+
+/* 右侧活动流边栏（外部浮动 toggle + 浮动圆角面板） */
+.am-feed-wrap {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+}
+.am-feed-toggle {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-right: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 50%;
+  transition: color 0.15s, background 0.15s;
+}
+.am-feed-toggle:hover {
+  color: var(--accent-primary);
+  background: var(--bg-hover);
+}
+.am-feed-sidebar {
+  width: 280px;
+  margin: 4px 0;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.am-feed-head {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+.am-feed {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 14px;
+  display: flex;
+  flex-direction: column;
+}
+.am-feed-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.am-feed-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+.am-feed-time { color: var(--text-muted); font-size: 10px; width: 60px; flex-shrink: 0; }
+.am-feed-agent { flex-shrink: 0; }
+.am-feed-icon { flex-shrink: 0; }
+.am-feed-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-light);
+}
+.am-feed-row--tool_use .am-feed-summary { color: var(--accent-primary); }
+.am-feed-row--error .am-feed-summary { color: var(--accent-danger); }
+
+/* ==================== Agent Map：缩放 / 时间筛选 / 直方图 ==================== */
+
+/* 中心标记 */
+.am-center-mark { fill: var(--accent-primary); opacity: 0.4; }
+
+/* 缩放控制（画布右下角浮动） */
+.am-zoom {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 3px 6px;
+  box-shadow: var(--shadow-secondary);
+}
+.am-zoom-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-light);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.am-zoom-btn:hover { background: var(--bg-hover); color: var(--accent-primary); }
+.am-zoom-pct {
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 38px;
+  text-align: center;
+}
+
+/* 时间筛选 + 直方图工具条 */
+/* 时间筛选 Popover 内容（上下结构：上方筛选项，下方水平拉通的趋势图） */
+.am-timefilter {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  padding: 12px 16px;
+}
+.am-timepresets {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-self: flex-start;
+}
+.am-chip {
+  padding: 4px 11px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border-radius: 14px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.am-chip:hover { color: var(--text-light); border-color: var(--accent-primary); }
+.am-chip--active {
+  background: color-mix(in srgb, var(--accent-primary) 16%, transparent);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+.am-timefilter-hint {
+  padding: 0 16px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border-color);
+  padding-top: 10px;
+  margin: 0 16px;
+}
+
+/* topbar 文字+箭头 toggle 按钮 */
+.am-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+.am-toggle-btn svg { opacity: 0.7; }
+
+/* 平滑趋势曲线（仅展示，横向拉通填满剩余空间） */
+.am-trend {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 120px;
+}
+.am-trend-label {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.am-trend-svg {
+  width: 100%;
+  height: 44px;
+  display: block;
+}
+.am-trend-axis {
+  font-size: 9px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ==================== Agent Map：图标按钮 + 图例 Popover ==================== */
+
+.am-icon-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
+}
+.am-icon-btn--active {
+  background: color-mix(in srgb, var(--accent-primary) 16%, transparent);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+.am-help-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* Popover 遮罩 + 面板 */
+.am-popover-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: transparent;
+}
+.am-popover {
+  position: absolute;
+  top: 64px;
+  right: 12px;
+  z-index: 51;
+  width: 360px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 80px);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* 宽版（图例）：三列布局 */
+.am-popover--wide {
+  width: 860px;
+}
+.am-legend-grid {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+.am-legend-col {
+  flex: 1;
+  min-width: 0;
+}
+/* 时间筛选 popover：贴右侧，窄一点 */
+.am-popover--time {
+  width: 440px;
+}
+.am-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+  font-weight: 600;
+  font-size: 14px;
+}
+.am-popover-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0 4px;
+}
+.am-popover-close:hover { color: var(--text-light); }
+.am-popover-body {
+  padding: 10px 16px 14px;
+  overflow-y: auto;
+}
+.am-legend-group {
+  break-inside: avoid;
+  margin-bottom: 10px;
+}
+.am-legend-group-title {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 0 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-color);
+}
+.am-legend-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 4px 0;
+}
+.am-legend-ic {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+.am-legend-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.am-legend-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-light);
+}
+.am-legend-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+/* 图例里的小符号样式 */
+.am-ic-star { color: var(--accent-primary); font-size: 16px; }
+.am-ic-bolt { color: var(--accent-warning); font-size: 16px; }
+.am-ic-busy {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent-warning);
+  border: 2px solid var(--bg-card);
+  box-shadow: 0 0 0 1px var(--border-color);
+}
+.am-ic-center {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent-primary); opacity: 0.6;
+}
+
+/* ==================== Agent Map：详情 Popover（跟随节点浮动） ==================== */
+.am-detail--popover {
+  position: fixed;
+  z-index: 60;
+  width: 380px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+}
+/* 详情内的活动路径在限高内滚动，永不溢出屏幕 */
+.am-detail--popover .am-path {
+  overflow-y: auto;
+}
+.am-feed-agent { flex-shrink: 0; }
+
+/* 可点击的活动流行（点击定位到地图节点） */
+.am-feed-row--clickable { cursor: pointer; }
+.am-feed-row--clickable:hover { background: var(--bg-hover); }
+
+/* 距离分档临界圆（浅色虚线，由内向外颜色递深） */
+.am-ring { pointer-events: none; }
+.am-ring circle {
+  stroke-width: 1;
+  stroke-dasharray: 5 6;
+  opacity: 0.55;
+}
+.am-ring--t0 circle { stroke: var(--accent-success); }
+.am-ring--t1 circle { stroke: var(--accent-warning); }
+.am-ring--t2 circle { stroke: #6BA8E5; }
+.am-ring--t3 circle { stroke: var(--accent-danger); opacity: 0.7; }
+.am-ring-label {
+  font-size: 11px;
+  fill: var(--text-muted);
+  opacity: 0.7;
+  pointer-events: none;
+  user-select: none;
+}
+.am-ring--t0 .am-ring-label { fill: var(--accent-success); }
+.am-ring--t1 .am-ring-label { fill: var(--accent-warning); }
+.am-ring--t2 .am-ring-label { fill: #6BA8E5; }
+.am-ring--t3 .am-ring-label { fill: var(--accent-danger); }
+
+/* 图例里的临界圆示意（一段虚线色块） */
+.am-ring-swatch {
+  display: inline-block;
+  width: 22px;
+  height: 0;
+  border-top: 2px dashed currentColor;
+  opacity: 0.7;
+}
+
+/* 详情 popover：项目路径行 */
+.am-detail-path {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.am-detail-path code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-light);
+  background: var(--bg-secondary);
+  padding: 1px 6px;
+  border-radius: 4px;
+  word-break: break-all;
+}
+.am-detail-path-na { color: var(--text-muted); font-size: 11px; font-style: normal; }

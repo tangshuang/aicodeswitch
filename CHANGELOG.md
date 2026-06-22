@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026-06-22: 开发环境 Ctrl+C 同步阻塞优化
+
+### 改进
+- 新增 `scripts/dev.js` 开发模式启动器（替代 `concurrently`）：直接 spawn `tsx`（服务）与 `vite`（UI），接管 `SIGINT`/`SIGTERM`，在服务子进程真正 `exit`（等价于 `Server stopped.` 出现）之后才退出父进程，避免终端提示符过早返回、端口未释放导致快速重启 `EADDRINUSE` 冲突
+- `package.json` `dev` 脚本改为 `node scripts/dev.js`；`dev:server` / `dev:ui` 子脚本保持不变
+- 日志按行加 `[server]` / `[ui]` 前缀（替代 concurrently 彩色前缀），任一子进程自行退出时级联停止另一个，15s 硬超时兜底强退
+
+## 2026-06-22: Agent Map 支持项目路径展示与原始会话标题
+
+### 新增
+- 新增 `server/agent-map/session-meta.ts`：从本机 Claude Code / Codex 会话存储读取每个会话的「项目路径」与「原始标题」
+  - Claude：`~/.claude/projects/*/sessions-index.json` 取 projectPath，回退遍历各项目目录定位 `<sessionId>.jsonl`，优先取行内 `type:"ai-title"` 的 `aiTitle` 作为标题
+  - Codex：构建一次 sessionId→文件 索引（`~/.codex/sessions/**` + `archived_sessions`），读首行 `session_meta.payload.cwd`；标题优先 `session_index.jsonl` 的 thread_name，回退首条用户消息（剥 `<environment_context>`）
+  - 结果按 sessionId 内存缓存，避免重复扫盘
+- 仅对非 AccessKey（global）会话解析：Claude Code/Codex 运行在本机时磁盘文件可读；AccessKey 流量来自远端，无法解析
+- 详情 popover 新增「项目路径」行：global 会话展示真实路径，access-key 会话提示「接入密钥会话，无法读取本地项目信息」
+- 新增 API：`GET /api/agent-map/sessions/:id/meta`（按需解析，含 source 标记）
+
+### 改进
+- `SessionMapItem` / `RuntimeState` 新增 `projectPath?` 字段
+- `agent-map-service` 在 `onFinalized` 异步富化项目路径与原始标题（命中即覆盖日志截取的标题），并暴露 `getSessionMeta`
+- 修复 `proxy-server.ts` `onFinalized` 未传 `title` 的缺口（节点标题此前仅靠种子化，新会话首现无标题）
+- 节点标题改用磁盘原始标题（Claude aiTitle / Codex thread_name），展示更标准
+
+## 2026-06-22: 新增 Agent Map 任务可视化节点地图
+
+### 新增
+- 新增「任务地图」页面（菜单"任务地图"，默认首页 `/` 重定向至此）：把每个 Claude Code / Codex Session 画成 SVG 节点，状态（进行中/空闲/已完成/异常）由活跃度自动推断并经 SSE 实时刷新，节点支持拖拽布局（localStorage 持久化）
+- 点开节点查看活动路径子图（提问 → 工具调用链 → 响应），底部全局活动流实时滚动所有 Session 的细粒度事件
+- 纯观测功能：数据全部复用代理已有流量，不驱动 Agent、不涉及未实现的 ATO 编排
+- 新增 `server/agent-map/` 模块（`agent-map-service.ts` 单例：在途注册表 + 活跃度状态推断引擎 + 活动事件环形缓冲 + EventEmitter 广播 + 15s 状态清扫；`activity-extractor.ts` 服务端活动解析；`routes.ts`）
+- 新增 4 个 API：`GET /api/agent-map/stream`（SSE 实时流）、`/sessions`、`/sessions/:id/events?since=`、`/stats`
+- 采集接入点：`proxy-server.ts` `proxyRequest` 入口 `startRequest`、`finalizeLog` 内 `endRequest`+`onFinalized`（独立于 enableLogging，覆盖普通路由 + AccessKey 两条分支）
+
+### 改进
+- `Session` 类型扩展 `status`/`lastActivitySummary`/`lastToolName`/`lastStatusCode`（可选，兼容旧数据）；新增 `ActivityEvent`/`SessionMapItem`/`AgentMapStats`/`AgentMapStreamEvent` 共享类型
+- 移除 `App.tsx` 中指向不存在 `HomePage.tsx` 的 ATO 遗留菜单/路由（构建曾因此失败），默认首页改为 `/agent-map`
+- 文档：新增 `docs/PRD/agent-map.md`；`CLAUDE.md` 补充 5.8 Agent Map Module 章节
+
 ## 2026-06-17: Tauri 构建流水线新增 macOS 与 Linux 产物
 
 ### 新增

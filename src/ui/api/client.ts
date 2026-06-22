@@ -122,6 +122,20 @@ interface BackendAPI {
 
   getRecommendVendorsMarkdown: () => Promise<string>;
   getReadmeMarkdown: () => Promise<string>;
+
+  // Agent Map（任务可视化节点地图）
+  getAgentMapSessions: () => Promise<import('../../types').SessionMapItem[]>;
+  getAgentMapSessionEvents: (id: string, since?: number) => Promise<import('../../types').ActivityEvent[]>;
+  getAgentMapStats: () => Promise<import('../../types').AgentMapStats>;
+  getAgentMapSessionMeta: (id: string) => Promise<{ source: 'global' | 'access-key' | 'unknown'; projectPath?: string; title?: string }>;
+  /** 建立 Agent Map SSE 实时流（返回 AbortController，回调逐帧解析） */
+  streamAgentMap: (handlers: {
+    onInit?: (payload: import('../../types').AgentMapInitPayload) => void;
+    onSessionUpdate?: (s: import('../../types').SessionMapItem) => void;
+    onActivity?: (e: import('../../types').ActivityEvent) => void;
+    onStats?: (s: import('../../types').AgentMapStats) => void;
+    onError?: (err: Error) => void;
+  }) => { abort: () => void };
   getUpgradeMarkdown: () => Promise<string>;
 
   // Skills 管理相关
@@ -669,4 +683,68 @@ export const api: BackendAPI = {
     });
   },
   lanSync: (data) => requestJson(buildUrl('/api/lan/sync'), { method: 'POST', body: JSON.stringify(data) }),
+
+  // Agent Map（任务可视化节点地图）
+  getAgentMapSessions: () => requestJson(buildUrl('/api/agent-map/sessions')),
+  getAgentMapSessionEvents: (id, since) => requestJson(buildUrl(`/api/agent-map/sessions/${id}/events`, since != null ? { since } : undefined)),
+  getAgentMapStats: () => requestJson(buildUrl('/api/agent-map/stats')),
+  getAgentMapSessionMeta: (id) => requestJson(buildUrl(`/api/agent-map/sessions/${id}/meta`)),
+  streamAgentMap: (handlers) => {
+    const controller = new AbortController();
+    const token = localStorage.getItem('auth_token');
+    (async () => {
+      try {
+        const resp = await fetch('/api/agent-map/stream', {
+          method: 'GET',
+          signal: controller.signal,
+          headers: {
+            'Accept': 'text/event-stream',
+            ...(token ? { 'Access-Token': token } : {}),
+          },
+        });
+        if (!resp.ok || !resp.body) {
+          handlers.onError?.(new Error(`HTTP ${resp.status}`));
+          return;
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          // SSE 帧以双换行分隔
+          let idx;
+          while ((idx = buf.indexOf('\n\n')) !== -1) {
+            const frame = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            const dataLine = frame.split('\n').find(l => l.startsWith('data:'));
+            if (!dataLine) continue;
+            const payload = dataLine.slice(5).trim();
+            if (!payload) continue;
+            let msg: any;
+            try { msg = JSON.parse(payload); } catch { continue; }
+            switch (msg.type) {
+              case 'init':
+                handlers.onInit?.({
+                  type: 'init',
+                  sessions: msg.sessions || [],
+                  events: msg.events || [],
+                  stats: msg.stats,
+                  serverTime: msg.serverTime,
+                });
+                break;
+              case 'session-update': handlers.onSessionUpdate?.(msg.session); break;
+              case 'activity': handlers.onActivity?.(msg.event); break;
+              case 'stats': handlers.onStats?.(msg.stats); break;
+              // heartbeat 忽略
+            }
+          }
+        }
+      } catch (err: any) {
+        if (err?.name !== 'AbortError') handlers.onError?.(err);
+      }
+    })();
+    return { abort: () => controller.abort() };
+  },
 };
