@@ -11,7 +11,7 @@
  *
  * 任何环节失败均静默，绝不影响代理主流程。
  */
-import { execFile, spawn } from 'child_process';
+import { execFile, execFileSync, spawn } from 'child_process';
 
 export interface NotifyOptions {
   title: string;
@@ -24,7 +24,28 @@ function escApple(s: string): string {
   return String(s ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
+// terminal-notifier 存在性（带缓存）。它是 macOS 上唯一能「点击通知不打开任何东西」的可靠手段：
+// osascript 的 display notification 点击必激活脚本宿主（Script Editor/文本阅读器），无法关闭；
+// terminal-notifier 默认点击 = 仅消失、无动作。
+let hasTN: boolean | undefined;
+function hasTerminalNotifier(): boolean {
+  if (hasTN !== undefined) return hasTN;
+  try {
+    execFileSync('which', ['terminal-notifier'], { stdio: 'ignore', windowsHide: true });
+    hasTN = true;
+  } catch { hasTN = false; }
+  return hasTN;
+}
+
 function notifyDarwin(opts: NotifyOptions): void {
+  // 优先 terminal-notifier：点击通知不触发任何动作（满足「点击不要有任何动作」）。
+  if (hasTerminalNotifier()) {
+    const args = ['-title', opts.title, '-message', opts.body, '-ignoreDn'];
+    if (opts.subtitle) args.push('-subtitle', opts.subtitle);
+    execFile('terminal-notifier', args, { windowsHide: true }, () => { /* ignore */ });
+    return;
+  }
+  // 回退：osascript（稳定弹通知，但点击会打开脚本宿主，无法避免）
   let script = `display notification "${escApple(opts.body)}" with title "${escApple(opts.title)}"`;
   if (opts.subtitle) script += ` subtitle "${escApple(opts.subtitle)}"`;
   execFile('osascript', ['-e', script], { windowsHide: true }, () => { /* ignore */ });

@@ -41,7 +41,7 @@
     "dev:server:watch": "tsx watch --tsconfig=tsconfig.server.json --clear-screen=false --watch-kill-signal=SIGINT src/server/main.ts",
     "build": "npm run build:ui && npm run build:server",
     "build:ui": "vite build",
-    "build:server": "tsc -p tsconfig.server.json && node scripts/copy-server-assets.js",
+    "build:server": "tsc -p tsconfig.server.json",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "prepublishOnly": "npm run build",
     "release": "standard-version --no-changelog",
