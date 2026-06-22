@@ -16,13 +16,26 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } fr
 import { api } from '../api/client';
 import { ClaudeCodeIcon, CodexIcon, AgentIcon } from '../components/AgentIcons';
 import { Switch } from '../components/Switch';
+import SessionDetailModal from '../components/SessionDetailModal';
 import { useAgentNotifications } from '../components/AgentNotificationsProvider';
 import type {
   ActivityEvent,
   AgentMapInitPayload,
   AgentMapStats,
+  RequestLog,
   SessionMapItem,
 } from '../../types';
+
+// SessionDetailModal 所需的会话信息子集（SessionMapItem 已覆盖全部字段，用于立即打开弹窗）
+type SessionDetailInfo = {
+  id: string;
+  targetType: string;
+  title?: string;
+  firstRequestAt: number;
+  lastRequestAt: number;
+  requestCount: number;
+  totalTokens: number;
+};
 
 // ============================ 工具与常量 ============================
 
@@ -469,6 +482,12 @@ export default function AgentMapPage() {
   const [stats, setStats] = useState<AgentMapStats | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailEvents, setDetailEvents] = useState<ActivityEvent[]>([]);
+  // 会话详情弹窗（复用 SessionDetailModal）：按来源分流拉取 global / access-key 日志
+  const [detailSession, setDetailSession] = useState<SessionDetailInfo | null>(null);
+  const [detailSessionLogs, setDetailSessionLogs] = useState<RequestLog[]>([]);
+  const [detailSessionLoading, setDetailSessionLoading] = useState(false);
+  // 打开会话详情时记录来源元信息，供刷新 / 拉取新日志复用
+  const [detailSessionSource, setDetailSessionSource] = useState<{ source: 'global' | 'access-key'; keyId?: string; sessionId: string } | null>(null);
   // 详情 popover：项目路径（按需向后端解析，仅 global 来源）
   const [pathInfo, setPathInfo] = useState<{ loading: boolean; projectPath?: string; unavailable?: boolean }>({ loading: false });
   // 全局活动流默认展开（每次进入页面均展示）
@@ -528,6 +547,46 @@ export default function AgentMapPage() {
     } catch {
       setDetailEvents([]);
     }
+  }, []);
+
+  // 按来源（global / access-key）拉取会话日志（session 信息直接取自 SessionMapItem）
+  const fetchSessionLogs = useCallback(async (
+    source: 'global' | 'access-key',
+    sessionId: string,
+    keyId?: string,
+  ): Promise<RequestLog[]> => {
+    if (source === 'access-key' && keyId) {
+      return api.getAccessKeySessionLogs(keyId, sessionId, 10000);
+    }
+    return api.getSessionLogs(sessionId, 10000);
+  }, []);
+
+  // 打开「会话详情」弹窗：立即用 SessionMapItem 构造 session 打开，日志后台加载
+  const openSessionDetail = useCallback((item: SessionMapItem) => {
+    const source: 'global' | 'access-key' = item.source === 'access-key' ? 'access-key' : 'global';
+    setDetailSession({
+      id: item.sessionId,
+      targetType: item.agent,
+      title: item.title,
+      firstRequestAt: item.firstRequestAt,
+      lastRequestAt: item.lastRequestAt,
+      requestCount: item.requestCount,
+      totalTokens: item.totalTokens,
+    });
+    setDetailSessionLogs([]);
+    setDetailSessionSource({ source, keyId: item.keyId, sessionId: item.sessionId });
+    setDetailSessionLoading(true);
+    fetchSessionLogs(source, item.sessionId, item.keyId)
+      .then(logs => setDetailSessionLogs(logs))
+      .catch(error => console.error('Failed to load session logs:', error))
+      .finally(() => setDetailSessionLoading(false));
+  }, [fetchSessionLogs]);
+
+  const closeSessionDetail = useCallback(() => {
+    setDetailSession(null);
+    setDetailSessionLogs([]);
+    setDetailSessionSource(null);
+    setDetailSessionLoading(false);
   }, []);
 
   useEffect(() => {
@@ -983,8 +1042,51 @@ export default function AgentMapPage() {
             <button className="am-btn am-btn--ghost" onClick={() => loadDetail(selected.sessionId)}>
               刷新活动
             </button>
+            <button
+              className="am-btn am-btn--ghost"
+              disabled={selected.source === 'access-key' && !selected.keyId}
+              onClick={() => openSessionDetail(selected)}
+            >
+              会话详情
+            </button>
           </div>
         </div>
+      )}
+
+      {/* 会话详情弹窗（复用「会话」模块的 SessionDetailModal） */}
+      {detailSession && detailSessionSource && (
+        <SessionDetailModal
+          session={detailSession}
+          logs={detailSessionLogs}
+          logsLoading={detailSessionLoading}
+          onRefreshLogs={async () => {
+            if (!detailSessionSource) return;
+            setDetailSessionLoading(true);
+            try {
+              const logs = await fetchSessionLogs(
+                detailSessionSource.source,
+                detailSessionSource.sessionId,
+                detailSessionSource.keyId,
+              );
+              setDetailSessionLogs(logs);
+            } catch (error) {
+              console.error('Failed to refresh session logs:', error);
+            } finally {
+              setDetailSessionLoading(false);
+            }
+          }}
+          onFetchNewLogs={async () => {
+            if (!detailSessionSource) return [];
+            const logs = await fetchSessionLogs(
+              detailSessionSource.source,
+              detailSessionSource.sessionId,
+              detailSessionSource.keyId,
+            );
+            setDetailSessionLogs(logs);
+            return logs;
+          }}
+          onClose={closeSessionDetail}
+        />
       )}
     </div>
   );

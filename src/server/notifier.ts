@@ -26,7 +26,7 @@ export interface NotifyOptions {
 
 const APPLET_DIR = join(homedir(), '.aicodeswitch', 'notifier');
 const APPLET_PATH = join(APPLET_DIR, 'AICodeSwitch.app');
-const APPLET_VERSION = '3'; // 改动 applet 结构时 +1，触发重建
+const APPLET_VERSION = '4'; // 改动 applet 结构时 +1，触发重建
 const VERSION_FILE = join(APPLET_DIR, '.applet-version');
 const TEMP_FILE = join(APPLET_DIR, '.notif.txt'); // applet 与 notifier 约定的传参文件
 const PLISTBUDDY = '/usr/libexec/PlistBuddy';
@@ -74,20 +74,17 @@ function ensureApplet(): string | null {
     mkdirSync(APPLET_DIR, { recursive: true });
     try { rmSync(APPLET_PATH, { recursive: true, force: true }); } catch { /* ignore */ }
 
-    // applet：启动后读取约定临时文件（3 行：title/body/subtitle），发通知并删除文件
+    // applet：启动后读取约定临时文件（3 行：title/body/subtitle），发通知并删除文件。
+    // 注意：不要用 AppleScript `text item delimiters to linefeed` 解析 `do shell script "cat"` 的
+    // 结果——其换行与 AppleScript linefeed 常量不一致，`text items` 会得到单元素列表导致越界。
+    // 改用 head/sed 在 shell 侧按行取，稳得多。
     const src = [
       'on run',
       'try',
       'set f to ((POSIX path of (path to home folder)) & ".aicodeswitch/notifier/.notif.txt")',
-      'set d to do shell script "cat " & quoted form of f',
-      'set oldDelims to AppleScript\'s text item delimiters',
-      'set AppleScript\'s text item delimiters to linefeed',
-      'set parts to text items of d',
-      'set AppleScript\'s text item delimiters to oldDelims',
-      'set ttl to item 1 of parts',
-      'set msg to item 2 of parts',
-      'set sub to ""',
-      'if (count of parts) > 2 then set sub to item 3 of parts',
+      'set ttl to do shell script "head -n 1 " & quoted form of f',
+      'set msg to do shell script "sed -n 2p " & quoted form of f',
+      'set sub to do shell script "sed -n 3p " & quoted form of f',
       'if sub is "" then',
       'display notification msg with title ttl',
       'else',

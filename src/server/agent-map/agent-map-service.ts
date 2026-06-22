@@ -57,6 +57,7 @@ interface RuntimeState {
   metaResolved?: boolean; // 是否已尝试解析本地会话元信息（避免重复扫盘）
   lastTurnEnd?: boolean | null; // 末轮响应是否表示「一轮结束」（精确信号，见 detectTurnEnd）
   lastPromptSummary?: string; // 最近一次真正写入的 prompt 文本，用于跨轮次去重
+  lastNotifyAt?: number; // 最近一次「一轮结束」OS 通知时间，用于冷却去重
 }
 
 export interface FinalizeContext {
@@ -81,6 +82,9 @@ const SWEEP_INTERVAL_MS = 15_000;      // 每 15s 扫描一次状态迁移
 const MAX_EVENTS_PER_SESSION = 200;
 const MAX_GLOBAL_EVENTS = 500;
 const RECENT_WINDOW_FOR_STATS_MS = 60_000;
+// 「一轮结束」OS 通知冷却：同一会话在此窗口内的多次 active→idle（典型来自主轮之后的
+// 后台/计数/compact 等续发请求，每个 end_turn 都会再触发一次迁移）只弹一次，避免重复打扰。
+const NOTIFY_COOLDOWN_MS = 60_000;
 // 启动重建：只回填最近 1h 内有活动的会话，每会话最多回填 N 条事件，避免重复解析大量历史分片
 const REBUILD_SINCE_MS = 60 * 60_000;
 const REBUILD_EVENTS_PER_SESSION = 30;
@@ -462,6 +466,11 @@ export class AgentMapService extends EventEmitter {
     if (prevStatus !== 'active' || st.status !== 'idle') return;
     // 499 = 用户主动放弃停止任务，属于预期行为，不弹系统通知
     if (st.lastStatusCode === 499) return;
+    // 冷却去重：主轮结束后常伴有后台/计数/compact 等续发请求，各自 end_turn 会重复触发 active→idle，
+    // 在冷却窗口内只弹一次，避免同一任务弹两条通知。
+    const now = Date.now();
+    if (st.lastNotifyAt && now - st.lastNotifyAt < NOTIFY_COOLDOWN_MS) return;
+    st.lastNotifyAt = now;
     const agentName = st.agent === 'codex' ? 'Codex' : 'Claude Code';
     notify({
       title: `✅ AICodeSwitch · ${agentName}`,

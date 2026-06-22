@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-06-22: 任务雷达 popover 新增「会话详情」入口 + 限高 80vh
+
+### 新增
+- 任务雷达页点击节点弹出的 popover 底部新增「会话详情」按钮（与「刷新活动」同款 ghost 文字按钮），点击后复用「会话」模块的 `SessionDetailModal` 打开会话详情弹窗（日志/对话双视图）。
+- 点击即时打开弹窗：直接用 `SessionMapItem` 构造 session 信息渲染弹窗（内置 loading 态），日志后台按来源分流加载（global → `/api/sessions/:id/logs`，access-key → `/api/access-keys/:keyId/sessions/:id/logs`），避免点击后的等待。
+
+### 调整
+- `.am-detail--popover` 最大高度由 `calc(100vh - 24px)` 收紧为 `80vh`，避免高分屏下 popover 撑满整屏。
+- popover 底部改为 flex 布局容纳多按钮；新增 `.am-btn:disabled` 禁用态（access-key 节点缺 keyId 时按钮禁用）。
+
 ## 2026-06-22: 重设计稳健的日志迁移逻辑（logId 去重 + 内容感知 gate）
 
 ### 修复

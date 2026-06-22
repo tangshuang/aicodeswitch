@@ -2550,6 +2550,7 @@ div:hover > .route-icon-popover {
 }
 .am-btn:hover { background: var(--bg-hover); }
 .am-btn--ghost { background: transparent; }
+.am-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .am-main {
   flex: 1;
@@ -2740,6 +2741,8 @@ div:hover > .route-icon-popover {
   letter-spacing: 0.5px;
 }
 .am-detail-footer {
+  display: flex;
+  gap: 8px;
   padding: 10px 14px;
   border-top: 1px solid var(--border-color);
   margin-top: auto;
@@ -3174,7 +3177,7 @@ div:hover > .route-icon-popover {
   z-index: 60;
   width: 380px;
   max-width: calc(100vw - 24px);
-  max-height: calc(100vh - 24px);
+  max-height: 80vh;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
 }
 /* 详情内的活动路径在限高内滚动，永不溢出屏幕 */
