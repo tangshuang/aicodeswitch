@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-06-22: 修复 Agent Map「最近模型」显示为编程工具提交的模型名
+
+### 修复
+- 任务地图节点详情「最近模型」原先取 `rule.targetModel || req.body.model`（预测值），当规则未配置 `targetModel` 时会回退成编程工具提交的 `req.body.model`，而非真正转发给上游供应商的模型名
+- `server/proxy-server.ts` 将 Agent Map、服务性能统计（`emitPerformance`）、请求日志 `targetModel`、Session/KeySession 持久化等约 17 处模型字段统一改为采用转换+覆盖后真正发往上游的 `requestBody.model`（与日志 `upstreamRequest.body.model` 一致），仅保留错误重试路径（`lastFailedRule`）与原始配置兜底路径（`fallbackTargetModel`）不变
+
 ## 2026-06-22: 修复写入 Codex/Claude Code 配置时 base_url 为 0.0.0.0 导致客户端无法连接
 
 ### 修复
