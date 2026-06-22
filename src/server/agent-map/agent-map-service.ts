@@ -463,7 +463,7 @@ export class AgentMapService extends EventEmitter {
     const agentName = st.agent === 'codex' ? 'Codex' : 'Claude Code';
     notify({
       title: `✅ AICodeSwitch · ${agentName}`,
-      body: `一轮工作结束：${st.title || st.lastActivitySummary || '任务已暂停，等待下一步'}`,
+      body: st.title || st.lastActivitySummary || '任务已暂停，等待下一步',
     });
   }
 
