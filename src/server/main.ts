@@ -12,6 +12,7 @@ import { AccessKeyManager } from './access-keys/manager';
 import { PolicyManager } from './access-keys/policy-manager';
 import { ServicePerformanceTracker } from './performance-tracker';
 import type { FileSystemDatabaseManager } from './fs-database';
+import { createLogStore } from './log-store';
 import { agentMapService, registerAgentMapRoutes } from './agent-map';
 import type {
   AppConfig,
@@ -4183,6 +4184,11 @@ const start = async () => {
   console.time('[Server] step "database-init"');
   const dbManager = await DatabaseFactory.createAuto(dataDir, legacyDataDir) as FileSystemDatabaseManager;
 
+  // 创建并初始化共享 LogStore（追加写 NDJSON），注入 dbManager
+  const logStore = createLogStore(dataDir);
+  await logStore.init();
+  dbManager.setLogStore(logStore);
+
   // Agent Map 服务接入 dbManager（种子化已有 Session + 启动状态清扫定时器）
   agentMapService.attach(dbManager);
   console.timeEnd('[Server] step "database-init"');
@@ -4204,13 +4210,22 @@ const start = async () => {
   const proxyServer = new ProxyServer(dbManager, app);
 
   // Initialize AccessKey module
-  const accessKeyModule = new AccessKeyModule(dataDir);
+  const accessKeyModule = new AccessKeyModule(dataDir, logStore);
   try {
     await accessKeyModule.initialize();
     proxyServer.setAccessKeyModule(accessKeyModule);
   } catch (error) {
     console.error('[Server] AccessKey module initialization failed:', error);
   }
+
+  // 日志保留期定时清理（主库 global + 所有 AccessKey key:*），每 6h 一次
+  const logRetentionTimer = setInterval(() => {
+    Promise.all([
+      logStore.retain('global', 30).catch(() => {}),
+      accessKeyModule.keyLogger.cleanupOldLogs().catch(() => {}),
+    ]).catch(() => {});
+  }, 6 * 60 * 60 * 1000);
+  if (typeof logRetentionTimer.unref === 'function') logRetentionTimer.unref();
 
   // Initialize Service Performance Tracker (全局统计，与 AUTH 无关)
   const performanceTracker = new ServicePerformanceTracker(dataDir);
@@ -4354,6 +4369,13 @@ const start = async () => {
       }
 
       dbManager.close();
+
+      // 落盘 LogStore 所有 namespace 的索引
+      try {
+        await logStore.close();
+      } catch (error) {
+        console.error('[Shutdown ...] LogStore close failed:', error);
+      }
 
       // 清理规则状态广播器（关闭 SSE 连接）
       rulesStatusBroadcaster.destroy();

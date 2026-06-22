@@ -2,6 +2,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import crypto from 'crypto';
 import CryptoJS from 'crypto-js';
+import { LogStore } from './log-store';
 import type {
   Vendor,
   APIService,
@@ -27,20 +28,6 @@ import type {
   ToolBindings,
 } from '../types';
 import { migrateSourceType, isLegacySourceType, normalizeSourceType } from './type-migration';
-
-interface LogShardIndex {
-  filename: string;
-  date: string;
-  startTime: number;
-  endTime: number;
-  count: number;
-}
-
-interface SessionLogRef {
-  filename: string;
-  index: number;
-  timestamp: number;
-}
 
 const VALID_CODEX_REASONING_EFFORTS: CodexReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
 const DEFAULT_CODEX_REASONING_EFFORT: CodexReasoningEffort = 'high';
@@ -83,19 +70,13 @@ const normalizeFailoverRecoverySeconds = (value: unknown): number => {
  */
 export class FileSystemDatabaseManager {
   private dataPath: string;
+  private logStore: LogStore | null = null;
   private vendors: Vendor[] = [];
   // 移除独立的 apiServices 存储，现在作为 vendor 的属性
   private routes: Route[] = [];
   private rules: Rule[] = [];
   private config: AppConfig | null = null;
   private sessions: Session[] = [];
-  private logShardsIndex: LogShardIndex[] = [];
-  private sessionLogIndex: Map<string, SessionLogRef[]> = new Map();
-  private sessionLogIndexDirty = false;
-  private sessionLogIndexDirtyCount = 0;
-  private sessionLogIndexFlushTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly SESSION_LOG_INDEX_FLUSH_DELAY = 3000;
-  private readonly SESSION_LOG_INDEX_FLUSH_THRESHOLD = 50;
   private errorLogs: ErrorLog[] = [];
   private blacklist: Map<string, ServiceBlacklistEntry> = new Map();
   private mcps: MCPServer[] = [];
@@ -111,20 +92,12 @@ export class FileSystemDatabaseManager {
   private contentTypeDistributionInitialized = false;
   private contentTypeDistributionInitializing = false;
 
-  // 分片写入锁：防止并发读写同一个分片文件导致数据损坏
-  private shardWriteLocks: Map<string, Promise<void>> = new Map();
-
-  // 延迟维护标记：启动时跳过耗时操作，后台异步执行
-  private _needsShardVerification = false;
-  private _needsSessionLogIndexBuild = false;
-
   // 缓存机制
   private logsCountCache: { count: number; timestamp: number } | null = null;
   private errorLogsCountCache: { count: number; timestamp: number } | null = null;
   private readonly CACHE_TTL = 1000;
 
-  // 日志分片配置
-  private readonly MAX_SHARD_SIZE = 10 * 1024 * 1024; // 10MB
+  // 日志保留期（委托 LogStore.retain）
   private readonly MAX_ERROR_LOG_FIELD_SIZE = 256 * 1024; // 256KB 单个字段最大长度
   private readonly LOG_RETENTION_DAYS = 30;
 
@@ -135,9 +108,6 @@ export class FileSystemDatabaseManager {
   private get rulesFile() { return path.join(this.dataPath, 'rules.json'); } // legacy
   private get configFile() { return path.join(this.dataPath, 'config.json'); }
   private get sessionsFile() { return path.join(this.dataPath, 'sessions.json'); }
-  private get logsDir() { return path.join(this.dataPath, 'logs'); }
-  private get logsIndexFile() { return path.join(this.dataPath, 'logs-index.json'); }
-  private get sessionLogIndexFile() { return path.join(this.dataPath, 'session-log-index.json'); }
   private get errorLogsFile() { return path.join(this.dataPath, 'error-logs.json'); }
   private get blacklistFile() { return path.join(this.dataPath, 'blacklist.json'); }
   private get statisticsFile() { return path.join(this.dataPath, 'statistics.json'); }
@@ -179,6 +149,22 @@ export class FileSystemDatabaseManager {
     this.dataPath = dataPath;
   }
 
+  /** 注入共享 LogStore（由 main.ts 在启动时调用）。日志存取统一委托给它。 */
+  setLogStore(ls: LogStore) {
+    this.logStore = ls;
+  }
+
+  getLogStore(): LogStore | null {
+    return this.logStore;
+  }
+
+  private requireLogStore(): LogStore {
+    if (!this.logStore) {
+      throw new Error('LogStore not initialized');
+    }
+    return this.logStore;
+  }
+
   async initialize() {
     // 确保数据目录存在
     await fs.mkdir(this.dataPath, { recursive: true });
@@ -197,37 +183,18 @@ export class FileSystemDatabaseManager {
 
   /**
    * 执行延迟的维护任务（启动后异步执行，不阻塞服务启动）
-   * 包括：分片一致性校验、损坏修复、旧日志清理、会话索引构建
+   * 现在主要是：旧 JSON 日志 → NDJSON 一次性迁移 + 保留期清理。
+   * 日志索引/分片一致性校验已交给 LogStore（追加写下无需校验）。
    */
   async deferredMaintenance(): Promise<void> {
-    const tasks: Promise<void>[] = [];
-
-    if (this._needsShardVerification) {
-      this._needsShardVerification = false;
-      tasks.push((async () => {
-        try {
-          await this.verifyShardIndexConsistency();
-          await this.cleanupOldLogShards();
-          console.log('[Database] Background shard verification completed');
-        } catch (err) {
-          console.error('[Database] Background shard verification failed:', err);
-        }
-      })());
+    if (!this.logStore) return;
+    try {
+      await this.logStore.migrateLegacy(this.dataPath);
+      await this.logStore.retain('global', this.LOG_RETENTION_DAYS);
+      console.log('[Database] LogStore deferred maintenance completed');
+    } catch (err) {
+      console.error('[Database] LogStore deferred maintenance failed:', err);
     }
-
-    if (this._needsSessionLogIndexBuild) {
-      this._needsSessionLogIndexBuild = false;
-      tasks.push((async () => {
-        try {
-          await this.buildSessionLogIndex();
-          console.log('[Database] Background session log index build completed');
-        } catch (err) {
-          console.error('[Database] Background session log index build failed:', err);
-        }
-      })());
-    }
-
-    await Promise.all(tasks);
   }
 
   private async loadAllData() {
@@ -237,7 +204,6 @@ export class FileSystemDatabaseManager {
       this.loadRoutes(),
       this.loadConfig(),
       this.loadSessions(),
-      this.loadLogsIndex(true), // 启动时跳过耗时校验
       this.loadErrorLogs(),
       this.loadBlacklist(),
       this.loadStatistics(),
@@ -245,9 +211,7 @@ export class FileSystemDatabaseManager {
       this.loadApiPathBindings(),
       this.loadToolBindings(),
     ]);
-
-    // 会话日志索引依赖 logShardsIndex，必须在 loadLogsIndex 之后
-    await this.loadSessionLogIndex(true); // 启动时跳过全量构建
+    // 日志存取已委托给 LogStore，不再在此加载旧分片索引
   }
 
   private async loadVendors() {
@@ -607,361 +571,6 @@ export class FileSystemDatabaseManager {
 
   private async saveSessions() {
     await fs.writeFile(this.sessionsFile, JSON.stringify(this.sessions, null, 2));
-  }
-
-  private async loadLogsIndex(deferMaintenance = true): Promise<void> {
-    try {
-      const data = await fs.readFile(this.logsIndexFile, 'utf-8');
-      this.logShardsIndex = JSON.parse(data);
-    } catch {
-      this.logShardsIndex = [];
-      await this.saveLogsIndex();
-    }
-
-    // 检查并迁移旧的 logs.json 文件
-    await this.migrateOldLogsIfNeeded();
-
-    if (deferMaintenance) {
-      // 启动时跳过耗时操作，由 deferredMaintenance() 异步执行
-      this._needsShardVerification = true;
-    } else {
-      // 校验索引与实际分片数据的一致性
-      await this.verifyShardIndexConsistency();
-      // 清理旧日志分片
-      await this.cleanupOldLogShards();
-    }
-  }
-
-  /**
-   * 校验索引中的 count 与实际分片文件中的数据是否一致
-   * 修复因并发写入竞争导致的不一致
-   */
-  private async verifyShardIndexConsistency(): Promise<void> {
-    let fixedCount = 0;
-    for (const shard of this.logShardsIndex) {
-      try {
-        const shardLogs = await this.loadLogShard(shard.filename);
-        if (shardLogs.length !== shard.count) {
-          console.warn(`[Database] Shard count mismatch on startup: ${shard.filename} index=${shard.count} actual=${shardLogs.length}, correcting`);
-          shard.count = shardLogs.length;
-          fixedCount++;
-        }
-      } catch {
-        // 分片文件无法读取，将 count 设为 0
-        if (shard.count > 0) {
-          console.warn(`[Database] Shard file unreadable on startup: ${shard.filename}, setting count to 0`);
-          shard.count = 0;
-          fixedCount++;
-        }
-      }
-    }
-    if (fixedCount > 0) {
-      console.log(`[Database] Fixed ${fixedCount} shard index count mismatch(es)`);
-      await this.saveLogsIndex();
-    }
-  }
-
-  private async saveLogsIndex(): Promise<void> {
-    await fs.writeFile(this.logsIndexFile, JSON.stringify(this.logShardsIndex, null, 2));
-  }
-
-  /**
-   * 加载会话日志索引，若不存在则标记为延迟构建
-   */
-  private async loadSessionLogIndex(deferBuild = true): Promise<void> {
-    try {
-      const data = await fs.readFile(this.sessionLogIndexFile, 'utf-8');
-      const parsed = JSON.parse(data);
-      this.sessionLogIndex = new Map(Object.entries(parsed));
-      console.log(`[Database] Session log index loaded: ${this.sessionLogIndex.size} sessions`);
-    } catch {
-      if (deferBuild) {
-        // 启动时跳过全量构建，由 deferredMaintenance() 异步执行
-        console.log('[Database] Session log index not found, will build in background...');
-        this._needsSessionLogIndexBuild = true;
-      } else {
-        // 索引文件不存在，从现有日志全量构建
-        console.log('[Database] Session log index not found, building from existing logs...');
-        await this.buildSessionLogIndex();
-      }
-    }
-  }
-
-  /**
-   * 从所有现有日志分片全量构建会话日志索引（首次启动或迁移用）
-   */
-  private async buildSessionLogIndex(): Promise<void> {
-    this.sessionLogIndex.clear();
-    for (const shard of this.logShardsIndex) {
-      const shardLogs = await this.loadLogShard(shard.filename);
-      for (let i = 0; i < shardLogs.length; i++) {
-        const sessionId = this.extractSessionIdFromLog(shardLogs[i]);
-        if (sessionId) {
-          let refs = this.sessionLogIndex.get(sessionId);
-          if (!refs) {
-            refs = [];
-            this.sessionLogIndex.set(sessionId, refs);
-          }
-          refs.push({ filename: shard.filename, index: i, timestamp: shardLogs[i].timestamp });
-        }
-      }
-    }
-    if (this.sessionLogIndex.size > 0) {
-      await this.saveSessionLogIndexNow();
-      console.log(`[Database] Session log index built: ${this.sessionLogIndex.size} sessions indexed`);
-    }
-  }
-
-  /**
-   * 将会话日志索引写入磁盘
-   */
-  private async saveSessionLogIndexNow(): Promise<void> {
-    const obj: Record<string, SessionLogRef[]> = {};
-    for (const [key, refs] of this.sessionLogIndex) {
-      obj[key] = refs;
-    }
-    await fs.writeFile(this.sessionLogIndexFile, JSON.stringify(obj));
-  }
-
-  /**
-   * 标记索引脏数据，触发防抖写盘
-   */
-  private scheduleSessionLogIndexFlush(): void {
-    this.sessionLogIndexDirty = true;
-    this.sessionLogIndexDirtyCount++;
-
-    // 达到阈值立即刷盘
-    if (this.sessionLogIndexDirtyCount >= this.SESSION_LOG_INDEX_FLUSH_THRESHOLD) {
-      this.flushSessionLogIndex();
-      return;
-    }
-
-    // 防抖定时器
-    if (!this.sessionLogIndexFlushTimer) {
-      this.sessionLogIndexFlushTimer = setTimeout(() => {
-        this.flushSessionLogIndex();
-      }, this.SESSION_LOG_INDEX_FLUSH_DELAY);
-    }
-  }
-
-  /**
-   * 立即将索引刷盘（关闭时调用）
-   */
-  private flushSessionLogIndex(): void {
-    if (this.sessionLogIndexFlushTimer) {
-      clearTimeout(this.sessionLogIndexFlushTimer);
-      this.sessionLogIndexFlushTimer = null;
-    }
-    if (this.sessionLogIndexDirty) {
-      this.sessionLogIndexDirty = false;
-      this.sessionLogIndexDirtyCount = 0;
-      this.saveSessionLogIndexNow().catch(err => {
-        console.error('[Database] Failed to flush session log index:', err);
-      });
-    }
-  }
-
-  /**
-   * 迁移旧的 logs.json 文件到新的分片格式
-   */
-  private async migrateOldLogsIfNeeded(): Promise<void> {
-    const oldLogsFile = path.join(this.dataPath, 'logs.json');
-
-    try {
-      // 检查旧日志文件是否存在
-      await fs.access(oldLogsFile);
-
-      console.log('[Database] Found old logs.json file, migrating to shard format...');
-
-      // 读取旧日志
-      const data = await fs.readFile(oldLogsFile, 'utf-8');
-      const oldLogs: RequestLog[] = JSON.parse(data);
-
-      if (oldLogs.length === 0) {
-        console.log('[Database] Old logs.json is empty, skipping migration');
-        await fs.unlink(oldLogsFile); // 删除空文件
-        return;
-      }
-
-      console.log(`[Database] Migrating ${oldLogs.length} log entries...`);
-
-      // 按日期分组日志
-      const logsByDate = new Map<string, RequestLog[]>();
-      for (const log of oldLogs) {
-        const date = new Date(log.timestamp).toISOString().split('T')[0];
-        if (!logsByDate.has(date)) {
-          logsByDate.set(date, []);
-        }
-        logsByDate.get(date)!.push(log);
-      }
-
-      // 为每个日期创建分片
-      let migratedCount = 0;
-      for (const [date, logs] of logsByDate.entries()) {
-        // 如果单日日志超过大小限制，需要进一步分片
-        let currentShardLogs: RequestLog[] = [];
-        let currentShardSize = 0;
-        let shardIndex = 0;
-
-        for (const log of logs) {
-          const logSize = JSON.stringify(log).length;
-
-          // 检查是否需要创建新分片
-          if (currentShardSize + logSize > this.MAX_SHARD_SIZE && currentShardLogs.length > 0) {
-            // 保存当前分片
-            const filename = shardIndex === 0 ? `logs-${date}.json` : `logs-${date}-${shardIndex}.json`;
-            await this.saveLogShard(filename, currentShardLogs);
-
-            // 更新索引
-            const timestamps = currentShardLogs.map(l => l.timestamp);
-            this.logShardsIndex.push({
-              filename,
-              date,
-              startTime: Math.min(...timestamps),
-              endTime: Math.max(...timestamps),
-              count: currentShardLogs.length
-            });
-
-            migratedCount += currentShardLogs.length;
-            currentShardLogs = [];
-            currentShardSize = 0;
-            shardIndex++;
-          }
-
-          currentShardLogs.push(log);
-          currentShardSize += logSize;
-        }
-
-        // 保存最后一个分片
-        if (currentShardLogs.length > 0) {
-          const filename = shardIndex === 0 ? `logs-${date}.json` : `logs-${date}-${shardIndex}.json`;
-          await this.saveLogShard(filename, currentShardLogs);
-
-          const timestamps = currentShardLogs.map(l => l.timestamp);
-          this.logShardsIndex.push({
-            filename,
-            date,
-            startTime: Math.min(...timestamps),
-            endTime: Math.max(...timestamps),
-            count: currentShardLogs.length
-          });
-
-          migratedCount += currentShardLogs.length;
-        }
-      }
-
-      // 保存索引
-      await this.saveLogsIndex();
-
-      console.log(`[Database] Successfully migrated ${migratedCount} log entries to ${this.logShardsIndex.length} shard(s)`);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        // 旧文件不存在，这是正常的
-        return;
-      }
-      console.error('[Database] Error migrating old logs:', err);
-    }
-  }
-
-  private async cleanupOldLogShards(): Promise<void> {
-    const now = Date.now();
-    const cutoffTime = now - this.LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-
-    // 找出需要删除的分片
-    const toDelete: string[] = [];
-    for (const shard of this.logShardsIndex) {
-      if (shard.endTime < cutoffTime) {
-        toDelete.push(shard.filename);
-      }
-    }
-
-    // 删除旧分片文件
-    for (const filename of toDelete) {
-      try {
-        const filepath = path.join(this.logsDir, filename);
-        await fs.unlink(filepath);
-      } catch (err) {
-        console.error(`Failed to delete old log shard ${filename}:`, err);
-      }
-    }
-
-    // 更新索引
-    this.logShardsIndex = this.logShardsIndex.filter(s => !toDelete.includes(s.filename));
-    if (toDelete.length > 0) {
-      await this.saveLogsIndex();
-
-      // 同步清理会话日志索引中被删除分片的条目
-      const deleteSet = new Set(toDelete);
-      for (const [sid, refs] of this.sessionLogIndex) {
-        const remaining = refs.filter(r => !deleteSet.has(r.filename));
-        if (remaining.length === 0) {
-          this.sessionLogIndex.delete(sid);
-        } else if (remaining.length < refs.length) {
-          this.sessionLogIndex.set(sid, remaining);
-        }
-      }
-      await this.saveSessionLogIndexNow();
-    }
-  }
-
-  private async getLogShardFilename(timestamp: number): Promise<string> {
-    const date = new Date(timestamp);
-    const dateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD
-
-    // 查找当天的现有分片
-    const existingShards = this.logShardsIndex.filter(s => s.date === dateStr);
-
-    // 检查最后一个分片的大小
-    for (const shard of existingShards.reverse()) {
-      const filepath = path.join(this.logsDir, shard.filename);
-      try {
-        const stats = await fs.stat(filepath);
-        if (stats.size < this.MAX_SHARD_SIZE) {
-          return shard.filename;
-        }
-      } catch {
-        // 文件不存在，继续查找
-        continue;
-      }
-    }
-
-    // 创建新分片
-    const shardIndex = existingShards.length;
-    const filename = shardIndex === 0 ? `logs-${dateStr}.json` : `logs-${dateStr}-${shardIndex}.json`;
-
-    return filename;
-  }
-
-  private async loadLogShard(filename: string): Promise<RequestLog[]> {
-    const filepath = path.join(this.logsDir, filename);
-    try {
-      let content = await fs.readFile(filepath, 'utf-8');
-      // 检测并修复空字节损坏（并发写入竞争可能导致文件中间出现大量 \x00）
-      const nullIndex = content.indexOf('\x00');
-      if (nullIndex !== -1) {
-        console.warn(`[Database] Detected corrupted shard file: ${filename}, truncating at null byte (pos ${nullIndex})`);
-        content = content.substring(0, nullIndex);
-        // 尝试补全被截断的 JSON 数组
-        const openBrackets = (content.match(/\[/g) || []).length;
-        const closeBrackets = (content.match(/\]/g) || []).length;
-        if (openBrackets > closeBrackets) {
-          content += ']';
-        }
-      }
-      return JSON.parse(content);
-    } catch {
-      return [];
-    }
-  }
-
-  private async saveLogShard(filename: string, logs: RequestLog[]): Promise<void> {
-    const filepath = path.join(this.logsDir, filename);
-    const tempFile = path.join(this.logsDir, `.tmp_${filename}`);
-    await fs.mkdir(this.logsDir, { recursive: true });
-    const content = JSON.stringify(logs, null, 2);
-    // 先写临时文件，再原子重命名，避免写入中途被并发操作导致文件损坏
-    await fs.writeFile(tempFile, content, 'utf-8');
-    await fs.rename(tempFile, filepath);
   }
 
   private async loadErrorLogs() {
@@ -1852,142 +1461,28 @@ export class FileSystemDatabaseManager {
     return true;
   }
 
-  // Log operations
+  // Log operations —— 委托给 LogStore（追加写 NDJSON + 字节偏移索引）
   async addLog(log: Omit<RequestLog, 'id'>): Promise<void> {
     const id = crypto.randomUUID();
     const contentType = this.resolveLogContentType(log);
-    const logWithId = { ...log, contentType, id };
+    const logWithId = { ...log, contentType, id } as RequestLog;
 
-    // 获取目标分片文件名
-    const filename = await this.getLogShardFilename(logWithId.timestamp);
+    // 追加写：O(单条)，不再 read-modify-write 整个分片
+    await this.requireLogStore().append('global', logWithId);
 
-    // 使用分片级别的写入锁，防止并发 read-modify-write 竞争条件
-    const previousLock = this.shardWriteLocks.get(filename) || Promise.resolve();
-    let shardLogsLength = 0;
-    const currentWrite = previousLock.then(async () => {
-      const shardLogs = await this.loadLogShard(filename);
-      shardLogs.push(logWithId);
-      shardLogsLength = shardLogs.length;
-      await this.saveLogShard(filename, shardLogs);
-
-      // 更新索引（在锁内完成，保证一致性）
-      const date = new Date(logWithId.timestamp).toISOString().split('T')[0];
-      const shardIndex = this.logShardsIndex.find(s => s.filename === filename);
-
-      if (shardIndex) {
-        shardIndex.count = shardLogs.length;
-        shardIndex.endTime = Math.max(shardIndex.endTime, logWithId.timestamp);
-      } else {
-        this.logShardsIndex.push({
-          filename,
-          date,
-          startTime: logWithId.timestamp,
-          endTime: logWithId.timestamp,
-          count: 1
-        });
-      }
-
-      await this.saveLogsIndex();
-    });
-
-    this.shardWriteLocks.set(filename, currentWrite);
-
-    try {
-      await currentWrite;
-    } catch (error) {
-      // 写入失败时清理锁
-      if (this.shardWriteLocks.get(filename) === currentWrite) {
-        this.shardWriteLocks.delete(filename);
-      }
-      throw error;
-    }
-
-    // 如果当前锁已执行完毕且没有被后续锁覆盖，清理它
-    if (this.shardWriteLocks.get(filename) === currentWrite) {
-      this.shardWriteLocks.delete(filename);
-    }
-
-    // 同时更新统计数据
+    // 统计保持写时增量（现状）
     await this.updateStatistics(logWithId);
 
     // 清除计数缓存
     this.logsCountCache = null;
-
-    // 更新会话日志索引
-    const sessionId = this.extractSessionIdFromLog(logWithId);
-    if (sessionId) {
-      let refs = this.sessionLogIndex.get(sessionId);
-      if (!refs) {
-        refs = [];
-        this.sessionLogIndex.set(sessionId, refs);
-      }
-      refs.push({ filename, index: shardLogsLength - 1, timestamp: logWithId.timestamp });
-      this.scheduleSessionLogIndexFlush();
-    }
   }
 
   async getLogs(limit: number = 100, offset: number = 0): Promise<RequestLog[]> {
-    // 按分片索引倒序排列（最新的在前）
-    const sortedShards = [...this.logShardsIndex].sort((a, b) => b.endTime - a.endTime);
-
-    const allLogs: RequestLog[] = [];
-    let currentOffset = 0;
-
-    // 遍历分片直到收集足够的日志
-    for (const shard of sortedShards) {
-      if (currentOffset + shard.count <= offset) {
-        // 跳过整个分片（使用索引中的 count 做快速跳过判断，避免不必要的磁盘IO）
-        currentOffset += shard.count;
-        continue;
-      }
-
-      const shardLogs = await this.loadLogShard(shard.filename);
-
-      // 修正索引中的计数（如果发现不一致）
-      if (shardLogs.length !== shard.count) {
-        console.warn(`[Database] Shard count mismatch: ${shard.filename} index=${shard.count} actual=${shardLogs.length}, correcting`);
-        shard.count = shardLogs.length;
-      }
-
-      // 计算需要从该分片取出的日志范围
-      let startIndex = 0;
-      if (currentOffset < offset) {
-        startIndex = offset - currentOffset;
-      }
-
-      const remainingCount = limit - allLogs.length;
-      const endIndex = Math.min(startIndex + remainingCount, shardLogs.length);
-
-      // 添加日志到结果
-      allLogs.push(...shardLogs.slice(startIndex, endIndex));
-
-      currentOffset += shardLogs.length;
-
-      if (allLogs.length >= limit) {
-        break;
-      }
-    }
-
-    // 按时间戳倒序排序
-    return allLogs.sort((a, b) => b.timestamp - a.timestamp);
+    return this.requireLogStore().getRecent('global', { limit, offset });
   }
 
   async clearLogs(): Promise<void> {
-    // 删除所有日志分片文件
-    for (const shard of this.logShardsIndex) {
-      try {
-        const filepath = path.join(this.logsDir, shard.filename);
-        await fs.unlink(filepath);
-      } catch (err) {
-        console.error(`Failed to delete log shard ${shard.filename}:`, err);
-      }
-    }
-
-    // 清空索引
-    this.logShardsIndex = [];
-    await this.saveLogsIndex();
-
-    // 清除计数缓存
+    await this.requireLogStore().clear('global');
     this.logsCountCache = null;
   }
 
@@ -1996,122 +1491,23 @@ export class FileSystemDatabaseManager {
     if (this.logsCountCache && now - this.logsCountCache.timestamp < this.CACHE_TTL) {
       return this.logsCountCache.count;
     }
-
-    const count = this.logShardsIndex.reduce((sum, shard) => sum + shard.count, 0);
+    const count = await this.requireLogStore().count('global');
     this.logsCountCache = { count, timestamp: now };
     return count;
   }
 
   /**
-   * 搜索请求日志内容
-   * @param query 搜索关键词
-   * @param limit 返回��量限制
-   * @param offset 偏移量
-   * @returns 匹配的日志列表
+   * 搜索请求日志内容（两阶段流式扫描，内存仅持描述符 + 当前页）
    */
   async searchLogs(query: string, limit: number = 100, offset: number = 0): Promise<RequestLog[]> {
-    const searchQuery = query.toLowerCase().trim();
-    if (!searchQuery) {
-      return this.getLogs(limit, offset);
-    }
-
-    // 两阶段扫描：阶段一仅收集轻量描述符（filename + index + timestamp），
-    // 不保留完整 log 对象引用；每个分片处理完即释放，避免所有匹配正文同时驻留内存。
-    const matches: { filename: string; index: number; timestamp: number }[] = [];
-    const sortedShards = [...this.logShardsIndex].sort((a, b) => b.endTime - a.endTime);
-
-    // 遍历所有分片进行搜索
-    for (const shard of sortedShards) {
-      const shardLogs = await this.loadLogShard(shard.filename);
-
-      for (let i = 0; i < shardLogs.length; i++) {
-        const log = shardLogs[i];
-        if (this.logMatchesQuery(log, searchQuery)) {
-          matches.push({ filename: shard.filename, index: i, timestamp: log.timestamp });
-        }
-      }
-      // shardLogs 在下一轮重新赋值，可被 GC 回收
-    }
-
-    // 按时间倒序后切页，仅对当前页回填完整正文
-    matches.sort((a, b) => b.timestamp - a.timestamp);
-    const page = matches.slice(offset, offset + limit);
-    const logs = await this.hydrateLogsFromRefs(page);
-    // 保持与 page 同序（倒序）
-    logs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-    return logs;
+    return this.requireLogStore().search('global', query, { limit, offset });
   }
 
   /**
-   * 搜索请求日志内容数量
-   * @param query 搜索关键词
-   * @returns 匹配的日志数量
+   * 搜索请求日志内容数量（流式，不持正文）
    */
   async searchLogsCount(query: string): Promise<number> {
-    const searchQuery = query.toLowerCase().trim();
-    if (!searchQuery) {
-      return this.getLogsCount();
-    }
-
-    let count = 0;
-    for (const shard of this.logShardsIndex) {
-      const shardLogs = await this.loadLogShard(shard.filename);
-      for (const log of shardLogs) {
-        if (this.logMatchesQuery(log, searchQuery)) {
-          count++;
-        }
-      }
-    }
-    return count;
-  }
-
-  /**
-   * 检查日志是否匹配搜索查询
-   */
-  private logMatchesQuery(log: RequestLog, query: string): boolean {
-    // 搜索请求体
-    if (log.body) {
-      const bodyStr = typeof log.body === 'string' ? log.body : JSON.stringify(log.body);
-      if (bodyStr.toLowerCase().includes(query)) {
-        return true;
-      }
-    }
-
-    // 搜索响应体
-    if (log.responseBody && typeof log.responseBody === 'string') {
-      if (log.responseBody.toLowerCase().includes(query)) {
-        return true;
-      }
-    }
-
-    // 搜索流式响应块
-    if (log.streamChunks && log.streamChunks.length > 0) {
-      for (const chunk of log.streamChunks) {
-        if (chunk.toLowerCase().includes(query)) {
-          return true;
-        }
-      }
-    }
-
-    // 搜索错误信息
-    if (log.error && log.error.toLowerCase().includes(query)) {
-      return true;
-    }
-
-    // 搜索路径
-    if (log.path && log.path.toLowerCase().includes(query)) {
-      return true;
-    }
-
-    // 搜索模型名称
-    if (log.requestModel && log.requestModel.toLowerCase().includes(query)) {
-      return true;
-    }
-    if (log.targetModel && log.targetModel.toLowerCase().includes(query)) {
-      return true;
-    }
-
-    return false;
+    return this.requireLogStore().searchCount('global', query);
   }
 
   private truncateForErrorLog(value: any): string | undefined {
@@ -2236,53 +1632,6 @@ export class FileSystemDatabaseManager {
     }
 
     return false;
-  }
-
-  /**
-   * 获取状态码为 499 的请求日志
-   * @param limit 返回数量限制
-   * @param offset 偏移量
-   * @returns 匹配的请求日志列表
-   */
-  async getClientClosedLogs(limit: number = 100, offset: number = 0): Promise<RequestLog[]> {
-    // 两阶段扫描：阶段一仅收集描述符，避免所有 499 日志正文同时驻留内存
-    const matches: { filename: string; index: number; timestamp: number }[] = [];
-    const sortedShards = [...this.logShardsIndex].sort((a, b) => b.endTime - a.endTime);
-
-    // 递序遍历所有分片， collect 499 logs
-    for (const shard of sortedShards) {
-      const shardLogs = await this.loadLogShard(shard.filename);
-      for (let i = 0; i < shardLogs.length; i++) {
-        const log = shardLogs[i];
-        if (log.statusCode === 499) {
-          matches.push({ filename: shard.filename, index: i, timestamp: log.timestamp });
-        }
-      }
-    }
-
-    // 按时间倒序后切页，仅对当前页回填完整正文
-    matches.sort((a, b) => b.timestamp - a.timestamp);
-    const page = matches.slice(offset, offset + limit);
-    const logs = await this.hydrateLogsFromRefs(page);
-    logs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-    return logs;
-  }
-
-  /**
-   * 获取状态码为 499 的请求日志数量
-   * @returns 匹配的请求数量
-   */
-  async getClientClosedLogsCount(): Promise<number> {
-    let count = 0;
-    for (const shard of this.logShardsIndex) {
-      const shardLogs = await this.loadLogShard(shard.filename);
-      for (const log of shardLogs) {
-        if (log.statusCode === 499) {
-          count++;
-        }
-      }
-    }
-    return count;
   }
 
   // Service blacklist operations
@@ -2783,7 +2132,7 @@ export class FileSystemDatabaseManager {
 
     this.contentTypeDistributionInitializing = true;
     try {
-      if (this.logShardsIndex.length === 0) {
+      if (!this.logStore) {
         this.contentTypeDistributionInitialized = true;
         return;
       }
@@ -2791,13 +2140,15 @@ export class FileSystemDatabaseManager {
       const counts = new Map<ContentType, number>();
       let totalRequests = 0;
 
-      for (const shard of this.logShardsIndex) {
-        const shardLogs = await this.loadLogShard(shard.filename);
-        for (const log of shardLogs) {
-          totalRequests++;
-          const contentType = this.resolveLogContentType(log);
-          counts.set(contentType, (counts.get(contentType) || 0) + 1);
-        }
+      // 从 LogStore 流式扫描全部日志，按 contentType 计数（仅首次/老数据触发）
+      for await (const log of this.logStore.streamAll('global')) {
+        totalRequests++;
+        const contentType = this.resolveLogContentType(log);
+        counts.set(contentType, (counts.get(contentType) || 0) + 1);
+      }
+      if (totalRequests === 0) {
+        this.contentTypeDistributionInitialized = true;
+        return;
       }
 
       this.statistics.contentTypeDistribution = Array.from(counts.entries()).map(([contentType, count]) => ({
@@ -3083,225 +2434,41 @@ export class FileSystemDatabaseManager {
    * 处理完即释放分片引用，避免大量分片正文同时驻留内存。
    * 供 getLogsBySessionId / searchLogs / getClientClosedLogs 复用。
    */
-  private async hydrateLogsFromRefs(refs: { filename: string; index: number }[]): Promise<RequestLog[]> {
-    if (refs.length === 0) return [];
-
-    // 按 filename 分组，避免重复加载同一分片
-    const shardMap = new Map<string, number[]>();
-    for (const ref of refs) {
-      let indices = shardMap.get(ref.filename);
-      if (!indices) {
-        indices = [];
-        shardMap.set(ref.filename, indices);
-      }
-      indices.push(ref.index);
-    }
-
-    const logs: RequestLog[] = [];
-    for (const [filename, indices] of shardMap) {
-      try {
-        const shardLogs = await this.loadLogShard(filename);
-        for (const idx of indices) {
-          if (idx >= 0 && idx < shardLogs.length) {
-            logs.push(shardLogs[idx]);
-          }
-        }
-      } catch {
-        // 分片文件可能已被清理，跳过
-      }
-      // shardLogs 在下一轮循环被重新赋值，可被 GC 回收
-    }
-    return logs;
-  }
-
+  /** 按会话取日志（字节偏移随机读，since 下推到索引层）。委托 LogStore。 */
   async getLogsBySessionId(sessionId: string, limit: number = 100, since?: number): Promise<RequestLog[]> {
-    const refs = this.sessionLogIndex.get(sessionId);
-
-    // 有索引：仅加载相关分片，按 index 直接取值
-    if (refs && refs.length > 0) {
-      // since 时间窗下推到索引层：先用 ref.timestamp 过滤，老分片完全不读
-      const filteredRefs = typeof since === 'number'
-        ? refs.filter(r => (r.timestamp || 0) >= since)
-        : refs;
-      if (filteredRefs.length === 0) return [];
-
-      const logs = await this.hydrateLogsFromRefs(filteredRefs);
-      return logs.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
-    }
-
-    // 无索引（兼容旧数据）：回退到全扫描
-    const allLogs: RequestLog[] = [];
-    const cutoff = typeof since === 'number' ? since : -Infinity;
-    for (const shard of this.logShardsIndex) {
-      // 若整片都早于 since，直接跳过，避免无谓解析
-      if (shard.endTime < cutoff) continue;
-      const shardLogs = await this.loadLogShard(shard.filename);
-      const filtered = shardLogs.filter(log =>
-        (log.timestamp || 0) >= cutoff && this.isLogBelongsToSession(log, sessionId)
-      );
-      allLogs.push(...filtered);
-    }
-    return allLogs.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
+    return this.requireLogStore().getBySession('global', sessionId, { limit, since });
   }
 
   /**
-   * 批量回填多个会话的近期日志，跨会话合并分片读取（每个分片只 loadLogShard 一次）。
-   * 用于 Agent Map 启动重建，避免「100 个会话各自独立读同一分片 100 次」的内存爆炸。
-   * 返回 Map<sessionId, RequestLog[]>（按 timestamp 倒序，受 perSessionLimit 截断）。
+   * 批量回填多个会话的近期日志（跨会话合并文件读取），委托 LogStore。
+   * 用于 Agent Map 启动重建。
    */
   async getRecentLogsBySessions(
     sessionIds: string[],
     opts: { since?: number; perSessionLimit?: number } = {}
   ): Promise<Map<string, RequestLog[]>> {
-    const result = new Map<string, RequestLog[]>();
-    if (sessionIds.length === 0) return result;
-
-    const since = opts.since;
-    const perSessionLimit = opts.perSessionLimit ?? 100;
-
-    // 1) 收集每个会话满足时间窗的 refs，并按 perSessionLimit 取最近 N 条
-    //    每个 ref 记下所属 sessionId，供后续分片读取时分发
-    type TaggedRef = { filename: string; index: number; ts: number; sessionId: string };
-    const tagged: TaggedRef[] = [];
-    for (const sid of sessionIds) {
-      const refs = this.sessionLogIndex.get(sid);
-      if (!refs || refs.length === 0) continue;
-      const filtered = typeof since === 'number'
-        ? refs.filter(r => (r.timestamp || 0) >= since)
-        : refs;
-      if (filtered.length === 0) continue;
-      filtered.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-      const picked = filtered.slice(-perSessionLimit); // 取最近的 N 条
-      for (const r of picked) {
-        tagged.push({ filename: r.filename, index: r.index, ts: r.timestamp || 0, sessionId: sid });
-      }
-    }
-    if (tagged.length === 0) return result;
-
-    // 2) 按 filename 分组，每个分片只加载一次
-    const shardMap = new Map<string, TaggedRef[]>();
-    for (const t of tagged) {
-      let arr = shardMap.get(t.filename);
-      if (!arr) {
-        arr = [];
-        shardMap.set(t.filename, arr);
-      }
-      arr.push(t);
-    }
-
-    // 3) 逐分片加载、按 sessionId 分发；分片处理完即释放
-    const buckets = new Map<string, RequestLog[]>();
-    for (const [filename, tRefs] of shardMap) {
-      try {
-        const shardLogs = await this.loadLogShard(filename);
-        for (const t of tRefs) {
-          if (t.index >= 0 && t.index < shardLogs.length) {
-            const log = shardLogs[t.index];
-            let bucket = buckets.get(t.sessionId);
-            if (!bucket) {
-              bucket = [];
-              buckets.set(t.sessionId, bucket);
-            }
-            bucket.push(log);
-          }
-        }
-      } catch {
-        // 分片文件可能已被清理，跳过
-      }
-    }
-
-    // 4) 每个会话桶按 timestamp 倒序
-    for (const [sid, logs] of buckets) {
-      logs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-      result.set(sid, logs);
-    }
-    return result;
+    return this.requireLogStore().getBySessionsBatch('global', sessionIds, opts);
   }
 
-  /**
-   * 检查日志是否属于指定 session
-   */
-  private isLogBelongsToSession(log: RequestLog, sessionId: string): boolean {
-    // 检查 headers 中的 session-id 或 session_id（Codex，兼容新旧版本）
-    if (log.headers?.['session-id'] === sessionId || log.headers?.['session_id'] === sessionId) {
-      return true;
-    }
-    // 检查 body 中的 metadata.user_id（Claude Code）
-    if (log.body) {
-      try {
-        // body 可能是对象（已解析）或字符串（未解析）
-        const body = typeof log.body === 'string' ? JSON.parse(log.body) : log.body;
-        if (body.metadata?.user_id) {
-          const userId = body.metadata.user_id;
-          // 兼容新旧格式：新版本为 JSON 字符串，旧版本为纯字符串
-          let extractedSessionId: string | null = null;
-          try {
-            const parsed = JSON.parse(userId);
-            if (parsed && typeof parsed === 'object' && parsed.session_id) {
-              extractedSessionId = parsed.session_id;
-            }
-          } catch {
-            // 不是 JSON，按旧版本纯字符串处理
-            extractedSessionId = userId;
-          }
-          if (extractedSessionId === sessionId) {
-            return true;
-          }
-        }
-      } catch {
-        // 忽略解析错误
-      }
-    }
-    return false;
-  }
-
-  /**
-   * 从日志条目中提取 sessionId（用于索引）
-   * Codex: headers['session-id']（新版）或 headers['session_id']（旧版）
-   * Claude Code: body.metadata.user_id（兼容新旧格式）
-   */
-  private extractSessionIdFromLog(log: RequestLog): string | null {
-    // Codex: headers 中的 session-id 或 session_id（兼容新旧版本）
-    const headerSessionId = log.headers?.['session-id'] || log.headers?.['session_id'];
-    if (typeof headerSessionId === 'string') return headerSessionId;
-
-    // Claude Code: body 中的 metadata.user_id
-    if (log.body) {
-      try {
-        const body = typeof log.body === 'string' ? JSON.parse(log.body) : log.body;
-        if (body.metadata?.user_id) {
-          const userId = body.metadata.user_id;
-          try {
-            const parsed = JSON.parse(userId);
-            if (parsed && typeof parsed === 'object' && parsed.session_id) {
-              return parsed.session_id;
-            }
-          } catch {
-            return userId;
-          }
-        }
-      } catch {
-        // 忽略解析错误
-      }
-    }
-    return null;
-  }
+  // sessionId 提取已移至 LogStore 内部（extractSessionId），fs-database 不再维护会话日志索引
 
   async deleteSession(sessionId: string): Promise<boolean> {
     const index = this.sessions.findIndex(s => s.id === sessionId);
     if (index === -1) return false;
 
     this.sessions.splice(index, 1);
-    this.sessionLogIndex.delete(sessionId);
-    this.scheduleSessionLogIndexFlush();
     await this.saveSessions();
+    // 关联日志删除走 LogStore tombstone
+    try {
+      await this.requireLogStore().deleteLogsBySession('global', sessionId);
+    } catch (err) {
+      console.error('[Database] deleteLogsBySession failed:', err);
+    }
     return true;
   }
 
   async clearSessions(): Promise<void> {
     this.sessions = [];
-    this.sessionLogIndex.clear();
-    this.scheduleSessionLogIndexFlush();
     await this.saveSessions();
   }
 
@@ -3333,137 +2500,17 @@ export class FileSystemDatabaseManager {
   }
 
   /**
-   * 删除指定会话集合关联的所有日志条目，并维护分片文件与索引的一致性。
-   * 多个会话可能共享同一分片，按分片重写并修正其余会话的 index 引用。
-   * 与 addLog 共享分片写入锁（shardWriteLocks），避免并发写入竞争。
+   * 删除指定会话集合关联的所有日志条目（tombstone，追加写无需重写文件）。
+   * 委托 LogStore。
    */
   private async deleteLogsBySessionIds(sessionIds: Set<string>): Promise<{ logsDeleted: number }> {
     if (sessionIds.size === 0) return { logsDeleted: 0 };
-
-    // 1. 按分片文件收集待删除的 index（基于内存索引快照）
-    const shardDeletes = new Map<string, Set<number>>();
-    for (const sid of sessionIds) {
-      const refs = this.sessionLogIndex.get(sid);
-      if (!refs) continue;
-      for (const ref of refs) {
-        let set = shardDeletes.get(ref.filename);
-        if (!set) {
-          set = new Set();
-          shardDeletes.set(ref.filename, set);
-        }
-        set.add(ref.index);
-      }
-    }
-
+    const ls = this.requireLogStore();
     let logsDeleted = 0;
-
-    // 2. 逐分片重写（在分片锁内执行，与该分片的 addLog 串行）
-    for (const [filename, deleteSet] of shardDeletes) {
-      let shardRemoved = 0;
-      const prevLock = this.shardWriteLocks.get(filename) || Promise.resolve();
-      const task = prevLock.then(async () => {
-        const shardLogs = await this.loadLogShard(filename);
-        if (shardLogs.length === 0) return;
-
-        // 构建 oldIndex -> newIndex 映射（仅保留项）
-        const newIndexMap = new Map<number, number>();
-        const newLogs: RequestLog[] = [];
-        let removed = 0;
-        for (let i = 0; i < shardLogs.length; i++) {
-          if (deleteSet.has(i)) {
-            removed++;
-            continue;
-          }
-          newIndexMap.set(i, newLogs.length);
-          newLogs.push(shardLogs[i]);
-        }
-
-        if (removed === 0) return;
-        shardRemoved = removed;
-
-        // 重写或删除分片文件
-        if (newLogs.length === 0) {
-          try {
-            await fs.unlink(path.join(this.logsDir, filename));
-          } catch {
-            // 文件可能已被其它清理流程删除，忽略
-          }
-        } else {
-          await this.saveLogShard(filename, newLogs);
-        }
-
-        // 更新分片索引
-        const shardIndex = this.logShardsIndex.find(s => s.filename === filename);
-        if (shardIndex) {
-          if (newLogs.length === 0) {
-            this.logShardsIndex = this.logShardsIndex.filter(s => s.filename !== filename);
-          } else {
-            shardIndex.count = newLogs.length;
-            let minTs = Infinity;
-            let maxTs = -Infinity;
-            for (const l of newLogs) {
-              if (l.timestamp < minTs) minTs = l.timestamp;
-              if (l.timestamp > maxTs) maxTs = l.timestamp;
-            }
-            shardIndex.startTime = minTs;
-            shardIndex.endTime = maxTs;
-          }
-        }
-
-        // 修正引用了该分片的非目标会话的 refs（index 偏移）
-        for (const [sid, refs] of this.sessionLogIndex) {
-          if (sessionIds.has(sid)) continue;
-          let touched = false;
-          const updated: SessionLogRef[] = [];
-          for (const ref of refs) {
-            if (ref.filename !== filename) {
-              updated.push(ref);
-              continue;
-            }
-            if (deleteSet.has(ref.index)) {
-              touched = true;
-              continue;
-            }
-            const ni = newIndexMap.get(ref.index);
-            if (ni !== undefined) {
-              if (ni !== ref.index) touched = true;
-              updated.push({ ...ref, index: ni });
-            } else {
-              touched = true;
-            }
-          }
-          if (touched) {
-            if (updated.length === 0) {
-              this.sessionLogIndex.delete(sid);
-            } else {
-              this.sessionLogIndex.set(sid, updated);
-            }
-          }
-        }
-      });
-
-      this.shardWriteLocks.set(filename, task);
-      try {
-        await task;
-        logsDeleted += shardRemoved;
-      } catch (err) {
-        console.error(`[Database] Failed to cleanup shard ${filename}:`, err);
-      } finally {
-        if (this.shardWriteLocks.get(filename) === task) {
-          this.shardWriteLocks.delete(filename);
-        }
-      }
-    }
-
-    // 3. 清除目标会话的索引条目
     for (const sid of sessionIds) {
-      this.sessionLogIndex.delete(sid);
+      logsDeleted += await ls.deleteLogsBySession('global', sid);
     }
-
-    await this.saveLogsIndex();
-    await this.saveSessionLogIndexNow();
     this.logsCountCache = null;
-
     return { logsDeleted };
   }
 
@@ -3631,7 +2678,6 @@ export class FileSystemDatabaseManager {
 
   // Close method for compatibility (no-op for filesystem database)
   close(): void {
-    // 刷盘会话日志索引
-    this.flushSessionLogIndex();
+    // 日志索引落盘由 LogStore.close() 负责（main.ts 在 shutdown 时调用）
   }
 }

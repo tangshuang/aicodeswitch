@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-06-22: 日志存储层重构（独立 LogStore，追加写 NDJSON）
+
+### 重构
+- 日志存取从「分片 JSON 数组 read-modify-write」改为独立的 `LogStore` 模块（`src/server/log-store/`），采用**追加写 NDJSON + 字节偏移索引**：写日志从 O(分片大小) 降为 O(单条)，查询改为流式逐行读，内存只持单行 + 当前页。
+- `sessionLogIndex` 由「分片内数组绝对下标」改为 `{file, offset, length, timestamp, logId}` 字节偏移引用——追加写下偏移永远稳定，按会话取日志变成按字节范围随机读，删除会话日志/保留清理无需修正引用。
+- 主库（`global`）与 AccessKey（`key:{keyId}`）日志**并入同一个 LogStore**（namespace 区分），消除 key-logger.ts 与 fs-database.ts 的两套并行实现；顺带补齐 AccessKey 日志的 session 倒排、定时清理（此前 `cleanupOldLogs` 为死代码）、统一 ISO 日期与紧凑序列化。
+- 会话级删除改用 tombstone（按 logId），追加写无需重写分片文件，消除原「重写分片 + 修正全局下标」的高成本路径。
+- 启动一次性迁移：`LogStore.migrateLegacy` 自动把旧 `logs-*.json` / `logs.json` / `key-logs/<id>/*.json` 流式转写为 NDJSON，**条目数对账通过后**才把旧文件归档到 `log-store/legacy-backup/`（不立即删除，留回滚窗口），并用 `.legacy-migrated` 标记保证只跑一次。
+- `fs-database.ts` 退化为薄委托层：`addLog`/`getLogs`/`getLogsCount`/`searchLogs(Count)`/`getLogsBySessionId`/`getRecentLogsBySessions`/`clearLogs`/`deleteLogsBySessionIds` 等全部委托 LogStore；删除死代码 `getClientClosedLogs*` 及一整套旧的分片读写/索引构建方法。统计 `updateStatistics` 写时增量保持现状（未改）。
+- `main.ts` 启动时创建并 `init` LogStore 注入 dbManager 与 AccessKeyModule；新增每 6 小时定时保留清理（主库 30 天 + 所有 AccessKey）；shutdown 时 `logStore.close()` 落盘索引。
+
+### 不变
+- 存储字段不变：每条日志的完整 `streamChunks`/`body`/`responseBody` 等仍完整落盘，日志详情页可见性不受影响。
+- 统计、导入导出（不含日志）、service-performance 维持现状。
+
 ## 2026-06-22: 修复代理服务 OOM（收紧日志加载 + 全扫描查询内存加固）
 
 ### 修复
