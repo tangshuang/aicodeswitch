@@ -292,44 +292,88 @@ export class SSEEventCollectorTransform extends Transform {
   }
 
   /**
-   * 从events中提取usage信息
+   * 从events中提取usage信息。
+   *
+   * 关键：必须遍历**全部**事件并合并，而不是命中第一个就返回——
+   * Anthropic 流式把用量拆在两个事件里：`message_start.message.usage` 带 input_tokens，
+   * `message_delta.usage` 带（累计的）output_tokens。旧实现命中 message_delta 即返回，
+   * 导致 input_tokens 永远丢失。同时统一 OpenAI(prompt_tokens/completion_tokens) 与
+   * Gemini(usageMetadata) 的字段命名，返回归一化的 {input_tokens, output_tokens, total_tokens, cache_read_input_tokens}。
    */
-  extractUsage(): { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number } | null {
+  extractUsage(): { input_tokens?: number; output_tokens?: number; total_tokens?: number; cache_read_input_tokens?: number } | null {
+    let input_tokens: number | undefined;
+    let output_tokens: number | undefined;
+    let total_tokens: number | undefined;
+    let cache_read_input_tokens: number | undefined;
+
     for (const event of this.events) {
       if (!event.data) continue;
-
+      let data: any;
       try {
-        const data = JSON.parse(event.data);
-
-        // 尝试从不同的位置提取usage
-        // 1. message_delta事件中的usage
-        if (event.event === 'message_delta' && data.usage) {
-          return data.usage;
-        }
-
-        // 2. 直接在data中的usage
-        if (data.usage) {
-          return data.usage;
-        }
-
-        // 3. OpenAI格式: choices数组中最后一个元素的usage
-        if (Array.isArray(data.choices) && data.choices.length > 0) {
-          const lastChoice = data.choices[data.choices.length - 1];
-          if (lastChoice?.usage) {
-            return lastChoice.usage;
-          }
-        }
-
-        // 4. 直接在顶级的usage字段
-        if (data?.input_tokens !== undefined || data?.output_tokens !== undefined ||
-            data?.prompt_tokens !== undefined || data?.completion_tokens !== undefined) {
-          return data;
-        }
+        data = JSON.parse(event.data);
       } catch {
-        // JSON解析失败,跳过
+        continue;
       }
+
+      // Anthropic: message_start 携带 input（在 message.usage 下）
+      const msgUsage = data?.message?.usage;
+      if (msgUsage) {
+        if (typeof msgUsage.input_tokens === 'number') input_tokens = msgUsage.input_tokens;
+        if (typeof msgUsage.cache_read_input_tokens === 'number') cache_read_input_tokens = msgUsage.cache_read_input_tokens;
+      }
+
+      // 通用 usage 对象（Anthropic message_delta.usage / OpenAI usage）
+      const usage = data?.usage;
+      if (usage) {
+        if (typeof usage.input_tokens === 'number') input_tokens = usage.input_tokens;
+        if (typeof usage.output_tokens === 'number') output_tokens = usage.output_tokens; // message_delta 累计值，取最后一次
+        if (typeof usage.cache_read_input_tokens === 'number') cache_read_input_tokens = usage.cache_read_input_tokens;
+        if (typeof usage.prompt_tokens === 'number') input_tokens = usage.prompt_tokens;
+        if (typeof usage.completion_tokens === 'number') output_tokens = usage.completion_tokens;
+        if (typeof usage.total_tokens === 'number') total_tokens = usage.total_tokens;
+        if (typeof usage.cached_tokens === 'number') cache_read_input_tokens = usage.cached_tokens;
+      }
+
+      // OpenAI: choices[].usage（部分上游把 usage 放在最后一个 choice 上）
+      if (Array.isArray(data?.choices) && data.choices.length > 0) {
+        const lastChoice = data.choices[data.choices.length - 1];
+        const cu = lastChoice?.usage;
+        if (cu) {
+          if (typeof cu.prompt_tokens === 'number') input_tokens = cu.prompt_tokens;
+          if (typeof cu.completion_tokens === 'number') output_tokens = cu.completion_tokens;
+          if (typeof cu.total_tokens === 'number') total_tokens = cu.total_tokens;
+        }
+      }
+
+      // Gemini: usageMetadata
+      const um = data?.usageMetadata;
+      if (um) {
+        if (typeof um.promptTokenCount === 'number') input_tokens = um.promptTokenCount;
+        if (typeof um.candidatesTokenCount === 'number') output_tokens = um.candidatesTokenCount;
+        if (typeof um.totalTokenCount === 'number') total_tokens = um.totalTokenCount;
+        if (typeof um.cachedContentTokenCount === 'number') cache_read_input_tokens = um.cachedContentTokenCount;
+      }
+
+      // 顶级裸字段兜底
+      if (typeof data?.input_tokens === 'number') input_tokens = data.input_tokens;
+      if (typeof data?.output_tokens === 'number') output_tokens = data.output_tokens;
+      if (typeof data?.prompt_tokens === 'number') input_tokens = data.prompt_tokens;
+      if (typeof data?.completion_tokens === 'number') output_tokens = data.completion_tokens;
+      if (typeof data?.total_tokens === 'number') total_tokens = data.total_tokens;
     }
 
-    return null;
+    if (input_tokens === undefined && output_tokens === undefined && total_tokens === undefined) {
+      return null;
+    }
+    const result: { input_tokens?: number; output_tokens?: number; total_tokens?: number; cache_read_input_tokens?: number } = {};
+    if (input_tokens !== undefined) result.input_tokens = input_tokens;
+    if (output_tokens !== undefined) result.output_tokens = output_tokens;
+    if (total_tokens !== undefined) {
+      result.total_tokens = total_tokens;
+    } else if (input_tokens !== undefined && output_tokens !== undefined) {
+      result.total_tokens = input_tokens + output_tokens;
+    }
+    if (cache_read_input_tokens !== undefined) result.cache_read_input_tokens = cache_read_input_tokens;
+    return result;
   }
 }

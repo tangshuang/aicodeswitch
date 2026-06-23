@@ -887,6 +887,8 @@ export interface PerfBucket {
   sumTtftMs: number;        // Σ TTFT（毫秒）
   sumTps: number;           // Σ tokensPerSecond
   totalOutputTokens: number;
+  sumInputTokens: number;   // Σ 输入 token（含非流式样本，不受计时精度门控）
+  sumTotalTokens: number;   // Σ 总 token（input+output 或上游 totalTokens）
 }
 
 /** 单个聚合节点（模型级 / 服务级 / 供应商级通用） */
@@ -934,6 +936,8 @@ export interface PerfDerived {
   maxTps?: number;
   errorCount: number;
   totalOutputTokens: number;
+  totalInputTokens: number;   // Σ 输入 token（跨 precise+estimated）
+  totalTokens: number;        // Σ 总 token（跨 precise+estimated）
   successRate: number;
 }
 
@@ -943,6 +947,9 @@ export interface PerfTrendPoint {
   count: number;
   avgTtftMs: number;
   avgTpm: number;
+  inputTokens: number;     // 该小时输入 token（含非流式样本）
+  outputTokens: number;    // 该小时输出 token
+  totalTokens: number;     // 该小时总 token
 }
 
 /** API 响应类型（前端 / tracker 共享结构） */

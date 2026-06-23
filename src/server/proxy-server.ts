@@ -58,6 +58,14 @@ type ContentTypeDetector = {
 
 const SUPPORTED_TARGETS = ['claude-code', 'codex'];
 
+/**
+ * Fallback（回退原始配置）路径的虚拟供应商归属。
+ * 该路径转发的请求不属于任何用户配置的供应商/服务，故用一组固定 ID + 名称
+ * 把它纳入服务性能统计（service-performance.json），便于在测速面板单独呈现。
+ */
+const FALLBACK_VENDOR_ID = 'fallback-vendor';
+const FALLBACK_VENDOR_NAME = '原始配置 / 直连';
+
 /** 默认模型列表 */
 const DEFAULT_MODELS = [
   { id: 'claude-sonnet-4-20250514', owned_by: 'anthropic' },
@@ -261,7 +269,10 @@ export class ProxyServer {
     const { statusCode, startTime, usage, streamTiming, service, vendorId, vendorName, model } = params;
 
     const isError = statusCode >= 400;
+    const inputTokens = usage?.inputTokens;
     const outputTokens = usage?.outputTokens;
+    const computedTotal = (inputTokens || 0) + (outputTokens || 0);
+    const totalTokens = usage?.totalTokens ?? (computedTotal > 0 ? computedTotal : undefined);
     const responseMs = Date.now() - startTime;
 
     let ttftMs: number | undefined;
@@ -279,13 +290,19 @@ export class ProxyServer {
       tokensPerSecond = outputTokens / (responseMs / 1000);
     }
 
+    // 解析最终归属：Fallback 临时服务没有真实 vendor，service.vendorId 兜底为虚拟供应商；
+    // 此时 vendorName 也为空，补上虚拟供应商名，确保不被 recordPerformance 的三元组校验丢弃。
+    const effectiveVendorId = vendorId ?? service.vendorId;
+    const effectiveVendorName = vendorName ??
+      (effectiveVendorId === FALLBACK_VENDOR_ID ? FALLBACK_VENDOR_NAME : undefined);
+
     tracker.recordPerformance(
-      vendorId ?? service.vendorId,
-      vendorName,
+      effectiveVendorId,
+      effectiveVendorName,
       service.id,
       service.name,
       model,
-      { ttftMs, tokensPerSecond, outputTokens, timingAccuracy, isError },
+      { ttftMs, tokensPerSecond, outputTokens, inputTokens, totalTokens, timingAccuracy, isError },
     );
   }
 
@@ -1386,6 +1403,7 @@ export class ProxyServer {
       const tempService: APIService = {
         id: 'fallback-service',
         name: 'Original Config',
+        vendorId: FALLBACK_VENDOR_ID,
         apiUrl: originalConfig.apiUrl,
         apiKey: originalConfig.apiKey,
         authType: originalConfig.authType,
@@ -3727,6 +3745,25 @@ export class ProxyServer {
     return { converter: adapter, extractUsage };
   }
 
+  /**
+   * 将 SSEEventCollector 归一化后的 usage（{input_tokens, output_tokens, total_tokens, cache_read_input_tokens}）
+   * 映射为 TokenUsage。collector 已遍历全部事件并合并 Anthropic message_start/message_delta + OpenAI/Gemini 字段，
+   * 因此这里无需再区分上游格式。
+   */
+  private tokenUsageFromCollected(extracted: { input_tokens?: number; output_tokens?: number; total_tokens?: number; cache_read_input_tokens?: number } | null | undefined) {
+    if (!extracted) return undefined;
+    const inputTokens = extracted.input_tokens || 0;
+    const outputTokens = extracted.output_tokens || 0;
+    const computedTotal = inputTokens + outputTokens;
+    const totalTokens = extracted.total_tokens ?? (computedTotal > 0 ? computedTotal : undefined);
+    return {
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      cacheReadInputTokens: extracted.cache_read_input_tokens || 0,
+    };
+  }
+
   private extractTokenUsageFromResponse(responseData: any, sourceType: SourceType) {
     if (!responseData) return undefined;
 
@@ -4627,7 +4664,7 @@ export class ProxyServer {
         responseHeadersForLog = this.normalizeResponseHeaders(responseHeaders);
 
         // 使用 transformSSEToTool 方法选择转换器
-        const { converter, extractUsage } = this.transformSSEToTool(targetType, sourceType);
+        const { converter } = this.transformSSEToTool(targetType, sourceType);
 
         this.copyResponseHeaders(responseHeaders, res);
 
@@ -4649,12 +4686,7 @@ export class ProxyServer {
             }
           }
 
-          // 如果有自定义的 extractUsage 函数，使用它
-          if (extractUsage && extractedUsage) {
-            usageForLog = extractUsage(extractedUsage);
-          } else if (extractedUsage) {
-            usageForLog = this.extractTokenUsageFromResponse(extractedUsage, sourceType);
-          }
+          usageForLog = this.tokenUsageFromCollected(extractedUsage);
         };
 
         // 监听 res 的错误事件
@@ -5540,7 +5572,7 @@ export class ProxyServer {
         const originalModel = req.body?.model;
         const modelRewriter = originalModel ? new ModelRewriteTransform(originalModel) : null;
 
-        const { converter, extractUsage } = this.transformSSEByFormat(clientFormat, sourceType);
+        const { converter } = this.transformSSEByFormat(clientFormat, sourceType);
         this.copyResponseHeaders(responseHeaders, res);
         res.status(response.status);
 
@@ -5553,11 +5585,7 @@ export class ProxyServer {
             const converterUsage = (converter as any).getUsage();
             if (converterUsage) extractedUsage = converterUsage;
           }
-          if (extractUsage && extractedUsage) {
-            usageForLog = extractUsage(extractedUsage);
-          } else if (extractedUsage) {
-            usageForLog = this.extractTokenUsageFromResponse(extractedUsage, sourceType);
-          }
+          usageForLog = this.tokenUsageFromCollected(extractedUsage);
         };
 
         try {

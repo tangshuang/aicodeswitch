@@ -12,17 +12,20 @@ import type {
 import {
   LineChart,
   Line,
+  ComposedChart,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
+  Legend,
   ResponsiveContainer,
 } from 'recharts';
 
-type Metric = 'ttft' | 'tpm';
+type Metric = 'ttft' | 'tpm' | 'tokens';
 type Dimension = 'service' | 'vendor';
 type DrillLevel = 'overview' | 'vendor' | 'service' | 'model';
-type SortField = 'avgTtftMs' | 'avgTpm' | 'successRate';
+type SortField = 'avgTtftMs' | 'avgTpm' | 'successRate' | 'totalTokens';
 type SortOrder = 'asc' | 'desc';
 
 const cardStyle: React.CSSProperties = {
@@ -76,6 +79,7 @@ interface TableRow {
   id: string;
   name: string;
   vendorName?: string;
+  serviceName?: string;
   derived: PerfDerived;
   onClick: () => void;
 }
@@ -185,6 +189,7 @@ export default function ServicePerformancePanel() {
       return vendorDetail.services.map(s => ({
         id: s.serviceId,
         name: s.serviceName || s.serviceId,
+        vendorName: vendorDetail.vendorName,
         derived: s.derived,
         onClick: () => goService(s.serviceId),
       }));
@@ -193,6 +198,8 @@ export default function ServicePerformancePanel() {
       return serviceDetail.models.map(m => ({
         id: m.model,
         name: m.model,
+        vendorName: serviceDetail.vendorName,
+        serviceName: serviceDetail.serviceName,
         derived: m.derived,
         onClick: () => goModel(m.model),
       }));
@@ -233,19 +240,32 @@ export default function ServicePerformancePanel() {
     return undefined;
   })();
   const slicedTrend = sliceTrend(trend, hours);
-  const chartData = slicedTrend.map(p => ({
-    hour: p.hour.slice(11),
-    value: metric === 'ttft' ? p.avgTtftMs : p.avgTpm,
-  }));
+  const chartData = slicedTrend.map(p =>
+    metric === 'tokens'
+      ? {
+          hour: p.hour.slice(11),
+          inputTokens: p.inputTokens || 0,
+          outputTokens: p.outputTokens || 0,
+          totalTokens: p.totalTokens || 0,
+        }
+      : {
+          hour: p.hour.slice(11),
+          value: metric === 'ttft' ? p.avgTtftMs : p.avgTpm,
+        }
+  );
 
   // —— 列与标题 ——
-  const showVendorColumn = drillLevel === 'overview' && dimension === 'service';
+  const showVendorColumn =
+    (drillLevel === 'overview' && dimension === 'service') ||
+    drillLevel === 'vendor' ||
+    drillLevel === 'service';
+  const showServiceColumn = drillLevel === 'service';
   const nameColLabel =
     (drillLevel === 'overview' && dimension === 'vendor') ? '供应商'
       : drillLevel === 'service' ? '模型'
       : 'API 服务';
 
-  const metricLabel = metric === 'ttft' ? '首 Token 返回时间' : '吞吐 TPM';
+  const metricLabel = metric === 'ttft' ? '首 Token 返回时间' : metric === 'tpm' ? '吞吐 TPM' : 'Token量';
 
   // 当前下钻的极值（仅模型级）
   const extremeDerived = drillLevel === 'model' ? modelDetail?.derived : undefined;
@@ -302,20 +322,25 @@ export default function ServicePerformancePanel() {
 
       {/* 筛选器 */}
       <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <label style={{ color: 'var(--text-muted)', fontSize: '13px' }}>维度:</label>
-          <select style={selectStyle} value={dimension} onChange={(e) => changeDimension(e.target.value as Dimension)} disabled={drillLevel !== 'overview'}>
-            <option value="service">API 服务</option>
-            <option value="vendor">供应商</option>
-          </select>
-        </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <label style={{ color: 'var(--text-muted)', fontSize: '13px' }}>指标:</label>
-          <select style={selectStyle} value={metric} onChange={(e) => setMetric(e.target.value as Metric)}>
-            <option value="ttft">首 Token 返回时间</option>
-            <option value="tpm">吞吐 TPM</option>
-          </select>
-        </div>
+        {drillLevel === 'overview' && (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <label style={{ color: 'var(--text-muted)', fontSize: '13px' }}>维度:</label>
+            <select style={selectStyle} value={dimension} onChange={(e) => changeDimension(e.target.value as Dimension)}>
+              <option value="service">API 服务</option>
+              <option value="vendor">供应商</option>
+            </select>
+          </div>
+        )}
+        {drillLevel !== 'overview' && (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <label style={{ color: 'var(--text-muted)', fontSize: '13px' }}>指标:</label>
+            <select style={selectStyle} value={metric} onChange={(e) => setMetric(e.target.value as Metric)}>
+              <option value="ttft">首 Token 返回时间</option>
+              <option value="tpm">吞吐 TPM</option>
+              <option value="tokens">Token量</option>
+            </select>
+          </div>
+        )}
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           <label style={{ color: 'var(--text-muted)', fontSize: '13px' }}>时段:</label>
           <select style={selectStyle} value={hours} onChange={(e) => setHours(Number(e.target.value))}>
@@ -330,55 +355,86 @@ export default function ServicePerformancePanel() {
       {error && <div style={{ color: '#e74c3c', marginBottom: '12px' }}>{error}</div>}
 
       {/* 对比表 */}
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-          <thead>
-            <tr>
-              <th style={th}>{nameColLabel}</th>
-              {showVendorColumn && <th style={th}>供应商</th>}
-              <th style={{ ...th, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('avgTtftMs')}>
-                平均首Token{sortArrow('avgTtftMs')}
-              </th>
-              <th style={{ ...th, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('avgTpm')}>
-                平均 TPM{sortArrow('avgTpm')}
-              </th>
-              <th style={th}>样本数</th>
-              <th style={{ ...th, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('successRate')}>
-                成功率{sortArrow('successRate')}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && (
-              <tr><td style={cell} colSpan={showVendorColumn ? 6 : 5} align="center">加载中...</td></tr>
-            )}
-            {!loading && sortedRows.length === 0 && (
-              <tr><td style={{ ...cell, color: 'var(--text-muted)' }} colSpan={showVendorColumn ? 6 : 5} align="center">暂无数据</td></tr>
-            )}
-            {!loading && sortedRows.map((r) => (
-              <tr key={r.id} style={rowHover}>
-                <td style={cell}>
-                  <span style={{ color: 'var(--text-primary)', cursor: 'pointer', textDecoration: 'underline' }} onClick={r.onClick}>
-                    {r.name}
-                  </span>
-                </td>
-                {showVendorColumn && <td style={{ ...cell, color: 'var(--text-muted)' }}>{r.vendorName || '-'}</td>}
-                <td style={cell}>{formatMs(r.derived.avgTtftMs)}</td>
-                <td style={cell}>{r.derived.count > 0 ? formatNum(r.derived.avgTpm) : '-'}</td>
-                <td style={cell}>{r.derived.count}</td>
-                <td style={cell}>{formatPct(r.derived.successRate)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {(() => {
+        const sourceCols = (showVendorColumn ? 1 : 0) + (showServiceColumn ? 1 : 0);
+        const metricCols = metric === 'tokens' ? 3 : 2;
+        const totalCols = 1 + sourceCols + metricCols + 2; // name + sources + metrics + 样本 + 成功率
+        return (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr>
+                  <th style={th}>{nameColLabel}</th>
+                  {showVendorColumn && <th style={th}>供应商</th>}
+                  {showServiceColumn && <th style={th}>API 服务</th>}
+                  {metric === 'tokens' ? (
+                    <>
+                      <th style={th}>输入Token</th>
+                      <th style={th}>输出Token</th>
+                      <th style={{ ...th, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('totalTokens')}>
+                        总Token{sortArrow('totalTokens')}
+                      </th>
+                    </>
+                  ) : (
+                    <>
+                      <th style={{ ...th, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('avgTtftMs')}>
+                        平均首Token{sortArrow('avgTtftMs')}
+                      </th>
+                      <th style={{ ...th, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('avgTpm')}>
+                        平均 TPM{sortArrow('avgTpm')}
+                      </th>
+                    </>
+                  )}
+                  <th style={th}>样本数</th>
+                  <th style={{ ...th, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('successRate')}>
+                    成功率{sortArrow('successRate')}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading && (
+                  <tr><td style={cell} colSpan={totalCols} align="center">加载中...</td></tr>
+                )}
+                {!loading && sortedRows.length === 0 && (
+                  <tr><td style={{ ...cell, color: 'var(--text-muted)' }} colSpan={totalCols} align="center">暂无数据</td></tr>
+                )}
+                {!loading && sortedRows.map((r) => (
+                  <tr key={r.id} style={rowHover}>
+                    <td style={cell}>
+                      <span style={{ color: 'var(--text-primary)', cursor: 'pointer', textDecoration: 'underline' }} onClick={r.onClick}>
+                        {r.name}
+                      </span>
+                    </td>
+                    {showVendorColumn && <td style={{ ...cell, color: 'var(--text-muted)' }}>{r.vendorName || '-'}</td>}
+                    {showServiceColumn && <td style={{ ...cell, color: 'var(--text-muted)' }}>{r.serviceName || '-'}</td>}
+                    {metric === 'tokens' ? (
+                      <>
+                        <td style={cell}>{r.derived.totalInputTokens != null ? formatNum(r.derived.totalInputTokens) : '-'}</td>
+                        <td style={cell}>{r.derived.totalOutputTokens != null ? formatNum(r.derived.totalOutputTokens) : '-'}</td>
+                        <td style={cell}>{r.derived.totalTokens != null ? formatNum(r.derived.totalTokens) : '-'}</td>
+                      </>
+                    ) : (
+                      <>
+                        <td style={cell}>{formatMs(r.derived.avgTtftMs)}</td>
+                        <td style={cell}>{r.derived.count > 0 ? formatNum(r.derived.avgTpm) : '-'}</td>
+                      </>
+                    )}
+                    <td style={cell}>{r.derived.count}</td>
+                    <td style={cell}>{formatPct(r.derived.successRate)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
 
       {/* 走势图（vendor/service/model 下钻层级） */}
       {drillLevel !== 'overview' && (
         <div style={{ marginTop: '24px' }}>
           <h4 style={{ margin: '0 0 12px 0', fontSize: '15px', color: 'var(--text-primary)' }}>
             {metricLabel} · 按小时走势
-            {extremeDerived && (
+            {extremeDerived && metric !== 'tokens' && (
               <span style={{ marginLeft: '12px', fontSize: '12px', color: 'var(--text-muted)' }}>
                 最小 {metric === 'ttft' ? formatMs(extremeDerived.minTtftMs) : formatNum(extremeDerived.minTps ? extremeDerived.minTps * 60 : undefined)}
                 {' / 最大 '}{metric === 'ttft' ? formatMs(extremeDerived.maxTtftMs) : formatNum(extremeDerived.maxTps ? extremeDerived.maxTps * 60 : undefined)}
@@ -389,16 +445,38 @@ export default function ServicePerformancePanel() {
             <div style={{ color: 'var(--text-muted)', padding: '24px', textAlign: 'center' }}>暂无走势数据</div>
           ) : (
             <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-primary)" />
-                <XAxis dataKey="hour" stroke="var(--text-muted)" fontSize={12} />
-                <YAxis stroke="var(--text-muted)" fontSize={12} />
-                <Tooltip
-                  contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-primary)', borderRadius: '8px' }}
-                  formatter={(v: any) => [metric === 'ttft' ? formatMs(Number(v)) : formatNum(Number(v)), metricLabel]}
-                />
-                <Line type="monotone" dataKey="value" stroke="#667eea" strokeWidth={2} dot={false} name={metricLabel} />
-              </LineChart>
+              {metric === 'tokens' ? (
+                <ComposedChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
+                  <defs>
+                    <linearGradient id="perfTotalTokens" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#667eea" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="#667eea" stopOpacity={0.04} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-primary)" />
+                  <XAxis dataKey="hour" stroke="var(--text-muted)" fontSize={12} />
+                  <YAxis stroke="var(--text-muted)" fontSize={12} />
+                  <Tooltip
+                    contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-primary)', borderRadius: '8px' }}
+                    formatter={(v: any, name: any) => [formatNum(Number(v)), name]}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Area type="monotone" dataKey="totalTokens" name="总Token" stroke="#667eea" strokeWidth={2} fill="url(#perfTotalTokens)" dot={false} />
+                  <Line type="monotone" dataKey="inputTokens" name="输入Token" stroke="#37d67a" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="outputTokens" name="输出Token" stroke="#f5a623" strokeWidth={2} dot={false} />
+                </ComposedChart>
+              ) : (
+                <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-primary)" />
+                  <XAxis dataKey="hour" stroke="var(--text-muted)" fontSize={12} />
+                  <YAxis stroke="var(--text-muted)" fontSize={12} />
+                  <Tooltip
+                    contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-primary)', borderRadius: '8px' }}
+                    formatter={(v: any) => [metric === 'ttft' ? formatMs(Number(v)) : formatNum(Number(v)), metricLabel]}
+                  />
+                  <Line type="monotone" dataKey="value" stroke="#667eea" strokeWidth={2} dot={false} name={metricLabel} />
+                </LineChart>
+              )}
             </ResponsiveContainer>
           )}
         </div>

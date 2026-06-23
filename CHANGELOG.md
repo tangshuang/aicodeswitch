@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-06-23: 修复 Token量 指标中「输入/总量」恒为空
+
+### 修复
+- **输入 Token 与总 Token 始终为空**：两处独立 bug 叠加。
+  - **数据兼容（主因）**：旧 `service-performance.json` 桶缺少新增的 `sumInputTokens`/`sumTotalTokens` 字段，加载后 `undefined += N` 得到 **NaN**，污染 `derive`/`trendFrom`，前端 `formatNum(NaN)` 回退为「-」。`totalOutputTokens` 因是旧字段未受影响，故只有输出有值。`ServicePerformanceTracker.initialize` 新增 `migrateBuckets`/`normalizeBucket`，加载时把所有 precise/estimated/hourly 桶的缺失字段补 0。
+  - **流式 input 丢失**：`chunk-collector.extractUsage` 旧实现在 `message_delta` 上提前返回，而该事件只带 `output_tokens`；真正的 `input_tokens` 在更早的 `message_start.message.usage` 里被跳过。重写为遍历**全部**事件并合并 Anthropic message_start(message.usage)+message_delta(usage)，同时统一 OpenAI(`prompt_tokens`/`completion_tokens`/`total_tokens`，含 `choices[].usage`) 与 Gemini(`usageMetadata`) 字段，返回归一化 `{input_tokens,output_tokens,total_tokens,cache_read_input_tokens}`。
+  - 流式消费点（标准路由 + AccessKey 两条 `finalizeLog`）改用新增的 `tokenUsageFromCollected` 直接映射归一化结果，移除原先字段名假设有误（只读 `input_tokens`/`output_tokens`）的 `extractUsage` 闭包分支与对流式扁平对象不兼容的 `extractTokenUsageFromResponse` 回退。非流式路径 `extractTokenUsageFromResponse` 本就正确，未动。
+
+## 2026-06-23: Fallback 透传流量纳入服务性能统计
+
+### 修复
+- **回退原始配置（Fallback）的透传流量补采**：此前未匹配规则时回退到原始上游的请求，因临时服务无 vendorId 被 `recordPerformance` 的三元组校验静默丢弃，导致这部分流量在测速面板完全不统计、模型不展示。现给 Fallback 临时服务挂上虚拟供应商 `fallback-vendor`（展示名「原始配置 / 直连」），并在 `emitPerformance` 补全虚拟供应商名，Fallback 流量作为独立虚拟供应商在服务性能面板呈现，与真实供应商区分开。
+
+## 2026-06-23: 服务性能面板新增「Token量」指标 + 下钻来源列 + 指标/维度按层级显隐
+
+### 新增
+- **服务性能新增「Token量」指标**：含 输入/输出/总量 三个口径。`PerformanceMetrics` / `PerfBucket` / `PerfDerived` / `PerfTrendPoint` 扩展 token 字段；`emitPerformance` 采集点传入 `inputTokens` 与 `totalTokens`（上游 `totalTokens` 优先，否则 input+output）。tracker 把 token 累加从 `timingAccuracy==='precise'` 门控中解耦——非流式样本的 token 也计入小时走势桶与派生总量（`derive` 改为跨 precise+estimated 求和），避免 token 时间序列只覆盖流式请求。
+- **切到「Token量」指标时**：对比表展示「输入Token / 输出Token / 总Token」3 列（其余指标仍为 平均首Token / 平均TPM）；走势图改用 `ComposedChart` 画 3 个系列——总量为面积阴影（渐变 Area），输入/输出为两条 Line，并附图例。
+
+### 优化
+- **下钻表格补来源列**：供应商层（行=API服务）补「供应商」列、服务层（行=模型）补「供应商」「API 服务」列，下钻后不再丢失来源；loading/空行 colSpan 按实际列数动态计算。
+- **指标/维度按层级显隐**：总览层只显示「维度」筛选器，下钻后只显示「指标」筛选器（二者作用域互斥，避免无效操作）。
+
 ## 2026-06-23: 请求日志/会话列表加载提速 + 筛选后端化 + 搜索框位置调整
 
 ### 优化
