@@ -4,9 +4,8 @@
 }
 
 .nav-tooltip {
-  position: absolute;
-  left: calc(100% + 12px);
-  top: 50%;
+  position: fixed;
+  /* left / top 由 JS 内联设置（基于触发元素 rect） */
   transform: translateY(-50%);
   background: var(--bg-card);
   color: var(--text-primary);

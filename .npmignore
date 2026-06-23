@@ -70,3 +70,5 @@ vite.config.ts
 .github/
 /docs/
 /schema/
+/logs/
+/.tmp/

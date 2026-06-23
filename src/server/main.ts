@@ -12,6 +12,9 @@ import { AccessKeyManager } from './access-keys/manager';
 import { PolicyManager } from './access-keys/policy-manager';
 import { ServicePerformanceTracker } from './performance-tracker';
 import type { FileSystemDatabaseManager } from './fs-database';
+import { createLogStore } from './log-store';
+import { agentMapService, registerAgentMapRoutes } from './agent-map';
+import { setNotifierAppUrl } from './notifier';
 import type {
   AppConfig,
   APIService,
@@ -74,8 +77,16 @@ if (fs.existsSync(dotenvPath)) {
   dotenv.config({ path: dotenvPath });
 }
 
-const host = process.env.HOST || '0.0.0.0';
+// 服务监听地址由 AUTH 模式强制决定（忽略 process.env.HOST）：
+// - AUTH 开启：监听 0.0.0.0，允许远端 AccessKey 客户端连接
+// - AUTH 关闭：监听 127.0.0.1，仅本机访问（默认最安全）
+const host = isAuthEnabled() ? '0.0.0.0' : '127.0.0.1';
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
+
+// 写入本地编程工具配置（Codex config.toml / Claude settings.json）+ UI/CLI 展示用的地址恒为回环地址。
+// 即便 AUTH 开启监听 0.0.0.0，本机工具与 dashboard 仍走 127.0.0.1，
+// 避免 0.0.0.0（监听语义）被当成连接目标，导致 Windows 客户端 stream disconnected。
+const clientHost = '127.0.0.1';
 
 let globalProxyConfig: { enabled: boolean; url: string; username?: string; password?: string } | null = null;
 
@@ -346,7 +357,7 @@ const writeClaudeConfig = async (
     // 构建代理配置
     const claudeSettingsEnv: Record<string, any> = {
       ANTHROPIC_AUTH_TOKEN: "api_key",
-      ANTHROPIC_BASE_URL: `http://${host}:${port}/claude-code`,
+      ANTHROPIC_BASE_URL: `http://${clientHost}:${port}/claude-code`,
       API_TIMEOUT_MS: "3000000",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
       CLAUDE_CODE_MAX_RETRIES: 3
@@ -543,7 +554,7 @@ const writeCodexConfig = async (
       model_providers: {
         aicodeswitch: {
           name: "aicodeswitch",
-          base_url: `http://${host}:${process.env.PORT ? parseInt(process.env.PORT, 10) : 4567}/codex`,
+          base_url: `http://${clientHost}:${port}/codex`,
           wire_api: "responses",
           stream_max_retries: 3,
           stream_retry_backoff: "fixed"
@@ -1658,6 +1669,9 @@ const registerRoutes = async (dbManager: FileSystemDatabaseManager, proxyServer:
     })
   );
 
+  // Agent Map（任务可视化节点地图）路由：SSE 实时流 + REST 快照/事件
+  registerAgentMapRoutes(app, agentMapService);
+
   // 清除规则的错误状态（广播 idle 状态给所有客户端）
   app.post(
     '/api/rules/:id/clear-status',
@@ -1725,8 +1739,27 @@ const registerRoutes = async (dbManager: FileSystemDatabaseManager, proxyServer:
       const rawOffset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : NaN;
       const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
       const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
-      const logs = await dbManager.getLogs(limit, offset);
-      res.json(logs);
+      const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+      const keyword = str(req.query.keyword) || str(req.query.query);
+      const filters = {
+        targetType: str(req.query.targetType) || undefined,
+        vendorId: str(req.query.vendorId) || undefined,
+        targetServiceId: str(req.query.serviceId) || str(req.query.targetServiceId) || undefined,
+        targetModel: str(req.query.model) || str(req.query.targetModel) || undefined,
+        routeId: str(req.query.routeId) || undefined,
+      };
+      const hasAnyFilter = keyword || filters.targetType || filters.vendorId || filters.targetServiceId || filters.targetModel || filters.routeId;
+      if (hasAnyFilter) {
+        const result = await dbManager.queryLogs({ filters, keyword, limit, offset });
+        res.json({ logs: result.data, total: result.total });
+      } else {
+        // 无筛选：仍返回 total，避免前端额外请求 count
+        const [logs, total] = await Promise.all([
+          dbManager.getLogs(limit, offset),
+          dbManager.getLogsCount(),
+        ]);
+        res.json({ logs, total });
+      }
     })
   );
   app.delete(
@@ -1744,8 +1777,26 @@ const registerRoutes = async (dbManager: FileSystemDatabaseManager, proxyServer:
       const rawOffset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : NaN;
       const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
       const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
-      const logs = await dbManager.getErrorLogs(limit, offset);
-      res.json(logs);
+      const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+      const filters = {
+        targetType: str(req.query.targetType) || undefined,
+        vendorId: str(req.query.vendorId) || undefined,
+        serviceId: str(req.query.serviceId) || str(req.query.targetServiceId) || undefined,
+        model: str(req.query.model) || str(req.query.targetModel) || undefined,
+        routeId: str(req.query.routeId) || undefined,
+      };
+      const keyword = str(req.query.keyword) || str(req.query.query);
+      const hasAnyFilter = keyword || filters.targetType || filters.vendorId || filters.serviceId || filters.model || filters.routeId;
+      if (hasAnyFilter) {
+        const result = await dbManager.queryErrorLogs({ filters, keyword, limit, offset });
+        res.json({ logs: result.data, total: result.total });
+      } else {
+        const [logs, total] = await Promise.all([
+          dbManager.getErrorLogs(limit, offset),
+          dbManager.getErrorLogsCount(),
+        ]);
+        res.json({ logs, total });
+      }
     })
   );
   app.delete(
@@ -2791,8 +2842,21 @@ ${instruction}
       const rawOffset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : NaN;
       const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
       const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
-      const sessions = await dbManager.getSessions(undefined, limit, offset);
-      res.json(sessions);
+      const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+      const opts = {
+        targetType: str(req.query.targetType) || undefined,
+        keyword: str(req.query.keyword) || str(req.query.query) || undefined,
+        vendorId: str(req.query.vendorId) || undefined,
+        serviceId: str(req.query.serviceId) || undefined,
+        model: str(req.query.model) || undefined,
+        routeId: str(req.query.routeId) || undefined,
+      };
+      const hasFilter = opts.targetType || opts.keyword || opts.vendorId || opts.serviceId || opts.model || opts.routeId;
+      const [sessions, total] = await Promise.all([
+        dbManager.getSessions(hasFilter ? opts : undefined, limit, offset),
+        dbManager.getSessionsCount(hasFilter ? opts : undefined),
+      ]);
+      res.json({ sessions, total });
     })
   );
 
@@ -4173,6 +4237,21 @@ const start = async () => {
   // 自动检测数据库类型并执行迁移（如果需要）
   console.time('[Server] step "database-init"');
   const dbManager = await DatabaseFactory.createAuto(dataDir, legacyDataDir) as FileSystemDatabaseManager;
+
+  // 创建并初始化共享 LogStore（追加写 NDJSON），注入 dbManager
+  const logStore = createLogStore(dataDir);
+  await logStore.init();
+  // 在服务对外提供流量前完成旧 JSON → NDJSON 迁移（含自愈：标记缺失时清空重迁，避免重复）。
+  // 必须在 listen 之前，防止迁移的「清空重迁」与实时写入竞争。
+  try {
+    await logStore.migrateLegacy(dataDir);
+  } catch (err) {
+    console.error('[Server] LogStore legacy migration failed:', err);
+  }
+  dbManager.setLogStore(logStore);
+
+  // Agent Map 服务接入 dbManager（种子化已有 Session + 启动状态清扫定时器）
+  agentMapService.attach(dbManager);
   console.timeEnd('[Server] step "database-init"');
 
   // 服务启动时自动同步配置文件（适用于 CLI 和 dev:server）
@@ -4192,13 +4271,22 @@ const start = async () => {
   const proxyServer = new ProxyServer(dbManager, app);
 
   // Initialize AccessKey module
-  const accessKeyModule = new AccessKeyModule(dataDir);
+  const accessKeyModule = new AccessKeyModule(dataDir, logStore);
   try {
     await accessKeyModule.initialize();
     proxyServer.setAccessKeyModule(accessKeyModule);
   } catch (error) {
     console.error('[Server] AccessKey module initialization failed:', error);
   }
+
+  // 日志保留期定时清理（主库 global + 所有 AccessKey key:*），每 6h 一次
+  const logRetentionTimer = setInterval(() => {
+    Promise.all([
+      logStore.retain('global', 30).catch(() => {}),
+      accessKeyModule.keyLogger.cleanupOldLogs().catch(() => {}),
+    ]).catch(() => {});
+  }, 6 * 60 * 60 * 1000);
+  if (typeof logRetentionTimer.unref === 'function') logRetentionTimer.unref();
 
   // Initialize Service Performance Tracker (全局统计，与 AUTH 无关)
   const performanceTracker = new ServicePerformanceTracker(dataDir);
@@ -4241,16 +4329,35 @@ const start = async () => {
     res.status(500).json({ error: err.message || 'Internal server error' });
   });
 
-  const isPortUsable = await checkPortUsable(port);
+  // 端口检测：若被占用，可能是上一个进程仍在退出过程中（Ctrl+C 后 shutdown 尚未完全释放端口），
+  // 此处轮询等待其释放后再继续启动，避免与正在退出的旧进程发生端口冲突。
+  // 超时仍未释放才判定为真正的占用并报错退出。
+  const PORT_POLL_INTERVAL = 300;
+  const PORT_WAIT_TIMEOUT = 10000;
+  let isPortUsable = await checkPortUsable(port);
   if (!isPortUsable) {
-    console.error(`端口 ${port} 已被占用，无法启动服务。请执行 aicos stop 后重启。`);
-    process.exit(1);
+    console.warn(`端口 ${port} 当前被占用，可能是上一个服务进程仍在退出中，等待其释放...`);
+    const portDeadline = Date.now() + PORT_WAIT_TIMEOUT;
+    while (!isPortUsable && Date.now() < portDeadline) {
+      await new Promise(resolve => setTimeout(resolve, PORT_POLL_INTERVAL));
+      isPortUsable = await checkPortUsable(port);
+    }
+    if (!isPortUsable) {
+      console.error(`端口 ${port} 在 ${PORT_WAIT_TIMEOUT / 1000}s 后仍被占用，无法启动服务。请执行 aicos stop 后重启。`);
+      process.exit(1);
+    }
+    console.log(`端口 ${port} 已释放，继续启动...`);
   }
 
   console.time('[Server] step "listen"');
   const server = app.listen(port, host, () => {
     listenReady = true;
-    console.log(`Admin server running on http://${host}:${port}`);
+    const listenInfo = host === '0.0.0.0'
+      ? ` (listening on all interfaces, port ${port})`
+      : '';
+    console.log(`Admin server running on http://${clientHost}:${port}${listenInfo}`);
+    // 点击 OS 通知时打开任务地图页（仅 terminal-notifier 路径生效；osascript 无法控制点击）
+    setNotifierAppUrl(`http://${clientHost}:${port}/#/agent-map`);
     console.timeEnd('[Server] step "listen"');
 
     // 启动后异步执行延迟维护任务（分片校验/修复、日志清理、会话索引构建）
@@ -4297,7 +4404,7 @@ const start = async () => {
     }
   });
 
-  console.log(`WebSocket server for tool installation attached to ws://${host}:${port}/api/tools/install`);
+  console.log(`WebSocket server for tool installation attached to ws://${clientHost}:${port}/api/tools/install`);
 
   let isShuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;
@@ -4310,6 +4417,13 @@ const start = async () => {
     isShuttingDown = true;
     shutdownPromise = (async () => {
       console.log(`[Server] Received ${signal}, shutting down...`);
+
+      // 立即停止监听以释放端口（同步关闭监听句柄，端口马上可用），
+      // 避免在漫长的清理流程期间端口仍被占用，导致此时重启产生 EADDRINUSE 冲突。
+      // 现有连接会继续处理直到完成或超时；其回调与下面的清理流程并行等待。
+      const serverClosedPromise = new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
 
       // 服务终止前恢复配置文件（适用于 aicos stop 与 Ctrl+C）
       try {
@@ -4343,13 +4457,19 @@ const start = async () => {
 
       dbManager.close();
 
+      // 落盘 LogStore 所有 namespace 的索引
+      try {
+        await logStore.close();
+      } catch (error) {
+        console.error('[Shutdown ...] LogStore close failed:', error);
+      }
+
       // 清理规则状态广播器（关闭 SSE 连接）
       rulesStatusBroadcaster.destroy();
 
+      // 等待监听句柄与现有连接关闭完成（最多 5s），确保端口彻底释放后再退出。
       await Promise.race([
-        new Promise<void>((resolve) => {
-          server.close(() => resolve());
-        }),
+        serverClosedPromise,
         new Promise<void>((resolve) => {
           setTimeout(resolve, 5000);
         })

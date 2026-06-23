@@ -35,7 +35,7 @@
     "aicodeswitch": "./bin/cli.js"
   },
   "scripts": {
-    "dev": "concurrently \"npm run dev:server\" \"npm run dev:ui\"",
+    "dev": "node scripts/dev.js",
     "dev:ui": "vite",
     "dev:server": "tsx --tsconfig=tsconfig.server.json src/server/main.ts",
     "dev:server:watch": "tsx watch --tsconfig=tsconfig.server.json --clear-screen=false --watch-kill-signal=SIGINT src/server/main.ts",

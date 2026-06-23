@@ -12,6 +12,7 @@ import { UsageTracker } from './usage-tracker';
 import { KeyLogger } from './key-logger';
 import { KeySessionTracker } from './key-session-tracker';
 import { KeyResolver } from './key-resolver';
+import type { LogStore } from '../log-store';
 
 export class AccessKeyModule {
   readonly keyManager: AccessKeyManager;
@@ -26,7 +27,7 @@ export class AccessKeyModule {
   private policiesFile: string;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(dataPath: string) {
+  constructor(dataPath: string, logStore: LogStore) {
     this.accessKeysFile = path.join(dataPath, 'access-keys.json');
     this.policiesFile = path.join(dataPath, 'policies.json');
 
@@ -34,7 +35,7 @@ export class AccessKeyModule {
     this.policyManager = new PolicyManager();
     this.quotaChecker = new QuotaChecker();
     this.usageTracker = new UsageTracker(dataPath);
-    this.keyLogger = new KeyLogger(dataPath);
+    this.keyLogger = new KeyLogger(dataPath, logStore);
     this.keySessionTracker = new KeySessionTracker(dataPath);
     this.keyResolver = new KeyResolver(this.keyManager, this.policyManager);
   }

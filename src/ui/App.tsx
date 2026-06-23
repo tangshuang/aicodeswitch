@@ -14,6 +14,7 @@ import SkillsPage from './pages/SkillsPage';
 import MCPPage from './pages/MCPPage';
 import AccessKeysPage from './pages/AccessKeysPage';
 import AccessKeyDetailPage from './pages/AccessKeyDetailPage';
+import AgentMapPage from './pages/AgentMapPage';
 import { ToastContainer } from './components/Toast';
 import { ConfirmProvider } from './components/Confirm';
 import ToolsInstallModal from './components/ToolsInstallModal';
@@ -25,6 +26,7 @@ import './styles/App.css';
 import logoImage from './assets/logo.png';
 import { useUpgradeNotes } from './hooks/docs';
 import { RulesStatusProvider } from './hooks/useRulesStatus';
+import { AgentNotificationsProvider } from './components/AgentNotificationsProvider';
 import upgradMd from '../../UPGRADE.md?raw';
 
 function AppContent() {
@@ -251,8 +253,8 @@ function AppContent() {
     };
   }, [authEnabled, sidebarCollapsed]);
 
-  // 折叠态菜单 overflow 为 visible（不滚动），此时不显示滚动提示
-  const showNavScrollHint = !sidebarCollapsed && navScrollState.scrollable;
+  // 菜单可滚动时显示阴影 + 滚轮提示（展开态与折叠态通用）
+  const showNavScrollHint = navScrollState.scrollable;
 
   const handleVendorModalConfirm = () => {
     setShowVendorModal(false);
@@ -428,7 +430,7 @@ function AppContent() {
         <ul className="nav-menu" ref={navMenuRef}>
           <li>
             <NavItemWithTooltip text="路由管理" showTooltip={sidebarCollapsed}>
-              <NavLink to="/"><span className="nav-icon">🌏</span><span className="nav-text">路由管理</span></NavLink>
+              <NavLink to="/routes"><span className="nav-icon">🌏</span><span className="nav-text">路由管理</span></NavLink>
             </NavItemWithTooltip>
           </li>
           <li>
@@ -457,6 +459,11 @@ function AppContent() {
             </>
           )}
           <li className="nav-divider"><hr style={{ border: 'none', borderTop: '1px solid var(--border-primary)', margin: '4px 8px' }} /></li>
+          <li>
+            <NavItemWithTooltip text="任务雷达" showTooltip={sidebarCollapsed}>
+              <NavLink to="/agent-map"><span className="nav-icon">🗺️</span><span className="nav-text">任务雷达</span></NavLink>
+            </NavItemWithTooltip>
+          </li>
           <li>
             <NavItemWithTooltip text="数据统计" showTooltip={sidebarCollapsed}>
               <NavLink to="/statistics"><span className="nav-icon">📊</span><span className="nav-text">数据统计</span></NavLink>
@@ -543,7 +550,8 @@ function AppContent() {
       </nav>
       <main className="main-content">
           <Routes>
-            <Route path="/" element={<RouteGroupsPage />} />
+            <Route path="/" element={<Navigate to="/routes" replace />} />
+            <Route path="/agent-map" element={<AgentMapPage />} />
             <Route path="/statistics" element={<StatisticsPage />} />
             <Route path="/routes" element={<RouteGroupsPage />} />
             <Route path="/vendors" element={<VendorsPage />} />
@@ -751,8 +759,10 @@ function App() {
     <Router>
       <ConfirmProvider>
         <RulesStatusProvider>
-          <AppContent />
-          <ToastContainer />
+          <AgentNotificationsProvider>
+            <AppContent />
+            <ToastContainer />
+          </AgentNotificationsProvider>
         </RulesStatusProvider>
       </ConfirmProvider>
     </Router>

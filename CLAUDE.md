@@ -248,6 +248,20 @@ aicos version            # Show current version information
   - AUTH 关闭 → 隐藏"接入密钥"菜单，显示"会话""日志"
   - AUTH 开启 → 显示"接入密钥"菜单，隐藏"会话""日志"
 
+#### 5.8. Agent Map Module - `server/agent-map/`
+- **Purpose**: 任务可视化节点地图（observe-only），把每个 Claude Code / Codex Session 画成画布节点，状态由活跃度自动推断并经 SSE 实时推送
+- **设计要点**：
+  - 纯观测，不驱动 Agent / 不涉及 ATO；数据全部来自代理 `finalizeLog` 采集点
+  - **状态推断**：`active`（60s 内有活动或有在途请求）/ `idle`（10min 内）/ `completed`（超 10min 且末轮正常）/ `error`（末次 5xx）
+  - **在途注册表**：`proxyRequest` 入口 `startRequest`、`finalizeLog` 内 `endRequest`，用于 active 判定 + "正在处理"指示
+  - **活动解析**：`activity-extractor.ts` 从单次请求抽出 `ActivityEvent`（prompt/tool_use/response/thinking/error），兼容 Claude/OpenAI/Responses/流式四种格式
+  - 服务自持运行时态（不依赖 dbManager 做状态推断，兼容 global/access-key 两套会话存储）；dbManager 仅用于 attach 时种子化已有全局 Session
+- **Key Files**: `agent-map-service.ts`（单例：在途注册表 + 状态引擎 + 事件环形缓冲 + EventEmitter 广播 + 15s 清扫）、`activity-extractor.ts`、`routes.ts`、`index.ts`
+- **HTTP API**: `GET /api/agent-map/stream`（SSE：init 快照 + session-update/activity/stats/heartbeat + 3s 心跳）、`/sessions`、`/sessions/:id/events?since=`、`/stats`
+- **main.ts 接线**: `agentMapService.attach(dbManager)` + `registerAgentMapRoutes(app, agentMapService)`
+- **proxy-server 归因**: `finalizeLog` 内 `onFinalized` 提取活动/重算状态/广播（覆盖普通路由 + AccessKey 两条分支，独立于 enableLogging）
+- **前端**: `AgentMapPage.tsx`（菜单"任务地图"，默认首页 `/` 重定向至此）—— SVG 节点画布（状态光晕脉冲 + 拖拽布局 localStorage 持久化）+ 详情活动路径子图 + 全局活动流；SSE 走 fetch+getReader（带 `Access-Token`）
+
 #### 6. UI (React) - `ui/`
 - Main app: `App.tsx` - Navigation and layout with collapsible sidebar
 - Components:
@@ -592,6 +606,9 @@ aicos version            # Show current version information
   - Tool requests are logged across all server-handled paths (proxy/stream/fallback/early-error)
   - `tags` include relay status per request: `通过中转` or `未通过中转`
   - Local count_tokens direct-return requests include tag: `系统计算Token直返`
+  - **存储与查询**：请求日志用 NDJSON 分片存储（`log-store/{namespace}/*.ndjson`，namespace 为 `global` 或 `key:{keyId}`），sidecar 索引包括 `shards-index.json` / `session-index.json` / `tombstones.json` / **`timeline-index.json`**（时间线索引）
+    - **时间线索引**（`TimelineEntry[]`）：常驻内存的轻量描述符（`{file, offset, length, ts, id, targetType, vendorId, targetServiceId, targetModel}`），append 顺序维护、防抖落盘。`getRecent` / `query` 无关键词时走索引切片（零扫描、仅 hydrate 当前页），深翻页常量化；sidecar 缺失/过期时 `loadNsState` 触发后台一次性 `rebuildTimeline`，期间回退扫描。
+    - **统一查询** `LogStore.query(ns, {filters, keyword, since, until, limit, offset})` → `{data, total}`：字段筛选无关键词走索引、有关键词回退全量扫描。`GET /api/logs` 接收 `targetType/vendorId/serviceId/model/keyword` 并返回 `{logs, total}`。
 - Access logs: System access records
 - Error logs: Error and exception records with comprehensive context
   - **Error Log Details**:
@@ -646,7 +663,7 @@ aicos version            # Show current version information
 
 1. **Environment Variables**: Copy `.env.example` to `.env` and modify as needed
 2. **Data Directory**: Default: `~/.aicodeswitch/data/` (JSON files)
-3. **Config File**: `~/.aicodeswitch/aicodeswitch.conf` (HOST, PORT, AUTH)
+3. **Config File**: `~/.aicodeswitch/aicodeswitch.conf` (PORT, AUTH)。监听地址由 AUTH 决定（AUTH 开→`0.0.0.0` / AUTH 关→`127.0.0.1`），`HOST` 已忽略；写入本地工具配置与 UI/CLI 展示地址恒为 `127.0.0.1`
 4. **Dev Ports**: UI (4568), Server (4567) - configured in `vite.config.ts` and `server/main.ts`
 5. **Skills Search**: `SKILLSMP_API_KEY` is required for Skills discovery via SkillsMP
 6. **API Endpoints**: All routes are prefixed with `/api/` except proxy routes (`/claude-code/`, `/codex/`)
@@ -950,6 +967,16 @@ npm 发布成功后，自动触发 Tauri 应用构建：
 
 ## 最近变更
 
+- 2026-06-22: 新增 Agent Map（任务可视化节点地图）
+  - 游戏化节点地图：把每个 Claude Code / Codex Session 画成画布节点，状态（进行中/空闲/已完成/异常）由活跃度自动推断并经 SSE 实时刷新；点开节点查看活动路径子图（提问→工具调用链→响应）
+  - 纯观测功能：数据全部复用代理已有流量，不驱动 Agent、不涉及未实现的 ATO 编排
+  - 新增 `server/agent-map/` 模块（`agent-map-service.ts` 单例：在途注册表 + 状态推断引擎 + 活动事件环形缓冲 + EventEmitter 广播 + 15s 状态清扫；`activity-extractor.ts` 服务端活动解析，兼容 Claude/OpenAI/Responses/流式；`routes.ts` SSE+REST）
+  - 采集接入点：`proxy-server.ts` `proxyRequest` 入口 `agentMapService.startRequest`、`finalizeLog` 内 `endRequest`+`onFinalized`（独立于 enableLogging，覆盖普通路由 + AccessKey 两条分支）
+  - `main.ts` 启动时 `agentMapService.attach(dbManager)`（种子化已有 Session + 启动清扫定时器），`registerRoutes` 内注册 `/api/agent-map/*`
+  - `Session` 类型扩展 `status`/`lastActivitySummary`/`lastToolName`/`lastStatusCode`（可选，兼容旧数据）；新增 `ActivityEvent`/`SessionMapItem`/`AgentMapStats`/`AgentMapStreamEvent` 类型
+  - 前端 `AgentMapPage.tsx`：SVG 节点画布（状态光晕脉冲、拖拽布局持久化）+ 详情活动路径子图 + 全局活动流；`/api/agent-map/stream` 走 fetch+getReader（带 Access-Token）
+  - 移除 App.tsx 中指向不存在 HomePage.tsx 的 ATO 遗留菜单/路由，默认首页重定向到 `/agent-map`
+
 - 2026-06-22: 密钥详情页新增"会话"Tab
   - 密钥详情页新增"会话"Tab，支持按密钥查看独立会话列表（搜索、过滤、分页、自动刷新）
   - 每密钥独立会话存储（`key-sessions/<keyId>/sessions.json`），与全局会话系统完全隔离
@@ -998,7 +1025,7 @@ npm 发布成功后，自动触发 Tauri 应用构建：
 * 所有对话请使用中文。生成代码中的文案及相关注释根据代码原本的语言生成。
 * 在服务端，直接使用 __dirname 来获取当前目录，不要使用 process.cwd()
 * 每次有新的架构变化时，你需要更新 CLAUDE.md, AGENTS.md 来让文档保持最新。
-* 每次有变更，以非常简单的概述，将变化内容记录到 CHANGELOG.md 中。
+* 每次有**代码**变更（忽略文档变更），以非常简单的概述，将变化内容记录到 CHANGELOG.md 中。
 * 禁止在ui中使用依赖GPU的css样式。
 * 禁止运行 dev:ui, dev:server, tauri:dev 等命令来进行测试。
 * 如果你需要创建文档，必须将文档放在 documents 目录下

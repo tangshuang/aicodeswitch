@@ -1,5 +1,188 @@
 # Changelog
 
+## 2026-06-23: 请求日志/会话列表加载提速 + 筛选后端化 + 搜索框位置调整
+
+### 优化
+- **请求日志列表加载提速**：新增「时间线索引」——为每个 namespace 维护常驻内存的轻量描述符数组（含 `targetType/vendorId/targetServiceId/targetModel` 筛选字段），持久化为 `timeline-index.json` sidecar，重启不必全量重扫。`getRecent` 退化为「数组切片 → 仅 hydrate 当前页」，深翻页不再随 offset 线性增长（此前需逐行 `JSON.parse` 最新分片直到凑够 `offset+limit` 条）。冷启动 sidecar 缺失/过期时后台一次性重建，期间回退扫描。
+- **请求日志筛选后端化**：此前 4 个筛选下拉框为纯前端、只过滤当前页（后页命中项永远看不到）。新增统一查询入口 `LogStore.query`：无关键词时走时间线索引（零扫描）、有关键词时回退扫描；`GET /api/logs` 支持 `targetType/vendorId/serviceId/model/routeId/keyword` 参数并随响应返回 `total`，前端删除客户端 `filterRequestLogs` 与冗余的 count 调用。
+- **请求日志新增「路由」筛选**：`RequestLog` 新增 `routeId` 字段，在 `proxyRequest` / `proxyRequestForApiPath` 各日志写入点填充 `route?.id`；时间线索引描述符同步携带 `routeId`，支持按路由筛选。
+- **会话列表筛选后端化 + 补齐筛选器**：`getSessions/getSessionsCount` 扩展为支持 `targetType/keyword/vendorId/serviceId/model/routeId` 字段筛选；会话页新增「供应商/API服务/模型/路由」下拉框，与日志页对齐，全部走后端。
+- **错误日志筛选/搜索同步**：`ErrorLog` 新增 `routeId` 字段（错误日志写入处填充）；新增 `queryErrorLogs` 内存查询（字段筛选 + 关键词 + total）；`GET /api/error-logs` 支持 `targetType/vendorId/serviceId/model/routeId/keyword` 并返回 `{logs, total}`；错误日志 tab 复用请求日志的同款筛选下拉框与搜索交互。
+
+### 调整
+- 请求日志/会话的「搜索」改为**点击「搜索」按钮/回车才发起请求**（不再输入实时请求）；搜索框与筛选项置于同一 flex 容器，跟在「清除筛选」之后自然换行；新增「清空」按钮一键清空搜索词。
+- 统一两个页面「清除筛选」按钮样式（danger 红色）。
+- 日志页 tab 角标总数与分页 total 拆分：角标显示未过滤总数（独立拉取，初始即有值，不再为 0），分页 total 为过滤后的命中数。
+- 每次列表请求合并返回 `total`，省去前端额外一次 count 往返；前端对旧版服务（返回裸数组）做了兼容，会自动补 count 以保证分页正确。
+
+## 2026-06-22: 任务雷达 popover 新增「会话详情」入口 + 限高 80vh
+
+### 新增
+- 任务雷达页点击节点弹出的 popover 底部新增「会话详情」按钮（与「刷新活动」同款 ghost 文字按钮），点击后复用「会话」模块的 `SessionDetailModal` 打开会话详情弹窗（日志/对话双视图）。
+- 点击即时打开弹窗：直接用 `SessionMapItem` 构造 session 信息渲染弹窗（内置 loading 态），日志后台按来源分流加载（global → `/api/sessions/:id/logs`，access-key → `/api/access-keys/:keyId/sessions/:id/logs`），避免点击后的等待。
+
+### 调整
+- `.am-detail--popover` 最大高度由 `calc(100vh - 24px)` 收紧为 `80vh`，避免高分屏下 popover 撑满整屏。
+- popover 底部改为 flex 布局容纳多按钮；新增 `.am-btn:disabled` 禁用态（access-key 节点缺 keyId 时按钮禁用）。
+
+## 2026-06-22: 重设计稳健的日志迁移逻辑（logId 去重 + 内容感知 gate）
+
+### 修复
+- 上版迁移在「用户删了 `log-store/global/*.ndjson` 数据文件但留下 `.legacy-migrated` 标记」时直接跳过迁移，导致重启后日志全没——标记只证明「曾经迁移过」，不证明「store 现在还有数据」。
+- `LogStore.migrateLegacy` 重写为**幂等 + 非破坏性 + 内容感知**：
+  - **gate 看真实数据**：仅当 `标记缺失 OR storeHasData()=false` 才迁移。`storeHasData` 扫实际 `*.ndjson` 文件（不信 shards-index.json 元数据，防「索引在、文件没了」）。正常重启（标记在 + 数据在）跳过，不扫源。
+  - **logId 去重取代破坏性 wipe**：进入迁移时为每个有数据的 namespace 用 `collectIds` 建已存在 idSet，迁移时 `idSet.has(id)` 则跳过。「部分残留/中断续跑/标记过期重跑」均不产生重复。
+  - **stale 索引清理**：store 无数据文件时，先删掉残留的 `shards-index.json`/`session-index.json`/`tombstones.json` + 清内存态，避免幽灵索引。
+  - 标记改名 `.log-store-migration`（兼容删除旧 `.legacy-migrated`），内容记录 `{version, finishedAt, sources}` 便于排查；仍需 `storeHasData()` 为真才在下次跳过。
+  - 不碰源头 `logs/`、`key-logs/`（始终只读）。
+- 状态矩阵全覆盖（有/无数据 × 有/无标记 × 部分/完全），任意状态结果一致、无重复、无丢失。
+
+## 2026-06-22: 任务地图修复 499（主动放弃）状态不一致
+
+### 修复
+- 点击「放弃停止任务」产生 499（客户端主动断开）时，任务地图节点不变化、全局活动流却冒出 ⚠️「请求失败 (499)」的矛盾：根因是节点状态引擎仅把 `>= 500` 视为 error，而活动流对任意 `>= 400` 都发 error 事件，499 恰好落在两者之间
+- 现将 499 统一视为「已取消」（与 proxy 既有的 `markRuleIdle` 约定一致）：活动流改发中性 `cancelled` 事件（🚫「已取消 (499)」，灰色，不计入 errorSessions），节点状态立即从 active 停止脉冲转为 idle、过 idleWindow 再 completed
+- 499 引发的 active→idle 迁移不弹 OS 系统通知（`maybeNotifyTurnEnd` 在 `lastStatusCode===499` 时跳过），避免用户主动放弃任务却被「任务已暂停」通知打扰
+- 改动文件：`src/types/index.ts`（`ActivityEvent.kind` 新增 `cancelled`）、`src/server/agent-map/activity-extractor.ts`（499 分支）、`src/server/agent-map/agent-map-service.ts`（`inferStatus` 新增 499 分支 + `maybeNotifyTurnEnd` 跳过 499）、`src/ui/pages/AgentMapPage.tsx`（渲染 cancelled 图标）、`src/ui/styles/App.css`（中性样式）
+
+
+## 2026-06-22: dev 模式 server 就绪后再启动 UI
+
+### 改进
+- `scripts/dev.js` 改为顺序启动：先启动 server 子进程，轮询 `/health`（127.0.0.1:4567，每 300ms 一次、最长等 30s）确认可用后再启动 UI，避免 UI 起来时代理目标尚未就绪
+- server 在健康检查未通过前退出或超时仍未就绪时，放弃启动 UI 并走正常停止流程，避免半挂状态
+- 信号处理与 server 退出级联提前注册，确保等待健康期间 Ctrl+C 也能正确清理
+
+## 2026-06-22: 优化 Ctrl+C 退出与重启的端口冲突问题
+
+### 改进
+- shutdown 序列中把 `server.close()` 提到最前：收到 SIGINT/SIGTERM 后**立即关闭监听句柄释放端口**，配置恢复、AccessKey、性能统计、dbManager、logStore 等耗时清理与之并行进行，端口不再被漫长清理流程拖住
+- 进程在清理全部完成、打印 "Server stopped." 后才 `process.exit(0)`，实现 Ctrl+C 阻塞到完全停止，避免"停止前重启"
+- 启动时端口探测改为轮询等待：若端口被占用（典型为上一个进程仍在退出过程中），每 300ms 探测一次、最多等 10s，超时仍未释放才报错退出，重启不再立即撞 EADDRINUSE
+
+## 2026-06-22: 修复 LogStore 迁移重复 + AccessKey 目录命名
+
+### 修复
+- 会话详情拉不到日志/对话记录：根因是旧→NDJSON 迁移在重启时**重复执行**——`.legacy-migrated` 标记缺失 + 旧分片归档条件过严（`written === arr.length`，任一坏数据就永不归档），导致每次启动都把旧日志重新追加一遍，`log-store/global/` 累积成 432 个 ~50MB 文件（约 21GB 重复数据），session 索引随之错乱。
+- `LogStore.migrateLegacy` 改为：① 标记缺失时**自愈清空**已有 namespace 目录后从源头（`logs/`、`key-logs/` 仍完整未动）重新迁移，保证幂等无重复；② 迁移改在 **main.ts 服务 listen 之前**执行，避免「清空重迁」与实时写入竞争；③ **不移动/删除旧文件**——`~/.aicodeswitch/fs-db/logs` 原地保留，由用户确认新存储正常后手动删除（见 UPGRADE.md）。
+- AccessKey 日志 namespace 目录改名：`key-key_<id>` → `key_<id>`（keyId 本身已带 `key_` 前缀，去掉冗余的 `key-`）。`nsDirName` 与 `init` 扫描逻辑同步调整。
+
+### 影响
+- 升级后首次启动会自动清空并重建 `log-store/`（从旧 `logs/`、`key-logs/` 重迁一次即完成并写入 `.legacy-migrated` 标记），之后会话详情恢复正常。
+- 旧 `logs/`、`key-logs/` 目录**原地保留**；运行一段时间确认正常后，可手动删除以释放空间。
+
+## 2026-06-22: 服务监听地址改为 AUTH 驱动；本地工具/UI 地址统一 127.0.0.1
+
+### 改进
+- 服务监听地址不再由 `process.env.HOST` 决定，改为由 AUTH 模式强制：AUTH 开启→监听 `0.0.0.0`（允许远端 AccessKey 客户端连接），AUTH 关闭→监听 `127.0.0.1`（仅本机，默认最安全）。`aicodeswitch.conf` 里的 `HOST` 不再生效
+- `clientHost` 恒为 `127.0.0.1`：写入 Codex `config.toml` 的 `base_url`、Claude `settings.json` 的 `ANTHROPIC_BASE_URL`，以及 `app.listen` 启动日志、工具安装 WebSocket 日志统一使用回环地址；AUTH 开启绑定全网卡时启动日志追加 `(listening on all interfaces)` 说明
+- CLI 侧 `bin/utils/get-server.js` `getServerInfo()` 不再读 `HOST`，始终返回 `127.0.0.1`（+ 配置端口）；`aicos status` / `aicos ui` / `aicos start` 展示与自动打开的 URL 统一为 `http://127.0.0.1:<port>`，即便 conf 残留旧 `HOST=0.0.0.0` 也不会再回显
+- AccessKey `connect-config` 端点保留 `req.hostname` 上下文相关逻辑（远端 AccessKey 客户端复制 env 时需要 LAN IP），是有意保留的唯一例外
+- 文档同步：README 删除 `HOST` 配置项并补充 AUTH 驱动说明；CLAUDE.md / AGENTS.md 配置文件说明更新
+
+## 2026-06-22: 日志存储层重构（独立 LogStore，追加写 NDJSON）
+
+### 重构
+- 日志存取从「分片 JSON 数组 read-modify-write」改为独立的 `LogStore` 模块（`src/server/log-store/`），采用**追加写 NDJSON + 字节偏移索引**：写日志从 O(分片大小) 降为 O(单条)，查询改为流式逐行读，内存只持单行 + 当前页。
+- `sessionLogIndex` 由「分片内数组绝对下标」改为 `{file, offset, length, timestamp, logId}` 字节偏移引用——追加写下偏移永远稳定，按会话取日志变成按字节范围随机读，删除会话日志/保留清理无需修正引用。
+- 主库（`global`）与 AccessKey（`key:{keyId}`）日志**并入同一个 LogStore**（namespace 区分），消除 key-logger.ts 与 fs-database.ts 的两套并行实现；顺带补齐 AccessKey 日志的 session 倒排、定时清理（此前 `cleanupOldLogs` 为死代码）、统一 ISO 日期与紧凑序列化。
+- 会话级删除改用 tombstone（按 logId），追加写无需重写分片文件，消除原「重写分片 + 修正全局下标」的高成本路径。
+- 启动一次性迁移：`LogStore.migrateLegacy` 自动把旧 `logs-*.json` / `logs.json` / `key-logs/<id>/*.json` 流式转写为 NDJSON，**条目数对账通过后**才把旧文件归档到 `log-store/legacy-backup/`（不立即删除，留回滚窗口），并用 `.legacy-migrated` 标记保证只跑一次。
+- `fs-database.ts` 退化为薄委托层：`addLog`/`getLogs`/`getLogsCount`/`searchLogs(Count)`/`getLogsBySessionId`/`getRecentLogsBySessions`/`clearLogs`/`deleteLogsBySessionIds` 等全部委托 LogStore；删除死代码 `getClientClosedLogs*` 及一整套旧的分片读写/索引构建方法。统计 `updateStatistics` 写时增量保持现状（未改）。
+- `main.ts` 启动时创建并 `init` LogStore 注入 dbManager 与 AccessKeyModule；新增每 6 小时定时保留清理（主库 30 天 + 所有 AccessKey）；shutdown 时 `logStore.close()` 落盘索引。
+
+### 不变
+- 存储字段不变：每条日志的完整 `streamChunks`/`body`/`responseBody` 等仍完整落盘，日志详情页可见性不受影响。
+- 统计、导入导出（不含日志）、service-performance 维持现状。
+
+## 2026-06-22: 修复代理服务 OOM（收紧日志加载 + 全扫描查询内存加固）
+
+### 修复
+- 代理服务长时间运行后堆内存持续增长至 4GB 触发 `JavaScript heap out of memory` 崩溃。根因：启动时 Agent Map `rebuildRecentEvents` 为最近 100 个会话各回填最多 200 条完整日志，且同一日志分片被不同会话重复 `JSON.parse` 多达 100 次（每条日志带完整 `streamChunks`）；叠加 `searchLogs` / `getClientClosedLogs` 全扫描时把所有匹配正文累积进内存。
+- `agent-map-service.ts`：启动重建改为仅回填最近 1 小时内有活动的 global 会话、每会话上限 30 条；点节点按需重建取最近 24h；提取 `buildEventsFromLogs()` 复用。新增常量 `REBUILD_SINCE_MS`(1h) / `REBUILD_EVENTS_PER_SESSION`(30) / `ONDEMAND_SINCE_MS`(24h)。
+- `fs-database.ts`：`getLogsBySessionId` 新增 `since` 参数，时间过滤下推到索引层（`sessionLogIndex` ref 已带 timestamp，老分片完全不读）；新增 `getRecentLogsBySessions()` 批量跨会话回填（每分片只加载一次）；新增 `hydrateLogsFromRefs()` 复用 helper。
+- `fs-database.ts`：`searchLogs` / `getClientClosedLogs` 两阶段化——扫描阶段只持 `{filename,index,timestamp}` 轻量描述符，切页后仅对当前页回填完整正文，匹配正文不再同时驻留内存。
+- 存储格式不变：每条日志的完整 `streamChunks` 仍照常落盘，日志详情页可见性不受影响。
+
+## 2026-06-22: 优化任务雷达「活动路径」重复消息
+
+### 改进
+- 任务地图节点详情「活动路径」此前会出现较多重复消息：同一句 prompt 在工具循环/客户端重试/末条 user 同时含 text+tool_result 时反复出现；连续相同的工具调用（如多次 `Read`/`Grep`）各占一行。
+- 后端 `agent-map-service.ts`：`RuntimeState` 新增 `lastPromptSummary`，`onFinalized` 改为跨轮次 prompt 去重——只要本轮 prompt 文本与该会话「最近一次真正写入的 prompt」相同即丢弃，不再受「上一条事件必须是 prompt」限制。
+- 前端 `AgentMapPage.tsx` `ActivityPathGraph`：对相邻同 kind+toolName+summary 的事件做游程折叠，合并为单行并显示「×N」徽标（纯静态展示，无展开交互）；连续相同的 `tool_use`/`response`/`prompt` 均受益。同时移除原有点击行展开 `tool_use` 详情的逻辑，活动路径/活动流不再展开任何内容。
+- 新增样式 `.am-path-count`（`App.css`），未使用 GPU 相关属性。
+
+## 2026-06-22: Agent Map 一轮结束精确识别（响应 turn-end 信号）+ 通知权限「禁止」兜底
+
+### 改进
+- 新增 `activity-extractor.ts` `detectTurnEnd`：从代理转发的下游响应里读取官方 SDK 判定「一轮完成」所用的字段——Claude 的 `stop_reason`（`tool_use`=继续，其余如 `end_turn`/`max_tokens`=结束）、Codex 的 `function_call`(继续)/`response.completed`(结束)。替代纯「60 秒无活动」启发式作为主信号。
+- `agent-map-service` 状态引擎：本轮响应判定为「结束」时**立即** `active → idle`，节点**停止脉冲**（此前已结束的节点会继续脉冲约 60s）；任务结束浏览器通知随之**即时触发**而非等 60s；`tool_use` 续轮保持 active，60s 时间窗仍作未知/兜底。
+- 新增 `RuntimeState.lastTurnEnd`；`inferStatus` / `onFinalized` / 15s 清扫均接入该信号。
+
+### 新增
+- 通知开关权限「禁止」路径兜底：`AgentNotificationsProvider.toggle` 按 `requestPermission` 结果 toast 反馈（开启成功 / 被禁止 / 未授权可重试 / 不支持）；「任务地图」topbar 在权限被禁止时常驻「⚠ 已被禁止 · 如何开启？」链接，弹出帮助 Popover 给出 Chrome/Edge/Safari/Firefox 站点设置放行步骤 +「切回本页开关自动恢复」提示。
+
+## 2026-06-22: 修复 Agent Map「最近模型」显示为编程工具提交的模型名
+
+### 修复
+- 任务地图节点详情「最近模型」原先取 `rule.targetModel || req.body.model`（预测值），当规则未配置 `targetModel` 时会回退成编程工具提交的 `req.body.model`，而非真正转发给上游供应商的模型名
+- `server/proxy-server.ts` 将 Agent Map、服务性能统计（`emitPerformance`）、请求日志 `targetModel`、Session/KeySession 持久化等约 17 处模型字段统一改为采用转换+覆盖后真正发往上游的 `requestBody.model`（与日志 `upstreamRequest.body.model` 一致），仅保留错误重试路径（`lastFailedRule`）与原始配置兜底路径（`fallbackTargetModel`）不变
+
+## 2026-06-22: 修复写入 Codex/Claude Code 配置时 base_url 为 0.0.0.0 导致客户端无法连接
+
+### 修复
+- 服务端默认监听 `0.0.0.0`（监听所有网卡，监听语义正确），但同一 `host` 被原样拼进写入客户端工具配置文件的 `base_url`（Codex `config.toml` 的 `base_url`、Claude Code `settings.json` 的 `env.ANTHROPIC_BASE_URL`）。`0.0.0.0` 不是有效连接目标，Windows 等系统的 HTTP 客户端无法 connect，导致 Codex 桌面端报 `stream disconnected before completion: error sending request for url (http://0.0.0.0:4567/codex/responses)`
+- `server/main.ts` 新增 `clientHost` 常量，将通配监听地址（`0.0.0.0` / `::`）归一化为可连接的回环地址 `127.0.0.1`；两处写配置点改用 `clientHost`，`app.listen` 仍用 `host` 保持「监听所有网卡」能力
+- 顺手将 Codex `base_url` 中重复的 `process.env.PORT` 三元判断替换为已有的 `port` 变量
+
+## 2026-06-22: 开发环境 Ctrl+C 同步阻塞优化
+
+### 改进
+- 新增 `scripts/dev.js` 开发模式启动器（替代 `concurrently`）：直接 spawn `tsx`（服务）与 `vite`（UI），接管 `SIGINT`/`SIGTERM`，在服务子进程真正 `exit`（等价于 `Server stopped.` 出现）之后才退出父进程，避免终端提示符过早返回、端口未释放导致快速重启 `EADDRINUSE` 冲突
+- `package.json` `dev` 脚本改为 `node scripts/dev.js`；`dev:server` / `dev:ui` 子脚本保持不变
+- 日志按行加 `[server]` / `[ui]` 前缀（替代 concurrently 彩色前缀），任一子进程自行退出时级联停止另一个，15s 硬超时兜底强退
+
+## 2026-06-22: Agent Map 支持项目路径展示与原始会话标题
+
+### 新增
+- 新增 `server/agent-map/session-meta.ts`：从本机 Claude Code / Codex 会话存储读取每个会话的「项目路径」与「原始标题」
+  - Claude：`~/.claude/projects/*/sessions-index.json` 取 projectPath，回退遍历各项目目录定位 `<sessionId>.jsonl`，优先取行内 `type:"ai-title"` 的 `aiTitle` 作为标题
+  - Codex：构建一次 sessionId→文件 索引（`~/.codex/sessions/**` + `archived_sessions`），读首行 `session_meta.payload.cwd`；标题优先 `session_index.jsonl` 的 thread_name，回退首条用户消息（剥 `<environment_context>`）
+  - 结果按 sessionId 内存缓存，避免重复扫盘
+- 仅对非 AccessKey（global）会话解析：Claude Code/Codex 运行在本机时磁盘文件可读；AccessKey 流量来自远端，无法解析
+- 详情 popover 新增「项目路径」行：global 会话展示真实路径，access-key 会话提示「接入密钥会话，无法读取本地项目信息」
+- 新增 API：`GET /api/agent-map/sessions/:id/meta`（按需解析，含 source 标记）
+
+### 改进
+- `SessionMapItem` / `RuntimeState` 新增 `projectPath?` 字段
+- `agent-map-service` 在 `onFinalized` 异步富化项目路径与原始标题（命中即覆盖日志截取的标题），并暴露 `getSessionMeta`
+- 修复 `proxy-server.ts` `onFinalized` 未传 `title` 的缺口（节点标题此前仅靠种子化，新会话首现无标题）
+- 节点标题改用磁盘原始标题（Claude aiTitle / Codex thread_name），展示更标准
+
+## 2026-06-22: 新增 Agent Map 任务可视化节点地图
+
+### 新增
+- 新增「任务地图」页面（菜单"任务地图"，默认首页 `/` 重定向至此）：把每个 Claude Code / Codex Session 画成 SVG 节点，状态（进行中/空闲/已完成/异常）由活跃度自动推断并经 SSE 实时刷新，节点支持拖拽布局（localStorage 持久化）
+- 点开节点查看活动路径子图（提问 → 工具调用链 → 响应），底部全局活动流实时滚动所有 Session 的细粒度事件
+- 纯观测功能：数据全部复用代理已有流量，不驱动 Agent、不涉及未实现的 ATO 编排
+- 新增 `server/agent-map/` 模块（`agent-map-service.ts` 单例：在途注册表 + 活跃度状态推断引擎 + 活动事件环形缓冲 + EventEmitter 广播 + 15s 状态清扫；`activity-extractor.ts` 服务端活动解析；`routes.ts`）
+- 新增 4 个 API：`GET /api/agent-map/stream`（SSE 实时流）、`/sessions`、`/sessions/:id/events?since=`、`/stats`
+- 采集接入点：`proxy-server.ts` `proxyRequest` 入口 `startRequest`、`finalizeLog` 内 `endRequest`+`onFinalized`（独立于 enableLogging，覆盖普通路由 + AccessKey 两条分支）
+
+### 改进
+- `Session` 类型扩展 `status`/`lastActivitySummary`/`lastToolName`/`lastStatusCode`（可选，兼容旧数据）；新增 `ActivityEvent`/`SessionMapItem`/`AgentMapStats`/`AgentMapStreamEvent` 共享类型
+- 移除 `App.tsx` 中指向不存在 `HomePage.tsx` 的 ATO 遗留菜单/路由（构建曾因此失败），默认首页改为 `/agent-map`
+- 文档：新增 `docs/PRD/agent-map.md`；`CLAUDE.md` 补充 5.8 Agent Map Module 章节
+
+## 2026-06-17: Tauri 构建流水线新增 macOS 与 Linux 产物
+
+### 新增
+- `build-tauri.yaml` 构建矩阵扩展：新增 macOS Intel（`macos-13`，`x86_64-apple-darwin`）与 Apple Silicon（`macos-14`，`aarch64-apple-darwin`），产出 `.dmg` + `.app`（`.zip`）
+- 新增 Linux 桌面构建（`ubuntu-22.04`，`x86_64-unknown-linux-gnu`），产出 `.deb` / `.rpm` / `.AppImage`
+- Linux job 新增 WebKitGTK、libayatana-appindicator 等系统依赖安装步骤
+- 新增各平台产物重命名（`AI-Code-Switch-<ver>-<OS>-<arch>`）与分组上传步骤
+- Release 说明补充 macOS（Intel/ARM 区分、Gatekeeper 提示）与 Linux（deb/rpm/AppImage 用法）下载指引
+
 ## 2026-06-17: 新增服务性能测速与吞吐统计（被动流量，全局）
 
 ### 新增

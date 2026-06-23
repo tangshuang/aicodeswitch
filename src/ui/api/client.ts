@@ -56,6 +56,18 @@ interface BackendAPI {
   getLogsCount: () => Promise<{ count: number }>;
   searchLogs: (query: string, limit: number, offset: number) => Promise<RequestLog[]>;
   searchLogsCount: (query: string) => Promise<{ count: number }>;
+  queryLogs: (params: {
+    filters?: { targetType?: string; vendorId?: string; serviceId?: string; model?: string; routeId?: string };
+    keyword?: string;
+    limit: number;
+    offset: number;
+  }) => Promise<{ logs: RequestLog[]; total: number }>;
+  queryErrorLogs: (params: {
+    filters?: { targetType?: string; vendorId?: string; serviceId?: string; model?: string; routeId?: string };
+    keyword?: string;
+    limit: number;
+    offset: number;
+  }) => Promise<{ logs: ErrorLog[]; total: number }>;
 
   getErrorLogs: (limit: number, offset: number) => Promise<ErrorLog[]>;
   clearErrorLogs: () => Promise<boolean>;
@@ -112,7 +124,12 @@ interface BackendAPI {
   }>;
 
   // Sessions 相关
-  getSessions: (limit?: number, offset?: number) => Promise<Session[]>;
+  getSessions: (params?: {
+    filters?: { targetType?: string; vendorId?: string; serviceId?: string; model?: string; routeId?: string };
+    keyword?: string;
+    limit?: number;
+    offset?: number;
+  }) => Promise<{ sessions: Session[]; total: number }>;
   getSessionsCount: () => Promise<{ count: number }>;
   getSession: (id: string) => Promise<Session | null>;
   getSessionLogs: (id: string, limit?: number) => Promise<RequestLog[]>;
@@ -122,6 +139,24 @@ interface BackendAPI {
 
   getRecommendVendorsMarkdown: () => Promise<string>;
   getReadmeMarkdown: () => Promise<string>;
+
+  // Agent Map（任务可视化节点地图）
+  getAgentMapSessions: () => Promise<import('../../types').SessionMapItem[]>;
+  getAgentMapSessionEvents: (id: string, since?: number) => Promise<import('../../types').ActivityEvent[]>;
+  getAgentMapStats: () => Promise<import('../../types').AgentMapStats>;
+  getAgentMapSessionMeta: (id: string) => Promise<{ source: 'global' | 'access-key' | 'unknown'; projectPath?: string; title?: string }>;
+  getAgentMapNotify: () => Promise<{ enabled: boolean }>;
+  setAgentMapNotify: (enabled: boolean) => Promise<{ enabled: boolean }>;
+  setAgentMapNotifyFocus: (hidden: boolean) => Promise<{ ok: boolean }>;
+  testAgentMapNotify: () => Promise<{ ok: boolean }>;
+  /** 建立 Agent Map SSE 实时流（返回 AbortController，回调逐帧解析） */
+  streamAgentMap: (handlers: {
+    onInit?: (payload: import('../../types').AgentMapInitPayload) => void;
+    onSessionUpdate?: (s: import('../../types').SessionMapItem) => void;
+    onActivity?: (e: import('../../types').ActivityEvent) => void;
+    onStats?: (s: import('../../types').AgentMapStats) => void;
+    onError?: (err: Error) => void;
+  }) => { abort: () => void };
   getUpgradeMarkdown: () => Promise<string>;
 
   // Skills 管理相关
@@ -332,6 +367,64 @@ export const api: BackendAPI = {
 
   searchLogs: (query, limit, offset) => requestJson(buildUrl('/api/logs/search', { query, limit, offset })),
   searchLogsCount: (query) => requestJson<{ count: number }>(buildUrl('/api/logs/search/count', { query })),
+  queryLogs: async ({ filters, keyword, limit, offset }) => {
+    const raw = await requestJson<unknown>(
+      buildUrl('/api/logs', {
+        targetType: filters?.targetType,
+        vendorId: filters?.vendorId,
+        serviceId: filters?.serviceId,
+        model: filters?.model,
+        routeId: filters?.routeId,
+        keyword,
+        limit,
+        offset,
+      })
+    );
+    // 新格式 { logs, total }
+    if (!Array.isArray(raw)) {
+      const obj = raw as { logs?: RequestLog[]; total?: number };
+      return { logs: obj.logs ?? [], total: obj.total ?? 0 };
+    }
+    // 旧格式（裸数组，旧版服务）：补一次 count 以保证分页正确
+    const logs = raw as RequestLog[];
+    let total = logs.length;
+    try {
+      const hasFilter = !!(filters && (filters.targetType || filters.vendorId || filters.serviceId || filters.model || filters.routeId));
+      if (!hasFilter) {
+        const c = await requestJson<{ count: number }>(buildUrl('/api/logs/count'));
+        total = c.count;
+      }
+    } catch { /* 旧版服务无 count 时退化为本页条数 */ }
+    return { logs, total };
+  },
+  queryErrorLogs: async ({ filters, keyword, limit, offset }) => {
+    const raw = await requestJson<unknown>(
+      buildUrl('/api/error-logs', {
+        targetType: filters?.targetType,
+        vendorId: filters?.vendorId,
+        serviceId: filters?.serviceId,
+        model: filters?.model,
+        routeId: filters?.routeId,
+        keyword,
+        limit,
+        offset,
+      })
+    );
+    if (!Array.isArray(raw)) {
+      const obj = raw as { logs?: ErrorLog[]; total?: number };
+      return { logs: obj.logs ?? [], total: obj.total ?? 0 };
+    }
+    const logs = raw as ErrorLog[];
+    let total = logs.length;
+    try {
+      const hasFilter = !!(filters && (filters.targetType || filters.vendorId || filters.serviceId || filters.model || filters.routeId)) || !!keyword;
+      if (!hasFilter) {
+        const c = await requestJson<{ count: number }>(buildUrl('/api/error-logs/count'));
+        total = c.count;
+      }
+    } catch { /* 旧版服务无 count 时退化为本页条数 */ }
+    return { logs, total };
+  },
   searchErrorLogs: (query, limit, offset) => requestJson(buildUrl('/api/error-logs/search', { query, limit, offset })),
   searchErrorLogsCount: (query) => requestJson<{ count: number }>(buildUrl('/api/error-logs/search/count', { query })),
 
@@ -402,7 +495,36 @@ export const api: BackendAPI = {
   getCodexConfigStatus: () => requestJson(buildUrl('/api/config-status/codex')),
 
   // Sessions 相关
-  getSessions: (limit, offset) => requestJson(buildUrl('/api/sessions', { limit, offset })),
+  getSessions: async ({ filters, keyword, limit, offset } = {}) => {
+    const raw = await requestJson<unknown>(
+      buildUrl('/api/sessions', {
+        targetType: filters?.targetType,
+        vendorId: filters?.vendorId,
+        serviceId: filters?.serviceId,
+        model: filters?.model,
+        routeId: filters?.routeId,
+        keyword,
+        limit,
+        offset,
+      })
+    );
+    // 新格式 { sessions, total }
+    if (!Array.isArray(raw)) {
+      const obj = raw as { sessions?: Session[]; total?: number };
+      return { sessions: obj.sessions ?? [], total: obj.total ?? 0 };
+    }
+    // 旧格式（裸数组，旧版服务）：补一次 count 以保证分页正确
+    const sessions = raw as Session[];
+    let total = sessions.length;
+    try {
+      const hasFilter = !!(filters && (filters.targetType || filters.vendorId || filters.serviceId || filters.model || filters.routeId)) || !!keyword;
+      if (!hasFilter) {
+        const c = await requestJson<{ count: number }>(buildUrl('/api/sessions/count'));
+        total = c.count;
+      }
+    } catch { /* 旧版服务无 count 时退化为本页条数 */ }
+    return { sessions, total };
+  },
   getSessionsCount: () => requestJson<{ count: number }>(buildUrl('/api/sessions/count')),
   getSession: (id) => requestJson<Session | null>(buildUrl(`/api/sessions/${id}`)),
   getSessionLogs: (id, limit) => requestJson(buildUrl(`/api/sessions/${id}/logs`, { limit })),
@@ -669,4 +791,92 @@ export const api: BackendAPI = {
     });
   },
   lanSync: (data) => requestJson(buildUrl('/api/lan/sync'), { method: 'POST', body: JSON.stringify(data) }),
+
+  // Agent Map（任务可视化节点地图）
+  getAgentMapSessions: () => requestJson(buildUrl('/api/agent-map/sessions')),
+  getAgentMapSessionEvents: (id, since) => requestJson(buildUrl(`/api/agent-map/sessions/${id}/events`, since != null ? { since } : undefined)),
+  getAgentMapStats: () => requestJson(buildUrl('/api/agent-map/stats')),
+  getAgentMapSessionMeta: (id) => requestJson(buildUrl(`/api/agent-map/sessions/${id}/meta`)),
+  getAgentMapNotify: () => requestJson(buildUrl('/api/agent-map/notify')),
+  setAgentMapNotify: (enabled) => requestJson(buildUrl('/api/agent-map/notify'), { method: 'POST', body: JSON.stringify({ enabled }) }),
+  setAgentMapNotifyFocus: (hidden) => requestJson(buildUrl('/api/agent-map/notify-focus'), { method: 'POST', body: JSON.stringify({ hidden }) }),
+  testAgentMapNotify: () => requestJson(buildUrl('/api/agent-map/notify-test'), { method: 'POST' }),
+  streamAgentMap: (handlers) => {
+    const controller = new AbortController();
+    const token = localStorage.getItem('auth_token');
+    let stopped = false;
+    let attempt = 0;
+
+    // 一次连接 + 读循环；正常结束或抛错由外层 loop 决定是否重连
+    const runOnce = async () => {
+      const resp = await fetch('/api/agent-map/stream', {
+        method: 'GET',
+        signal: controller.signal,
+        headers: {
+          'Accept': 'text/event-stream',
+          ...(token ? { 'Access-Token': token } : {}),
+        },
+      });
+      if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        // SSE 帧以双换行分隔
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const dataLine = frame.split('\n').find(l => l.startsWith('data:'));
+          if (!dataLine) continue;
+          const payload = dataLine.slice(5).trim();
+          if (!payload) continue;
+          let msg: any;
+          try { msg = JSON.parse(payload); } catch { continue; }
+          switch (msg.type) {
+            case 'init':
+              handlers.onInit?.({
+                type: 'init',
+                sessions: msg.sessions || [],
+                events: msg.events || [],
+                stats: msg.stats,
+                serverTime: msg.serverTime,
+              });
+              break;
+            case 'session-update': handlers.onSessionUpdate?.(msg.session); break;
+            case 'activity': handlers.onActivity?.(msg.event); break;
+            case 'stats': handlers.onStats?.(msg.stats); break;
+            // heartbeat 忽略
+          }
+        }
+      }
+    };
+
+    // 自动重连：连接断开（done/error）后，按指数退避重试，直到用户 abort
+    (async () => {
+      while (!stopped) {
+        try {
+          await runOnce();
+          attempt = 0; // 成功连上并正常结束 → 重置退避
+        } catch (err: any) {
+          if (err?.name === 'AbortError') return; // 用户主动断开
+          handlers.onError?.(err);
+        }
+        if (stopped) break;
+        attempt = Math.min(attempt + 1, 5);
+        const delay = Math.min(1000 * 2 ** (attempt - 1), 15000); // 1s → 2s → 4s → 8s → 15s 封顶
+        await new Promise(r => setTimeout(r, delay));
+      }
+    })();
+
+    return {
+      abort: () => {
+        stopped = true;
+        controller.abort();
+      },
+    };
+  },
 };

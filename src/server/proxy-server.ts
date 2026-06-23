@@ -12,6 +12,7 @@ import { ChunkCollectorTransform, SSEEventCollectorTransform, type SSEEvent } fr
 import { StreamTimingTransform } from './transformers/stream-timing-transform';
 import type { ServicePerformanceTracker } from './performance-tracker';
 import { rulesStatusBroadcaster } from './rules-status-service';
+import { agentMapService } from './agent-map';
 import {
   transformRequest as convertRequest,
   transformResponse as convertResponse,
@@ -812,6 +813,7 @@ export class ProxyServer {
           responseTime: Date.now() - requestStartAt,
           // 添加最后失败的服务信息
           ruleId: lastFailedRule?.id,
+          routeId: route?.id,
           targetServiceId: lastFailedService?.id,
           targetServiceName: lastFailedService?.name,
           targetModel: lastFailedRule?.targetModel || req.body?.model,
@@ -3812,6 +3814,14 @@ export class ProxyServer {
     const targetType = this.inferToolFromRequest(req);
     const sessionId = this.defaultExtractSessionId(req, targetType) || '-';
 
+    // Agent Map：在途请求注册（active 状态判定依据）
+    const _accessKeyCtxAtStart = (req as any)._accessKeyCtx as { accessKey: AccessKey; policy: Policy } | undefined;
+    agentMapService.startRequest(sessionId, targetType, {
+      source: _accessKeyCtxAtStart ? 'access-key' : 'global',
+      keyId: _accessKeyCtxAtStart?.accessKey?.id,
+      keyName: _accessKeyCtxAtStart?.accessKey?.name,
+    });
+
     const vendor = this.dbManager.getVendorByServiceId(service.id);
     console.log(`\x1b[32m[Request Start]\x1b[0m client=${targetType}, session=${sessionId}, rule=${rule.id}(${rule.contentType}), vendor=${vendor?.name || '-'}, service=${service.name}, model=${rule.targetModel || req.body?.model || '-'}`);
     const failoverEnabled = options?.failoverEnabled === true;
@@ -3997,8 +4007,34 @@ export class ProxyServer {
       this.emitPerformance({
         statusCode, startTime, usage: usageForLog, streamTiming,
         service, vendorId: vendor?.id, vendorName: vendor?.name,
-        model: rule.targetModel || req.body?.model,
+        model: requestBody?.model || req.body?.model,
       });
+
+      // Agent Map：在途请求注销 + 活动/状态采集广播（独立于 enableLogging，仅执行一次）
+      if (!res.locals._agentMapRecorded) {
+        res.locals._agentMapRecorded = true;
+        agentMapService.endRequest(sessionId);
+        const _akCtx = (req as any)._accessKeyCtx as { accessKey: AccessKey; policy: Policy } | undefined;
+        const _tokensDelta = usageForLog?.totalTokens ||
+          ((usageForLog?.inputTokens || 0) + (usageForLog?.outputTokens || 0));
+        agentMapService.onFinalized({
+          sessionId,
+          agent: targetType,
+          source: _akCtx ? 'access-key' : 'global',
+          keyId: _akCtx?.accessKey?.id,
+          keyName: _akCtx?.accessKey?.name,
+          title: this.defaultExtractSessionTitle(req, sessionId),
+          timestamp: Date.now(),
+          statusCode,
+          // 采用真正转发给上游的模型（转换+覆盖后的 requestBody.model），而非 rule.targetModel 预测值，
+          // 避免规则未配置 targetModel 时回退成编程工具提交的 req.body.model
+          model: requestBody?.model || req.body?.model,
+          tokensDelta: _tokensDelta,
+          body: req.body,
+          downstreamResponseBody: downstreamResponseBodyForLog ?? responseBodyForLog,
+          responseBody: responseBodyForLog,
+        });
+      }
 
       const isError = statusCode >= 400;
       if (isError) {
@@ -4034,10 +4070,11 @@ export class ProxyServer {
             error,
             contentType: rule.contentType,
             ruleId: rule.id,
+            routeId: route?.id,
             targetType,
             targetServiceId: service.id,
             targetServiceName: service.name,
-            targetModel: rule.targetModel || req.body?.model,
+            targetModel: requestBody?.model || req.body?.model,
             vendorId: service.vendorId,
             vendorName: vendor?.name,
             requestModel: req.body?.model,
@@ -4076,7 +4113,7 @@ export class ProxyServer {
               vendorName: vendor?.name,
               serviceId: service.id,
               serviceName: service.name,
-              model: rule.targetModel || req.body?.model,
+              model: requestBody?.model || req.body?.model,
               totalTokens: sessionTokens,
             }).catch(err => console.error('[KeySession] upsert error:', err));
           }
@@ -4100,10 +4137,11 @@ export class ProxyServer {
             error,
             contentType: rule.contentType,
             ruleId: rule.id,
+            routeId: route?.id,
             targetType,
             targetServiceId: service.id,
             targetServiceName: service.name,
-            targetModel: rule.targetModel || req.body?.model,
+            targetModel: requestBody?.model || req.body?.model,
             vendorId: service.vendorId,
             vendorName: vendor?.name,
             requestModel: req.body?.model,
@@ -4143,10 +4181,11 @@ export class ProxyServer {
         // 新增字段
         contentType: rule.contentType,
         ruleId: rule.id,
+        routeId: route?.id,
         targetType,
         targetServiceId: service.id,
         targetServiceName: service.name,
-        targetModel: rule.targetModel || requestModel,
+        targetModel: requestBody?.model || req.body?.model,
         vendorId: service.vendorId,
         vendorName: vendorForLog?.name,
         requestModel,
@@ -4176,7 +4215,7 @@ export class ProxyServer {
           vendorName: vendorForLog?.name,
           serviceId: service.id,
           serviceName: service.name,
-          model: requestModel || rule.targetModel,
+          model: requestBody?.model || req.body?.model,
           totalTokens,
           highIqMode: rule.contentType === 'high-iq' ? true : existingSession?.highIqMode,
           highIqRuleId: rule.contentType === 'high-iq' ? rule.id : existingSession?.highIqRuleId,
@@ -4297,7 +4336,7 @@ export class ProxyServer {
         targetType,
         targetServiceId: service.id,
         targetServiceName: service.name,
-        targetModel: rule.targetModel || req.body?.model,
+        targetModel: requestBody?.model || req.body?.model,
         vendorId: service.vendorId,
         vendorName: vendor?.name,
         requestModel: req.body?.model,
@@ -4537,7 +4576,7 @@ export class ProxyServer {
               targetType,
               targetServiceId: service.id,
               targetServiceName: service.name,
-              targetModel: rule.targetModel || req.body?.model,
+              targetModel: requestBody?.model || req.body?.model,
               vendorId: service.vendorId,
               vendorName: vendor?.name,
               requestModel: req.body?.model,
@@ -4692,7 +4731,7 @@ export class ProxyServer {
               targetType,
               targetServiceId: service.id,
               targetServiceName: service.name,
-              targetModel: rule.targetModel || req.body?.model,
+              targetModel: requestBody?.model || req.body?.model,
               vendorId: service.vendorId,
               vendorName: vendor?.name,
               requestModel: req.body?.model,
@@ -4742,7 +4781,7 @@ export class ProxyServer {
               targetType,
               targetServiceId: service.id,
               targetServiceName: service.name,
-              targetModel: rule.targetModel || req.body?.model,
+              targetModel: requestBody?.model || req.body?.model,
               vendorId: service.vendorId,
               vendorName: vendor?.name,
               requestModel: req.body?.model,
@@ -4862,7 +4901,7 @@ export class ProxyServer {
           targetType,
           targetServiceId: service.id,
           targetServiceName: service.name,
-          targetModel: rule.targetModel || req.body?.model,
+          targetModel: requestBody?.model || req.body?.model,
           vendorId: service.vendorId,
           vendorName: vendor?.name,
           requestModel: req.body?.model,
@@ -4913,7 +4952,7 @@ export class ProxyServer {
         targetType,
         targetServiceId: service.id,
         targetServiceName: service.name,
-        targetModel: rule.targetModel || req.body?.model,
+        targetModel: requestBody?.model || req.body?.model,
         vendorId: service.vendorId,
         vendorName: vendor?.name,
         requestModel: req.body?.model,
@@ -5219,7 +5258,7 @@ export class ProxyServer {
       this.emitPerformance({
         statusCode, startTime, usage: usageForLog, streamTiming,
         service, vendorId: vendor?.id, vendorName: vendor?.name,
-        model: rule.targetModel || req.body?.model,
+        model: requestBody?.model || req.body?.model,
       });
 
       // AccessKey 独立日志处理
@@ -5238,9 +5277,10 @@ export class ProxyServer {
             error,
             contentType: rule.contentType,
             ruleId: rule.id,
+            routeId: route?.id,
             targetServiceId: service.id,
             targetServiceName: service.name,
-            targetModel: rule.targetModel || req.body?.model,
+            targetModel: requestBody?.model || req.body?.model,
             vendorId: service.vendorId,
             vendorName: vendor?.name,
             requestModel: req.body?.model,
@@ -5270,7 +5310,7 @@ export class ProxyServer {
               vendorName: vendor?.name,
               serviceId: service.id,
               serviceName: service.name,
-              model: rule.targetModel || req.body?.model,
+              model: requestBody?.model || req.body?.model,
               totalTokens: sessionTokens,
             }).catch(err => console.error('[KeySession] upsert error:', err));
           }
@@ -5292,9 +5332,10 @@ export class ProxyServer {
             error,
             contentType: rule.contentType,
             ruleId: rule.id,
+            routeId: route?.id,
             targetServiceId: service.id,
             targetServiceName: service.name,
-            targetModel: rule.targetModel || req.body?.model,
+            targetModel: requestBody?.model || req.body?.model,
             vendorId: service.vendorId,
             vendorName: vendor?.name,
             requestModel: req.body?.model,
