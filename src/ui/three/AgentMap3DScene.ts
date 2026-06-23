@@ -158,7 +158,7 @@ export class AgentMap3DScene {
 
   private selectedId: string | null = null;
   private showAllLabels = false;
-  private showLinks = true;
+  private showLinks = false;
   private focusTarget: { cam: THREE.Vector3; look: THREE.Vector3 } | null = null;
   private rafId = 0;
   private running = false;
@@ -264,29 +264,29 @@ export class AgentMap3DScene {
       this.decalGeoms.push(buildCurvedDecalGeometry(r));
     }
 
-    // 地面（深度参照）：圆盘覆盖到最外圈（≈30 天）之外
-    const floorR = worldRadiusForAgeDays(30) + 12;
+    // 地面（深度参照）：圆盘覆盖到最外圈（365 天）之外
+    const floorR = worldRadiusForAgeDays(365) + 14;
     this.floor = new THREE.Mesh(
-      new THREE.CircleGeometry(floorR, 72),
+      new THREE.CircleGeometry(floorR, 96),
       new THREE.MeshBasicMaterial({ color: this.palette.completed, transparent: true, opacity: 0.05, side: THREE.DoubleSide }),
     );
     this.floor.rotation.x = -Math.PI / 2;
     this.scene.add(this.floor);
-    // 同心圆对齐到 1 / 5 / 10 天的时间临界（与 2D 的 RINGS 语义一致）
-    const ringDays = [1, 5, 10];
+    // 同心圆对齐到 1 / 7 / 30 / 365 天的时间阶梯临界
+    const ringDays = [1, 7, 30, 365];
     for (const days of ringDays) {
       const r = worldRadiusForAgeDays(days);
       const mat = new THREE.MeshBasicMaterial({ color: this.palette.completed, transparent: true, opacity: 0.2, side: THREE.DoubleSide });
-      const mesh = new THREE.Mesh(new THREE.RingGeometry(r - 0.4, r + 0.4, 128), mat);
+      const mesh = new THREE.Mesh(new THREE.RingGeometry(r - 1, r + 1, 128), mat);
       mesh.rotation.x = -Math.PI / 2;
       mesh.position.y = 0.01;
       this.scene.add(mesh);
       this.floorRings.push({ mesh, mat });
-      // 天数标签（贴在圆环上，billboard 始终可读）
+      // 天数标签（贴在圆环上，billboard 始终可读；365 天显示为「1年」）
       const labelEl = document.createElement('div');
       labelEl.className = 'am-axis-label';
       labelEl.style.pointerEvents = 'none';
-      labelEl.textContent = `${days} 天`;
+      labelEl.textContent = days >= 365 ? '1年' : `${days} 天`;
       const labelObj = new CSS2DObject(labelEl);
       labelObj.position.set(r, 0.6, 0);
       this.scene.add(labelObj);

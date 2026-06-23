@@ -262,7 +262,7 @@ function MapLegend({ onClose }: { onClose: () => void }) {
               <LegendRow icon={<span>📐</span>} label="中心纵轴 = Token 量尺"
                 desc="底部中心点垂直向上一根虚线纵轴，标注 10k / 100k / 1M / 10M / 100M / 1B 临界刻度；节点高度由 Token 总量驱动（阶梯式分段、每跨一档放大但不超过 2 倍），Token 越多越往上长" />
               <LegendRow icon={<span>🌀</span>} label="地面同心圆 = 会话年龄"
-                desc="底部平面三道同心圆对齐 1 天 / 5 天 / 10 天临界：越靠中心 = 会话越新（刚创建），越往外 = 会话开始得越早。节点距中心的水平距离由会话开始时间决定，落定后不漂移" />
+                desc="底部平面同心圆按时间阶梯对齐到 1 天 / 7 天 / 30 天 / 1 年 临界（段长比 20/30/30/20，1 天段最长）：越靠中心 = 会话越新（刚创建），越往外 = 会话开始得越早；超过 1 年的节点游离在最外圈之外。节点距中心的水平距离由会话开始时间决定，落定后不漂移" />
               <LegendRow icon={<span>🎨</span>} label="节点颜色 / 形态"
                 desc="进行中=主色（带脉冲发光圈）、空闲=黄色、异常=红色（快频脉冲）、已完成=浅绿线框球（半透明、不遮挡视野）。in-flight 请求中的节点球体会轻微呼吸缩放" />
             </LegendGroup>
@@ -313,8 +313,8 @@ export default function AgentMapPage() {
   const [webglFailed, setWebglFailed] = useState(false);
   // 3D：是否展示所有节点标签
   const [showLabels, setShowLabels] = useState(false);
-  // 3D：是否展示中心点到各节点的 Token 连线（默认开；选中节点的连线始终显示）
-  const [showLinks, setShowLinks] = useState(true);
+  // 3D：是否展示中心点到各节点的 Token 连线（默认关；选中节点的连线始终显示）
+  const [showLinks, setShowLinks] = useState(false);
   // 定位触发（活动流行 → 对应画布聚焦节点）；resetNonce 触发 3D 复位视角
   const [focus, setFocus] = useState<{ sessionId: string; nonce: number } | null>(null);
   const [resetNonce, setResetNonce] = useState(0);
