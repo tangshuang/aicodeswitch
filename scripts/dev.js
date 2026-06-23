@@ -104,30 +104,68 @@ function prefixStream(child, label) {
   }
 }
 
+const IS_WIN = process.platform === 'win32';
+
 /**
- * 等待子进程 exit（触发于 process.exit 或被信号杀死）。
- * @returns {Promise<number>} exit code 或 signal 字符串
+ * 进程组是否仍存活（组内还有任意进程）。
+ * 子进程以 detached:true 启动后，其 pid == pgid，故 -pid 可探测整组。
+ * 关键点：tsx 会 fork——serverChild 只是 tsx 启动器（launcher），真正运行
+ * main.ts 的 node 进程、以及 esbuild 服务进程都是它的子孙，与启动器同组。
+ * 启动器的 'exit'/'close' 在它自身一退出就触发（Ctrl+C 时几乎立刻），
+ * 而真正的服务进程仍在做数秒优雅关闭并随后打印 "Server stopped."。
+ * 因此「等启动器退出」≠「等服务停止」。改用「轮询整组存活」：只要组内
+ * 还有任何进程（真正的 node 服务），就算未停止；等整组清空才等价于
+ * 「Server stopped. 已出现并 process.exit」。
  */
-function waitForExit(child) {
-  return new Promise((resolve) => {
-    if (child.exitCode !== null || child.signalCode) {
-      resolve(child.exitCode ?? 0);
-      return;
-    }
-    child.once('exit', (code, signal) => {
-      resolve(code ?? (signal ? 128 + 1 : 0));
-    });
-  });
+function groupAlive(pid) {
+  if (pid == null) return false;
+  try {
+    process.kill(-pid, 0); // 信号 0 = 探测存在性；-pid = 整个进程组
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-function safeKill(child, signal) {
-  try {
-    if (child && child.exitCode === null && !child.signalCode) {
-      child.kill(signal);
-    }
-  } catch {
-    /* ignore */
+/**
+ * 向子进程所在进程组发信号（覆盖 launcher + 真正服务 + esbuild）。
+ * Windows 无进程组语义，退化为直接 kill 直接子进程。
+ */
+function signalGroup(child, signal) {
+  if (!child || child.exitCode !== null || child.signalCode) return;
+  const pid = child.pid;
+  if (IS_WIN || pid == null) {
+    try { child.kill(signal); } catch { /* ignore */ }
+    return;
   }
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    try { child.kill(signal); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * 等待整个进程组清空（POSIX），Windows 退化为等待直接子进程 'close'。
+ * 不带内部超时——超时由调用方用 SIGKILL 清组后，本函数下一拍（≤100ms）即感知并 resolve。
+ * @returns {Promise<number>} 直接子进程的 exit code（仅用于异常码上报）
+ */
+function waitForGroupExit(child) {
+  return new Promise((resolve) => {
+    const pid = child.pid;
+    if (IS_WIN || pid == null) {
+      if (child.exitCode !== null || child.signalCode) { resolve(child.exitCode ?? 0); return; }
+      child.once('close', (code, signal) => resolve(code ?? (signal ? 128 + 1 : 0)));
+      return;
+    }
+    if (!groupAlive(pid)) { resolve(child.exitCode ?? 0); return; }
+    const iv = setInterval(() => {
+      if (!groupAlive(pid)) {
+        clearInterval(iv);
+        resolve(child.exitCode ?? 0);
+      }
+    }, 100);
+  });
 }
 
 async function main() {
@@ -135,12 +173,18 @@ async function main() {
   let shuttingDown = false;
   let uiChild = null;
 
-  // 直接调本地 bin，去掉 `npm run` 额外进程层
-  // shell:true 让 Windows 能找到 .cmd 版 bin
+  // 直接调本地 bin，去掉 `npm run` 额外进程层。
+  // POSIX 不开 shell（避免中间 /bin/sh 抢先于 SIGINT 退出）；Windows 的 .cmd 仍需 shell。
+  // detached:true：把子进程放进它自己的进程组（POSIX setsid），这样我们可以用
+  // process.kill(-pid, sig) 给整组发信号、用 groupAlive(-pid) 探测整组存活。
+  // 这一点对本脚本的核心目标至关重要——见 waitForGroupExit 注释：tsx 会 fork，
+  // serverChild 只是启动器，真正的 node 服务是它的孙进程，只有「整组存活探测」
+  // 才能把退出阻塞到真正的 "Server stopped."。
+  const USE_SHELL = IS_WIN;
   const serverChild = spawn(
     'tsx',
     ['--tsconfig=tsconfig.server.json', 'src/server/main.ts'],
-    { cwd: ROOT, shell: true, stdio: ['inherit', 'pipe', 'pipe'] },
+    { cwd: ROOT, shell: USE_SHELL, detached: !IS_WIN, stdio: ['inherit', 'pipe', 'pipe'] },
   );
   prefixStream(serverChild, SERVER_LABEL);
 
@@ -173,10 +217,11 @@ async function main() {
   }
   process.stdout.write(`${DEV_LABEL} 服务端已就绪，启动 UI...\n`);
 
-  // 2) 启动 UI
+  // 2) 启动 UI（同样放进独立进程组，便于整组信号/清理，避免 vite 的 esbuild 子进程残留）
   uiChild = spawn('vite', [], {
     cwd: ROOT,
-    shell: true,
+    shell: USE_SHELL,
+    detached: !IS_WIN,
     stdio: ['inherit', 'pipe', 'pipe'],
   });
   prefixStream(uiChild, UI_LABEL);
@@ -205,9 +250,10 @@ async function main() {
       );
     }
 
-    // 子进程随进程组已直接收到信号，这里再显式转发一次（幂等，无副作用）
-    safeKill(serverChild, 'SIGINT');
-    safeKill(uiChild, 'SIGINT');
+    // 子进程各自在独立进程组里，Ctrl+C 不会直达它们，必须由父进程显式给整组发 SIGINT，
+    // 真正的服务进程才会进入优雅关闭（恢复配置 + server.close + 打印 "Server stopped."）。
+    signalGroup(serverChild, 'SIGINT');
+    signalGroup(uiChild, 'SIGINT');
 
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -215,13 +261,13 @@ async function main() {
       process.stderr.write(
         `${DEV_LABEL} 等待超时（${SHUTDOWN_TIMEOUT_MS / 1000}s），强制终止残留子进程。\n`,
       );
-      safeKill(serverChild, 'SIGKILL');
-      safeKill(uiChild, 'SIGKILL');
+      signalGroup(serverChild, 'SIGKILL');
+      signalGroup(uiChild, 'SIGKILL');
     }, SHUTDOWN_TIMEOUT_MS);
 
-    // 服务是长时序（配置恢复 + server.close 最多 5s），UI 通常已先退出
-    const exits = [waitForExit(serverChild)];
-    if (uiChild) exits.push(waitForExit(uiChild));
+    // 阻塞到「整组清空」：等真正的 node 服务进程也退出（而不仅是 tsx 启动器）。
+    const exits = [waitForGroupExit(serverChild)];
+    if (uiChild) exits.push(waitForGroupExit(uiChild));
     const [serverCode, uiCode] = await Promise.all(exits);
 
     clearTimeout(timer);

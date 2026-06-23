@@ -3860,18 +3860,29 @@ export class ProxyServer {
       || rule.contentType === 'compact'
       || this.isCountTokensPath(req.path)
       || this.isCountTokensPath(req.originalUrl);
+    // 思考类请求：复用路由同款识别（rule.contentType==='thinking' 或请求体带 thinking/reasoning 信号）。
+    // 思考期间用更宽的静默上限，避免思考静默被误判为「上游停滞」而弹通知。
+    const _isThinking = rule.contentType === 'thinking' || this.hasThinkingSignal(req.body);
+    (res.locals as any)._agentMapThinking = _isThinking;
     agentMapService.startRequest(sessionId, targetType, {
       source: _accessKeyCtxAtStart ? 'access-key' : 'global',
       keyId: _accessKeyCtxAtStart?.accessKey?.id,
       keyName: _accessKeyCtxAtStart?.accessKey?.name,
       background: _isBgRequest,
+      thinking: _isThinking,
     });
     // 安全网：无论走哪条分支（含编程套餐拒绝、配额拦截、异常等早退，导致 finalizeLog 未被调用），
     // 都在响应关闭时确保 endRequest 配对执行一次，杜绝在途计数泄漏（「永远卡在进行中」）。
     res.on('close', () => {
-      if ((res.locals as any)._agentMapRecorded) return;
-      (res.locals as any)._agentMapRecorded = true;
-      agentMapService.endRequest(sessionId, { isStream: !!(res.locals as any)._agentMapStream });
+      // 仅保证 endRequest 配对执行一次（防在途计数泄漏）。用独立标记 _agentMapEnded，
+      // 不再与 finalizeLog 的 onFinalized 共用标记 —— 否则 res 'close' 先于 finalizeLog 触发时
+      // 会把标记置位，导致 finalizeLog 跳过 onFinalized（requestCount / model / token 永不更新）。
+      if ((res.locals as any)._agentMapEnded) return;
+      (res.locals as any)._agentMapEnded = true;
+      agentMapService.endRequest(sessionId, {
+        isStream: !!(res.locals as any)._agentMapStream,
+        thinking: !!(res.locals as any)._agentMapThinking,
+      });
       agentMapService.reevaluate(sessionId);
     });
 
@@ -4063,10 +4074,19 @@ export class ProxyServer {
         model: requestBody?.model || req.body?.model,
       });
 
-      // Agent Map：在途请求注销 + 活动/状态采集广播（独立于 enableLogging，仅执行一次）
-      if (!res.locals._agentMapRecorded) {
-        res.locals._agentMapRecorded = true;
-        agentMapService.endRequest(sessionId, { isStream: !!res.locals._agentMapStream });
+      // Agent Map：在途请求注销 + 活动/状态采集广播（独立于 enableLogging）
+      // 注意：endRequest 与 onFinalized 用各自独立的标记，二者解耦。
+      // 这样即便 res 'close' 安全网已先执行 endRequest（_agentMapEnded=true），onFinalized 仍会在此执行 ——
+      // 修复「requestCount / model / token 不更新」：旧实现二者共用 _agentMapRecorded，'close' 抢先置位会让此处整块跳过。
+      if (!(res.locals as any)._agentMapEnded) {
+        (res.locals as any)._agentMapEnded = true;
+        agentMapService.endRequest(sessionId, {
+          isStream: !!res.locals._agentMapStream,
+          thinking: !!res.locals._agentMapThinking,
+        });
+      }
+      if (!(res.locals as any)._agentMapFinalized) {
+        (res.locals as any)._agentMapFinalized = true;
         const _akCtx = (req as any)._accessKeyCtx as { accessKey: AccessKey; policy: Policy } | undefined;
         const _tokensDelta = usageForLog?.totalTokens ||
           ((usageForLog?.inputTokens || 0) + (usageForLog?.outputTokens || 0));
@@ -4273,6 +4293,9 @@ export class ProxyServer {
           serviceName: service.name,
           model: requestBody?.model || req.body?.model,
           totalTokens,
+          // 输入/输出拆分持久化（与 totalTokens 同口径），供 Agent Map 重启后恢复
+          inputTokens: usageForLog?.inputTokens || 0,
+          outputTokens: usageForLog?.outputTokens || 0,
           highIqMode: rule.contentType === 'high-iq' ? true : existingSession?.highIqMode,
           highIqRuleId: rule.contentType === 'high-iq' ? rule.id : existingSession?.highIqRuleId,
           highIqEnabledAt: rule.contentType === 'high-iq'
@@ -4672,7 +4695,12 @@ export class ProxyServer {
         const downstreamChunkCollector = new ChunkCollectorTransform(() => {
           rulesStatusBroadcaster.refreshRuleInUse(route.id, rule.id);
           // Agent Map 心跳：每个流经的下游 chunk 都视为「会话仍活跃」，刷新活动时钟（节流由 ChunkCollector 内部 5s 上限控制）
-          agentMapService.heartbeat(sessionId);
+          // 同时把当前流式请求的实时累计 usage（input/output）一并推送，使前端节点在流式过程中随 token 增长实时上移
+          const u = eventCollector.extractUsage();
+          agentMapService.heartbeat(sessionId, u ? {
+            inputTokens: u.input_tokens || 0,
+            outputTokens: u.output_tokens || 0,
+          } : undefined);
         });
         // 服务性能打点：记录首/末 SSE 事件时间，用于 TTFT 与生成阶段吞吐
         streamTiming = new StreamTimingTransform(startTime);

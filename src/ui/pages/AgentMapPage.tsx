@@ -7,7 +7,7 @@
  * 各自拥有自己的交互与生命周期，互不干扰：本页面仅负责共享状态（数据、选中态、popover、活动流）
  * 与视图切换。2D 走 SVG；3D 走 Three.js（WebGL 不可用时回退到 2D）。
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { api } from '../api/client';
 import { ClaudeCodeIcon, CodexIcon, AgentIcon } from '../components/AgentIcons';
 import { Switch } from '../components/Switch';
@@ -257,8 +257,8 @@ function MapLegend({ onClose }: { onClose: () => void }) {
                 desc="右下角「2D / 3D」分段切换；3D 使用 WebGL，若环境不支持会自动回退到 2D（此时 3D 按钮置灰）。3D 与 2D 是两套完全独立的画布，互不影响" />
               <LegendRow icon={<span className="am-ic-mouse">🖱</span>} label="鼠标操作"
                 desc="左键按住拖拽 = 环绕旋转视角；滚轮 = 以光标为中心缩放；右键（或双指）按住拖拽 = 平移；在节点上单击 = 选中并展开详情，点空白 = 取消选中。一旦开始拖拽，复位/定位的自动过渡会立即停止，视角完全交给用户" />
-              <LegendRow icon={<span>🕹️</span>} label="复位 / 标签"
-                desc="3D 模式下右下角额外出现「标签」「复位」两个按钮：复位 = 把相机平滑回到初始机位（中心点位于画面 2/3 处）；标签 = 切换是否显示所有节点文字（默认只显示选中节点的文字，避免密集遮挡）" />
+              <LegendRow icon={<span>🕹️</span>} label="连线 / 标签 / 复位"
+                desc="3D 模式下右下角额外出现「连线」「标签」「复位」三个按钮：连线 = 开关中心点到各节点的 Token 连线（默认开，关闭后选中节点的连线仍显示）；标签 = 切换是否显示所有节点文字（默认只显示选中节点的文字）；复位 = 把相机平滑回到初始机位" />
               <LegendRow icon={<span>📐</span>} label="中心纵轴 = Token 量尺"
                 desc="底部中心点垂直向上一根虚线纵轴，标注 10k / 100k / 1M / 10M / 100M / 1B 临界刻度；节点高度由 Token 总量驱动（阶梯式分段、每跨一档放大但不超过 2 倍），Token 越多越往上长" />
               <LegendRow icon={<span>🌀</span>} label="地面同心圆 = 会话年龄"
@@ -313,11 +313,11 @@ export default function AgentMapPage() {
   const [webglFailed, setWebglFailed] = useState(false);
   // 3D：是否展示所有节点标签
   const [showLabels, setShowLabels] = useState(false);
+  // 3D：是否展示中心点到各节点的 Token 连线（默认开；选中节点的连线始终显示）
+  const [showLinks, setShowLinks] = useState(true);
   // 定位触发（活动流行 → 对应画布聚焦节点）；resetNonce 触发 3D 复位视角
   const [focus, setFocus] = useState<{ sessionId: string; nonce: number } | null>(null);
   const [resetNonce, setResetNonce] = useState(0);
-  // 选中节点屏幕坐标（由当前画布上报，用于 popover 跟随）
-  const [selectedScreen, setSelectedScreen] = useState<{ x: number; y: number } | null>(null);
 
   // SSE 连接
   useEffect(() => {
@@ -406,6 +406,7 @@ export default function AgentMapPage() {
     if (!sessions.has(sessionId)) return;
     setSelectedId(sessionId);
     setPreset('all');
+    setFeedOpen(true);
     setFocus({ sessionId, nonce: Date.now() });
   }, [sessions]);
 
@@ -421,55 +422,22 @@ export default function AgentMapPage() {
     return sessionList.filter(s => s.lastRequestAt >= range.start && s.lastRequestAt <= range.end);
   }, [sessionList, range]);
 
-  // ===== 详情 Popover 定位（由当前画布上报的节点屏幕坐标驱动） =====
-  const detailRef = useRef<HTMLDivElement>(null);
-  const [detailStyle, setDetailStyle] = useState<React.CSSProperties>({ visibility: 'hidden' });
-  const [detailPlacement, setDetailPlacement] = useState<'left' | 'right'>('right');
-  const [recomputeTick, setRecomputeTick] = useState(0);
+  // ===== 选中数据「粘性」：实时刷新瞬时缺失时沿用上次数据，避免侧栏在 详情↔活动流 之间闪跳 =====
+  const selectedStickyRef = useRef<SessionMapItem | null>(null);
+  if (selected) selectedStickyRef.current = selected;
+  const selectedView = selected ?? (selectedId ? selectedStickyRef.current : null);
+  useEffect(() => { if (!selectedId) selectedStickyRef.current = null; }, [selectedId]);
 
-  useEffect(() => {
-    const bump = () => setRecomputeTick(t => (t + 1) % 1_000_000);
-    window.addEventListener('resize', bump);
-    window.addEventListener('scroll', bump, true);
-    return () => {
-      window.removeEventListener('resize', bump);
-      window.removeEventListener('scroll', bump, true);
-    };
+  // 点击节点 → 选中并确保侧栏展开（详情/活动流都在侧栏里）
+  const handleSelect = useCallback((id: string | null) => {
+    setSelectedId(id);
+    if (id) setFeedOpen(true);
   }, []);
-
-  useLayoutEffect(() => {
-    if (!selectedId || !selectedScreen) { setDetailStyle(s => ({ ...s, visibility: 'hidden' })); return; }
-    const el = detailRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const margin = 10, gap = 16, nodeR = 30;
-    const vw = window.innerWidth, vh = window.innerHeight;
-    let placement: 'left' | 'right' = 'right';
-    let left: number;
-    if (selectedScreen.x + nodeR + gap + rect.width <= vw - margin) {
-      left = selectedScreen.x + nodeR + gap; placement = 'right';
-    } else if (selectedScreen.x - nodeR - gap - rect.width >= margin) {
-      left = selectedScreen.x - nodeR - gap - rect.width; placement = 'left';
-    } else {
-      left = Math.max(margin, Math.min(selectedScreen.x, vw - rect.width - margin));
-    }
-    let top = selectedScreen.y - rect.height / 2;
-    top = Math.max(margin, Math.min(top, vh - rect.height - margin));
-    setDetailPlacement(placement);
-    setDetailStyle({ left, top, visibility: 'visible' });
-  }, [selectedId, selectedScreen, detailEvents, recomputeTick]);
-
-  // 选中态变化 → 清空旧屏幕坐标（等画布上报新坐标）
-  useEffect(() => { setSelectedScreen(null); }, [selectedId]);
 
   // 趋势图窗口
   const oldestTs = feedEvents.length ? feedEvents[feedEvents.length - 1].ts : nowQ;
   const trendStart = preset === 'all' ? Math.min(oldestTs, nowQ - 24 * HOUR) : nowQ - presetMs;
   const trendEnd = nowQ;
-
-  const onSelectedScreen = useCallback((_id: string, x: number, y: number) => {
-    setSelectedScreen(prev => (prev && Math.abs(prev.x - x) < 0.5 && Math.abs(prev.y - y) < 0.5 ? prev : { x, y }));
-  }, []);
 
   return (
     <div className="am-page">
@@ -546,23 +514,22 @@ export default function AgentMapPage() {
               sessions={filteredSessions}
               now={nowQ}
               selectedId={selectedId}
-              onSelect={setSelectedId}
+              onSelect={handleSelect}
               showLabels={showLabels}
+              showLinks={showLinks}
               focus={focus}
               resetNonce={resetNonce}
               onContextLost={() => setWebglFailed(true)}
-              onSelectedScreen={onSelectedScreen}
             />
           ) : (
             <AgentMapCanvas2D
               sessions={filteredSessions}
               now={nowQ}
               selectedId={selectedId}
-              onSelect={setSelectedId}
+              onSelect={handleSelect}
               view={view}
               onView={setView}
               focus={focus}
-              onSelectedScreen={onSelectedScreen}
             />
           )}
           <div className="am-legend">
@@ -584,6 +551,11 @@ export default function AgentMapPage() {
             {view3D && !webglFailed ? (
               <div className="am-view-toggle" role="group" aria-label="3D 显示控制">
                 <button
+                  className={`am-view-btn am-view-btn--link${showLinks ? ' am-view-btn--active' : ''}`}
+                  onClick={() => setShowLinks(v => !v)}
+                  title={showLinks ? '隐藏中心点到节点的 Token 连线（选中节点的连线仍显示）' : '显示中心点到节点的 Token 连线'}
+                >连线</button>
+                <button
                   className={`am-view-btn am-view-btn--label${showLabels ? ' am-view-btn--active' : ''}`}
                   onClick={() => setShowLabels(v => !v)}
                   title={showLabels ? '隐藏所有节点标签（仅保留选中节点）' : '显示所有节点标签'}
@@ -596,68 +568,64 @@ export default function AgentMapPage() {
           </div>
         </div>
 
-        {/* 右侧活动流边栏 */}
+        {/* 右侧侧栏：选中节点 → 节点详情面板；未选中 → 全局活动流 */}
         <div className="am-feed-wrap">
-          <button className="am-feed-toggle" onClick={toggleFeed} title={feedOpen ? '收起活动流' : '展开活动流'} aria-label={feedOpen ? '收起活动流' : '展开活动流'}>
+          <button className="am-feed-toggle" onClick={toggleFeed} title={feedOpen ? '收起侧栏' : '展开侧栏'} aria-label={feedOpen ? '收起侧栏' : '展开侧栏'}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               {feedOpen ? <polyline points="9 18 15 12 9 6" /> : <polyline points="15 18 9 12 15 6" />}
             </svg>
           </button>
           {feedOpen && (
             <aside className="am-feed-sidebar">
-              <div className="am-feed-head">
-                <span>📜 全局活动流</span>
-                <span className="am-feed-count">{feedEvents.length}</span>
-              </div>
-              <ActivityFeed events={feedEvents} onSelectSession={locateSession} />
+              {selectedView ? (
+                <div className="am-detail am-detail--sidebar">
+                  <div className="am-detail-head">
+                    <span className={`am-badge am-badge--${selectedView.status}`}>
+                      <AgentIcon agent={selectedView.agent} size={14} /> {STATUS_LABEL[selectedView.status]}
+                    </span>
+                    <button className="am-detail-close" onClick={() => setSelectedId(null)} title="返回活动流">×</button>
+                  </div>
+                  <div className="am-detail-body">
+                    <h3 className="am-detail-title">{selectedView.title || selectedView.sessionId}</h3>
+                    <div className="am-detail-meta">
+                      <div>请求轮次：<b>{selectedView.requestCount}</b></div>
+                      <div>输入 Token：<b>{(selectedView.inputTokens || 0).toLocaleString()}</b></div>
+                      <div>输出 Token：<b>{(selectedView.outputTokens || 0).toLocaleString()}</b></div>
+                      <div>累计 Token：<b>{(selectedView.totalTokens || 0).toLocaleString()}</b></div>
+                      <div>最近模型：<b>{selectedView.lastModel || '-'}</b></div>
+                      <div className="am-detail-path">
+                        项目路径：
+                        {pathInfo.projectPath
+                          ? <code title={pathInfo.projectPath}>{pathInfo.projectPath}</code>
+                          : pathInfo.unavailable
+                            ? <span className="am-detail-path-na">接入密钥会话，无法读取本地项目信息</span>
+                            : pathInfo.loading
+                              ? <span className="am-detail-path-na">解析中…</span>
+                              : <span className="am-detail-path-na">未识别</span>}
+                      </div>
+                      <div>首/末：<b>{timeAgo(selectedView.firstRequestAt)}</b> · <b>{timeAgo(selectedView.lastRequestAt)}</b></div>
+                    </div>
+                    <div className="am-detail-section-title">活动路径</div>
+                    <ActivityPathGraph events={detailEvents} />
+                  </div>
+                  <div className="am-detail-footer">
+                    <button className="am-btn am-btn--ghost" onClick={() => loadDetail(selectedView.sessionId)}>刷新活动</button>
+                    <button className="am-btn am-btn--ghost" disabled={selectedView.source === 'access-key' && !selectedView.keyId} onClick={() => openSessionDetail(selectedView)}>会话详情</button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="am-feed-head">
+                    <span>📜 全局活动流</span>
+                    <span className="am-feed-count">{feedEvents.length}</span>
+                  </div>
+                  <ActivityFeed events={feedEvents} onSelectSession={locateSession} />
+                </>
+              )}
             </aside>
           )}
         </div>
       </div>
-
-      {/* 详情 Popover */}
-      {selected && (
-        <div ref={detailRef} className={`am-detail am-detail--popover am-detail--${detailPlacement}`} style={detailStyle}>
-          <div className="am-detail-head">
-            <span className={`am-badge am-badge--${selected.status}`}>
-              <AgentIcon agent={selected.agent} size={14} /> {STATUS_LABEL[selected.status]}
-            </span>
-            <button className="am-detail-close" onClick={() => setSelectedId(null)}>×</button>
-          </div>
-          <h3 className="am-detail-title">{selected.title || selected.sessionId}</h3>
-          <div className="am-detail-meta">
-            <div>请求轮次：<b>{selected.requestCount}</b></div>
-            <div className="am-detail-tokens">
-              <span>累计 Tokens：<b>{selected.totalTokens.toLocaleString()}</b></span>
-              {(selected.inputTokens > 0 || selected.outputTokens > 0) && (
-                <span className="am-detail-tokens-split">
-                  <i className="am-tok am-tok--in" />{(selected.inputTokens || 0).toLocaleString()}
-                  <i className="am-tok am-tok--out" />{(selected.outputTokens || 0).toLocaleString()}
-                </span>
-              )}
-            </div>
-            <div>最近模型：<b>{selected.lastModel || '-'}</b></div>
-            <div className="am-detail-path">
-              项目路径：
-              {pathInfo.projectPath
-                ? <code title={pathInfo.projectPath}>{pathInfo.projectPath}</code>
-                : pathInfo.unavailable
-                  ? <span className="am-detail-path-na">接入密钥会话，无法读取本地项目信息</span>
-                  : pathInfo.loading
-                    ? <span className="am-detail-path-na">解析中…</span>
-                    : <span className="am-detail-path-na">未识别</span>}
-            </div>
-            <div>首/末：<b>{timeAgo(selected.firstRequestAt)}</b> · <b>{timeAgo(selected.lastRequestAt)}</b></div>
-            {selected.inFlight > 0 && <div className="am-detail-inflight">● 正在处理 {selected.inFlight} 个请求…</div>}
-          </div>
-          <div className="am-detail-section-title">活动路径</div>
-          <ActivityPathGraph events={detailEvents} />
-          <div className="am-detail-footer">
-            <button className="am-btn am-btn--ghost" onClick={() => loadDetail(selected.sessionId)}>刷新活动</button>
-            <button className="am-btn am-btn--ghost" disabled={selected.source === 'access-key' && !selected.keyId} onClick={() => openSessionDetail(selected)}>会话详情</button>
-          </div>
-        </div>
-      )}
 
       {/* 会话详情弹窗 */}
       {detailSession && detailSessionSource && (

@@ -166,12 +166,14 @@ export function worldFromSession(s: SessionMapItem, now: number): WorldPlacement
   const y = tokenHeight(s.totalTokens);
   const pos = new Vector3(x, y, z);
 
+  // 仅当输入、输出都 >0 时才有切分点（用于两段不同色）；任一为 0 → split=null，画完整累计连线
   let split: Vector3 | null = null;
   const input = s.inputTokens | 0;
   const output = s.outputTokens | 0;
-  const sum = input + output;
-  if (sum > 0) {
-    const ratio = Math.max(0, Math.min(1, input / sum));
+  if (input > 0 && output > 0) {
+    // 输入段占比 = input/(input+output)；但输出段至少占 3/20，避免输入远大于输出时输出段不可见
+    const MIN_OUTPUT_FRAC = 3 / 20;
+    const ratio = Math.min(input / (input + output), 1 - MIN_OUTPUT_FRAC);
     split = new Vector3(
       APEX.x + (pos.x - APEX.x) * ratio,
       APEX.y + (pos.y - APEX.y) * ratio,

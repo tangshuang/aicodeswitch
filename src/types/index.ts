@@ -425,6 +425,8 @@ export interface Session {
   lastRequestAt: number;   // 最后一次请求时间
   requestCount: number;    // 请求总数
   totalTokens: number;     // 总token使用量
+  inputTokens: number;     // 累计输入 token（与 totalTokens 同口径累加持久化）
+  outputTokens: number;    // 累计输出 token（与 totalTokens 同口径累加持久化）
   vendorId?: string;       // 最后使用的供应商ID
   vendorName?: string;     // 最后使用的供应商名称
   serviceId?: string;      // 最后使用的服务ID

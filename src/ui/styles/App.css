@@ -2629,6 +2629,7 @@ div:hover > .route-icon-popover {
 .am-node--error .am-node-glow { stroke: var(--accent-danger); stroke-width: 3; opacity: 0.5; animation: am-pulse 1.2s ease-in-out infinite; }
 .am-node--completed { opacity: 0.55; }
 .am-node--completed .am-node-circle { stroke: var(--border-secondary); stroke-dasharray: 3 3; }
+.am-node--selected { opacity: 1; } /* 选中节点强制不透明（覆盖 completed 的 0.55） */
 .am-node--selected .am-node-circle { stroke-width: 4; }
 .am-node--busy .am-node-circle { animation: am-pulse 1s ease-in-out infinite; }
 
@@ -2664,6 +2665,7 @@ div:hover > .route-icon-popover {
 .am-node-3d.am-node--error .am-node-sphere { stroke: var(--accent-danger); fill: color-mix(in srgb, var(--accent-danger) 22%, var(--bg-card)); }
 .am-node-3d.am-node--completed { opacity: 0.55; }
 .am-node-3d.am-node--completed .am-node-sphere { stroke: var(--border-secondary); stroke-dasharray: 3 3; }
+.am-node-3d.am-node--selected { opacity: 1; }
 .am-node-3d.am-node--selected .am-node-sphere { stroke-width: 4; }
 
 /* ===== 3D 视图：三层叠加连线（背景/输入/输出） ===== */
@@ -2715,6 +2717,9 @@ div:hover > .route-icon-popover {
 /* 「标签」按钮：hover 不修改背景（保持各自常态背景） */
 .am-view-btn--label:hover { background: transparent; color: var(--text-muted); }
 .am-view-btn--label.am-view-btn--active:hover { background: color-mix(in srgb, var(--accent-primary) 18%, transparent); color: var(--accent-primary); }
+/* 「连线」按钮：hover 不改背景（保持常态/激活态背景） */
+.am-view-btn--link:hover { background: transparent; color: var(--text-muted); }
+.am-view-btn--link.am-view-btn--active:hover { background: color-mix(in srgb, var(--accent-primary) 18%, transparent); color: var(--accent-primary); }
 
 /* ===== 3D 视图（Three.js / WebGL）容器与标签叠层 ===== */
 .am-canvas-3d { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; z-index: 0; }
@@ -2726,10 +2731,14 @@ div:hover > .route-icon-popover {
   font-size: 11px;
   line-height: 1.25;
   color: var(--text-primary);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75), 0 0 2px rgba(0, 0, 0, 0.6);
   white-space: nowrap;
   user-select: none;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.15s ease;
 }
+/* 标签 hover：背景高亮以凸显文字（仅 pointer-events 开启时可触发） */
+.am-node-label:hover { background: color-mix(in srgb, var(--accent-primary) 24%, transparent); }
 .am-node-label-title { font-weight: 600; }
 .am-node-label-sub { font-size: 9px; opacity: 0.8; }
 
@@ -2746,10 +2755,9 @@ div:hover > .route-icon-popover {
   user-select: none;
 }
 
-/* 详情 popover：token 输入/输出拆分 */
-.am-detail-tokens { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 详情 popover：token 输入/输出拆分（保留配色点供其它复用） */
 .am-detail-tokens-split { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted); }
-.am-tok { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-left: 4px; }
+.am-tok { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .am-tok--in { background: var(--accent-secondary); }
 .am-tok--out { background: var(--accent-primary); }
 
@@ -2847,7 +2855,6 @@ div:hover > .route-icon-popover {
   gap: 4px;
 }
 .am-detail-meta b { color: var(--text-light); font-weight: 600; }
-.am-detail-inflight { color: var(--accent-warning); margin-top: 4px; }
 .am-detail-section-title {
   padding: 8px 14px;
   font-size: 12px;
@@ -3288,19 +3295,20 @@ div:hover > .route-icon-popover {
   background: var(--accent-primary); opacity: 0.6;
 }
 
-/* ==================== Agent Map：详情 Popover（跟随节点浮动） ==================== */
-.am-detail--popover {
-  position: fixed;
-  z-index: 100000;
-  width: 380px;
-  max-width: calc(100vw - 24px);
-  max-height: 80vh;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+/* ==================== Agent Map：节点详情（侧栏内，选中节点时替换活动流） ==================== */
+.am-detail--sidebar {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
 }
-/* 详情内的活动路径在限高内滚动，永不溢出屏幕 */
-.am-detail--popover .am-path {
+.am-detail--sidebar .am-detail-head { flex-shrink: 0; }
+.am-detail--sidebar .am-detail-body {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  padding: 10px 14px;
 }
+.am-detail--sidebar .am-detail-footer { flex-shrink: 0; }
 .am-feed-agent { flex-shrink: 0; }
 
 /* 可点击的活动流行（点击定位到地图节点） */

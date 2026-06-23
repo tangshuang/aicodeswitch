@@ -5,7 +5,7 @@
  * 关键：本组件每次挂载都会在 useEffect 里重新挂载 wheel 监听到自身的 svgRef，
  * 因此在 2D ↔ 3D 之间切换（卸载/重新挂载）后，滚轮缩放始终可用。
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { SessionMapItem } from '../../types';
 import {
   SVG_W, SVG_H, ZOOM_MIN, ZOOM_MAX, RINGS,
@@ -20,17 +20,15 @@ interface AgentMapCanvas2DProps {
   view: View;
   onView: React.Dispatch<React.SetStateAction<View>>;
   focus: { sessionId: string; nonce: number } | null;
-  onSelectedScreen: (id: string, x: number, y: number) => void;
 }
 
 export default function AgentMapCanvas2D({
-  sessions, now, selectedId, onSelect, view, onView, focus, onSelectedScreen,
+  sessions, now, selectedId, onSelect, view, onView, focus,
 }: AgentMapCanvas2DProps) {
   const svgRef = useRef<SVGSVGElement>(null);
-  const groupRef = useRef<SVGGElement>(null);
+  const groupRef = useRef<SVGSVGElement>(null);
   const viewRef = useRef(view); viewRef.current = view;
   const [pressing, setPressing] = useState(false);
-  const [resizeTick, setResizeTick] = useState(0);
 
   // 节点 2D 位置
   const pos = useMemo(() => {
@@ -128,35 +126,11 @@ export default function AgentMapCanvas2D({
     onSelect(p.sid);
   };
 
-  // 选中节点屏幕坐标 → 父级 popover 定位
-  useLayoutEffect(() => {
-    if (!selectedId) return;
-    const g = groupRef.current;
-    const svg = svgRef.current;
-    const np = pos[selectedId];
-    if (!g || !svg || !np) return;
-    const ctm = g.getScreenCTM();
-    if (!ctm) return;
-    const pt = svg.createSVGPoint();
-    pt.x = np.x; pt.y = np.y;
-    const screen = pt.matrixTransform(ctm);
-    onSelectedScreen(selectedId, screen.x, screen.y);
-  }, [selectedId, pos, view, onSelectedScreen, resizeTick]);
-
-  // 滚动 / 窗口尺寸 → 触发 popover 重新定位
-  useEffect(() => {
-    const bump = () => setResizeTick(t => (t + 1) % 1_000_000);
-    window.addEventListener('resize', bump);
-    window.addEventListener('scroll', bump, true);
-    return () => {
-      window.removeEventListener('resize', bump);
-      window.removeEventListener('scroll', bump, true);
-    };
-  }, []);
-
   // 节点排序：active / error / 选中排最后，确保脉冲发光永远在最顶层
   const sortedSessions = useMemo(() => {
-    const top = (s: SessionMapItem) => (s.status === 'active' || s.status === 'error' || s.sessionId === selectedId) ? 1 : 0;
+    // 选中节点优先级最高（画在最上层，不被遮挡）；其次 active/error；最后其余
+    const top = (s: SessionMapItem) => s.sessionId === selectedId ? 2
+      : (s.status === 'active' || s.status === 'error') ? 1 : 0;
     return [...sessions].sort((a, b) => top(a) - top(b));
   }, [sessions, selectedId]);
 

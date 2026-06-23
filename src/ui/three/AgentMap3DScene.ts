@@ -39,8 +39,6 @@ export interface AgentMap3DSceneCallbacks {
   onSelect: (sessionId: string | null) => void;
   /** WebGL 上下文丢失 / 不可用 —— 页面回退到 SVG */
   onContextLost?: () => void;
-  /** 选中节点在容器内的屏幕坐标变化（每帧，仅选中节点；用于 popover 跟随） */
-  onSelectedScreenUpdate?: (sessionId: string, x: number, y: number) => void;
 }
 
 interface NodeHandle {
@@ -65,11 +63,12 @@ interface NodeHandle {
 
 interface LinkHandle {
   group: THREE.Group;
-  bg: Line2;
+  bg: Line2;          // 完整累计连线（输入/输出任一缺失时显示）
   bgMat: LineMaterial;
-  segIn: Line2;
-  segOut: Line2;
-  segMat: LineMaterial;
+  segIn: Line2;       // 输入段：顶点→split（输入色）
+  segInMat: LineMaterial;
+  segOut: Line2;      // 输出段：split→节点（输出色）
+  segOutMat: LineMaterial;
 }
 
 // 相机：拉近、瞄准偏下的中心区，让中心点与底层节点在初始/复位视图里更显眼
@@ -79,6 +78,8 @@ const CAM_TARGET = new THREE.Vector3(0, 28, 0);
 // logo 贴片在球面上的固定位置：上半球偏前（朝相机方向），法线朝外
 const DECAL_DIR = new THREE.Vector3(0, 0.82, 0.58).normalize();
 const DECAL_HALF_ANG = 0.32; // 贴片半张角（弧度），决定贴片覆盖的球面范围（小贴片）
+// 连线输出段固定亮蓝色（高亮）；输入段、累计段用主题色（palette.active）
+const LINK_OUTPUT_COLOR = 0x00d600; // 输出段：亮蓝
 
 /** 构造与球面同弧度的曲面贴片几何：以 PlaneGeometry 网格为基础，把顶点投到半径 r 的球面上（围绕 DECAL_DIR）。
  *  UV 沿用平面 0..1，logo 不变形；顶点落在球面上 → 弧度与球面完全一致。按半径桶缓存共享。 */
@@ -134,8 +135,10 @@ export class AgentMap3DScene {
   private sphereGeoms: THREE.SphereGeometry[] = [];
   private glowGeoms: THREE.SphereGeometry[] = [];
   private decalGeoms: THREE.BufferGeometry[] = []; // logo 曲面贴片几何（按半径桶共享）
-  private outlineMesh!: THREE.Mesh;
-  private outlineMat!: THREE.MeshBasicMaterial;
+  // 选中节点的「土星环」指示：绕选中球体的同色倾斜环，持续旋转
+  private ringPivot!: THREE.Object3D;
+  private ringMesh!: THREE.Mesh;
+  private ringMat!: THREE.MeshBasicMaterial;
   private floor!: THREE.Mesh;
   private floorRings: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial }[] = [];
   private apexMat!: THREE.MeshBasicMaterial;
@@ -149,13 +152,13 @@ export class AgentMap3DScene {
 
   private palette!: Record<SessionStatus, THREE.Color>;
   private completedNodeColor!: THREE.Color; // 已完成节点：浅绿（区别于中性 palette.completed）
-  private accent2Color!: THREE.Color;
   private bgColor!: THREE.Color;
   private logoTexCache = new Map<string, THREE.CanvasTexture>(); // logo 纹理：按 agent×status 烘焙缓存
   private logoImg: Record<string, HTMLImageElement> = {};        // agent → 已加载的 SVG <Image>
 
   private selectedId: string | null = null;
   private showAllLabels = false;
+  private showLinks = true;
   private focusTarget: { cam: THREE.Vector3; look: THREE.Vector3 } | null = null;
   private rafId = 0;
   private running = false;
@@ -290,16 +293,22 @@ export class AgentMap3DScene {
       this.ringLabels.push(labelObj);
     }
 
-    this.apexMat = new THREE.MeshBasicMaterial({ color: this.palette.active });
-    this.apexMesh = new THREE.Mesh(new THREE.SphereGeometry(0.6, 16, 12), this.apexMat);
-    this.apexMesh.position.copy(APEX);
+    // 中心点：底面上的一个小圆（非球），与时间线同心圆同色
+    this.apexMat = new THREE.MeshBasicMaterial({ color: this.palette.completed, side: THREE.DoubleSide });
+    this.apexMesh = new THREE.Mesh(new THREE.CircleGeometry(0.7, 32), this.apexMat);
+    this.apexMesh.rotation.x = -Math.PI / 2; // 平贴地面
+    this.apexMesh.position.set(0, 0.02, 0);  // 略高于地面避免 z-fight
     this.scene.add(this.apexMesh);
 
     // 选中外描边（单例）
-    this.outlineMat = new THREE.MeshBasicMaterial({ color: this.palette.active, transparent: true, opacity: 0.35, side: THREE.BackSide });
-    this.outlineMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), this.outlineMat);
-    this.outlineMesh.visible = false;
-    this.scene.add(this.outlineMesh);
+    // 选中节点的土星环：pivot 绕世界 Y 旋转，环在 pivot 内倾斜（土星感）
+    this.ringMat = new THREE.MeshBasicMaterial({ color: this.palette.active.clone(), transparent: true, opacity: 0.85, side: THREE.DoubleSide });
+    this.ringMesh = new THREE.Mesh(new THREE.TorusGeometry(1, 0.05, 12, 80), this.ringMat);
+    this.ringMesh.rotation.x = Math.PI * 0.42; // 倾斜
+    this.ringPivot = new THREE.Object3D();
+    this.ringPivot.add(this.ringMesh);
+    this.ringPivot.visible = false;
+    this.scene.add(this.ringPivot);
 
     // Token 量尺：中心点垂直向上的纵轴 + 100k 刻度标签（100k..1000k，1 单位 = 100k token）
     this.buildAxis(w, h);
@@ -355,6 +364,26 @@ export class AgentMap3DScene {
     if (status === 'completed') { m.opacity = 0.32; m.color.set(0x9aa0a6); }
     else if (status === 'idle') { m.opacity = 0.8; m.color.set(0xffffff); }
     else { m.opacity = 1; m.color.set(0xffffff); }
+  }
+
+  /** 按状态 + 选中态刷新节点外观（仅改外观，不动 depthTest/renderOrder —— 选中节点保持原始层级，正常被深度遮挡）：
+   *  - 选中：实心 + 不透明（opacity 1，含已完成）。active 还显示脉冲描边光环；非 active 无呼吸。
+   *  - 未选中：按状态恢复（completed 半透明线框等）。 */
+  private applyNodeAppearance(h: NodeHandle): void {
+    const isSelected = h.sessionId === this.selectedId;
+    const isCompleted = h.status === 'completed';
+    if (isSelected) {
+      h.sphereMat.wireframe = false;
+      h.sphereMat.transparent = false;             // 选中一律不透明
+      h.sphereMat.opacity = 1;
+      h.decalMat.opacity = 1;
+      h.decalMat.color.set(0xffffff);
+    } else {
+      h.sphereMat.transparent = isCompleted;
+      h.sphereMat.opacity = isCompleted ? 0.7 : 1;
+      h.sphereMat.wireframe = isCompleted;
+      this.applyDecalTint(h.decalMat, h.status);
+    }
   }
 
   private ensureLogoImg(agent: string): Promise<HTMLImageElement> {
@@ -416,7 +445,6 @@ export class AgentMap3DScene {
       completed: this.resolveColor(STATUS_VAR.completed),
       error: this.resolveColor(STATUS_VAR.error),
     };
-    this.accent2Color = this.resolveColor('--accent-secondary');
     // 雾化淡入到页面背景的代表色（--bg-primary 是渐变，取其 solid 代表色）
     this.bgColor = this.resolveColor('--bg-primary-solid');
     // 已完成节点：浅绿（按主题取色，保证在浅/深背景上都可读）
@@ -443,13 +471,18 @@ export class AgentMap3DScene {
       h.glowMat.color.copy(this.palette[h.status]);
     }
     for (const l of this.links.values()) {
-      l.bgMat.color.copy(this.palette.completed);
-      l.segMat.color.copy(this.accent2Color);
+      l.bgMat.color.copy(this.palette.active);          // 累计连线（主题绿）
+      l.segInMat.color.copy(this.palette.active);       // 输入段：主题绿
+      l.segOutMat.color.setHex(LINK_OUTPUT_COLOR);      // 输出段：亮蓝（固定）
     }
     (this.floor.material as THREE.MeshBasicMaterial).color.copy(this.palette.completed);
     for (const r of this.floorRings) r.mat.color.copy(this.palette.completed);
-    this.apexMat.color.copy(this.palette.active);
-    this.outlineMat.color.copy(this.palette.active);
+    this.apexMat.color.copy(this.palette.completed); // 中心点圆与时间线同心圆同色
+    // 主题变了 → 若有选中节点，土星环颜色随之刷新
+    if (this.selectedId) {
+      const h = this.nodes.get(this.selectedId);
+      if (h) this.ringMat.color.copy(h.status === 'completed' ? this.completedNodeColor : this.palette[h.status]);
+    }
     if (this.axisMat) this.axisMat.color.copy(this.palette.completed);
   }
 
@@ -506,7 +539,7 @@ export class AgentMap3DScene {
       blending: THREE.AdditiveBlending,
     });
     const glow = new THREE.Mesh(this.glowGeoms[p.bucket], glowMat);
-    glow.visible = s.status === 'active' || s.status === 'error';
+    glow.visible = s.status === 'active';
     group.add(glow);
 
     // logo 曲面贴片：与球面同弧度（顶点落在球面上），挂到 sphere 下作为子节点 → 随球体呼吸一起缩放
@@ -525,8 +558,10 @@ export class AgentMap3DScene {
     const sid = s.sessionId;
     const labelEl = document.createElement('div');
     labelEl.className = 'am-node-label';
-    labelEl.style.pointerEvents = 'auto';
-    labelEl.style.cursor = 'pointer';
+    // pointer-events 跟随标签开关：开→可点选；关→不拦截鼠标（仅选中节点标签可见也不挡操作）
+    const labelPE = this.showAllLabels ? 'auto' : 'none';
+    labelEl.style.pointerEvents = labelPE;
+    labelEl.style.cursor = labelPE === 'auto' ? 'pointer' : 'default';
     labelEl.addEventListener('click', (ev) => {
       ev.stopPropagation();
       this.cb.onSelect(sid);
@@ -553,6 +588,7 @@ export class AgentMap3DScene {
     this.nodes.set(s.sessionId, handle);
     this.writeLabel(handle, s);
     this.syncLabel(handle);
+    this.applyNodeAppearance(handle); // 若新建节点已被选中 → 强制不透明
   }
 
   private updateNode(h: NodeHandle, s: SessionMapItem, p: ReturnType<typeof worldFromSession>): void {
@@ -568,7 +604,7 @@ export class AgentMap3DScene {
       h.glow.geometry = this.glowGeoms[p.bucket];
       h.decal.geometry = this.decalGeoms[p.bucket]; // 贴片几何随半径桶同步
       h.label.position.set(0, -p.radius * 1.8, 0);
-      if (this.selectedId === h.sessionId) this.outlineMesh.scale.setScalar(p.radius * 1.18);
+      if (this.selectedId === h.sessionId) this.ringMesh.scale.setScalar(p.radius * 1.8);
     }
 
     if (s.status !== h.status) {
@@ -576,12 +612,11 @@ export class AgentMap3DScene {
       const isCompleted = s.status === 'completed';
       const c = isCompleted ? this.completedNodeColor : this.palette[s.status];
       h.sphereMat.color.copy(c);
-      h.sphereMat.transparent = isCompleted;
-      h.sphereMat.opacity = isCompleted ? 0.7 : 1;
-      h.sphereMat.wireframe = isCompleted;
       h.glowMat.color.copy(this.palette[s.status]);
-      h.glow.visible = s.status === 'active' || s.status === 'error';
-      this.applyDecalTint(h.decalMat, s.status); // 状态变了 → 贴片显眼度同步
+      h.glow.visible = s.status === 'active';
+      this.applyNodeAppearance(h); // 状态变了 → 透明度/线框/贴片按状态+选中态刷新
+      // 若是当前选中节点，土星环颜色随新状态刷新
+      if (h.sessionId === this.selectedId) this.showRing(h);
     }
     this.writeLabel(h, s);
     this.syncLabel(h);
@@ -606,7 +641,12 @@ export class AgentMap3DScene {
   setLabelsVisible(all: boolean): void {
     if (this.showAllLabels === all) return;
     this.showAllLabels = all;
-    for (const h of this.nodes.values()) this.syncLabel(h);
+    const pe = all ? 'auto' : 'none'; // 开→可点选；关→不拦截鼠标
+    for (const h of this.nodes.values()) {
+      h.labelEl.style.pointerEvents = pe;
+      h.labelEl.style.cursor = pe === 'auto' ? 'pointer' : 'default';
+      this.syncLabel(h);
+    }
   }
 
   private formatTokens(n: number): string {
@@ -622,33 +662,59 @@ export class AgentMap3DScene {
     const w = this.container.clientWidth || 800;
     const h = this.container.clientHeight || 600;
     const resolution = new THREE.Vector2(w, h);
+    const hasSplit = !!p.split; // 输入、输出都 >0 才分段两色；否则只画完整累计连线
 
+    // 完整累计连线（输入/输出任一缺失时显示，单一颜色、完整不断）
     const bgMat = new LineMaterial({
-      color: this.palette.completed.getHex(), linewidth: 2, transparent: true,
-      opacity: 0.35 + p.depth01 * 0.5, dashed: false,
+      color: this.palette.active.getHex(), linewidth: 3, transparent: true,
+      opacity: 0.85 + p.depth01 * 0.15, dashed: false,
     });
     bgMat.resolution = resolution;
     const bg = new Line2(this.makeLineGeo(APEX, p.pos), bgMat);
 
-    const segMat = new LineMaterial({
-      color: this.accent2Color.getHex(), linewidth: 3, transparent: true, opacity: 0.95,
-    });
-    segMat.resolution = resolution;
+    // 输入段（顶点→split，主题绿）与输出段（split→节点，亮蓝）
+    const segInMat = new LineMaterial({ color: this.palette.active.getHex(), linewidth: 3, transparent: true, opacity: 0.95 });
+    segInMat.resolution = resolution;
+    const segOutMat = new LineMaterial({ color: LINK_OUTPUT_COLOR, linewidth: 3, transparent: true, opacity: 0.95 });
+    segOutMat.resolution = resolution;
     const split = p.split ?? p.pos;
-    const segIn = new Line2(this.makeLineGeo(APEX, split), segMat);
-    const segOut = new Line2(this.makeLineGeo(split, p.pos), segMat);
+    const segIn = new Line2(this.makeLineGeo(APEX, split), segInMat);
+    const segOut = new Line2(this.makeLineGeo(split, p.pos), segOutMat);
+
+    // 有输入+输出 → 只显示两段（隐藏累计）；任一缺失 → 只显示完整累计
+    bg.visible = !hasSplit;
+    segIn.visible = hasSplit;
+    segOut.visible = hasSplit;
 
     group.add(bg, segIn, segOut);
+    group.visible = this.linkVisible(sessionId);
     this.scene.add(group);
-    this.links.set(sessionId, { group, bg, bgMat, segIn, segOut, segMat });
+    this.links.set(sessionId, { group, bg, bgMat, segIn, segInMat, segOut, segOutMat });
+  }
+
+  /** 连线是否可见：开关开 → 全显；开关关 → 仅选中节点显示 */
+  private linkVisible(sessionId: string): boolean {
+    return this.showLinks || sessionId === this.selectedId;
+  }
+
+  /** 连线开关（选中节点的连线始终显示） */
+  setLinksVisible(v: boolean): void {
+    if (this.showLinks === v) return;
+    this.showLinks = v;
+    for (const [id, l] of this.links) l.group.visible = this.linkVisible(id);
   }
 
   private updateLink(l: LinkHandle, p: ReturnType<typeof worldFromSession>): void {
-    this.setLineGeo(l.bg.geometry as LineGeometry, APEX, p.pos);
-    l.bgMat.opacity = 0.35 + p.depth01 * 0.5;
+    const hasSplit = !!p.split;
     const split = p.split ?? p.pos;
+    this.setLineGeo(l.bg.geometry as LineGeometry, APEX, p.pos);
+    l.bgMat.opacity = 0.85 + p.depth01 * 0.15;
     this.setLineGeo(l.segIn.geometry as LineGeometry, APEX, split);
     this.setLineGeo(l.segOut.geometry as LineGeometry, split, p.pos);
+    // 有输入+输出 → 两段（隐藏累计）；任一缺失 → 完整累计
+    l.bg.visible = !hasSplit;
+    l.segIn.visible = hasSplit;
+    l.segOut.visible = hasSplit;
   }
 
   private makeLineGeo(a: THREE.Vector3, b: THREE.Vector3): LineGeometry {
@@ -667,16 +733,27 @@ export class AgentMap3DScene {
     this.applySelection(sessionId);
   }
 
+  /** 显示选中节点的同色土星环（颜色随状态、尺寸随半径） */
+  private showRing(h: NodeHandle): void {
+    this.ringMat.color.copy(h.status === 'completed' ? this.completedNodeColor : this.palette[h.status]);
+    this.ringMesh.scale.setScalar(h.radius * 1.8);
+    this.ringPivot.visible = true;
+  }
+
   private applySelection(sessionId: string | null): void {
     const prev = this.selectedId;
     this.selectedId = sessionId;
-    if (prev) { const ph = this.nodes.get(prev); if (ph) this.syncLabel(ph); }
-    if (!sessionId) { this.outlineMesh.visible = false; return; }
+    if (prev) {
+      const ph = this.nodes.get(prev); if (ph) { this.applyNodeAppearance(ph); this.syncLabel(ph); }
+      const pl = this.links.get(prev); if (pl) pl.group.visible = this.linkVisible(prev);
+    }
+    if (!sessionId) { this.ringPivot.visible = false; return; }
     const h = this.nodes.get(sessionId);
-    if (!h) { this.outlineMesh.visible = false; return; }
+    if (!h) { this.ringPivot.visible = false; return; }
+    const nl = this.links.get(sessionId); if (nl) nl.group.visible = this.linkVisible(sessionId);
+    this.applyNodeAppearance(h);
     this.syncLabel(h);
-    this.outlineMesh.scale.setScalar(h.radius * 1.18);
-    this.outlineMesh.visible = true;
+    this.showRing(h); // 选中节点显示同色土星环
   }
 
   focusSession(sessionId: string): void {
@@ -689,16 +766,6 @@ export class AgentMap3DScene {
 
   resetCamera(): void {
     this.focusTarget = { cam: CAM_HOME.clone(), look: CAM_TARGET.clone() };
-  }
-
-  projectToScreen(sessionId: string): { x: number; y: number } | null {
-    const h = this.nodes.get(sessionId);
-    if (!h) return null;
-    const v = h.group.position.clone();
-    v.project(this.camera);
-    const w = this.container.clientWidth;
-    const hh = this.container.clientHeight;
-    return { x: (v.x * 0.5 + 0.5) * w, y: (-v.y * 0.5 + 0.5) * hh };
   }
 
   private refreshPickables(): void {
@@ -767,12 +834,10 @@ export class AgentMap3DScene {
     const lerpK = 1 - Math.exp(-dt * 6);
     for (const h of this.nodes.values()) {
       h.group.position.lerp(h.targetPos, lerpK);
-      // 脉冲发光圈（对应 2D .am-node-glow 的 am-pulse 呼吸）
+      // 脉冲发光圈（仅进行中 active 节点）
       if (h.glow.visible) {
-        const pulse = h.status === 'error' ? (0.5 + Math.sin(t * 5) * 0.3) : (0.4 + Math.sin(t * 2) * 0.2);
-        h.glowMat.opacity = pulse * 0.5;
-        const s = 1 + Math.sin(t * (h.status === 'error' ? 5 : 2)) * 0.05;
-        h.glow.scale.setScalar(s);
+        h.glowMat.opacity = (0.4 + Math.sin(t * 2) * 0.2) * 0.5;
+        h.glow.scale.setScalar(1 + Math.sin(t * 2) * 0.05);
       }
       if (h.inFlight > 0) {
         h.sphere.scale.setScalar(1 + Math.sin(t * 6) * 0.05);
@@ -781,13 +846,14 @@ export class AgentMap3DScene {
       }
     }
 
-    if (this.selectedId && this.outlineMesh.visible) {
+    // 选中节点的土星环：跟随节点位置，持续绕 Y 轴旋转
+    if (this.selectedId && this.ringPivot.visible) {
       const h = this.nodes.get(this.selectedId);
       if (h) {
-        this.outlineMesh.position.copy(h.group.position);
-        this.outlineMat.opacity = 0.3 + Math.sin(t * 3) * 0.12;
+        this.ringPivot.position.copy(h.group.position);
+        this.ringPivot.rotation.y += dt * 0.8;
       } else {
-        this.outlineMesh.visible = false;
+        this.ringPivot.visible = false;
       }
     }
 
@@ -800,11 +866,6 @@ export class AgentMap3DScene {
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
     this.css2d.render(this.scene, this.camera);
-
-    if (this.selectedId && this.cb.onSelectedScreenUpdate) {
-      const p = this.projectToScreen(this.selectedId);
-      if (p) this.cb.onSelectedScreenUpdate(this.selectedId, p.x, p.y);
-    }
   };
 
   // ============================ 尺寸 / 释放 ============================
@@ -818,7 +879,7 @@ export class AgentMap3DScene {
     this.renderer.setSize(w, h);
     this.css2d.setSize(w, h);
     const res = new THREE.Vector2(w, h);
-    for (const l of this.links.values()) { l.bgMat.resolution = res; l.segMat.resolution = res; }
+    for (const l of this.links.values()) { l.bgMat.resolution = res; l.segInMat.resolution = res; l.segOutMat.resolution = res; }
     if (this.axisMat) this.axisMat.resolution = res;
   }
 
@@ -846,8 +907,8 @@ export class AgentMap3DScene {
     for (const g of this.sphereGeoms) g.dispose();
     for (const g of this.glowGeoms) g.dispose();
     for (const g of this.decalGeoms) g.dispose();
-    this.outlineMesh.geometry.dispose();
-    this.outlineMat.dispose();
+    this.ringMesh.geometry.dispose();
+    this.ringMat.dispose();
     this.floor.geometry.dispose();
     (this.floor.material as THREE.Material).dispose();
     for (const r of this.floorRings) { r.mesh.geometry.dispose(); r.mat.dispose(); }
@@ -884,7 +945,8 @@ export class AgentMap3DScene {
     l.segIn.geometry.dispose();
     l.segOut.geometry.dispose();
     l.bgMat.dispose();
-    l.segMat.dispose();
+    l.segInMat.dispose();
+    l.segOutMat.dispose();
   }
 }
 

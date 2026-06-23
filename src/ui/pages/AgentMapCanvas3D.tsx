@@ -14,18 +14,17 @@ interface AgentMapCanvas3DProps {
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   showLabels: boolean;
+  showLinks: boolean;
   focus: { sessionId: string; nonce: number } | null;
   resetNonce: number;
   onContextLost: () => void;
-  onSelectedScreen: (id: string, x: number, y: number) => void;
 }
 
 export default function AgentMapCanvas3D({
-  sessions, now, selectedId, onSelect, showLabels, focus, resetNonce, onContextLost, onSelectedScreen,
+  sessions, now, selectedId, onSelect, showLabels, showLinks, focus, resetNonce, onContextLost,
 }: AgentMapCanvas3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<AgentMap3DScene | null>(null);
-  const followThrottle = useRef<{ t: number; x: number; y: number }>({ t: 0, x: -9999, y: -9999 });
 
   // 挂载 / 卸载场景
   useEffect(() => {
@@ -35,16 +34,6 @@ export default function AgentMapCanvas3D({
       scene = new AgentMap3DScene(containerRef.current, {
         onSelect,
         onContextLost,
-        onSelectedScreenUpdate: (_sid, x, y) => {
-          // 节流：移动 > 4px 且距上次 > 110ms 才上报，驱动 popover 跟随
-          const ref = followThrottle.current;
-          const t = performance.now();
-          if (t - ref.t < 110 && Math.hypot(x - ref.x, y - ref.y) < 4) return;
-          ref.t = t; ref.x = x; ref.y = y;
-          // 容器内坐标 → 视口坐标
-          const wrap = containerRef.current?.getBoundingClientRect();
-          onSelectedScreen(_sid, x + (wrap?.left ?? 0), y + (wrap?.top ?? 0));
-        },
       });
     } catch {
       onContextLost();
@@ -69,6 +58,11 @@ export default function AgentMapCanvas3D({
   useEffect(() => {
     sceneRef.current?.setLabelsVisible(showLabels);
   }, [showLabels]);
+
+  // 连线显隐开关（选中节点的连线始终显示，由场景内部处理）
+  useEffect(() => {
+    sceneRef.current?.setLinksVisible(showLinks);
+  }, [showLinks]);
 
   // 定位（来自活动流）：相机聚焦到节点
   useEffect(() => {
