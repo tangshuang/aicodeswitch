@@ -550,7 +550,7 @@ function AppContent() {
       </nav>
       <main className="main-content">
           <Routes>
-            <Route path="/" element={<Navigate to="/agent-map" replace />} />
+            <Route path="/" element={<Navigate to="/routes" replace />} />
             <Route path="/agent-map" element={<AgentMapPage />} />
             <Route path="/statistics" element={<StatisticsPage />} />
             <Route path="/routes" element={<RouteGroupsPage />} />
