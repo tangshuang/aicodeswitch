@@ -231,10 +231,11 @@ function MapLegend({ onClose }: { onClose: () => void }) {
               <LegendRow icon={<i className="am-dot am-dot--completed" />} label="已完成" desc="超过 10 分钟无活动，且末轮正常结束（变暗、虚线）" />
               <LegendRow icon={<i className="am-dot am-dot--error" />} label="异常" desc="末次请求失败（上游 5xx），红色脉冲" />
             </LegendGroup>
-            <LegendGroup title="距离分档（同心圆）">
-              <LegendRow icon={<span className="am-ring-swatch" style={{ color: 'var(--accent-success)' }} />} label="1 天临界" desc="圈内在 1 天内开始的会话；圈外是更早（1 天以上）的会话" />
-              <LegendRow icon={<span className="am-ring-swatch" style={{ color: 'var(--accent-warning)' }} />} label="5 天临界" desc="1–5 天前开始的会话落在本圈与 1 天圈之间" />
-              <LegendRow icon={<span className="am-ring-swatch" style={{ color: '#6BA8E5' }} />} label="10 天临界（最外圈）" desc="5–10 天前开始的会话落在本圈与 5 天圈之间；超过 10 天的会话落在本圈之外（最外围）" />
+            <LegendGroup title="距离分档（同心圆，按时间阶梯 1/7/30/365 天）">
+              <LegendRow icon={<span className="am-ring-swatch" style={{ color: 'var(--accent-success)' }} />} label="1 天临界" desc="圈内在 1 天内开始的会话；圈外是更早的会话" />
+              <LegendRow icon={<span className="am-ring-swatch" style={{ color: 'var(--accent-warning)' }} />} label="7 天临界" desc="1–7 天前开始的会话落在本圈与 1 天圈之间" />
+              <LegendRow icon={<span className="am-ring-swatch" style={{ color: '#6BA8E5' }} />} label="30 天临界" desc="7–30 天前开始的会话落在本圈与 7 天圈之间" />
+              <LegendRow icon={<span className="am-ring-swatch" style={{ color: '#6BA8E5' }} />} label="1 年临界（最外圈）" desc="30 天–1 年前开始的会话落在本圈与 30 天圈之间；超过 1 年的会话游离在本圈之外（最外围）" />
             </LegendGroup>
           </div>
           <div className="am-legend-col">

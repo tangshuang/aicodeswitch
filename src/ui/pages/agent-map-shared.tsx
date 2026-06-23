@@ -38,14 +38,14 @@ export function hashStr(s: string): number {
   return Math.abs(h);
 }
 
-// [会话开始距今天数, 半径] 控制点：age=0 紧贴中心，前两小时缓慢外移，之后逐渐加速
+// [会话开始距今天数, 半径] 阶梯式控制点：2D 专用比例 50/30/10/10（1/7 天段更大，避免近期会话挤在中心）。
+// 临界 1/7/30/365 天，总长 800：0–1d→400(50%), 1–7d→640(30%), 7–30d→720(10%), 30–365d→800(10%)
 const R_POINTS: [number, number][] = [
-  [0, 20],
-  [2 / 24, 60],
-  [1, 420],
-  [5, 620],
-  [10, 760],
-  [30, 860],
+  [0, 0],
+  [1, 400],     // 0–1d：50%
+  [7, 640],     // 1–7d：30%（累计）
+  [30, 720],    // 7–30d：10%
+  [365, 800],   // 30–365d：10%
 ];
 
 export function radiusForAgeDays(ageDays: number): number {
@@ -58,7 +58,7 @@ export function radiusForAgeDays(ageDays: number): number {
       return r0 + (r1 - r0) * k;
     }
   }
-  return R_POINTS[R_POINTS.length - 1][1];
+  return R_POINTS[R_POINTS.length - 1][1]; // 超过 365 天 → 饱和在最外圈
 }
 
 /** 计算节点 2D 基础位置：半径=会话年龄分档，角度=sessionId 哈希（稳定不漂移） */
@@ -73,11 +73,15 @@ export function basePosition(sessionId: string, firstRequestAt: number, now: num
 }
 
 // 距离分档临界圆：1 / 5 / 10 天
-export const RINGS: { days: number; r: number; tier: number; label: string }[] = [
-  { days: 1, r: 420, tier: 0, label: '1 天' },
-  { days: 5, r: 620, tier: 1, label: '5 天' },
-  { days: 10, r: 760, tier: 2, label: '10 天' },
+// 距离分档临界圆：与时间阶梯一致（1 / 7 / 30 / 365 天）；r 由 radiusForAgeDays 推导，保持同步
+const RING_DEFS = [
+  { days: 1, tier: 0, label: '1 天' },
+  { days: 7, tier: 1, label: '7 天' },
+  { days: 30, tier: 2, label: '30 天' },
+  { days: 365, tier: 3, label: '1 年' },
 ];
+export const RINGS: { days: number; r: number; tier: number; label: string }[] =
+  RING_DEFS.map(d => ({ days: d.days, tier: d.tier, label: d.label, r: radiusForAgeDays(d.days) }));
 
 export function timeAgo(ts: number): string {
   const diff = Date.now() - ts;
