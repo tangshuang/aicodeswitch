@@ -270,8 +270,6 @@ aicos version            # Show current version information
   - `Tooltip.tsx` - Tooltip component for displaying menu text when sidebar is collapsed
   - `Toast.tsx` - Toast notification component
   - `Confirm.tsx` - Confirmation dialog component
-  - `ToolsInstallModal.tsx` - Tools installation modal
-  - `NotificationBar.tsx` - Notification bar component
 - Pages:
   - `VendorsPage.tsx` - Manage AI service vendors
   - `SkillsPage.tsx` - Manage global Skills and discovery

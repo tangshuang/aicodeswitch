@@ -21,12 +21,9 @@ src/ui/
 │   ├── Confirm.tsx        #  确认对话框
 │   ├── Tooltip.tsx        #  提示工具
 │   ├── TitleBar.tsx       #  标题栏
-│   ├── Terminal.tsx       #  终端模拟器
 │   ├── Switch.tsx          #  开关组件
 │   ├── Pagination.tsx     #  分页组件
-│   ├── NotificationBar.tsx #  通知栏
-│   ├── JSONViewer.tsx     #  JSON 查看器
-│   └── ToolsInstallModal.tsx # 工具安装模态框
+│   └── JSONViewer.tsx     #  JSON 查看器
 ├── pages/
 │   ├── VendorsPage.tsx    # 供应商管理
 │   ├── RoutesPage.tsx     # 路由配置

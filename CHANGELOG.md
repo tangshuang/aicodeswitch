@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-06-23: 移除 Claude Code / Codex 安装检查功能
+
+- 删除启动时检测工具是否安装及一键安装的全部逻辑：后端 `tools-service.ts`、`websocket-service.ts`、`/api/tools/status`、`/api/tools/install`（WS），前端 `ToolsInstallModal.tsx`、`NotificationBar.tsx`、`Terminal.tsx`，以及 App.tsx 的启动检查与 api/client.ts、types 的相关代码。
+- 一并移除 RoutesPage 的 Agent Teams 版本门控（不再校验 Claude Code ≥ 2.1.32），开关始终可用。
+
 ## 2026-06-23: 修复 Ctrl+C 后卡很久才打印 "Server stopped."
 
 ### 修复

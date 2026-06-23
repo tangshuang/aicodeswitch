@@ -17,9 +17,7 @@ src/server/
 ├── fs-database.ts       # 文件系统数据库: JSON 文件 CRUD
 ├── auth.ts              # 认证中间件
 ├── utils.ts             # 工具函数 (端口检测等)
-├── websocket-service.ts # WebSocket 服务
 ├── rules-status-service.ts # 路由状态管理
-├── tools-service.ts     # 工具/Skills 管理
 ├── version-check.ts     # 版本检查
 ├── config-metadata.ts   # 配置元数据
 └── transformers/        # API 格式转换
