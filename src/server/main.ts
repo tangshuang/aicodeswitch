@@ -38,8 +38,6 @@ import os from 'os';
 import { isAuthEnabled, verifyAuthCode, generateToken, authMiddleware } from './auth';
 import { checkVersionUpdate } from './version-check';
 import { checkPortUsable } from './utils';
-import { getToolsInstallationStatus } from './tools-service';
-import { createToolInstallationWSServer } from './websocket-service';
 import { rulesStatusBroadcaster, type RuleStatusData } from './rules-status-service';
 import { normalizeSourceType, isLegacySourceType } from './type-migration';
 import {
@@ -3191,19 +3189,6 @@ ${instruction}
     }
   }));
 
-  // 工具安装检测相关路由
-  app.get('/api/tools/status', asyncHandler(async (_req, res) => {
-    console.log('[API] GET /api/tools/status - 获取工具安装状态');
-    try {
-      const status = await getToolsInstallationStatus();
-      console.log('[API] 工具安装状态:', status);
-      res.json(status);
-    } catch (error) {
-      console.error('[API] 获取工具状态失败:', error);
-      res.status(500).json({ error: '获取工具状态失败' });
-    }
-  }));
-
   // MCP 工具管理相关路由
   app.get('/api/mcps', (_req, res) => {
     res.json(dbManager.getMCPs());
@@ -4378,10 +4363,6 @@ const start = async () => {
     setImmediate(() => process.exit(1));
   });
 
-  // 创建 WebSocket 服务器用于工具安装
-  const toolInstallWss = createToolInstallationWSServer();
-
-
   // 设置黑名单检查函数，用于在规则状态同步时检查黑名单是否已过期
   rulesStatusBroadcaster.setBlacklistChecker(async (serviceId, routeId, contentType) => {
     // 检查服务��否在黑名单中
@@ -4392,19 +4373,6 @@ const start = async () => {
     );
     return isBlacklisted;
   });
-
-  // 将 WebSocket 服务器附加到 HTTP 服务器（仅用于工具安装）
-  server.on('upgrade', (request, socket, head) => {
-    if (request.url === '/api/tools/install') {
-      toolInstallWss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
-        toolInstallWss.emit('connection', ws, request);
-      });
-    } else {
-      socket.destroy();
-    }
-  });
-
-  console.log(`WebSocket server for tool installation attached to ws://${clientHost}:${port}/api/tools/install`);
 
   let isShuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;
@@ -4420,10 +4388,16 @@ const start = async () => {
 
       // 立即停止监听以释放端口（同步关闭监听句柄，端口马上可用），
       // 避免在漫长的清理流程期间端口仍被占用，导致此时重启产生 EADDRINUSE 冲突。
-      // 现有连接会继续处理直到完成或超时；其回调与下面的清理流程并行等待。
       const serverClosedPromise = new Promise<void>((resolve) => {
         server.close(() => resolve());
       });
+      // 强制断开所有现存连接（含浏览器长连的 SSE：agent-map stream、rules-status
+      // 广播等）。否则这些连接永不自行关闭，server.close 的回调要等满下面 5s 超时
+      // 才触发，表现为 Ctrl+C 后「卡很久才打印 Server stopped.」。closeAllConnections
+      // 立即销毁所有 socket，让 close 回调几乎瞬时完成。
+      if (typeof server.closeAllConnections === 'function') {
+        server.closeAllConnections();
+      }
 
       // 服务终止前恢复配置文件（适用于 aicos stop 与 Ctrl+C）
       try {

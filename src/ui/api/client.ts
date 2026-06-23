@@ -1,4 +1,4 @@
-import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ToolInstallationStatus, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ClaudePermissionDefaultMode, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, AccessKeySession, KeyUsageDailyRecord, QuotaAlert, LanDiscoverResponse, LanSyncRequest, LanSyncResult, PerfVendorOverview, PerfVendorDetail, PerfServiceDetail, PerfModelDetail, PerfServiceOverview } from '../../types';
+import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ClaudePermissionDefaultMode, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, AccessKeySession, KeyUsageDailyRecord, QuotaAlert, LanDiscoverResponse, LanSyncRequest, LanSyncResult, PerfVendorOverview, PerfVendorDetail, PerfServiceDetail, PerfModelDetail, PerfServiceOverview } from '../../types';
 
 interface BackendAPI {
   // 鉴权相关
@@ -7,7 +7,6 @@ interface BackendAPI {
 
   // 版本检查
   checkVersion: () => Promise<{ hasUpdate: boolean; currentVersion: string | null; latestVersion: string | null }>;
-  checkClaudeVersion: () => Promise<ToolInstallationStatus>;
 
   getVendors: () => Promise<Vendor[]>;
   createVendor: (vendor: Omit<Vendor, 'id' | 'createdAt' | 'updatedAt'>) => Promise<Vendor>;
@@ -93,7 +92,7 @@ interface BackendAPI {
   importData: (encryptedData: string, password: string) => Promise<ImportResult>;
 
   writeClaudeConfig: (enableAgentTeams?: boolean, enableBypassPermissionsSupport?: boolean, permissionsDefaultMode?: ClaudePermissionDefaultMode) => Promise<boolean>;
-  writeCodexConfig: (modelReasoningEffort?: CodexReasoningEffort) => Promise<boolean>;
+  writeCodexConfig: (modelReasoningEffort?: CodexReasoningEffort, enableMemories?: boolean) => Promise<boolean>;
   restoreClaudeConfig: () => Promise<boolean>;
   restoreCodexConfig: () => Promise<boolean>;
   checkClaudeBackup: () => Promise<{ exists: boolean }>;
@@ -172,15 +171,6 @@ interface BackendAPI {
   // Upgrade 相关
   getUpgrade: () => Promise<{ shouldShow: boolean; content: string }>;
   acknowledgeUpgrade: () => Promise<{ success: boolean }>;
-
-  // 工具安装相关
-  getToolsStatus: () => Promise<ToolInstallationStatus>;
-  installTool: (tool: 'claude-code' | 'codex', callbacks: {
-    onStdout?: (data: string) => void;
-    onStderr?: (data: string) => void;
-    onClose?: (code: number | null, success: boolean) => void;
-    onError?: (error: string) => void;
-  }) => (() => void) & { sendInput?: (input: string) => void }; // 返回取消函数和发送输入函数
 
   // MCP 工具管理相关
   getMCPs: () => Promise<MCPServer[]>;
@@ -465,10 +455,10 @@ export const api: BackendAPI = {
       method: 'POST',
       body: JSON.stringify({ enableAgentTeams, enableBypassPermissionsSupport, permissionsDefaultMode })
     }),
-  writeCodexConfig: (modelReasoningEffort?: CodexReasoningEffort) =>
+  writeCodexConfig: (modelReasoningEffort?: CodexReasoningEffort, enableMemories?: boolean) =>
     requestJson(buildUrl('/api/write-config/codex'), {
       method: 'POST',
-      body: JSON.stringify({ modelReasoningEffort })
+      body: JSON.stringify({ modelReasoningEffort, enableMemories })
     }),
   restoreClaudeConfig: () => requestJson(buildUrl('/api/restore-config/claude'), { method: 'POST' }),
   restoreCodexConfig: () => requestJson(buildUrl('/api/restore-config/codex'), { method: 'POST' }),
@@ -489,7 +479,6 @@ export const api: BackendAPI = {
     }),
   checkClaudeBackup: () => requestJson(buildUrl('/api/check-backup/claude')),
   checkCodexBackup: () => requestJson(buildUrl('/api/check-backup/codex')),
-  checkClaudeVersion: () => requestJson(buildUrl('/api/tools/status')),
   // 新的详细配置状态 API
   getClaudeConfigStatus: () => requestJson(buildUrl('/api/config-status/claude')),
   getCodexConfigStatus: () => requestJson(buildUrl('/api/config-status/codex')),
@@ -578,9 +567,6 @@ export const api: BackendAPI = {
   getUpgrade: () => requestJson(buildUrl('/api/upgrade')),
   acknowledgeUpgrade: () => requestJson(buildUrl('/api/upgrade/ack'), { method: 'POST' }),
 
-  // 工具安装相关
-  getToolsStatus: () => requestJson<ToolInstallationStatus>(buildUrl('/api/tools/status')),
-
   // MCP 工具管理相关
   getMCPs: () => requestJson<MCPServer[]>(buildUrl('/api/mcps')),
   getMCP: (id: string) => requestJson<MCPServer | null>(buildUrl(`/api/mcps/${id}`)),
@@ -633,115 +619,6 @@ export const api: BackendAPI = {
       method: 'PUT',
       body: JSON.stringify({ bindings, models }),
     }),
-
-  installTool: (tool, callbacks) => {
-    console.log('[API Client] 开始安装工具:', tool);
-
-    // 构建 WebSocket URL
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const wsUrl = `${protocol}//${host}/api/tools/install`;
-
-    console.log('[API Client] 连接 WebSocket:', wsUrl);
-
-    let ws: WebSocket | null = null;
-    let reconnectTimeout: NodeJS.Timeout | null = null;
-
-    try {
-      ws = new WebSocket(wsUrl);
-    } catch (error) {
-      console.error('[API Client] 创建 WebSocket 失败:', error);
-      callbacks.onError?.('创建 WebSocket 连接失败');
-      return () => {};
-    }
-
-    // 连接打开时发送安装请求
-    ws.onopen = () => {
-      console.log('[API Client] WebSocket 连接已建立');
-      // 发送安装请求
-      ws?.send(JSON.stringify({ type: 'install', tool }));
-    };
-
-    // 接收消息
-    ws.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        console.log('[API Client] 收到消息:', message.type);
-
-        switch (message.type) {
-          case 'start':
-            console.log('[API Client] 安装开始:', message.data);
-            callbacks.onStdout?.(`\n========== 开始安装 ${message.data.tool} ==========\n`);
-            callbacks.onStdout?.(`操作系统: ${message.data.os}\n`);
-            callbacks.onStdout?.(`执行命令: ${message.data.command}\n`);
-            callbacks.onStdout?.(`子进程已创建 (PID: ${message.data.pid})\n`);
-            callbacks.onStdout?.(`等待 npm 输出...\n\n`);
-            break;
-          case 'stdout':
-            callbacks.onStdout?.(message.data);
-            break;
-          case 'stderr':
-            callbacks.onStderr?.(message.data);
-            break;
-          case 'close':
-            console.log('[API Client] 安装完成:', message.data);
-            callbacks.onClose?.(message.data.code, message.data.success);
-            // 延迟关闭 WebSocket，确保收到所有消息
-            setTimeout(() => {
-              ws?.close();
-            }, 1000);
-            break;
-          case 'error':
-            console.error('[API Client] 安装错误:', message.data);
-            callbacks.onError?.(message.data);
-            break;
-        }
-      } catch (error) {
-        console.error('[API Client] 解析消息失败:', error, event.data);
-      }
-    };
-
-    // 连接关闭
-    ws.onclose = (event) => {
-      console.log('[API Client] WebSocket 连接关闭:', event.code, event.reason);
-      if (!event.wasClean) {
-        callbacks.onError?.('连接意外关闭');
-      }
-    };
-
-    // 连接错误
-    ws.onerror = (error) => {
-      console.error('[API Client] WebSocket 错误:', error);
-      callbacks.onError?.('WebSocket 连接错误');
-    };
-
-    // 返回取消函数和发送输入函数
-    const cleanup = () => {
-      console.log('[API Client] 清理 WebSocket 连接');
-      if (reconnectTimeout) {
-        clearTimeout(reconnectTimeout);
-      }
-      if (ws) {
-        ws.close();
-        ws = null;
-      }
-    };
-
-    const sendInput = (input: string) => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'input', data: input }));
-        console.log('[API Client] 发送输入:', input.slice(0, 10));
-      } else {
-        console.warn('[API Client] WebSocket 未连接，无法发送输入');
-      }
-    };
-
-    // 返回取消函数，同时提供 sendInput 方法
-    const cancelFn = cleanup as (() => void) & { sendInput?: (input: string) => void };
-    cancelFn.sendInput = sendInput;
-
-    return cancelFn;
-  },
 
   // AccessKey 接入密钥
   getAccessKeys: (params) => requestJson(buildUrl('/api/access-keys', params as Record<string, string | number | undefined>)),

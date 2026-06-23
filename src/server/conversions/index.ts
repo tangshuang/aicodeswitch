@@ -321,8 +321,17 @@ export function buildTargetBody(options: Pick<TransformRequestOptions, 'fromForm
       if (result.messages) {
         result.messages = fixThinkingHistory(result.messages, 'completions');
       }
-      // 剥离 stream_options（reasoning_content 提供商通常不支持）
-      delete result.stream_options;
+      // stream_options 剥离策略由 providerConfig.streamOptions 决定：
+      //   'supported'   → 保留（DeepSeek 等支持 include_usage，能拿到真实 usage）
+      //   'unsupported' → 剥离（已知会报错的供应商）
+      //   'auto'/缺省   → 维持历史行为：reasoning_content 剥离
+      const streamOpt = providerConfig.streamOptions || 'auto';
+      const shouldStripStreamOptions =
+        streamOpt === 'unsupported' ||
+        (streamOpt === 'auto' && isReasoningContentCompletion);
+      if (shouldStripStreamOptions) {
+        delete result.stream_options;
+      }
     }
 
     // 注入 thinking 参数（如 thinking: { type: 'enabled' }）和 effort 参数

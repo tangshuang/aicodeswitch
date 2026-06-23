@@ -26,6 +26,8 @@ export interface PerformanceMetrics {
   ttftMs?: number;
   tokensPerSecond?: number;       // tps（TPM/60）
   outputTokens?: number;
+  inputTokens?: number;           // 输入 token（含 cache 等，按上游口径）
+  totalTokens?: number;           // 总 token（input+output 或上游 totalTokens）
   timingAccuracy: 'precise' | 'estimated';
   isError: boolean;
 }
@@ -46,11 +48,45 @@ export class ServicePerformanceTracker {
     try {
       const raw = await fs.readFile(this.filePath, 'utf-8');
       const parsed = JSON.parse(raw) as ServicePerformanceFile;
-      if (parsed && parsed.vendors) this.file = parsed;
+      if (parsed && parsed.vendors) {
+        this.file = parsed;
+        // 旧数据文件可能缺新增的 token 字段（sumInputTokens/sumTotalTokens），
+        // 直接累加会得到 undefined+N=NaN，污染派生值。这里补齐为 0。
+        this.migrateBuckets(this.file);
+      }
     } catch {
       // 首次启动或文件损坏，使用空桶
       this.file = { vendors: {} };
     }
+  }
+
+  /** 加载后补齐旧数据缺失的桶字段，避免 undefined 累加成 NaN */
+  private migrateBuckets(file: ServicePerformanceFile): void {
+    for (const v of Object.values(file.vendors)) {
+      if (v.vendorRollup) this.normalizeAggregate(v.vendorRollup);
+      for (const s of Object.values(v.services || {})) {
+        if (s.serviceRollup) this.normalizeAggregate(s.serviceRollup);
+        for (const agg of Object.values(s.models || {})) {
+          this.normalizeAggregate(agg);
+        }
+      }
+    }
+  }
+
+  private normalizeAggregate(agg: PerfAggregate): void {
+    this.normalizeBucket(agg.precise);
+    this.normalizeBucket(agg.estimated);
+    for (const b of Object.values(agg.hourly || {})) this.normalizeBucket(b);
+  }
+
+  private normalizeBucket(b: PerfBucket | undefined): void {
+    if (!b) return;
+    if (typeof b.count !== 'number') b.count = 0;
+    if (typeof b.sumTtftMs !== 'number') b.sumTtftMs = 0;
+    if (typeof b.sumTps !== 'number') b.sumTps = 0;
+    if (typeof b.totalOutputTokens !== 'number') b.totalOutputTokens = 0;
+    if (typeof b.sumInputTokens !== 'number') b.sumInputTokens = 0;
+    if (typeof b.sumTotalTokens !== 'number') b.sumTotalTokens = 0;
   }
 
   /**
@@ -272,7 +308,7 @@ export class ServicePerformanceTracker {
   }
 
   private emptyBucket(): PerfBucket {
-    return { count: 0, sumTtftMs: 0, sumTps: 0, totalOutputTokens: 0 };
+    return { count: 0, sumTtftMs: 0, sumTps: 0, totalOutputTokens: 0, sumInputTokens: 0, sumTotalTokens: 0 };
   }
 
   private accumulate(agg: PerfAggregate, m: PerformanceMetrics, hour: string, withExtremes: boolean): void {
@@ -284,20 +320,29 @@ export class ServicePerformanceTracker {
     const hasTtft = m.timingAccuracy === 'precise' && typeof m.ttftMs === 'number';
     const hasTps = typeof m.tokensPerSecond === 'number';
 
+    // token 量与计时精度无关，precise/estimated 桶都累加
     bucket.count += 1;
     if (hasTtft) bucket.sumTtftMs += m.ttftMs!;
     if (hasTps) bucket.sumTps += m.tokensPerSecond!;
     if (m.outputTokens) bucket.totalOutputTokens += m.outputTokens;
+    if (m.inputTokens) bucket.sumInputTokens += m.inputTokens;
+    if (m.totalTokens) bucket.sumTotalTokens += m.totalTokens;
 
-    // 小时桶（仅精确样本计入走势，避免估算样本污染）
+    // 小时走势桶：
+    //  - count/sumTtftMs/sumTps 仅精确样本计入（避免估算样本污染 TTFT/TPM 均值）
+    //  - token 三项与精度无关，所有样本都计入走势（含非流式）
+    const hb = agg.hourly[hour] ?? (agg.hourly[hour] = this.emptyBucket());
+    let touchedHourly = false;
     if (m.timingAccuracy === 'precise') {
-      const hb = agg.hourly[hour] ?? (agg.hourly[hour] = this.emptyBucket());
       hb.count += 1;
       if (hasTtft) hb.sumTtftMs += m.ttftMs!;
       if (hasTps) hb.sumTps += m.tokensPerSecond!;
-      if (m.outputTokens) hb.totalOutputTokens += m.outputTokens;
-      this.trimHourly(agg.hourly);
+      touchedHourly = true;
     }
+    if (m.outputTokens) { hb.totalOutputTokens += m.outputTokens; touchedHourly = true; }
+    if (m.inputTokens) { hb.sumInputTokens += m.inputTokens; touchedHourly = true; }
+    if (m.totalTokens) { hb.sumTotalTokens += m.totalTokens; touchedHourly = true; }
+    if (touchedHourly) this.trimHourly(agg.hourly);
 
     // 极值（仅模型级、仅精确样本）
     if (withExtremes && m.timingAccuracy === 'precise') {
@@ -324,9 +369,14 @@ export class ServicePerformanceTracker {
 
   private derive(agg: PerfAggregate): PerfDerived {
     const p = agg.precise;
+    const e = agg.estimated;
     const count = p.count;
     const avgTtftMs = count > 0 ? p.sumTtftMs / count : 0;
     const avgTps = count > 0 ? p.sumTps / count : 0;
+    // token 量跨 precise+estimated 求和（含非流式样本）
+    const totalOutputTokens = p.totalOutputTokens + e.totalOutputTokens;
+    const totalInputTokens = p.sumInputTokens + e.sumInputTokens;
+    const totalTokens = p.sumTotalTokens + e.sumTotalTokens;
     return {
       count,
       avgTtftMs,
@@ -336,7 +386,9 @@ export class ServicePerformanceTracker {
       minTps: agg.minTps,
       maxTps: agg.maxTps,
       errorCount: agg.errorCount,
-      totalOutputTokens: p.totalOutputTokens,
+      totalOutputTokens,
+      totalInputTokens,
+      totalTokens,
       successRate: count + agg.errorCount > 0 ? count / (count + agg.errorCount) : 0,
     };
   }
@@ -360,6 +412,9 @@ export class ServicePerformanceTracker {
         count: b.count,
         avgTtftMs: b.count > 0 ? b.sumTtftMs / b.count : 0,
         avgTpm: b.count > 0 ? (b.sumTps / b.count) * 60 : 0,
+        inputTokens: b.sumInputTokens,
+        outputTokens: b.totalOutputTokens,
+        totalTokens: b.sumTotalTokens,
       }));
   }
 

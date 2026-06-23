@@ -2409,6 +2409,8 @@ export class FileSystemDatabaseManager {
         lastRequestAt: now,
         requestCount: 1,
         totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
       };
       this.sessions.push(session);
       await this.saveSessions();
@@ -2434,6 +2436,8 @@ export class FileSystemDatabaseManager {
       highIqEnabledAt?: number;
       routeId?: string;
       routeName?: string;
+      inputTokens?: number;
+      outputTokens?: number;
     }
   ): Promise<boolean> {
     const session = this.sessions.find(s => s.id === sessionId);
@@ -2596,7 +2600,7 @@ export class FileSystemDatabaseManager {
   }
 
   // 新增方法：创建或更新 session
-  upsertSession(session: Omit<Session, 'requestCount' | 'totalTokens'> & { requestCount?: number; totalTokens?: number }): void {
+  upsertSession(session: Omit<Session, 'requestCount' | 'totalTokens' | 'inputTokens' | 'outputTokens'> & { requestCount?: number; totalTokens?: number; inputTokens?: number; outputTokens?: number }): void {
     const now = Date.now();
     const existing = this.sessions.find(s => s.id === session.id);
 
@@ -2605,6 +2609,8 @@ export class FileSystemDatabaseManager {
       existing.lastRequestAt = now;
       existing.requestCount++;
       existing.totalTokens += session.totalTokens || 0;
+      existing.inputTokens = (existing.inputTokens || 0) + (session.inputTokens || 0);
+      existing.outputTokens = (existing.outputTokens || 0) + (session.outputTokens || 0);
       if (session.vendorId !== undefined) existing.vendorId = session.vendorId;
       if (session.vendorName !== undefined) existing.vendorName = session.vendorName;
       if (session.serviceId !== undefined) existing.serviceId = session.serviceId;
@@ -2626,6 +2632,8 @@ export class FileSystemDatabaseManager {
         lastRequestAt: now,
         requestCount: 1,
         totalTokens: session.totalTokens || 0,
+        inputTokens: session.inputTokens || 0,
+        outputTokens: session.outputTokens || 0,
         vendorId: session.vendorId,
         vendorName: session.vendorName,
         serviceId: session.serviceId,

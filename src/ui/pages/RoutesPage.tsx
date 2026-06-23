@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api/client';
-import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry, MCPServer, ToolInstallationStatus, CodexReasoningEffort, ClaudeEffortLevel, ClaudePermissionDefaultMode, AppConfig, ApiPathBinding, ToolName, ToolBindings } from '../../types';
+import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntry, MCPServer, CodexReasoningEffort, ClaudeEffortLevel, ClaudePermissionDefaultMode, AppConfig, ApiPathBinding, ToolName, ToolBindings } from '../../types';
 import { useConfirm } from '../components/Confirm';
 import { toast } from '../components/Toast';
 import Select from '../components/Select';
@@ -166,9 +166,6 @@ export default function RoutesPage() {
   const [showTokenLimit, setShowTokenLimit] = useState(false);
   const [showRequestLimit, setShowRequestLimit] = useState(false);
 
-  // Claude Code 版本检查状态
-  const [claudeVersionCheck, setClaudeVersionCheck] = useState<ToolInstallationStatus | null>(null);
-
   // 一键配置弹窗状态
   const [showQuickSetupModal, setShowQuickSetupModal] = useState(false);
   const [showSyncConfigModal, setShowSyncConfigModal] = useState(false);
@@ -198,7 +195,6 @@ export default function RoutesPage() {
     loadAppConfig();
     loadToolBindings();
     loadApiPathBindings();
-    checkClaudeVersion();
     loadAllRules();
   }, []);
 
@@ -323,37 +319,6 @@ export default function RoutesPage() {
     } finally {
       setUnbindingSessionId(null);
     }
-  };
-
-  // 检查Claude Code版本
-  const checkClaudeVersion = async () => {
-    try {
-      const versionInfo = await api.checkClaudeVersion();
-      setClaudeVersionCheck(versionInfo);
-    } catch (error) {
-      console.error('Failed to check Claude version:', error);
-    }
-  };
-
-  // 比较版本号（返回: 1=version1>version2, -1=version1<version2, 0=equal）
-  const compareVersions = (v1: string | null | undefined, v2: string): number => {
-    if (!v1) return -1;
-    const parts1 = v1.split('.').map(Number);
-    const parts2 = v2.split('.').map(Number);
-
-    for (let i = 0; i < 3; i++) {
-      const p1 = parts1[i] || 0;
-      const p2 = parts2[i] || 0;
-      if (p1 > p2) return 1;
-      if (p1 < p2) return -1;
-    }
-    return 0;
-  };
-
-  // 检查是否支持 Agent Teams 功能
-  const isAgentTeamsSupported = () => {
-    if (!claudeVersionCheck?.claudeCode?.version) return false;
-    return compareVersions(claudeVersionCheck.claudeCode.version, '2.1.32') >= 0;
   };
 
   const loadRules = async (routeId: string) => {
@@ -702,12 +667,6 @@ export default function RoutesPage() {
   };
 
   const handleToggleAgentTeams = async (newValue: boolean) => {
-    // 检查版本是否支持
-    if (newValue && !isAgentTeamsSupported()) {
-      toast.error('当前 Claude Code 版本不支持 Agent Teams 功能，需要版本 ≥ 2.1.32');
-      return;
-    }
-
     try {
       const current = appConfig || {};
       await api.updateConfig({
@@ -1812,20 +1771,6 @@ export default function RoutesPage() {
             </div>
           </div>
 
-          {!isAgentTeamsSupported() && claudeVersionCheck?.claudeCode?.version && (
-            <div style={{
-              backgroundColor: 'var(--bg-warning, #fff3cd)',
-              border: '1px solid var(--border-warning, #ffc107)',
-              borderRadius: '6px',
-              padding: '12px',
-              marginBottom: '12px',
-              fontSize: '13px',
-              color: 'var(--text-warning, #856404)'
-            }}>
-              ⚠️ 当前 Claude Code 版本 ({claudeVersionCheck.claudeCode.version}) 不支持 Agent Teams 功能。<br />
-              Agent Teams 功能需要 Claude Code 版本 ≥ 2.1.32。请升级 Claude Code 后再使用此功能。
-            </div>
-          )}
           <div style={{ marginTop: '20px', marginBottom: '20px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <input
@@ -1833,20 +1778,17 @@ export default function RoutesPage() {
                 id="agent-teams-toggle"
                 checked={appConfig?.enableAgentTeams || false}
                 onChange={(e) => handleToggleAgentTeams(e.target.checked)}
-                disabled={!isAgentTeamsSupported()}
-                style={{ cursor: isAgentTeamsSupported() ? 'pointer' : 'not-allowed', width: '16px', height: '16px' }}
+                style={{ cursor: 'pointer', width: '16px', height: '16px' }}
               />
               <label
                 htmlFor="agent-teams-toggle"
-                style={{ cursor: isAgentTeamsSupported() ? 'pointer' : 'not-allowed', fontSize: '14px', userSelect: 'none', color: isAgentTeamsSupported() ? 'inherit' : 'var(--text-muted)' }}
+                style={{ cursor: 'pointer', fontSize: '14px', userSelect: 'none' }}
               >
                 开启 Agent Teams 功能
               </label>
             </div>
             <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
-              {!isAgentTeamsSupported()
-                ? 'Agent Teams 功能需要 Claude Code 版本 ≥ 2.1.32。请升级 Claude Code 后再使用此功能。'
-                : '开启后将启用 Agent Teams 实验性功能，并实时写入配置；重启 Claude Code 后生效。'}
+              开启后将启用 Agent Teams 实验性功能，并实时写入配置；重启 Claude Code 后生效。
             </div>
           </div>
           <div>

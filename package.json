@@ -1,6 +1,6 @@
 {
   "name": "aicodeswitch",
-  "version": "5.2.13",
+  "version": "6.0.0",
   "description": "A tool to help you manage AI programming tools to access large language models locally. It allows your Claude Code, Codex and other tools to no longer be limited to official models.",
   "author": "tangshuang",
   "license": "GPL-3.0",
@@ -80,6 +80,7 @@
     "@types/node": "^20.11.5",
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
+    "@types/three": "^0.165.0",
     "@typescript-eslint/eslint-plugin": "^6.14.0",
     "@typescript-eslint/parser": "^6.14.0",
     "@vitejs/plugin-react": "^4.2.1",
@@ -96,6 +97,7 @@
     "react-router-dom": "^6.21.3",
     "recharts": "^3.7.0",
     "standard-version": "^9.5.0",
+    "three": "^0.165.0",
     "tsx": "^4.7.0",
     "typescript": "^5.2.2",
     "vite": "^5.0.8"

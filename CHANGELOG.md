@@ -1,5 +1,222 @@
 # Changelog
 
+## 2026-06-23: 移除 Claude Code / Codex 安装检查功能
+
+- 删除启动时检测工具是否安装及一键安装的全部逻辑：后端 `tools-service.ts`、`websocket-service.ts`、`/api/tools/status`、`/api/tools/install`（WS），前端 `ToolsInstallModal.tsx`、`NotificationBar.tsx`、`Terminal.tsx`，以及 App.tsx 的启动检查与 api/client.ts、types 的相关代码。
+- 一并移除 RoutesPage 的 Agent Teams 版本门控（不再校验 Claude Code ≥ 2.1.32），开关始终可用。
+
+## 2026-06-23: 修复 Ctrl+C 后卡很久才打印 "Server stopped."
+
+### 修复
+- **根因**：shutdown 流程里 `server.close()` 的回调要等所有现存连接关闭才触发，但浏览器长连的 SSE（agent-map stream、rules-status 广播等）永不自行关闭 → 必须等满 `Promise.race` 的 5s 超时，表现为 Ctrl+C 后阻塞很久才打印 `Server stopped.`。
+- **修复**：在 `server.close()` 之后调用 `server.closeAllConnections()`（Node ≥18.2）强制销毁所有现存 socket，close 回调几乎瞬时完成。dev.js 的整组退出阻塞逻辑本身正确，无需改动。
+- 文件：`src/server/main.ts`。
+
+## 2026-06-23: reasoning_content 上游流式 usage 丢失修复（按供应商决定是否保留 stream_options）
+
+### 修复
+- **根因**：`conversions/index.ts` 对所有 `outputFormat === 'reasoning_content'` 的上游无条件 `delete stream_options`，导致 DeepSeek 等（实际支持 `stream_options.include_usage`）的流式响应不再回传最终 usage chunk → 会话/日志的输入/输出/总计 token 全为 0。
+- **修复**：在 `thinking` 模块新增按供应商的 `streamOptions` 三态配置（`supported` / `unsupported` / `auto`）。DeepSeek、Moonshot、Qwen、Zhipu、SiliconFlow 标 `supported`（保留 stream_options，拿回真实 usage）；mimo、agnes 标 `auto`；未命中供应商走 `auto` 兜底（维持历史 reasoning_content 剥离行为，避免潜在 400）。`conversions/index.ts` 的剥离改为按该字段决策。
+- 文件：`src/server/conversions/types.ts`、`src/server/conversions/thinking/providers.ts`、`src/server/conversions/index.ts`。
+
+## 2026-06-23: 修复任务雷达 requestCount / model / token 不更新（onFinalized 被安全网误跳过）
+
+### 修复
+- **根因**：`proxyRequest` 的 `res.on('close')` 安全网与 `finalizeLog` 共用同一个标记 `_agentMapRecorded`。流式响应里 `res 'close'` 常先于 `finalizeLog` 的采集块触发并把标记置位 → `finalizeLog` 里 `if (!_agentMapRecorded)` 为假，整块跳过 `onFinalized`。而 `requestCount / lastModel / token` 只在 `onFinalized` 里更新（`status` 走安全网的 `reevaluate` 仍会变）→ 表现为「状态会变，但轮次/模型/Token 一直不更新」。
+- **修复**：拆成两个独立标记 —— `_agentMapEnded`（保证 `endRequest` 只跑一次，安全网与 finalizeLog 共享）和 `_agentMapFinalized`（保证 `onFinalized` 只跑一次，仅 finalizeLog 持有）。二者解耦后，即便安全网已先 `endRequest`，`finalizeLog` 仍会执行 `onFinalized`，requestCount/model/token 正常更新并通过 SSE 推送。
+- 文件：`src/server/proxy-server.ts`（安全网 + `finalizeLog` 采集块）。
+
+## 2026-06-23: 任务雷达 3D 连线分段两色修复（输入/输出不同色）
+
+### 修复
+- **根因**：输入段与输出段共用同一个材质 → 两段同色，看着只有一种颜色。
+- **修复**：`split` 仅在输入、输出都 >0 时计算（`agentMapGeometry`）。场景连线拆为三种几何：完整累计连线（bg）、输入段（segIn）、输出段（segOut），各用独立材质（输入=`accent-secondary`、输出=`accent-primary`、累计=`accent-primary`）。
+  - 输入+输出都有 → 只显示输入段+输出段（两色），隐藏累计全程线。
+  - 输入或输出任一为 0 → 只显示完整累计连线（单色、不断）。
+- `LinkHandle` 改为 `segInMat`/`segOutMat` 分离；`createLink`/`updateLink` 按 `p.split` 切换 `bg/segIn/segOut` 显隐；`refreshTheme`/`resize`/`disposeLink` 同步更新两个段材质。
+
+
+## 2026-06-23: 任务雷达 Token 流式实时推送（节点随 token 增长实时上移）
+
+### 新增
+- **背景**：此前 Token 仅在请求结束（`onFinalized`）时更新一次，流式过程中前端一直看不到 Token 变化，节点位置（3D 高度由 totalTokens 驱动）也不动。
+- **实时推送**：流式 pipeline 的下游 chunk 心跳回调里，从 `eventCollector.extractUsage()` 取当前请求的累计 usage（input/output），随 `heartbeat` 一并推给前端。`RuntimeState` 新增 `runningInputTokens/runningOutputTokens`（在途请求的实时累计），`toMapItem` 展示值 = 已落盘累计 + 在途实时累计 → 节点在流式过程中随 token 增长实时上移。
+- **防双算**：请求结束时 `endRequest` 把 running 清零，`onFinalized` 把最终 usage 并入落盘累计。因展示口径 = 累计 + running，而 finalize 时累计已含最终值且 running 清零，前后值连续无跳变。
+- `src/server/agent-map/agent-map-service.ts`：`RuntimeState` 新增 running 字段（三处初始化补 0）；`heartbeat(sessionId, usage?)` 写 running + `emitSession`；`endRequest` 在 inFlight→0 时清零 running；`toMapItem` 返回 累计+running。
+- `src/server/proxy-server.ts`：流式下游 chunk 回调取 `eventCollector.extractUsage()` 并传入 `heartbeat`（沿用 ChunkCollector 5s 节流）。
+
+## 2026-06-23: 任务雷达 3D 连线开关 + 标签样式 + 中心点改为底面圆
+
+### 新增 / 优化
+- **「连线」开关**：3D 模式右下角「标签」按钮左侧新增「连线」按钮（默认开）。关 → 隐藏中心点到各节点的 Token 连线；**选中节点的连线始终显示**（即便开关关闭）。`AgentMap3DScene` 新增 `showLinks`/`setLinksVisible`/`linkVisible`（showLinks || selected），`applySelection` 切换时刷新前后节点的连线可见性。
+- **标签样式**：移除节点标签的文字阴影；新增 hover 背景高亮（`pointer-events` 开启时可触发）以凸显文字。「连线」按钮 hover 不改背景（新增 `.am-view-btn--link` 规则）。
+- **中心点改为底面圆**：原点由小球改为地面上的小圆（`CircleGeometry`，平贴 y=0），尺寸调小（半径 0.7），颜色与时间线同心圆一致（`palette.completed`），不再与节点色混淆。
+
+## 2026-06-23: 任务雷达历史会话 Token 拆分按日志回填（legacy 会话补出输入/输出）
+
+### 新增
+- **背景**：上一轮把输入/输出拆分持久化到 `Session`，但修复前累积的 legacy 会话拆分从未存过，仍恒为 0。
+- **回填**：点开 legacy 会话详情（`getSessionMeta`）时，从该会话**全部请求日志**现算 `usage.inputTokens/outputTokens` 之和，写回 `RuntimeState` + DB（绝对值），之后新请求在回填基线上照常累加。每会话只回填一次（`tokenSplitBackfilled` 标记防重入，失败回滚允许重试）。
+- **触发点**：懒触发（点开详情才回填），避免启动时为数百会话全量读日志的 I/O 峰值。
+- `src/server/agent-map/agent-map-service.ts`：`RuntimeState` 新增 `tokenSplitBackfilled`；新增私有 `backfillTokenSplit(st)`；`getSessionMeta` 的 global 分支触发回填并 `emitSession` 推送刷新。
+- `src/server/fs-database.ts`：`updateSession` 的 updates 类型补 `inputTokens?/outputTokens?`（`Object.assign` 绝对写入）。
+- 限制：仅覆盖 global 会话；access-key 会话有独立存储（`key-session-tracker` 仅 totalTokens），不在本次回填范围。
+
+## 2026-06-23: dev 脚本 Ctrl+C 阻塞到服务真正停止（修复「Server stopped. 延迟回显」）
+
+### 修复
+- **根因**：`tsx` 会 fork——`serverChild`（`node_modules/.bin/tsx`）只是个启动器，真正运行 `src/server/main.ts` 的 node 进程是它的孙进程。Ctrl+C 的 SIGINT 打到整个前台进程组后，启动器几乎立刻退出，dev 父进程原本只 `await` 启动器的 `exit`/`close`，于是瞬间退出；而真正的服务进程仍在做数秒优雅关闭（恢复配置 + `server.close`），最终在终端提示符回显之后才打印 `Server stopped.`，成为孤儿输出。
+- **修复**：`scripts/dev.js` 改用进程组语义——子进程以 `detached: true` 启动（POSIX `setsid`，`child.pid == pgid`），停止时用 `process.kill(-pid, sig)` 给整组（启动器 + 真正服务 + esbuild）发信号，并以 `groupAlive(-pid)` 轮询整组存活。只要组内还有任何进程（真正的 node 服务）就阻塞，等整组清空才退出，等价于「等到 `Server stopped.` 出现并 `process.exit`」。超时（15s）兜底用整组 `SIGKILL`。POSIX 下同时去掉 `shell: true` 避免 `/bin/sh` 抢先退出。
+- 文件：`scripts/dev.js`。
+
+## 2026-06-23: 任务结束防抖应用到展示状态（修复「闪一下空闲再恢复进行中」）
+
+### 修复
+- **根因**：上一轮的防抖只作用在「OS 通知弹窗」，**展示状态**仍在每次请求结束时立即转 idle，下一个请求一来又回 active → 节点「闪一下空闲再恢复进行中」。防抖未覆盖状态展示。
+- **修复**：把防抖（`NOTIFY_DEBOUNCE_MS`，默认 8s）同时应用到**展示状态**——`inferStatus` 在「结束」（end_turn / 未知）情形下先保持 `active` 满 8s，期满且无新请求才落实 `idle`。期间发起新主请求会刷新 `lastActivityAt`，继续保持 `active`、不闪、不弹通知。
+- **架构调整**：通知触发从「状态迁移（active→idle）」改为「结束检测」（`onFinalized` 检测到 `inFlight==0` 且非 `tool_use` 即调度）。因为状态被防抖保持 active，迁移会延迟，旧的「迁移触发」会双重延迟；改为检测触发后，由 `fireNotify` 在防抖期满时把状态落实为 `idle`，二者经 `NOTIFY_DEBOUNCE_MS` 对齐。
+- `maybeNotifyTurnEnd` 移除，新增 `considerEndNotify`（基于结束检测 + `notifiedForTurn` 去重 + 499 跳过）；`fireNotify` 在弹通知时同步落实 `idle`（仅 `inFlight==0`，不覆盖后台请求进行中的 active）；`onFinalized`/`sweep`/`reevaluate` 三处改为调 `considerEndNotify`；`NOTIFY_DEBOUNCE_MS` 由 5s 调到 8s（用户反馈时长不够）。
+- 文件：`src/server/agent-map/agent-map-service.ts`。
+
+## 2026-06-23: 任务雷达 3D 非进行中节点去光晕 + 选中节点加旋转土星环
+
+### 改动
+- **非进行中节点去掉光晕**：脉冲发光圈（glow）改为仅 `active` 显示；idle/completed/error 不再有光晕。
+- **选中节点加同色土星环**：用旋转的 `Torus` 环替换原来的脉冲描边光环（outline）。环颜色随节点状态（同色），尺寸随半径（×1.8），绕世界 Y 轴持续旋转（pivot + 倾斜环），跟随选中节点位置。`createNode`/`updateNode`/`applySelection`/`refreshTheme` 全部改用 `ringPivot`/`ringMesh`/`ringMat`，渲染循环每帧跟随节点 + 旋转。
+
+## 2026-06-23: 任务雷达 3D 标签不挡鼠标 + 选中节点透明度细化
+
+### 优化
+- **标签不挡鼠标**：节点标签 `pointer-events` 跟随「标签」开关——开→`auto`（可点选节点）、关→`none`（即便选中节点的标签仍可见，也不拦截鼠标，避免挡住轨道/拾取操作）。`setLabelsVisible` 与 `createNode` 同步切换 pointer-events 与 cursor。
+- **选中透明度细化**：选中的 active / idle / error 节点保持**不透明**（opacity 1）；仅 completed 选中为半透明（0.85）。`applyNodeAppearance` 选中分支按 `status==='completed'` 决定透明度。
+
+## 2026-06-23: 任务雷达 3D 选中「非进行中」节点移除呼吸、改为静态半透明实心
+
+### 优化
+- 之前选中的非进行中节点带脉冲描边光环（呼吸）。现按状态区分：
+  - **进行中(active) 选中**：保留不透明实心 + 脉冲描边光环（表示进行中）。
+  - **非进行中(idle/completed/error) 选中**：隐藏描边光环、发光圈冻结为恒定（去掉呼吸），仅呈现**静态半透明实心**（opacity 0.85、去线框、置顶不被遮挡）。
+- `applyNodeAppearance`：选中态按 `active` 分流（active→opacity 1；非 active→0.85 半透明）。
+- `applySelection` / `updateNode`：描边光环仅当选中节点为 `active` 时显示。
+- 渲染循环：发光圈对「选中且非 active」节点冻结为恒定（不再 sin 脉冲）。
+
+## 2026-06-23: 任务雷达选中节点强制不透明 + 置顶（失焦恢复）
+
+### 优化
+- **3D**：新增 `applyNodeAppearance(h)` 统一刷新节点外观。选中节点 → 球体强制 `opacity=1`、去线框（实心）、logo 贴片全亮，并 `depthTest=false` + `renderOrder=999`（球/光晕/贴片）、外描边 `renderOrder=998` + `depthTest=false` → **不被其它球遮挡**。失焦（取消选中）→ 恢复按状态（completed 半透明线框、logo 减淡）+ `depthTest=true`/`renderOrder=0`。`createNode`/`updateNode`(状态变)/`applySelection`(选/切) 三处统一调用该方法。
+- **2D**：节点排序优先级改为「选中(2) > active/error(1) > 其余(0)」，选中节点画在最上层（SVG 后绘制即置顶），失焦自动恢复。CSS `.am-node--selected { opacity: 1 }`（含 3D SVG 回退变体）覆盖 completed 的 0.55。
+
+## 2026-06-23: 任务结束通知增加防抖（避免每轮结束都弹）
+
+### 改动
+- **防抖延迟**：检测到任务结束时不再立即弹通知，而是挂一个 `NOTIFY_DEBOUNCE_MS`（默认 5s）的定时器；若期间发起新的**主请求**（`startRequest` 非 background），说明会话马上又进入下一轮、用户并未真正离开 → 取消本次通知。只有持续静默满防抖窗口才真正弹。解决「请求结束后马上进入下一个」导致每轮结束都弹的打扰，同时兜底吸收 `end_turn` 的偶发误判（误判后紧跟的真实请求会取消它）。
+- 仅**主请求**取消挂起通知（`startRequest(background=false)` 调 `cancelNotifyTimer` + 重置 `notifiedForTurn`）；后台类请求（count_tokens / compact）不取消，保证主任务真实结束仍能通知。
+- `RuntimeState` 新增 `notifyTimer`；`maybeNotifyTurnEnd` 改为「标记 + 调度」而非立即弹；新增 `scheduleNotify`/`cancelNotifyTimer`/`fireNotify`（`fireNotify` 复检 `notifyEnabled`，防抖期间关开关则不弹；过 60s 冷却兜底）；`destroy()` 清理所有挂起定时器；定时器 `unref()` 不阻止进程退出。
+- 文件：`src/server/agent-map/agent-map-service.ts`。
+
+## 2026-06-23: 任务雷达节点详情从浮动 popover 迁到右侧侧栏（根治闪现/自动关闭）
+
+### 重构
+- **根因**：节点详情原为 `position: fixed` 浮动 popover，位置由「画布上报节点屏幕坐标 → useLayoutEffect 定位」驱动；实时刷新（SSE + 10s tick）下选中数据/屏幕坐标瞬时为空，导致 popover 闪现后自动关闭（2D 必现）。
+- **改为侧栏常驻**：点击节点 → 右侧「全局活动流」侧栏直接替换为该节点详情面板（元信息 + 活动路径 + 刷新/会话详情按钮）；取消选中（头部 × / 点空白）→ 恢复全局活动流。2D/3D 通用，详情不再依赖屏幕坐标，闪现/关闭从根上消除。
+- 选中数据「粘性」：`selectedStickyRef` 在 session 瞬时缺失时沿用上次数据，避免侧栏在 详情↔活动流 间闪跳。点击节点自动展开侧栏（`handleSelect`）。
+- **删除整条坐标上报链路**：`onSelectedScreen` / `selectedScreen` / `detailStyle` / `detailPlacement` / `detailRef` / `recomputeTick` 及相关 `useLayoutEffect`、滚动-resize 监听；`AgentMapCanvas2D` 去掉 `onSelectedScreen`+`resizeTick`；`AgentMapCanvas3D` 去掉 `onSelectedScreen`+`followThrottle`；`AgentMap3DScene` 去掉 `onSelectedScreenUpdate` 回调、每帧 `projectToScreen` 上报与该方法。
+- 样式：`.am-detail--popover`（fixed/阴影）→ `.am-detail--sidebar`（width:100%、flex 列、body 内滚动，适配 280px 侧栏）。
+
+## 2026-06-23: 修复任务雷达误报通知（本地工具执行 & Thinking 长耗时）
+
+### 修复
+- **本地工具执行（tool_use）误弹通知**。Agentic 一轮任务由「请求 → 上游返回 `tool_use` → 客户端本地执行工具（无代理流量）→ `tool_result` 再请求」多个周期组成。上一轮通知重构丢弃了 `detectTurnEnd` 对状态的区分，导致上游返回 `tool_use` 时 SSE 流关闭、`inFlight→0`，`inferStatus` 直接判 idle → 误弹通知（每个工具调用都会弹一次）。现恢复「轮次语义」判定：末响应为 `tool_use`（`lastTurnEnd===false`）→ 保持「进行中」（客户端正在本地执行工具），**永不弹通知**；末响应为 `end_turn` 才转 idle 并弹一次。
+- **Thinking 长静默误判停滞**。思考类模型在首 Token 后、正式内容前常有 >30s 静默思考期（部分上游不流式下发 thinking token），被「SSE 30s 静默即停滞」误判为 idle → 误报。现复用路由同款 Thinking 识别（`rule.contentType==='thinking'` 或 `hasThinkingSignal(req.body)`），思考请求期间静默上限由 30s 提升到 `THINKING_SILENCE_MS`（3min），思考期间保持「进行中」不弹通知。
+- **通知资格与展示状态解耦**。`inferStatus` 新增返回 `notifyEligible`：仅「`inFlight==0` 且 `lastTurnEnd===false`」（本地工具执行）为 `false`，其余均可通知。`maybeNotifyTurnEnd` 据此跳过——sweep 把长期无后续的 tool_use 节点转为 idle/completed（仅雷达展示诚实）时不会弹通知。用户已确认：tool_use 长时间无后续始终静默，仅在明确结束（end_turn / 上游停滞 / 报错）时弹。
+
+### 改动
+- `src/server/agent-map/agent-map-service.ts`：新增常量 `THINKING_SILENCE_MS`、`RuntimeState.thinkingInFlight`；`startRequest`/`endRequest` 新增 `thinking` opt；重写 `inferStatus`（在途分支按 thinking 选静默上限；`inFlight==0` 分支按 `lastTurnEnd` 分流并产出 `notifyEligible`）；`maybeNotifyTurnEnd(prev, st, notifyEligible)` 与 `onFinalized`/`sweep`/`reevaluate`/`seedFromDb` 四处调用点对齐新签名。
+- `src/server/proxy-server.ts`（`proxyRequest`）：计算 `_isThinking = rule.contentType==='thinking' || this.hasThinkingSignal(req.body)`，记入 `res.locals._agentMapThinking`；`startRequest` 传 `thinking`；`finalizeLog` 与 `res.on('close')` 安全网的 `endRequest` 均传 `thinking`。
+
+## 2026-06-23: 任务雷达 Token 输入/输出拆分持久化（修复重启后拆分归零）
+
+### 修复
+- **根因**：任务雷达节点的累计 Token 能正确显示（来自 DB `Session.totalTokens`），但输入/输出拆分恒为 0。原因是 `Session` 只持久化了 `totalTokens`，输入/输出仅存于内存 `RuntimeState`，`seedFromDb` 重启种子化时硬编码为 0。
+- **修复**：把输入/输出拆分按 `totalTokens` 同口径持久化。
+- `src/types/index.ts`：`Session` 新增 `inputTokens` / `outputTokens`。
+- `src/server/fs-database.ts`：`upsertSession` 累加输入/输出；`getOrCreateSession` 初始化为 0。
+- `src/server/proxy-server.ts`：`upsertSession` 调用传入 `usageForLog.inputTokens/outputTokens`。
+- `src/server/agent-map/agent-map-service.ts`：`seedFromDb` 改为从 `s.inputTokens/s.outputTokens` 恢复。
+- 说明：历史会话（本次修复前累积的）拆分不可回填（此前从未存储），仅累计可恢复；修复后的新流量三项均正确。
+
+## 2026-06-23: 任务雷达详情弹窗常驻展示 Token 输入/输出/累计三项
+
+### 改动
+- `src/ui/pages/AgentMapPage.tsx`：节点详情 Popover 的 Token 区由「累计 + 条件隐藏的输入/输出拆分」改为**始终以普通信息行展示**（输入 Token / 输出 Token / 累计 Token），便于核对采集到的数值是否为 0。
+
+## 2026-06-23: 重构会话级任务通知系统（修复「永远卡在进行中」+ 通知随机/不触发）
+
+### 重构
+- **根因修复：节点 5 小时前最后活动却仍显示「进行中」**。旧状态机 `inferStatus` 把 `inFlight > 0` 直接判为 active，而 `startRequest` 一旦因早退（编程套餐拒绝、配额拦截、异常等导致 `finalizeLog` 未被调用）未配对 `endRequest`，在途计数就永久泄漏 → 节点永远 active。新版**在途陈旧度清扫**：SSE 流已开始产出后 30s 无新 chunk、或同步请求 5min 未返回（首 Token 前按 5min 等待，兼容思考类模型长 TTFT），即判为停滞并**清零泄漏的在途计数器**，最长 5min 必然脱离「进行中」。
+- **通知随机/不触发的根因修复**。旧逻辑依赖 `detectTurnEnd` 正则匹配下游响应的 `stop_reason`/`response.completed`，流式分包或非 Anthropic 格式时常返回 null → 回退到 `lastRequestAt` 的 60s 窗口；而请求刚结束时 `lastRequestAt≈now`，状态被强行保持 active 60s，期间任何后台续发请求（count_tokens/compact）再次刷新时间 → active→idle 永不发生或随机命中。新版改用**真实活动时钟** `lastActivityAt`：由请求开始、**每个 SSE 下游 chunk（heartbeat）**、请求结束共同刷新；`active` 严格意味着「确有在途请求且存活」。请求一结束（inFlight→0）`onFinalized` 立即把状态转 idle → 即时弹通知，不再依赖正则或 60s 窗口。
+- **在途泄漏兜底**：`proxyRequest` 在 `startRequest` 时挂 `res.on('close')` 安全网，确保即便 `finalizeLog` 被跳过，`endRequest` 也必触发一次，从源头杜绝泄漏。
+- **通知精度**：新增 `notifiedForTurn` 标记，每个主任务轮只弹一次；后台类请求（`background`/`compact`/`count_tokens`）不重置该标记，故主任务结束后的续发请求不会重复弹通知（另保留 60s 冷却兜底）。
+- **异常也通知**：`active → error`（上游 5xx）也触发一次通知（⚠️ 标识），便于及时感知失败；用户主动取消（499）不弹。
+
+### 改动
+- `src/server/agent-map/agent-map-service.ts`：`RuntimeState` 新增 `lastActivityAt`/`streamingInFlight`/`streamFirstChunkAt`/`inFlightSince`/`notifiedForTurn`；新增 `markStreaming`/`heartbeat`/`reevaluate`；重写 `inferStatus`（在途 + 陈旧度判定，移除 `turnEnd`/60s 窗口作为主信号）；`sweep` 增加泄漏计数器清零；`maybeNotifyTurnEnd` 改为基于 `notifiedForTurn`。
+- `src/server/proxy-server.ts`（`proxyRequest`）：`startRequest` 增加 `background` 标记；新增 `res.on('close')` 安全网；流式 pipeline 注入 `markStreaming` + `ChunkCollectorTransform` 回调里调 `heartbeat`；`endRequest` 传 `isStream`。
+- `src/ui/pages/AgentMapPage.tsx`：通知开关 tooltip 更新为新语义（任务结束/流结束/停滞超阈值即弹，每轮一次）。
+
+## 2026-06-23: 任务雷达 3D 视图改用 Three.js + 2D/3D 画布拆分为独立组件
+
+### 重构
+- **3D 视图改用真正的 Three.js（WebGL）**：替换原 SVG 伪 3D 侧视锥。新增 `three` 依赖；`view3D` 时挂载 Three 场景，支持 OrbitControls 自由轨道（旋转/缩放/平移）、raycaster 拾取、CSS2DRenderer 文字叠层、按帧 lerp 平滑过渡 SSE 更新。**倒置结构**：中心点位于底部平面正中心（与同心圆地面齐平），节点 Token 越多越往上生长，相机俯瞰——便于观察中间正在执行的节点运动。**Token 量尺**：中心点垂直向上的纵轴标注阶梯临界点（10k / 100k / 1M / 10M / 100M / 1B）；节点高度采用**向上生长**的分段映射——每跨一个临界点下一段高度比前一段更长、放大倍率封顶 2×（底部加 10k 档避免小 session 堆地；BASE=4.5、GROW=2：0–10k→4.5→100k→13.5→1M→31.5→10M→67.5→100M→139.5→1B→283，超过 1B 饱和），整体约为早期 3 倍。**时间维度**改为同款分段 ≤2× 增长（0–1d→4→5d→12→10d→28→30d→60），地面圆盘与同心圆（标注 1/5/10 天）按此定位。相机/雾化/光照同步放大取景范围（高度上界约 280）。**透明背景**：canvas 透出页面 `--bg-primary` 渐变（该变量是 linear-gradient，必须真透明才能匹配），故不使用会合成成不透明黑底的后处理；自发光感由 emissive 材质 + 加法混合光晕（active/error 脉冲）提供，雾化淡入到 `--bg-primary-solid`。节点颜色/尺寸与 2D 一致（状态强调色 + req/100 线性尺寸），已完成节点为浅绿线框（不遮挡视野）。每个球面贴客户端 logo：球体保持状态色（实心；已完成为浅绿线框），logo 作为**与球面同弧度的曲面贴片**贴在上半球偏前——以分块 PlaneGeometry 把顶点投到球面上构造（弧度与球面完全一致、UV 干净不变形），并挂为球体的子节点，随球体「呼吸」脉冲一起缩放、紧贴球面（不再被吃掉）。已完成（网状）球的 logo 降低明度与透明度（opacity 0.32、灰色 tint），不凸显。256 纹理 + mipmap + 各向异性 8 抗锯齿，`claudecode-color.svg` / `codex-color.svg` 运行时光栅化（512 源降采样），按 agent 缓存；贴片几何按半径桶共享。复位按钮只复位相机、不锁定视角（用户开始拖拽即取消自动过渡）。
+- **2D / 3D 画布拆为两个完全独立的组件**（`AgentMapCanvas2D` / `AgentMapCanvas3D`）：各自自持交互与生命周期，互不干扰。修复了切到 3D 再切回 2D 后滚轮缩放失效的问题（wheel 监听随 2D 组件挂载/卸载重建）。共享几何/常量抽到 `agent-map-shared.tsx`。
+- 3D 新增「标签」「复位」分段按钮（与 2D/3D 切换同款样式）：标签默认仅选中节点显示（避免密集遮挡），可一键展开全部（修了切换无效的 bug——CSS2DRenderer 每帧按 `label.visible` 覆写 display，改用 visible 控制）；标签按钮 hover 不改背景。WebGL 不可用时自动回退 2D（3D 按钮禁用）。
+
+## 2026-06-23: 修复 Codex（OpenAI Responses 流式）token 恒为 0
+
+### 修复
+- **任务雷达/服务性能里几乎所有 Codex 会话 token 为 0**：Codex 默认走 OpenAI Responses API 流式，usage 在最终 `response.completed` 事件的 `data.response.usage` 下；而 `chunk-collector.extractUsage` 只解析了 `data.message.usage` / `data.usage` / `data.choices[].usage` / `data.usageMetadata` / 顶级裸字段，漏了 `data.response.usage`，导致流式 `extractUsage()` 恒返回 null → `usageForLog = undefined` → `_tokensDelta = 0`。Claude Code 因 Anthropic usage 在 `data.message.usage`/`data.usage` 而正常。
+- `chunk-collector.ts extractUsage` 新增 `data.response.usage` 分支，读取 `input_tokens`/`output_tokens`/`total_tokens` 与 `input_tokens_details.cached_tokens`。该 collector 同时服务于 Agent Map 与服务性能统计，故 Codex 的「服务性能·Token量」面板一并修复。
+- 防御：`proxy-server.ts extractTokenUsageFromResponse` 的 `completions/responses` 非流式分支改为 `responseData?.usage ?? responseData?.response?.usage` 兜底，并补 `input_tokens_details.cached_tokens`，覆盖个别把 usage 嵌在 `response.usage` 下的上游。
+
+## 2026-06-23: 恢复任务雷达 2D 节点呼吸圈的 transform: scale 效果
+
+- `@keyframes am-pulse`（2D 视图 `.am-node-glow` 外围呼吸圈 + busy 节点圆心）重新加入 `transform: scale(1 → 1.12)`，与 `opacity` 叠加呼吸；圆环以 (0,0) 为圆心绘制，scale 默认以 0 0 为原点即圆心，无需额外 `transform-origin`。覆盖上一条「去掉 scale 改纯 opacity」的合规改动（用户显式要求恢复）。
+
+## 2026-06-23: 任务雷达新增 3D 视图（Token 下沉锥体 + 两段式连线 + 土星环节点）
+
+### 新增
+- **任务雷达 2D/3D 视图切换**：右下角浮动控件组（缩放按钮左侧）新增「2D / 3D」分段切换，默认 2D（省性能）。3D 视图以纯 SVG 伪 3D 实现，0 新依赖、不引入 WebGL。
+- **3D 几何**：2D 中心点变为锥体顶点（最高/最近），节点水平位置（角度=sessionId 哈希、半径=会话年龄）与 2D 完全一致，**Token 总量只驱动垂直下沉**（对数缩放，避免大数值飞出屏幕）；同心圆按倾角压扁为椭圆地面。
+- **三层叠加连线**：顶点→节点连线始终先画一根中性背景线，再叠输入段（靠顶点）与输出段（靠节点）两根彩色线，按 input/output 占比切分；无 input/output 数据（如冷启动归零）时遮罩线不画，自然退化为一根背景线。
+- **土星环球体节点**：3D 下节点从脉冲圆点改为带倾斜椭圆环的球体（左上高光营造体积），状态着色复用现有配色，并按深度做 painter's algorithm 排序。
+- **顺带合规**：`am-pulse` 动画去掉 `transform: scale()`，改为纯 `opacity`（项目规范禁止 GPU 密集 CSS），2D 视觉语义不变。
+
+### 后端
+- **透传 input/output token 到 Agent Map 节点**：`SessionMapItem` / `RuntimeState` / `FinalizeContext` 新增 `inputTokens` / `outputTokens`（及 delta）；`proxy-server.ts` 折叠点在原 `tokensDelta` 之外，把已规范化的 `usageForLog.inputTokens` / `outputTokens` 单独传入 `agentMapService.onFinalized`；`agent-map-service` 累加并经 `toMapItem` 暴露。input/output 为运行时累加（重启归零），Z 轴深度仍用已持久化的 `totalTokens` 保证稳定。详情 popover 展示输入/输出/总量三个值。
+
+## 2026-06-23: 修复 Token量 指标中「输入/总量」恒为空
+
+### 修复
+- **输入 Token 与总 Token 始终为空**：两处独立 bug 叠加。
+  - **数据兼容（主因）**：旧 `service-performance.json` 桶缺少新增的 `sumInputTokens`/`sumTotalTokens` 字段，加载后 `undefined += N` 得到 **NaN**，污染 `derive`/`trendFrom`，前端 `formatNum(NaN)` 回退为「-」。`totalOutputTokens` 因是旧字段未受影响，故只有输出有值。`ServicePerformanceTracker.initialize` 新增 `migrateBuckets`/`normalizeBucket`，加载时把所有 precise/estimated/hourly 桶的缺失字段补 0。
+  - **流式 input 丢失**：`chunk-collector.extractUsage` 旧实现在 `message_delta` 上提前返回，而该事件只带 `output_tokens`；真正的 `input_tokens` 在更早的 `message_start.message.usage` 里被跳过。重写为遍历**全部**事件并合并 Anthropic message_start(message.usage)+message_delta(usage)，同时统一 OpenAI(`prompt_tokens`/`completion_tokens`/`total_tokens`，含 `choices[].usage`) 与 Gemini(`usageMetadata`) 字段，返回归一化 `{input_tokens,output_tokens,total_tokens,cache_read_input_tokens}`。
+  - 流式消费点（标准路由 + AccessKey 两条 `finalizeLog`）改用新增的 `tokenUsageFromCollected` 直接映射归一化结果，移除原先字段名假设有误（只读 `input_tokens`/`output_tokens`）的 `extractUsage` 闭包分支与对流式扁平对象不兼容的 `extractTokenUsageFromResponse` 回退。非流式路径 `extractTokenUsageFromResponse` 本就正确，未动。
+
+## 2026-06-23: Fallback 透传流量纳入服务性能统计
+
+### 修复
+- **回退原始配置（Fallback）的透传流量补采**：此前未匹配规则时回退到原始上游的请求，因临时服务无 vendorId 被 `recordPerformance` 的三元组校验静默丢弃，导致这部分流量在测速面板完全不统计、模型不展示。现给 Fallback 临时服务挂上虚拟供应商 `fallback-vendor`（展示名「原始配置 / 直连」），并在 `emitPerformance` 补全虚拟供应商名，Fallback 流量作为独立虚拟供应商在服务性能面板呈现，与真实供应商区分开。
+
+## 2026-06-23: 服务性能面板新增「Token量」指标 + 下钻来源列 + 指标/维度按层级显隐
+
+### 新增
+- **服务性能新增「Token量」指标**：含 输入/输出/总量 三个口径。`PerformanceMetrics` / `PerfBucket` / `PerfDerived` / `PerfTrendPoint` 扩展 token 字段；`emitPerformance` 采集点传入 `inputTokens` 与 `totalTokens`（上游 `totalTokens` 优先，否则 input+output）。tracker 把 token 累加从 `timingAccuracy==='precise'` 门控中解耦——非流式样本的 token 也计入小时走势桶与派生总量（`derive` 改为跨 precise+estimated 求和），避免 token 时间序列只覆盖流式请求。
+- **切到「Token量」指标时**：对比表展示「输入Token / 输出Token / 总Token」3 列（其余指标仍为 平均首Token / 平均TPM）；走势图改用 `ComposedChart` 画 3 个系列——总量为面积阴影（渐变 Area），输入/输出为两条 Line，并附图例。
+
+### 优化
+- **下钻表格补来源列**：供应商层（行=API服务）补「供应商」列、服务层（行=模型）补「供应商」「API 服务」列，下钻后不再丢失来源；loading/空行 colSpan 按实际列数动态计算。
+- **指标/维度按层级显隐**：总览层只显示「维度」筛选器，下钻后只显示「指标」筛选器（二者作用域互斥，避免无效操作）。
+
 ## 2026-06-23: 请求日志/会话列表加载提速 + 筛选后端化 + 搜索框位置调整
 
 ### 优化

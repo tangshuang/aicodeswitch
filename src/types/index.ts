@@ -425,6 +425,8 @@ export interface Session {
   lastRequestAt: number;   // 最后一次请求时间
   requestCount: number;    // 请求总数
   totalTokens: number;     // 总token使用量
+  inputTokens: number;     // 累计输入 token（与 totalTokens 同口径累加持久化）
+  outputTokens: number;    // 累计输出 token（与 totalTokens 同口径累加持久化）
   vendorId?: string;       // 最后使用的供应商ID
   vendorName?: string;     // 最后使用的供应商名称
   serviceId?: string;      // 最后使用的服务ID
@@ -489,6 +491,8 @@ export interface SessionMapItem {
   lastRequestAt: number;
   requestCount: number;
   totalTokens: number;
+  inputTokens: number;                              // 累计输入 token（运行时累加，重启归零）
+  outputTokens: number;                             // 累计输出 token（运行时累加，重启归零）
   lastToolName?: string;
   lastActivitySummary?: string;
   lastStatusCode?: number;
@@ -583,31 +587,6 @@ export interface Statistics {
     totalErrors: number;
     recentErrors: number; // 最近24小时
   };
-}
-
-/** 工具安装状态 */
-export interface ToolInstallationStatus {
-  claudeCode: {
-    installed: boolean;
-    version?: string;
-    installCommand?: string;
-  };
-  codex: {
-    installed: boolean;
-    version?: string;
-    installCommand?: string;
-  };
-}
-
-/** 安装请求 */
-export interface InstallToolRequest {
-  tool: 'claude-code' | 'codex';
-}
-
-/** 安装响应 */
-export interface InstallToolResponse {
-  success: boolean;
-  message?: string;
 }
 
 /** MCP 工具类型 */
@@ -887,6 +866,8 @@ export interface PerfBucket {
   sumTtftMs: number;        // Σ TTFT（毫秒）
   sumTps: number;           // Σ tokensPerSecond
   totalOutputTokens: number;
+  sumInputTokens: number;   // Σ 输入 token（含非流式样本，不受计时精度门控）
+  sumTotalTokens: number;   // Σ 总 token（input+output 或上游 totalTokens）
 }
 
 /** 单个聚合节点（模型级 / 服务级 / 供应商级通用） */
@@ -934,6 +915,8 @@ export interface PerfDerived {
   maxTps?: number;
   errorCount: number;
   totalOutputTokens: number;
+  totalInputTokens: number;   // Σ 输入 token（跨 precise+estimated）
+  totalTokens: number;        // Σ 总 token（跨 precise+estimated）
   successRate: number;
 }
 
@@ -943,6 +926,9 @@ export interface PerfTrendPoint {
   count: number;
   avgTtftMs: number;
   avgTpm: number;
+  inputTokens: number;     // 该小时输入 token（含非流式样本）
+  outputTokens: number;    // 该小时输出 token
+  totalTokens: number;     // 该小时总 token
 }
 
 /** API 响应类型（前端 / tracker 共享结构） */
