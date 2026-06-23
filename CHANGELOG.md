@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-06-23: 修复 Ctrl+C 后卡很久才打印 "Server stopped."
+
+### 修复
+- **根因**：shutdown 流程里 `server.close()` 的回调要等所有现存连接关闭才触发，但浏览器长连的 SSE（agent-map stream、rules-status 广播等）永不自行关闭 → 必须等满 `Promise.race` 的 5s 超时，表现为 Ctrl+C 后阻塞很久才打印 `Server stopped.`。
+- **修复**：在 `server.close()` 之后调用 `server.closeAllConnections()`（Node ≥18.2）强制销毁所有现存 socket，close 回调几乎瞬时完成。dev.js 的整组退出阻塞逻辑本身正确，无需改动。
+- 文件：`src/server/main.ts`。
+
+## 2026-06-23: reasoning_content 上游流式 usage 丢失修复（按供应商决定是否保留 stream_options）
+
+### 修复
+- **根因**：`conversions/index.ts` 对所有 `outputFormat === 'reasoning_content'` 的上游无条件 `delete stream_options`，导致 DeepSeek 等（实际支持 `stream_options.include_usage`）的流式响应不再回传最终 usage chunk → 会话/日志的输入/输出/总计 token 全为 0。
+- **修复**：在 `thinking` 模块新增按供应商的 `streamOptions` 三态配置（`supported` / `unsupported` / `auto`）。DeepSeek、Moonshot、Qwen、Zhipu、SiliconFlow 标 `supported`（保留 stream_options，拿回真实 usage）；mimo、agnes 标 `auto`；未命中供应商走 `auto` 兜底（维持历史 reasoning_content 剥离行为，避免潜在 400）。`conversions/index.ts` 的剥离改为按该字段决策。
+- 文件：`src/server/conversions/types.ts`、`src/server/conversions/thinking/providers.ts`、`src/server/conversions/index.ts`。
+
 ## 2026-06-23: 修复任务雷达 requestCount / model / token 不更新（onFinalized 被安全网误跳过）
 
 ### 修复

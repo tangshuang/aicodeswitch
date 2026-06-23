@@ -4420,10 +4420,16 @@ const start = async () => {
 
       // 立即停止监听以释放端口（同步关闭监听句柄，端口马上可用），
       // 避免在漫长的清理流程期间端口仍被占用，导致此时重启产生 EADDRINUSE 冲突。
-      // 现有连接会继续处理直到完成或超时；其回调与下面的清理流程并行等待。
       const serverClosedPromise = new Promise<void>((resolve) => {
         server.close(() => resolve());
       });
+      // 强制断开所有现存连接（含浏览器长连的 SSE：agent-map stream、rules-status
+      // 广播等）。否则这些连接永不自行关闭，server.close 的回调要等满下面 5s 超时
+      // 才触发，表现为 Ctrl+C 后「卡很久才打印 Server stopped.」。closeAllConnections
+      // 立即销毁所有 socket，让 close 回调几乎瞬时完成。
+      if (typeof server.closeAllConnections === 'function') {
+        server.closeAllConnections();
+      }
 
       // 服务终止前恢复配置文件（适用于 aicos stop 与 Ctrl+C）
       try {

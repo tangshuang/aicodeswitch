@@ -36,6 +36,14 @@ export interface ReasoningConfig {
   effortValueMode: string;
   /** Expected output field: 'reasoning_content' | 'reasoning' | 'reasoning_details' */
   outputFormat: string;
+  /**
+   * 流式 usage（stream_options.include_usage）支持情况，决定是否保留 stream_options：
+   * - 'supported'：供应商支持，始终保留 → 流式能拿到真实 usage
+   * - 'unsupported'：供应商会对 stream_options 报错，始终剥离
+   * - 'auto'（默认）：按 outputFormat 兜底——reasoning_content 剥离，其余保留（历史行为）
+   * 判定入口：conversions/index.ts 的 completions 后处理
+   */
+  streamOptions?: 'supported' | 'unsupported' | 'auto';
 }
 
 /** Per-provider server_tool_use support configuration */

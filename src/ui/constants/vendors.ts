@@ -333,7 +333,7 @@ export default {
                 name: 'Chat Completions 标准接口（免费）',
                 sourceType: 'openai-chat',
                 apiUrl: 'https://apihub.agnes-ai.com/v1/chat/completions',
-                models: 'agnes-2.0-flash, agnes-1.5-flash',
+                models: 'agnes-2.0-flash',
                 authType: AuthType.AUTH_TOKEN,
             },
         ],
