@@ -14,6 +14,14 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist/ui',
       emptyOutDir: true,
+      rollupOptions: {
+        output: {
+          manualChunks: { three: ['three'] },
+        },
+      },
+    },
+    optimizeDeps: {
+      include: ['three'],
     },
     resolve: {
       alias: {

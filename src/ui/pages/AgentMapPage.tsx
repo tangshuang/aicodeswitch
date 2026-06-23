@@ -1,16 +1,11 @@
 /**
- * Agent Map（任务可视化节点地图）
+ * Agent Map（任务雷达）主页面
  *
- * 把每个 Claude Code / Codex Session 画成画布上的一个节点（"星球"），
- * 状态（进行中 / 空闲 / 已完成 / 异常）由后端活跃度推断并经 SSE 实时推送。
+ * 把每个 Claude Code / Codex Session 画成画布上的一个节点，状态由后端活跃度推断并经 SSE 实时推送。
  *
- * 能力：
- * - 鼠标滚轮缩放 + 拖拽平移 + 节点拖拽（缩放下仍可精确点击/拖动）
- * - 按时间筛选 Session（全部 / 1h / 6h / 24h / 7d）
- * - 时间分布直方图，点击柱子快速框选该时间段
- * - 点开节点查看活动路径子图（提问 → 工具调用链 → 响应）
- *
- * 数据源：/api/agent-map/stream（SSE 实时） + REST 冷启动补齐。
+ * 2D 与 3D 是两个完全独立的画布组件（AgentMapCanvas2D / AgentMapCanvas3D），
+ * 各自拥有自己的交互与生命周期，互不干扰：本页面仅负责共享状态（数据、选中态、popover、活动流）
+ * 与视图切换。2D 走 SVG；3D 走 Three.js（WebGL 不可用时回退到 2D）。
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { api } from '../api/client';
@@ -18,6 +13,9 @@ import { ClaudeCodeIcon, CodexIcon, AgentIcon } from '../components/AgentIcons';
 import { Switch } from '../components/Switch';
 import SessionDetailModal from '../components/SessionDetailModal';
 import { useAgentNotifications } from '../components/AgentNotificationsProvider';
+import AgentMapCanvas2D from './AgentMapCanvas2D';
+import AgentMapCanvas3D from './AgentMapCanvas3D';
+import { DAY, HOUR, timeAgo, TOOL_ICON, ZoomControls, type View } from './agent-map-shared';
 import type {
   ActivityEvent,
   AgentMapInitPayload,
@@ -26,7 +24,6 @@ import type {
   SessionMapItem,
 } from '../../types';
 
-// SessionDetailModal 所需的会话信息子集（SessionMapItem 已覆盖全部字段，用于立即打开弹窗）
 type SessionDetailInfo = {
   id: string;
   targetType: string;
@@ -37,32 +34,11 @@ type SessionDetailInfo = {
   totalTokens: number;
 };
 
-// ============================ 工具与常量 ============================
-
-const SVG_W = 1000;
-const SVG_H = 700;
-const HOUR = 3600_000;
-const DAY = 86400_000;
-const ZOOM_MIN = 0.4;
-const ZOOM_MAX = 4;
-
-const TOOL_ICON: Record<string, string> = {
-  Read: '📖', Edit: '📝', Write: '📝', MultiEdit: '📝',
-  Bash: '🔧', Glob: '🔍', Grep: '🔍',
-  WebFetch: '🌐', WebSearch: '🌐',
-  Agent: '🤖', Task: '🤖',
-  NotebookEdit: '📓',
-};
-
 const STATUS_LABEL: Record<string, string> = {
   active: '进行中', idle: '空闲', completed: '已完成', error: '异常',
 };
 
 type Preset = 'all' | '1h' | '6h' | '24h' | '7d';
-
-// 节点视觉半径：默认很小，仅随对话轮数增长，封顶避免过大；尺寸差距刻意拉大
-const NODE_R_MIN = 8;
-const NODE_R_MAX = 96;
 const PRESETS: { key: Preset; label: string; ms: number }[] = [
   { key: 'all', label: '全部', ms: 0 },
   { key: '1h', label: '近 1 小时', ms: HOUR },
@@ -71,251 +47,7 @@ const PRESETS: { key: Preset; label: string; ms: number }[] = [
   { key: '7d', label: '近 7 天', ms: 7 * DAY },
 ];
 
-function hashStr(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) {
-    h = (h * 31 + s.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h);
-}
-
-/**
- * 计算节点基础位置：
- * - 半径（距中心距离）以「会话开始时间 firstRequestAt」为准：刚创建的会话紧贴中心，
- *   随时间推移缓慢外移；分档插值，越往外越紧凑，封顶不会无限远。
- *   由于 firstRequestAt 不随后续请求变化，节点落定后位置稳定、不再漂移。
- * - 角度由 sessionId 哈希决定（稳定，新增节点不会扰动已有节点位置）。
- *
- * 半径量级刻意放大：最早开始的节点在画布缩到 40% 时才出现在最外围
- * （最外档 860 * 0.4 ≈ 344 ≈ viewBox 短半轴），日常 100% 视野只聚焦近期开始的会话。
- */
-// [会话开始距今天数, 半径] 控制点：age=0 紧贴中心，前两小时缓慢外移，之后逐渐加速
-const R_POINTS: [number, number][] = [
-  [0, 20],        // 刚创建：紧贴中心
-  [2 / 24, 60],   // 约 2 小时：缓慢外移
-  [1, 420],       // 1 天（1天临界圈）
-  [5, 620],       // 5 天
-  [10, 760],      // 10 天
-  [30, 860],      // 封顶
-];
-// 距离分档临界圆：1 / 5 / 10 天（10 天为最外圈，超过 10 天的节点落在此圈之外）
-const RINGS: { days: number; r: number; tier: number; label: string }[] = [
-  { days: 1, r: 420, tier: 0, label: '1 天' },
-  { days: 5, r: 620, tier: 1, label: '5 天' },
-  { days: 10, r: 760, tier: 2, label: '10 天' },
-];
-function radiusForAgeDays(ageDays: number): number {
-  // 非有限值（firstRequestAt 缺失 / NaN）一律按「最新」处理，紧贴中心，避免被误推到最外围
-  if (!Number.isFinite(ageDays) || ageDays <= 0) return R_POINTS[0][1];
-  for (let i = 1; i < R_POINTS.length; i++) {
-    if (ageDays <= R_POINTS[i][0]) {
-      const [a0, r0] = R_POINTS[i - 1];
-      const [a1, r1] = R_POINTS[i];
-      const k = (ageDays - a0) / (a1 - a0);
-      return r0 + (r1 - r0) * k;
-    }
-  }
-  return R_POINTS[R_POINTS.length - 1][1]; // 超过最大档位，封顶
-}
-function basePosition(sessionId: string, firstRequestAt: number, now: number) {
-  const cx = SVG_W / 2;
-  const cy = SVG_H / 2;
-  const rawAge = now - firstRequestAt;
-  const ageDays = Number.isFinite(rawAge) && rawAge > 0 ? rawAge / DAY : 0;
-  const radius = radiusForAgeDays(ageDays);
-  // 主角度由 hash 决定；再用第二个 hash 做小幅抖动，避免同角度重叠
-  const angle = ((hashStr(sessionId) % 360) + (hashStr(sessionId + '~j') % 40 - 20)) * (Math.PI / 180);
-  return {
-    x: cx + Math.cos(angle) * radius,
-    y: cy + Math.sin(angle) * radius,
-  };
-}
-
-function timeAgo(ts: number): string {
-  const diff = Date.now() - ts;
-  if (diff < 60_000) return `${Math.floor(diff / 1000)}秒前`;
-  if (diff < 3600_000) return `${Math.floor(diff / 60_000)}分钟前`;
-  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}小时前`;
-  return `${Math.floor(diff / 86400_000)}天前`;
-}
-
-interface NodePos { x: number; y: number; }
-interface View { zoom: number; panX: number; panY: number; }
-
-// ============================ 3D 投影（侧视伪 3D，纯 SVG） ============================
-//
-// 3D 视图为「侧视锥体」：顶点（原点）固定在画布顶部，所有节点从顶点向下分布。
-// - 水平/纵深位置：由 2D 的（角度 + 年龄半径）决定，侧视下水平展开、纵深带来轻微上下偏移。
-// - 纵向高度：由 Token 总量决定——token 越多越往下沉（重任务沉到底层）；token=0 钉在最底层，
-//   与最大值齐平（不单独做底座）。
-// - 侧倾角约 14°（离正侧面约 14° 俯视），既能看到锥体高度，又有一定立体纵深。
-const VIEW_TILT_DEG = 14;                              // 侧倾角（离正侧面的俯视度数）
-const DEPTH_TILT = Math.sin(VIEW_TILT_DEG * Math.PI / 180); // 纵深→垂直偏移系数（侧倾深度感）
-const APEX_Y = 70;                                     // 顶点屏幕 Y（锥尖靠近画布顶部）
-const FLOOR_DROP = 540;                                // 顶点→底层最大垂直距离（锥体高度）
-const SIDE_SCALE = 0.5;                                // 侧视下水平/纵深缩放（避免年龄半径过宽）
-const TOKEN_MAX = 1_000_000;                           // 对数缩放参考上界（≈1M token 满深）
-
-/** token 总量 → 归一化深度 0..1（对数缩放，跨度大时不飞出屏幕） */
-function tokenDepth(total: number): number {
-  const t = Math.max(0, total | 0);
-  if (t <= 0) return 0;
-  return Math.max(0, Math.min(1, Math.log10(t + 1) / Math.log10(TOKEN_MAX + 1)));
-}
-
-interface NodePos3D {
-  /** 节点最终屏幕坐标 */
-  sx: number; sy: number;
-  /** 顶点屏幕坐标 */
-  apexX: number; apexY: number;
-  /** 下沉量（SVG 单位，0=顶点，FLOOR_DROP=底层） */
-  z: number;
-  /** 输入段终点 = 输出段起点（按 input/total 比例切分；无数据时=null） */
-  split: { x: number; y: number } | null;
-}
-
-/**
- * 2D 基础位置 + token + 输入/输出构成 → 侧视 3D 屏幕坐标。
- * - hx：水平展开（年龄半径×角度），hd：纵深（年龄另一轴）。
- * - token 下沉 d：token>0 越多越大（沉向底层）；token=0 → FLOOR_DROP（钉在最底层，与最大值齐平）。
- * - sy = 顶点 Y + d + hd*侧倾系数（纵深带来上下偏移，形成侧视立体感）。
- */
-function project3D(base: NodePos, total: number, input: number, output: number): NodePos3D {
-  const cx = SVG_W / 2;
-  const hx = (base.x - cx) * SIDE_SCALE;            // 水平展开
-  const hd = (base.y - SVG_H / 2) * SIDE_SCALE;     // 纵深
-  // token=0 钉在最底层（depth01=1）；token>0 越多越往下沉
-  const depth01 = total > 0 ? tokenDepth(total) : 1;
-  const d = depth01 * FLOOR_DROP;
-  const sx = cx + hx;
-  const sy = APEX_Y + d + hd * DEPTH_TILT;
-  const apexX = cx;
-  const apexY = APEX_Y;
-  // 输入/输出切分点：沿顶点→节点向量，按 input/(input+output) 比例
-  let split: { x: number; y: number } | null = null;
-  const sum = (input | 0) + (output | 0);
-  if (sum > 0) {
-    const ratio = Math.max(0, Math.min(1, (input | 0) / sum));
-    split = {
-      x: apexX + (sx - apexX) * ratio,
-      y: apexY + (sy - apexY) * ratio,
-    };
-  }
-  return { sx, sy, apexX, apexY, z: d, split };
-}
-
-// ============================ 画布节点 ============================
-
-function SessionNodeSvg({ item, pos, selected, mode3D, depth }: {
-  item: SessionMapItem;
-  pos: NodePos;
-  selected: boolean;
-  mode3D?: boolean;
-  depth?: number;
-}) {
-  // 节点尺寸：默认小，仅随对话轮数增长，封顶；尺寸越大代表历史对话轮数越多
-  const req = item.requestCount || 0;
-  const activity = Math.min(req / 100, 1); // 0..1 饱和（30 轮约半饱和）
-  const r = NODE_R_MIN + (NODE_R_MAX - NODE_R_MIN) * activity;
-  const iconSize = Math.round(r * 0.85);
-
-  if (mode3D) {
-    // 3D：土星环球体。球体带高光偏移营造体积；倾斜椭圆环替代 2D 的脉冲光晕。
-    const ringRx = r * 1.7;
-    const ringRy = Math.max(2, ringRx * 0.32); // 倾斜压扁的环
-    return (
-      <g
-        transform={`translate(${pos.x} ${pos.y})`}
-        className={`am-node am-node-3d am-node--${item.status}${selected ? ' am-node--selected' : ''}`}
-        data-sid={item.sessionId}
-      >
-        {/* 土星环：仅 active 节点渲染（后半，先画，被球体压住中间） */}
-        {item.status === 'active' && (
-          <ellipse rx={ringRx} ry={ringRy} className="am-node-ring am-node-ring--back" vectorEffect="non-scaling-stroke" />
-        )}
-        {/* 球体（状态填色 + 左上高光，营造体积） */}
-        <circle r={r} className="am-node-sphere" vectorEffect="non-scaling-stroke" />
-        <circle r={r} className="am-node-shine" fill="url(#am-sphere-shine)" vectorEffect="non-scaling-stroke" />
-        {/* 土星环前半（覆盖在球体之上，形成穿过球体的视觉）；仅 active */}
-        {item.status === 'active' && (
-          <path
-            d={`M ${-ringRx} 0 A ${ringRx} ${ringRy} 0 0 0 ${ringRx} 0`}
-            className="am-node-ring am-node-ring--front"
-            vectorEffect="non-scaling-stroke"
-          />
-        )}
-        {item.agent === 'codex'
-          ? <CodexIcon size={iconSize} x={-iconSize / 2} y={-iconSize / 2} />
-          : <ClaudeCodeIcon size={iconSize} x={-iconSize / 2} y={-iconSize / 2} />}
-        <text textAnchor="middle" dy={r + 18} className="am-node-title">
-          {(item.title || item.sessionId.slice(-8)).slice(0, 18)}
-        </text>
-        <text textAnchor="middle" dy={r + 34} className="am-node-activity">
-          {typeof depth === 'number'
-            ? `${(item.totalTokens / 1000).toFixed(item.totalTokens >= 10000 ? 0 : 1)}k tokens`
-            : (item.lastActivitySummary || '').slice(0, 20) || timeAgo(item.lastRequestAt)}
-        </text>
-        {item.source === 'access-key' && (
-          <text textAnchor="middle" dy={r + 50} className="am-node-source">🔑 {item.keyName || 'key'}</text>
-        )}
-      </g>
-    );
-  }
-
-  return (
-    <g
-      transform={`translate(${pos.x} ${pos.y})`}
-      className={`am-node am-node--${item.status}${selected ? ' am-node--selected' : ''}`}
-      data-sid={item.sessionId}
-    >
-      <circle r={r + 6} className="am-node-glow" />
-      <circle r={r} className="am-node-circle" vectorEffect="non-scaling-stroke" />
-      {item.agent === 'codex'
-        ? <CodexIcon size={iconSize} x={-iconSize / 2} y={-iconSize / 2} />
-        : <ClaudeCodeIcon size={iconSize} x={-iconSize / 2} y={-iconSize / 2} />}
-      <text textAnchor="middle" dy={r + 16} className="am-node-title">
-        {(item.title || item.sessionId.slice(-8)).slice(0, 18)}
-      </text>
-      <text textAnchor="middle" dy={r + 32} className="am-node-activity">
-        {item.lastToolName
-          ? `${TOOL_ICON[item.lastToolName] || '•'} ${item.lastToolName}`
-          : (item.lastActivitySummary || '').slice(0, 20) || timeAgo(item.lastRequestAt)}
-      </text>
-      {item.source === 'access-key' && (
-        <text textAnchor="middle" dy={r + 48} className="am-node-source">🔑 {item.keyName || 'key'}</text>
-      )}
-    </g>
-  );
-}
-
-// ============================ 缩放控制 ============================
-
-function ZoomControls({ view, onView }: { view: View; onView: (v: View) => void }) {
-  const zoomBy = (factor: number) => {
-    // 以画布中心为锚点缩放
-    const cx = SVG_W / 2, cy = SVG_H / 2;
-    const { zoom, panX, panY } = view;
-    const newZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom * factor));
-    const ux = (cx - panX) / zoom;
-    const uy = (cy - panY) / zoom;
-    onView({ zoom: newZoom, panX: cx - ux * newZoom, panY: cy - uy * newZoom });
-  };
-  const pct = Math.round(view.zoom * 100);
-  return (
-    <div className="am-zoom">
-      <button className="am-zoom-btn" onClick={() => zoomBy(1 / 1.2)} title="缩小">−</button>
-      <span className="am-zoom-pct">{pct}%</span>
-      <button className="am-zoom-btn" onClick={() => zoomBy(1.2)} title="放大">+</button>
-      <button
-        className="am-zoom-btn"
-        onClick={() => onView({ zoom: 1, panX: 0, panY: 0 })}
-        title="重置缩放"
-      >⟲</button>
-    </div>
-  );
-}
-
-// ============================ 时间直方图 ============================
+// ============================ 时间直方图 / 趋势图 ============================
 
 interface Bucket { index: number; start: number; end: number; count: number; }
 
@@ -335,14 +67,10 @@ function buildHistogram(events: ActivityEvent[], start: number, end: number, buc
 
 function formatBucketLabel(ts: number, spanMs: number): string {
   const s = new Date(ts);
-  if (spanMs <= DAY) {
-    // 小时级
-    return `${s.getHours().toString().padStart(2, '0')}:00`;
-  }
+  if (spanMs <= DAY) return `${s.getHours().toString().padStart(2, '0')}:00`;
   return `${s.getMonth() + 1}/${s.getDate()}`;
 }
 
-/** Catmull-Rom 转三次贝塞尔，生成平滑曲线 path */
 function smoothPath(pts: { x: number; y: number }[]): string {
   if (pts.length === 0) return '';
   if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
@@ -361,7 +89,6 @@ function smoothPath(pts: { x: number; y: number }[]): string {
   return d.join(' ');
 }
 
-/** 平滑曲线趋势图（仅展示，不可交互筛选） */
 function TrendChart({ events, start, end }: { events: ActivityEvent[]; start: number; end: number }) {
   const W = 220, H = 44, PAD = 3;
   const BUCKET_COUNT = 28;
@@ -370,7 +97,6 @@ function TrendChart({ events, start, end }: { events: ActivityEvent[]; start: nu
   const maxCount = Math.max(1, ...counts);
   const total = counts.reduce((a, b) => a + b, 0);
   const spanMs = end - start;
-
   const pts = counts.map((c, i) => ({
     x: counts.length === 1 ? W / 2 : (i / (counts.length - 1)) * (W - 2) + 1,
     y: H - PAD - (c / maxCount) * (H - 2 * PAD),
@@ -379,7 +105,6 @@ function TrendChart({ events, start, end }: { events: ActivityEvent[]; start: nu
   const area = pts.length > 0
     ? `${line} L ${pts[pts.length - 1].x.toFixed(2)} ${H} L ${pts[0].x.toFixed(2)} ${H} Z`
     : '';
-
   return (
     <div className="am-trend" title={`区间内活动趋势：共 ${total} 次活动`}>
       <span className="am-trend-label">活动趋势</span>
@@ -400,16 +125,11 @@ function TrendChart({ events, start, end }: { events: ActivityEvent[]; start: nu
   );
 }
 
-// ============================ 活动路径子图（详情） ============================
+// ============================ 活动路径子图 / 活动流 / 图例 ============================
 
 function ActivityPathGraph({ events }: { events: ActivityEvent[] }) {
-  if (events.length === 0) {
-    return <div className="am-empty">暂无活动记录（发起一次请求后会出现）</div>;
-  }
+  if (events.length === 0) return <div className="am-empty">暂无活动记录（发起一次请求后会出现）</div>;
   const sorted = [...events].sort((a, b) => b.ts - a.ts);
-
-  // 游程折叠：相邻且 kind+toolName+summary 相同的事件合并为一组，
-  // 渲染成单行 + 「×N」徽标（纯静态展示，无展开交互）。消除连续相同工具调用等视觉重复。
   const groups: { key: string; kind: ActivityEvent['kind']; toolName?: string; summary: string; count: number; ts: number }[] = [];
   for (const e of sorted) {
     const gkey = `${e.kind}|${e.toolName || ''}|${e.summary || ''}`;
@@ -417,7 +137,6 @@ function ActivityPathGraph({ events }: { events: ActivityEvent[] }) {
     if (last && last.key === gkey) { last.count += 1; continue; }
     groups.push({ key: gkey, kind: e.kind, toolName: e.toolName, summary: e.summary || e.kind, count: 1, ts: e.ts });
   }
-
   return (
     <div className="am-path">
       {groups.map((g, i) => {
@@ -440,9 +159,7 @@ function ActivityPathGraph({ events }: { events: ActivityEvent[] }) {
                 <span className="am-path-time">{new Date(g.ts).toLocaleTimeString()}</span>
                 {g.count > 1 && <span className="am-path-count">×{g.count}</span>}
               </div>
-              {g.kind === 'prompt' && (
-                <div className="am-path-prompt">{g.summary}</div>
-              )}
+              {g.kind === 'prompt' && <div className="am-path-prompt">{g.summary}</div>}
             </div>
           </div>
         );
@@ -451,12 +168,8 @@ function ActivityPathGraph({ events }: { events: ActivityEvent[] }) {
   );
 }
 
-// ============================ 全局活动 feed ============================
-
 function ActivityFeed({ events, onSelectSession }: { events: ActivityEvent[]; onSelectSession?: (sessionId: string) => void }) {
-  if (events.length === 0) {
-    return <div className="am-feed-empty">等待实时活动…</div>;
-  }
+  if (events.length === 0) return <div className="am-feed-empty">等待实时活动…</div>;
   return (
     <div className="am-feed">
       {events.slice(0, 80).map(e => (
@@ -478,8 +191,6 @@ function ActivityFeed({ events, onSelectSession }: { events: ActivityEvent[]; on
   );
 }
 
-// ============================ 图例说明（Popover） ============================
-
 function LegendRow({ icon, label, desc }: { icon: React.ReactNode; label: string; desc: string }) {
   return (
     <div className="am-legend-row">
@@ -491,7 +202,6 @@ function LegendRow({ icon, label, desc }: { icon: React.ReactNode; label: string
     </div>
   );
 }
-
 function LegendGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="am-legend-group">
@@ -500,7 +210,6 @@ function LegendGroup({ title, children }: { title: string; children: React.React
     </div>
   );
 }
-
 function MapLegend({ onClose }: { onClose: () => void }) {
   return (
     <>
@@ -513,56 +222,51 @@ function MapLegend({ onClose }: { onClose: () => void }) {
         <div className="am-popover-body am-legend-grid">
           <div className="am-legend-col">
             <LegendGroup title="客户端类型（节点中心图标）">
-              <LegendRow icon={<ClaudeCodeIcon size={16} />} label="Claude Code"
-                desc="该 Session 来自 Claude Code 客户端" />
-              <LegendRow icon={<CodexIcon size={16} />} label="Codex"
-                desc="该 Session 来自 Codex 客户端" />
+              <LegendRow icon={<ClaudeCodeIcon size={16} />} label="Claude Code" desc="该 Session 来自 Claude Code 客户端" />
+              <LegendRow icon={<CodexIcon size={16} />} label="Codex" desc="该 Session 来自 Codex 客户端" />
             </LegendGroup>
-
-            <LegendGroup title="节点状态（外环颜色 + 光晕）">
-              <LegendRow icon={<i className="am-dot am-dot--active" />} label="进行中"
-                desc="最近 60 秒内有请求，或有在途请求（脉冲发光）" />
-              <LegendRow icon={<i className="am-dot am-dot--idle" />} label="空闲"
-                desc="超过 60 秒无新请求，但 10 分钟内有过活动" />
-              <LegendRow icon={<i className="am-dot am-dot--completed" />} label="已完成"
-                desc="超过 10 分钟无活动，且末轮正常结束（变暗、虚线）" />
-              <LegendRow icon={<i className="am-dot am-dot--error" />} label="异常"
-                desc="末次请求失败（上游 5xx），红色脉冲" />
+            <LegendGroup title="节点状态（颜色 + 光晕）">
+              <LegendRow icon={<i className="am-dot am-dot--active" />} label="进行中" desc="最近 60 秒内有请求，或有在途请求（脉冲发光）" />
+              <LegendRow icon={<i className="am-dot am-dot--idle" />} label="空闲" desc="超过 60 秒无新请求，但 10 分钟内有过活动" />
+              <LegendRow icon={<i className="am-dot am-dot--completed" />} label="已完成" desc="超过 10 分钟无活动，且末轮正常结束（变暗、虚线）" />
+              <LegendRow icon={<i className="am-dot am-dot--error" />} label="异常" desc="末次请求失败（上游 5xx），红色脉冲" />
             </LegendGroup>
-
             <LegendGroup title="距离分档（同心圆）">
-              <LegendRow icon={<span className="am-ring-swatch" style={{ color: 'var(--accent-success)' }} />} label="1 天临界"
-                desc="圈内在 1 天内开始的会话；圈外是更早（1 天以上）的会话" />
-              <LegendRow icon={<span className="am-ring-swatch" style={{ color: 'var(--accent-warning)' }} />} label="5 天临界"
-                desc="1–5 天前开始的会话落在本圈与 1 天圈之间" />
-              <LegendRow icon={<span className="am-ring-swatch" style={{ color: '#6BA8E5' }} />} label="10 天临界（最外圈）"
-                desc="5–10 天前开始的会话落在本圈与 5 天圈之间；超过 10 天的会话落在本圈之外（最外围）" />
+              <LegendRow icon={<span className="am-ring-swatch" style={{ color: 'var(--accent-success)' }} />} label="1 天临界" desc="圈内在 1 天内开始的会话；圈外是更早（1 天以上）的会话" />
+              <LegendRow icon={<span className="am-ring-swatch" style={{ color: 'var(--accent-warning)' }} />} label="5 天临界" desc="1–5 天前开始的会话落在本圈与 1 天圈之间" />
+              <LegendRow icon={<span className="am-ring-swatch" style={{ color: '#6BA8E5' }} />} label="10 天临界（最外圈）" desc="5–10 天前开始的会话落在本圈与 5 天圈之间；超过 10 天的会话落在本圈之外（最外围）" />
             </LegendGroup>
           </div>
-
           <div className="am-legend-col">
             <LegendGroup title="节点装饰">
-              <LegendRow icon={<span>🔑</span>} label="接入密钥来源"
-                desc="节点下方钥匙标记，走 AccessKey 接入密钥流量" />
-              <LegendRow icon={<span className="am-ic-center" />} label="中心点"
-                desc="画布中心圆点，进行中节点会与它连线" />
+              <LegendRow icon={<span>🔑</span>} label="接入密钥来源" desc="节点下方钥匙标记，走 AccessKey 接入密钥流量" />
+              <LegendRow icon={<span className="am-ic-center" />} label="中心点" desc="画布中心圆点，进行中节点会与它连线" />
             </LegendGroup>
-
             <LegendGroup title="节点位置与尺寸">
-              <LegendRow icon={<span>🎯</span>} label="距中心距离 = 会话开始时间"
-                desc="以会话开始时间（firstRequestAt）按龄分档：1 天内居内侧（分布最宽），1–5 天、5–10 天依次外扩，10 天以上在最外围（缩到约 40% 可见）。内圈带宽最大、越往外越紧凑，落定后不漂移" />
-              <LegendRow icon={<span>🔵</span>} label="节点大小 = 对话轮数"
-                desc="默认较小，仅随对话轮数（requestCount）增长并封顶，越大代表历史对话轮数越多" />
+              <LegendRow icon={<span>🎯</span>} label="距中心距离 = 会话开始时间" desc="以会话开始时间（firstRequestAt）按龄分档：1 天内居内侧（分布最宽），1–5 天、5–10 天依次外扩，10 天以上在最外围。内圈带宽最大、越往外越紧凑，落定后不漂移" />
+              <LegendRow icon={<span>🔵</span>} label="节点大小 = 对话轮数" desc="默认较小，仅随对话轮数（requestCount）增长并封顶，越大代表历史对话轮数越多" />
             </LegendGroup>
-
             <LegendGroup title="操作">
-              <LegendRow icon={<span className="am-ic-mouse">🖱</span>} label="缩放 / 平移"
-                desc="滚轮缩放（光标处为锚点）；在节点或空白处按下拖拽即可平移画布，短按选中节点" />
-              <LegendRow icon={<span className="am-ic-chart">📈</span>} label="时间筛选"
-                desc="点 topbar「时间筛选」按预设区间过滤；趋势曲线仅作参考" />
+              <LegendRow icon={<span className="am-ic-mouse">🖱</span>} label="缩放 / 平移" desc="2D：滚轮缩放、拖拽平移、短按选中；3D：拖拽旋转、滚轮缩放、右键平移、点击选中" />
+              <LegendRow icon={<span className="am-ic-chart">📈</span>} label="时间筛选" desc="点 topbar「时间筛选」按预设区间过滤；趋势曲线仅作参考" />
             </LegendGroup>
           </div>
-
+          <div className="am-legend-col">
+            <LegendGroup title="3D 视图操作与标识">
+              <LegendRow icon={<span>🧊</span>} label="进入 / 退出 3D"
+                desc="右下角「2D / 3D」分段切换；3D 使用 WebGL，若环境不支持会自动回退到 2D（此时 3D 按钮置灰）。3D 与 2D 是两套完全独立的画布，互不影响" />
+              <LegendRow icon={<span className="am-ic-mouse">🖱</span>} label="鼠标操作"
+                desc="左键按住拖拽 = 环绕旋转视角；滚轮 = 以光标为中心缩放；右键（或双指）按住拖拽 = 平移；在节点上单击 = 选中并展开详情，点空白 = 取消选中。一旦开始拖拽，复位/定位的自动过渡会立即停止，视角完全交给用户" />
+              <LegendRow icon={<span>🕹️</span>} label="复位 / 标签"
+                desc="3D 模式下右下角额外出现「标签」「复位」两个按钮：复位 = 把相机平滑回到初始机位（中心点位于画面 2/3 处）；标签 = 切换是否显示所有节点文字（默认只显示选中节点的文字，避免密集遮挡）" />
+              <LegendRow icon={<span>📐</span>} label="中心纵轴 = Token 量尺"
+                desc="底部中心点垂直向上一根虚线纵轴，标注 10k / 100k / 1M / 10M / 100M / 1B 临界刻度；节点高度由 Token 总量驱动（阶梯式分段、每跨一档放大但不超过 2 倍），Token 越多越往上长" />
+              <LegendRow icon={<span>🌀</span>} label="地面同心圆 = 会话年龄"
+                desc="底部平面三道同心圆对齐 1 天 / 5 天 / 10 天临界：越靠中心 = 会话越新（刚创建），越往外 = 会话开始得越早。节点距中心的水平距离由会话开始时间决定，落定后不漂移" />
+              <LegendRow icon={<span>🎨</span>} label="节点颜色 / 形态"
+                desc="进行中=主色（带脉冲发光圈）、空闲=黄色、异常=红色（快频脉冲）、已完成=浅绿线框球（半透明、不遮挡视野）。in-flight 请求中的节点球体会轻微呼吸缩放" />
+            </LegendGroup>
+          </div>
           <div className="am-legend-col">
             <LegendGroup title="活动路径 / 活动流图标">
               <LegendRow icon={<span>💬</span>} label="提问 / 回复" desc="用户提问或模型回复" />
@@ -582,8 +286,6 @@ function MapLegend({ onClose }: { onClose: () => void }) {
   );
 }
 
-
-
 // ============================ 主页面 ============================
 
 export default function AgentMapPage() {
@@ -592,38 +294,30 @@ export default function AgentMapPage() {
   const [stats, setStats] = useState<AgentMapStats | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailEvents, setDetailEvents] = useState<ActivityEvent[]>([]);
-  // 会话详情弹窗（复用 SessionDetailModal）：按来源分流拉取 global / access-key 日志
   const [detailSession, setDetailSession] = useState<SessionDetailInfo | null>(null);
   const [detailSessionLogs, setDetailSessionLogs] = useState<RequestLog[]>([]);
   const [detailSessionLoading, setDetailSessionLoading] = useState(false);
-  // 打开会话详情时记录来源元信息，供刷新 / 拉取新日志复用
   const [detailSessionSource, setDetailSessionSource] = useState<{ source: 'global' | 'access-key'; keyId?: string; sessionId: string } | null>(null);
-  // 详情 popover：项目路径（按需向后端解析，仅 global 来源）
   const [pathInfo, setPathInfo] = useState<{ loading: boolean; projectPath?: string; unavailable?: boolean }>({ loading: false });
-  // 全局活动流默认展开（每次进入页面均展示）
   const [feedOpen, setFeedOpen] = useState(true);
   const toggleFeed = useCallback(() => setFeedOpen(prev => !prev), []);
   const [helpOpen, setHelpOpen] = useState(false);
-  // 时间筛选工具条默认展开，可在 topbar 收起
   const [timebarOpen, setTimebarOpen] = useState(false);
-  // 任务结束浏览器通知（全局 Provider 提供）
   const { enabled: notifyEnabled, toggle: toggleNotify } = useAgentNotifications();
   const [connected, setConnected] = useState(false);
-  // 画布按下时切换为 grabbing 光标
-  const [pressing, setPressing] = useState(false);
 
-  // 缩放 / 平移
+  // 视图：2D 缩放/平移（仅 2D 画布使用，3D 由 OrbitControls 自持）
   const [view, setView] = useState<View>({ zoom: 1, panX: 0, panY: 0 });
-  const viewRef = useRef(view); viewRef.current = view;
-
-  // 时间筛选
-  const [preset, setPreset] = useState<Preset>('all');
-
-  // 2D / 3D 视图切换（默认 2D，省性能；3D 为 token 下沉锥体）
+  // 2D / 3D 切换；WebGL 不可用时回退 2D
   const [view3D, setView3D] = useState(false);
-
-  const svgRef = useRef<SVGSVGElement>(null);
-  const groupRef = useRef<SVGGElement>(null);
+  const [webglFailed, setWebglFailed] = useState(false);
+  // 3D：是否展示所有节点标签
+  const [showLabels, setShowLabels] = useState(false);
+  // 定位触发（活动流行 → 对应画布聚焦节点）；resetNonce 触发 3D 复位视角
+  const [focus, setFocus] = useState<{ sessionId: string; nonce: number } | null>(null);
+  const [resetNonce, setResetNonce] = useState(0);
+  // 选中节点屏幕坐标（由当前画布上报，用于 popover 跟随）
+  const [selectedScreen, setSelectedScreen] = useState<{ x: number; y: number } | null>(null);
 
   // SSE 连接
   useEffect(() => {
@@ -636,63 +330,37 @@ export default function AgentMapPage() {
         setFeedEvents(payload.events);
         setStats(payload.stats);
       },
-      onSessionUpdate: (s) => {
-        setSessions(prev => {
-          const next = new Map(prev);
-          next.set(s.sessionId, s);
-          return next;
-        });
-      },
-      onActivity: (e) => {
-        setFeedEvents(prev => [e, ...prev].slice(0, 500));
-      },
+      onSessionUpdate: (s) => setSessions(prev => { const next = new Map(prev); next.set(s.sessionId, s); return next; }),
+      onActivity: (e) => setFeedEvents(prev => [e, ...prev].slice(0, 500)),
       onStats: (s) => setStats(s),
       onError: () => setConnected(false),
     });
     return () => stream.abort();
   }, []);
 
-  // 10s 定时刷新：强制重渲染，让节点位置（2D 年龄扩散 + 3D token 高度）周期性重算，
-  // 避免无 SSE 事件 / 无交互时长时间静止。仅触发 setState，位置由下方 nowQ/layout 重算。
+  // 10s 定时刷新：强制重渲染，让节点位置周期性重算（2D 年龄扩散 + 3D token 高度）
   const [, setLayoutTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setLayoutTick(t => (t + 1) % 1_000_000_000), 10_000);
     return () => clearInterval(id);
   }, []);
 
-  // 拉取选中节点详情事件
   const loadDetail = useCallback(async (id: string) => {
-    try {
-      const evs = await api.getAgentMapSessionEvents(id);
-      setDetailEvents(evs);
-    } catch {
-      setDetailEvents([]);
-    }
+    try { setDetailEvents(await api.getAgentMapSessionEvents(id)); }
+    catch { setDetailEvents([]); }
   }, []);
 
-  // 按来源（global / access-key）拉取会话日志（session 信息直接取自 SessionMapItem）
-  const fetchSessionLogs = useCallback(async (
-    source: 'global' | 'access-key',
-    sessionId: string,
-    keyId?: string,
-  ): Promise<RequestLog[]> => {
-    if (source === 'access-key' && keyId) {
-      return api.getAccessKeySessionLogs(keyId, sessionId, 10000);
-    }
+  const fetchSessionLogs = useCallback(async (source: 'global' | 'access-key', sessionId: string, keyId?: string): Promise<RequestLog[]> => {
+    if (source === 'access-key' && keyId) return api.getAccessKeySessionLogs(keyId, sessionId, 10000);
     return api.getSessionLogs(sessionId, 10000);
   }, []);
 
-  // 打开「会话详情」弹窗：立即用 SessionMapItem 构造 session 打开，日志后台加载
   const openSessionDetail = useCallback((item: SessionMapItem) => {
     const source: 'global' | 'access-key' = item.source === 'access-key' ? 'access-key' : 'global';
     setDetailSession({
-      id: item.sessionId,
-      targetType: item.agent,
-      title: item.title,
-      firstRequestAt: item.firstRequestAt,
-      lastRequestAt: item.lastRequestAt,
-      requestCount: item.requestCount,
-      totalTokens: item.totalTokens,
+      id: item.sessionId, targetType: item.agent, title: item.title,
+      firstRequestAt: item.firstRequestAt, lastRequestAt: item.lastRequestAt,
+      requestCount: item.requestCount, totalTokens: item.totalTokens,
     });
     setDetailSessionLogs([]);
     setDetailSessionSource({ source, keyId: item.keyId, sessionId: item.sessionId });
@@ -704,10 +372,7 @@ export default function AgentMapPage() {
   }, [fetchSessionLogs]);
 
   const closeSessionDetail = useCallback(() => {
-    setDetailSession(null);
-    setDetailSessionLogs([]);
-    setDetailSessionSource(null);
-    setDetailSessionLoading(false);
+    setDetailSession(null); setDetailSessionLogs([]); setDetailSessionSource(null); setDetailSessionLoading(false);
   }, []);
 
   useEffect(() => {
@@ -715,14 +380,12 @@ export default function AgentMapPage() {
     else setDetailEvents([]);
   }, [selectedId, loadDetail]);
 
-  // 选中节点的 lastRequestAt 变化时（有新请求结束），刷新详情活动
   const selected = selectedId ? sessions.get(selectedId) : null;
   useEffect(() => {
     if (selectedId) loadDetail(selectedId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.lastRequestAt]);
 
-  // 项目路径：access-key 直接标记不可用；global 若 SSE 已带 projectPath 则直接用，否则按需解析
   useEffect(() => {
     if (!selectedId) { setPathInfo({ loading: false }); return; }
     const s = sessions.get(selectedId);
@@ -738,145 +401,32 @@ export default function AgentMapPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, selected?.projectPath]);
 
-  // ===== 坐标转换工具（client → SVG viewBox / 用户空间） =====
-  const clientToViewBox = useCallback((cx: number, cy: number): { x: number; y: number } | null => {
-    const svg = svgRef.current;
-    if (!svg) return null;
-    const ctm = svg.getScreenCTM();
-    if (!ctm) return null;
-    const pt = svg.createSVGPoint();
-    pt.x = cx; pt.y = cy;
-    const p = pt.matrixTransform(ctm.inverse());
-    return { x: p.x, y: p.y };
-  }, []);
+  // 定位：活动流行 → 选中 + 清除时间筛选 + 通知当前画布聚焦（2D 平移居中 / 3D 相机 lerp）
+  const locateSession = useCallback((sessionId: string) => {
+    if (!sessions.has(sessionId)) return;
+    setSelectedId(sessionId);
+    setPreset('all');
+    setFocus({ sessionId, nonce: Date.now() });
+  }, [sessions]);
 
-  // ===== 滚轮缩放（原生非被动监听，确保 preventDefault 生效） =====
-  useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const V = clientToViewBox(e.clientX, e.clientY);
-      if (!V) return;
-      const { zoom, panX, panY } = viewRef.current;
-      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-      const newZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom * factor));
-      const ux = (V.x - panX) / zoom;
-      const uy = (V.y - panY) / zoom;
-      setView({ zoom: newZoom, panX: V.x - ux * newZoom, panY: V.y - uy * newZoom });
-    };
-    svg.addEventListener('wheel', onWheel, { passive: false });
-    return () => svg.removeEventListener('wheel', onWheel);
-  }, [clientToViewBox, sessions.size]);
-
-  // ===== 画布拖拽平移 + 点击选中（节点与空白统一处理，按下→抬起距离区分点击/拖拽） =====
-  const pressRef = useRef<{
-    startClient: { x: number; y: number };
-    startVB: { x: number; y: number };
-    panX: number; panY: number;
-    moved: boolean;
-    sid: string | null;
-  } | null>(null);
-
-  const onCanvasPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-    setPressing(true);
-    // 识别按下处是否落在某个节点上（沿 DOM 向上找 data-sid）
-    let el = e.target as Element | null;
-    let sid: string | null = null;
-    while (el && el !== e.currentTarget) {
-      const attr = el.getAttribute && el.getAttribute('data-sid');
-      if (attr) { sid = attr; break; }
-      el = el.parentElement;
-    }
-    const vb = clientToViewBox(e.clientX, e.clientY);
-    pressRef.current = {
-      startClient: { x: e.clientX, y: e.clientY },
-      startVB: vb || { x: 0, y: 0 },
-      panX: viewRef.current.panX,
-      panY: viewRef.current.panY,
-      moved: false,
-      sid,
-    };
-    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
-  };
-  const onCanvasPointerMove = (e: React.PointerEvent) => {
-    const p = pressRef.current;
-    if (!p) return;
-    if (!p.moved && Math.hypot(e.clientX - p.startClient.x, e.clientY - p.startClient.y) > 5) {
-      p.moved = true;
-      // 一旦判定为拖拽平移，立即关闭详情 popover（避免遮挡 / 跟随抖动）
-      setSelectedId(null);
-    }
-    // 拖拽即平移（在节点上或空白上都生效）
-    const cur = clientToViewBox(e.clientX, e.clientY);
-    if (!cur) return;
-    setView(v => ({ ...v, panX: p.panX + (cur.x - p.startVB.x), panY: p.panY + (cur.y - p.startVB.y) }));
-  };
-  const onCanvasPointerUp = () => {
-    setPressing(false);
-    const p = pressRef.current;
-    pressRef.current = null;
-    if (!p || p.moved) return; // 发生了拖拽平移，不改变选中态
-    // 未移动 → 视为点击：点节点选中并展开详情，点空白关闭详情
-    setSelectedId(p.sid);
-  };
-  const onCanvasPointerLeave = () => {
-    // 指针离开 / 取消时兜底复位光标与按压态（pointer 已 capture，up 仍会触发）
-    if (!pressRef.current) setPressing(false);
-  };
-
-  // ===== 节点布局 =====
-  const sessionList = useMemo(() => Array.from(sessions.values()), [sessions]);
-
-  // 时间筛选窗口
-  // nowQ 按 10s 量化：配合上方 10s 定时器，让节点位置每 10s 周期性重算（2D 年龄扩散 + 3D token 高度）。
-  // 量化避免每渲染重建 range/filteredSessions/layout（否则会与详情 popover 的 useLayoutEffect 形成 setState 循环）。
+  // 时间筛选
+  const [preset, setPreset] = useState<Preset>('all');
   const nowQ = Math.floor(Date.now() / 10000) * 10000;
   const presetMs = PRESETS.find(p => p.key === preset)!.ms;
   const hasTimeFilter = preset !== 'all';
-  const range = useMemo(
-    () => (preset === 'all' ? null : { start: nowQ - presetMs, end: nowQ }),
-    [preset, nowQ, presetMs]
-  );
+  const range = useMemo(() => (preset === 'all' ? null : { start: nowQ - presetMs, end: nowQ }), [preset, nowQ, presetMs]);
+  const sessionList = useMemo(() => Array.from(sessions.values()), [sessions]);
   const filteredSessions = useMemo(() => {
     if (!range) return sessionList;
     return sessionList.filter(s => s.lastRequestAt >= range.start && s.lastRequestAt <= range.end);
   }, [sessionList, range]);
 
-  const layout = useMemo(() => {
-    const pos: Record<string, NodePos> = {};
-    const pos3D: Record<string, NodePos3D> = {};
-    for (const s of filteredSessions) {
-      const base = basePosition(s.sessionId, s.firstRequestAt, nowQ);
-      pos[s.sessionId] = base;
-      pos3D[s.sessionId] = project3D(base, s.totalTokens, s.inputTokens, s.outputTokens);
-    }
-    return { pos, pos3D };
-  }, [filteredSessions, nowQ]);
-
-  // 点击全局活动流某条 → 定位到地图节点并展开详情 popover
-  const locateSession = useCallback((sessionId: string) => {
-    const s = sessions.get(sessionId);
-    if (!s) return;
-    setSelectedId(sessionId);
-    setPreset('all'); // 清除时间筛选，确保该节点出现在画布上
-    // 计算节点用户空间位置，平移视图使其居中（保持当前缩放）
-    const pos = basePosition(sessionId, s.firstRequestAt, Date.now());
-    setView(v => ({
-      zoom: v.zoom,
-      panX: SVG_W / 2 - pos.x * v.zoom,
-      panY: SVG_H / 2 - pos.y * v.zoom,
-    }));
-  }, [sessions]);
-
-  // ===== 详情 Popover 定位（跟随节点屏幕位置，禁止溢出屏幕） =====
+  // ===== 详情 Popover 定位（由当前画布上报的节点屏幕坐标驱动） =====
   const detailRef = useRef<HTMLDivElement>(null);
   const [detailStyle, setDetailStyle] = useState<React.CSSProperties>({ visibility: 'hidden' });
   const [detailPlacement, setDetailPlacement] = useState<'left' | 'right'>('right');
   const [recomputeTick, setRecomputeTick] = useState(0);
 
-  // 滚动 / 窗口尺寸变化 → 触发重新定位（popover 为 fixed，需主动跟随）
   useEffect(() => {
     const bump = () => setRecomputeTick(t => (t + 1) % 1_000_000);
     window.addEventListener('resize', bump);
@@ -888,54 +438,38 @@ export default function AgentMapPage() {
   }, []);
 
   useLayoutEffect(() => {
-    if (!selectedId) return;
+    if (!selectedId || !selectedScreen) { setDetailStyle(s => ({ ...s, visibility: 'hidden' })); return; }
     const el = detailRef.current;
-    const g = groupRef.current;
-    const svg = svgRef.current;
-    if (!el || !g || !svg) return;
-    const nodePos3D = layout.pos3D[selectedId];
-    const nodePos2D = layout.pos[selectedId];
-    const nodePos = view3D ? nodePos3D : nodePos2D;
-    if (!nodePos) return;
-    const ctm = g.getScreenCTM();
-    if (!ctm) return;
-    // 节点中心 → 屏幕坐标（含缩放 / 平移 / 滚动）
-    const pt = svg.createSVGPoint();
-    pt.x = view3D ? (nodePos3D as NodePos3D).sx : (nodePos2D as NodePos).x;
-    pt.y = view3D ? (nodePos3D as NodePos3D).sy : (nodePos2D as NodePos).y;
-    const screen = pt.matrixTransform(ctm);
-
+    if (!el) return;
     const rect = el.getBoundingClientRect();
-    const margin = 10;
-    const gap = 16;
-    const nodeR = 30;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-
-    // 水平：优先右侧，空间不足放左侧；两侧都放不下则贴边
+    const margin = 10, gap = 16, nodeR = 30;
+    const vw = window.innerWidth, vh = window.innerHeight;
     let placement: 'left' | 'right' = 'right';
     let left: number;
-    if (screen.x + nodeR + gap + rect.width <= vw - margin) {
-      left = screen.x + nodeR + gap;
-      placement = 'right';
-    } else if (screen.x - nodeR - gap - rect.width >= margin) {
-      left = screen.x - nodeR - gap - rect.width;
-      placement = 'left';
+    if (selectedScreen.x + nodeR + gap + rect.width <= vw - margin) {
+      left = selectedScreen.x + nodeR + gap; placement = 'right';
+    } else if (selectedScreen.x - nodeR - gap - rect.width >= margin) {
+      left = selectedScreen.x - nodeR - gap - rect.width; placement = 'left';
     } else {
-      left = Math.max(margin, Math.min(screen.x, vw - rect.width - margin));
+      left = Math.max(margin, Math.min(selectedScreen.x, vw - rect.width - margin));
     }
-    // 垂直：以节点为中心，整体 clamp 进屏幕
-    let top = screen.y - rect.height / 2;
+    let top = selectedScreen.y - rect.height / 2;
     top = Math.max(margin, Math.min(top, vh - rect.height - margin));
-
     setDetailPlacement(placement);
     setDetailStyle({ left, top, visibility: 'visible' });
-  }, [selectedId, layout, view, view3D, sessions, detailEvents, recomputeTick]);
+  }, [selectedId, selectedScreen, detailEvents, recomputeTick]);
 
-  // 趋势图窗口（始终反映 preset 窗口；仅展示参考，不参与筛选）
+  // 选中态变化 → 清空旧屏幕坐标（等画布上报新坐标）
+  useEffect(() => { setSelectedScreen(null); }, [selectedId]);
+
+  // 趋势图窗口
   const oldestTs = feedEvents.length ? feedEvents[feedEvents.length - 1].ts : nowQ;
   const trendStart = preset === 'all' ? Math.min(oldestTs, nowQ - 24 * HOUR) : nowQ - presetMs;
   const trendEnd = nowQ;
+
+  const onSelectedScreen = useCallback((_id: string, x: number, y: number) => {
+    setSelectedScreen(prev => (prev && Math.abs(prev.x - x) < 0.5 && Math.abs(prev.y - y) < 0.5 ? prev : { x, y }));
+  }, []);
 
   return (
     <div className="am-page">
@@ -943,9 +477,7 @@ export default function AgentMapPage() {
       <div className="am-header">
         <div className="am-title">
           <h2>🗺️ 任务雷达</h2>
-          <span className={`am-conn${connected ? ' am-conn--on' : ''}`}>
-            {connected ? '● 实时' : '○ 连接中'}
-          </span>
+          <span className={`am-conn${connected ? ' am-conn--on' : ''}`}>{connected ? '● 实时' : '○ 连接中'}</span>
         </div>
         <div className="am-stats">
           <span className="am-stat am-stat--active">进行中 <b>{stats?.activeSessions ?? 0}</b></span>
@@ -956,54 +488,25 @@ export default function AgentMapPage() {
           <span className="am-stat">显示 <b>{filteredSessions.length}</b>/{sessionList.length}</span>
         </div>
         <div className="am-actions">
-          <button
-            className="am-btn am-toggle-btn"
-            onClick={() => { setTimebarOpen(v => !v); setHelpOpen(false); }}
-            title={timebarOpen ? '收起时间筛选' : '展开时间筛选'}
-          >
+          <button className="am-btn am-toggle-btn" onClick={() => { setTimebarOpen(v => !v); setHelpOpen(false); }} title={timebarOpen ? '收起时间筛选' : '展开时间筛选'}>
             <span>时间筛选</span>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transition: 'transform 0.18s', transform: timebarOpen ? 'rotate(180deg)' : 'none' }}>
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transition: 'transform 0.18s', transform: timebarOpen ? 'rotate(180deg)' : 'none' }}><polyline points="6 9 12 15 18 9" /></svg>
           </button>
-          <button
-            className="am-btn am-toggle-btn"
-            onClick={() => { setHelpOpen(v => !v); setTimebarOpen(false); }}
-            title="符号说明"
-          >
+          <button className="am-btn am-toggle-btn" onClick={() => { setHelpOpen(v => !v); setTimebarOpen(false); }} title="符号说明">
             <span>符号说明</span>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transition: 'transform 0.18s', transform: helpOpen ? 'rotate(180deg)' : 'none' }}>
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transition: 'transform 0.18s', transform: helpOpen ? 'rotate(180deg)' : 'none' }}><polyline points="6 9 12 15 18 9" /></svg>
           </button>
-          <div
-            className="am-notify-switch"
-            title={notifyEnabled
-              ? '已开启：本页处于后台时，Agent 一轮工作结束会弹系统通知（服务端 OS 通知，浏览器关掉也能弹）'
-              : '开启：本页处于后台时，Agent 一轮工作结束会弹系统通知'}
-          >
-            <Switch
-              checked={notifyEnabled}
-              onChange={toggleNotify}
-              label="🔔 通知"
-              labelPosition="left"
-            />
+          <div className="am-notify-switch" title={notifyEnabled ? '已开启：本页处于后台时，Agent 一轮工作结束会弹系统通知' : '开启：本页处于后台时，Agent 一轮工作结束会弹系统通知'}>
+            <Switch checked={notifyEnabled} onChange={toggleNotify} label="🔔 通知" />
             {notifyEnabled && (
-              <button
-                type="button"
-                className="am-notify-test"
-                onClick={() => api.testAgentMapNotify()}
-                title="发一条测试通知，验证系统是否真的弹（若没弹，请在系统设置里允许 AICodeSwitch/终端 的通知）"
-              >
-                测试
-              </button>
+              <button type="button" className="am-notify-test" onClick={() => api.testAgentMapNotify()} title="发一条测试通知，验证系统是否真的弹（若没弹，请在系统设置里允许 AICodeSwitch/终端 的通知）">测试</button>
             )}
           </div>
         </div>
         {helpOpen && <MapLegend onClose={() => setHelpOpen(false)} />}
       </div>
 
-      {/* 时间筛选 Popover（点 topbar「时间筛选」展开，不占用画布空间） */}
+      {/* 时间筛选 Popover */}
       {timebarOpen && (
         <>
           <div className="am-popover-overlay" onClick={() => setTimebarOpen(false)} />
@@ -1015,13 +518,7 @@ export default function AgentMapPage() {
             <div className="am-timefilter">
               <div className="am-timepresets">
                 {PRESETS.map(p => (
-                  <button
-                    key={p.key}
-                    className={`am-chip${preset === p.key ? ' am-chip--active' : ''}`}
-                    onClick={() => setPreset(p.key)}
-                  >
-                    {p.label}
-                  </button>
+                  <button key={p.key} className={`am-chip${preset === p.key ? ' am-chip--active' : ''}`} onClick={() => setPreset(p.key)}>{p.label}</button>
                 ))}
               </div>
               <TrendChart events={feedEvents} start={trendStart} end={trendEnd} />
@@ -1036,7 +533,7 @@ export default function AgentMapPage() {
       )}
 
       <div className="am-main">
-        {/* 画布 */}
+        {/* 画布（2D / 3D 完全隔离的独立组件） */}
         <div className="am-canvas-wrap">
           {sessionList.length === 0 ? (
             <div className="am-empty-canvas">
@@ -1044,138 +541,29 @@ export default function AgentMapPage() {
               <p>暂无 Session</p>
               <p className="am-empty-hint">启动 Claude Code 或 Codex 开始编程，节点会实时出现在这里</p>
             </div>
+          ) : view3D && !webglFailed ? (
+            <AgentMapCanvas3D
+              sessions={filteredSessions}
+              now={nowQ}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              showLabels={showLabels}
+              focus={focus}
+              resetNonce={resetNonce}
+              onContextLost={() => setWebglFailed(true)}
+              onSelectedScreen={onSelectedScreen}
+            />
           ) : (
-            <svg
-              ref={svgRef}
-              className="am-canvas"
-              viewBox={`0 0 ${SVG_W} ${SVG_H}`}
-              preserveAspectRatio="xMidYMid meet"
-              onPointerDown={onCanvasPointerDown}
-              onPointerMove={onCanvasPointerMove}
-              onPointerUp={onCanvasPointerUp}
-              onPointerLeave={onCanvasPointerLeave}
-              onPointerCancel={onCanvasPointerUp}
-              style={{ cursor: pressing ? 'grabbing' : 'grab', touchAction: 'none' }}
-            >
-              <rect x={0} y={0} width={SVG_W} height={SVG_H} fill="transparent" />
-              <defs>
-                <radialGradient id="am-sphere-shine" cx="0.35" cy="0.3" r="0.75">
-                  <stop offset="0%" stopColor="rgba(255,255,255,0.55)" />
-                  <stop offset="45%" stopColor="rgba(255,255,255,0.12)" />
-                  <stop offset="100%" stopColor="rgba(255,255,255,0)" />
-                </radialGradient>
-              </defs>
-              <g ref={groupRef} transform={`translate(${view.panX} ${view.panY}) scale(${view.zoom})`}>
-                {view3D ? (
-                  <>
-                    {/* 3D 顶点（原点，画布顶部） */}
-                    <circle cx={SVG_W / 2} cy={APEX_Y} r={5} className="am-center-mark am-center-mark--apex" />
-                    {/* 3D 底层平面：侧视下压扁的椭圆，token=0 与最大值齐平于此 */}
-                    <ellipse
-                      cx={SVG_W / 2}
-                      cy={APEX_Y + FLOOR_DROP}
-                      rx={460 * SIDE_SCALE * 2}
-                      ry={460 * SIDE_SCALE * 2 * DEPTH_TILT}
-                      className="am-floor"
-                      fill="none"
-                    />
-                  </>
-                ) : (
-                  <>
-                    {/* 2D 中心标记 */}
-                    <circle cx={SVG_W / 2} cy={SVG_H / 2} r={4} className="am-center-mark" />
-                    {/* 2D 距离分档临界圆（1 / 5 / 10 天） */}
-                    {RINGS.map(ring => (
-                      <g key={`ring-${ring.days}`} className={`am-ring am-ring--t${ring.tier}`}>
-                        <circle cx={SVG_W / 2} cy={SVG_H / 2} r={ring.r} fill="none" />
-                        <text x={SVG_W / 2} y={SVG_H / 2 - ring.r - 6} textAnchor="middle" className="am-ring-label">
-                          {ring.label}
-                        </text>
-                      </g>
-                    ))}
-                  </>
-                )}
-                {view3D ? (
-                  <>
-                    {/* 3D 连线：三层叠加（背景全长 / 输入段 / 输出段），按深度排序后绘制 */}
-                    {[...filteredSessions]
-                      .sort((a, b) => {
-                        const pa = layout.pos3D[a.sessionId];
-                        const pb = layout.pos3D[b.sessionId];
-                        return (pa?.sy ?? 0) - (pb?.sy ?? 0);
-                      })
-                      .map(s => {
-                        const p = layout.pos3D[s.sessionId];
-                        if (!p) return null;
-                        const depth = tokenDepth(s.totalTokens);
-                        const op = 0.35 + depth * 0.5; // 越深越实
-                        return (
-                          <g key={`l3-${s.sessionId}`} className="am-link3d-group" opacity={op}>
-                            {/* 背景线（兜底，无 input/output 数据时仅此线可见） */}
-                            <line x1={p.apexX} y1={p.apexY} x2={p.sx} y2={p.sy} className="am-link3d am-link3d--bg" />
-                            {/* 输入段：顶点 → split（盖在上段） */}
-                            {p.split && (
-                              <line x1={p.apexX} y1={p.apexY} x2={p.split.x} y2={p.split.y} className="am-link3d am-link3d--in" />
-                            )}
-                            {/* 输出段：split → 节点（盖在下段） */}
-                            {p.split && (
-                              <line x1={p.split.x} y1={p.split.y} x2={p.sx} y2={p.sy} className="am-link3d am-link3d--out" />
-                            )}
-                          </g>
-                        );
-                      })}
-                    {/* 3D 节点：按 sy 排序（painter's algorithm，下沉/靠前者压上面） */}
-                    {[...filteredSessions]
-                      .sort((a, b) => {
-                        const pa = layout.pos3D[a.sessionId];
-                        const pb = layout.pos3D[b.sessionId];
-                        return (pa?.sy ?? 0) - (pb?.sy ?? 0);
-                      })
-                      .map(s => {
-                        const p = layout.pos3D[s.sessionId];
-                        if (!p) return null;
-                        return (
-                          <SessionNodeSvg
-                            key={s.sessionId}
-                            item={s}
-                            pos={{ x: p.sx, y: p.sy }}
-                            selected={s.sessionId === selectedId}
-                            mode3D
-                            depth={tokenDepth(s.totalTokens)}
-                          />
-                        );
-                      })}
-                  </>
-                ) : (
-                  <>
-                    {/* 连线（active 节点到中心） */}
-                    {filteredSessions.filter(s => s.status === 'active').map(s => {
-                      const p = layout.pos[s.sessionId];
-                      if (!p) return null;
-                      return <line key={`l-${s.sessionId}`} x1={SVG_W / 2} y1={SVG_H / 2} x2={p.x} y2={p.y} className="am-link am-link--active" />;
-                    })}
-                    {/* 节点：active / error / 选中节点排在最后渲染，确保脉冲发光永远处于最顶层、不被遮住 */}
-                    {[...filteredSessions]
-                      .sort((a, b) => {
-                        const top = (s: SessionMapItem) => (s.status === 'active' || s.status === 'error' || s.sessionId === selectedId) ? 1 : 0;
-                        return top(a) - top(b);
-                      })
-                      .map(s => {
-                      const p = layout.pos[s.sessionId];
-                      if (!p) return null;
-                      return (
-                        <SessionNodeSvg
-                          key={s.sessionId}
-                          item={s}
-                          pos={p}
-                          selected={s.sessionId === selectedId}
-                        />
-                      );
-                    })}
-                  </>
-                )}
-              </g>
-            </svg>
+            <AgentMapCanvas2D
+              sessions={filteredSessions}
+              now={nowQ}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              view={view}
+              onView={setView}
+              focus={focus}
+              onSelectedScreen={onSelectedScreen}
+            />
           )}
           <div className="am-legend">
             <span><i className="am-dot am-dot--active" /> 进行中</span>
@@ -1185,33 +573,34 @@ export default function AgentMapPage() {
           </div>
           <div className="am-float-controls">
             <div className="am-view-toggle" role="group" aria-label="2D / 3D 视图切换">
+              <button className={`am-view-btn${!view3D ? ' am-view-btn--active' : ''}`} onClick={() => setView3D(false)} title="2D 平面视图（默认）">2D</button>
               <button
-                className={`am-view-btn${!view3D ? ' am-view-btn--active' : ''}`}
-                onClick={() => setView3D(false)}
-                title="2D 平面视图（默认，性能更低消耗）"
-              >2D</button>
-              <button
-                className={`am-view-btn${view3D ? ' am-view-btn--active' : ''}`}
-                onClick={() => setView3D(true)}
-                title="3D 锥体视图：节点按 Token 总量下沉，连线分输入/输出两段"
+                className={`am-view-btn${view3D ? ' am-view-btn--active' : ''}${webglFailed ? ' am-view-btn--disabled' : ''}`}
+                onClick={() => { if (!webglFailed) setView3D(true); }}
+                disabled={webglFailed}
+                title={webglFailed ? 'WebGL 不可用，已回退到 2D' : '3D 场景视图（Three.js）：自由轨道旋转/缩放/平移'}
               >3D</button>
             </div>
-            <ZoomControls view={view} onView={setView} />
+            {view3D && !webglFailed ? (
+              <div className="am-view-toggle" role="group" aria-label="3D 显示控制">
+                <button
+                  className={`am-view-btn am-view-btn--label${showLabels ? ' am-view-btn--active' : ''}`}
+                  onClick={() => setShowLabels(v => !v)}
+                  title={showLabels ? '隐藏所有节点标签（仅保留选中节点）' : '显示所有节点标签'}
+                >标签</button>
+                <button className="am-view-btn" onClick={() => setResetNonce(n => n + 1)} title="复位视角">复位</button>
+              </div>
+            ) : (
+              <ZoomControls view={view} onView={setView} />
+            )}
           </div>
         </div>
 
-        {/* 右侧活动流边栏：浮动 toggle 按钮在面板外部，收起后仅剩箭头 */}
+        {/* 右侧活动流边栏 */}
         <div className="am-feed-wrap">
-          <button
-            className="am-feed-toggle"
-            onClick={toggleFeed}
-            title={feedOpen ? '收起活动流' : '展开活动流'}
-            aria-label={feedOpen ? '收起活动流' : '展开活动流'}
-          >
+          <button className="am-feed-toggle" onClick={toggleFeed} title={feedOpen ? '收起活动流' : '展开活动流'} aria-label={feedOpen ? '收起活动流' : '展开活动流'}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              {feedOpen
-                ? <polyline points="9 18 15 12 9 6" />
-                : <polyline points="15 18 9 12 15 6" />}
+              {feedOpen ? <polyline points="9 18 15 12 9 6" /> : <polyline points="15 18 9 12 15 6" />}
             </svg>
           </button>
           {feedOpen && (
@@ -1226,13 +615,9 @@ export default function AgentMapPage() {
         </div>
       </div>
 
-      {/* 详情 Popover：跟随选中节点屏幕位置浮动，不占用主视图空间 */}
+      {/* 详情 Popover */}
       {selected && (
-        <div
-          ref={detailRef}
-          className={`am-detail am-detail--popover am-detail--${detailPlacement}`}
-          style={detailStyle}
-        >
+        <div ref={detailRef} className={`am-detail am-detail--popover am-detail--${detailPlacement}`} style={detailStyle}>
           <div className="am-detail-head">
             <span className={`am-badge am-badge--${selected.status}`}>
               <AgentIcon agent={selected.agent} size={14} /> {STATUS_LABEL[selected.status]}
@@ -1268,21 +653,13 @@ export default function AgentMapPage() {
           <div className="am-detail-section-title">活动路径</div>
           <ActivityPathGraph events={detailEvents} />
           <div className="am-detail-footer">
-            <button className="am-btn am-btn--ghost" onClick={() => loadDetail(selected.sessionId)}>
-              刷新活动
-            </button>
-            <button
-              className="am-btn am-btn--ghost"
-              disabled={selected.source === 'access-key' && !selected.keyId}
-              onClick={() => openSessionDetail(selected)}
-            >
-              会话详情
-            </button>
+            <button className="am-btn am-btn--ghost" onClick={() => loadDetail(selected.sessionId)}>刷新活动</button>
+            <button className="am-btn am-btn--ghost" disabled={selected.source === 'access-key' && !selected.keyId} onClick={() => openSessionDetail(selected)}>会话详情</button>
           </div>
         </div>
       )}
 
-      {/* 会话详情弹窗（复用「会话」模块的 SessionDetailModal） */}
+      {/* 会话详情弹窗 */}
       {detailSession && detailSessionSource && (
         <SessionDetailModal
           session={detailSession}
@@ -1292,11 +669,7 @@ export default function AgentMapPage() {
             if (!detailSessionSource) return;
             setDetailSessionLoading(true);
             try {
-              const logs = await fetchSessionLogs(
-                detailSessionSource.source,
-                detailSessionSource.sessionId,
-                detailSessionSource.keyId,
-              );
+              const logs = await fetchSessionLogs(detailSessionSource.source, detailSessionSource.sessionId, detailSessionSource.keyId);
               setDetailSessionLogs(logs);
             } catch (error) {
               console.error('Failed to refresh session logs:', error);
@@ -1306,11 +679,7 @@ export default function AgentMapPage() {
           }}
           onFetchNewLogs={async () => {
             if (!detailSessionSource) return [];
-            const logs = await fetchSessionLogs(
-              detailSessionSource.source,
-              detailSessionSource.sessionId,
-              detailSessionSource.keyId,
-            );
+            const logs = await fetchSessionLogs(detailSessionSource.source, detailSessionSource.sessionId, detailSessionSource.keyId);
             setDetailSessionLogs(logs);
             return logs;
           }}

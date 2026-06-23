@@ -2711,6 +2711,40 @@ div:hover > .route-icon-popover {
 }
 .am-view-btn:hover { background: var(--bg-hover); color: var(--text-light); }
 .am-view-btn--active { background: color-mix(in srgb, var(--accent-primary) 18%, transparent); color: var(--accent-primary); }
+.am-view-btn--disabled { opacity: 0.4; cursor: not-allowed; }
+/* 「标签」按钮：hover 不修改背景（保持各自常态背景） */
+.am-view-btn--label:hover { background: transparent; color: var(--text-muted); }
+.am-view-btn--label.am-view-btn--active:hover { background: color-mix(in srgb, var(--accent-primary) 18%, transparent); color: var(--accent-primary); }
+
+/* ===== 3D 视图（Three.js / WebGL）容器与标签叠层 ===== */
+.am-canvas-3d { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; z-index: 0; }
+/* CSS2DRenderer 根层与每个 label 都不拦截指针，保证 raycaster 拾取穿透到 canvas */
+.am-canvas-3d > div { pointer-events: none; }
+.am-node-label {
+  pointer-events: none;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.25;
+  color: var(--text-primary);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75), 0 0 2px rgba(0, 0, 0, 0.6);
+  white-space: nowrap;
+  user-select: none;
+}
+.am-node-label-title { font-weight: 600; }
+.am-node-label-sub { font-size: 9px; opacity: 0.8; }
+
+/* 3D Token 量尺刻度标签（中心纵轴） */
+.am-axis-label {
+  pointer-events: none;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg-card) 70%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+  user-select: none;
+}
 
 /* 详情 popover：token 输入/输出拆分 */
 .am-detail-tokens { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -3157,7 +3191,8 @@ div:hover > .route-icon-popover {
 }
 /* 宽版（图例）：三列布局 */
 .am-popover--wide {
-  width: 860px;
+  width: 1120px;
+  max-width: calc(100vw - 32px);
 }
 .am-legend-grid {
   display: flex;
@@ -3256,7 +3291,7 @@ div:hover > .route-icon-popover {
 /* ==================== Agent Map：详情 Popover（跟随节点浮动） ==================== */
 .am-detail--popover {
   position: fixed;
-  z-index: 60;
+  z-index: 100000;
   width: 380px;
   max-width: calc(100vw - 24px);
   max-height: 80vh;
