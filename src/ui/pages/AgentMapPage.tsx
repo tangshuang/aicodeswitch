@@ -49,22 +49,6 @@ const PRESETS: { key: Preset; label: string; ms: number }[] = [
 
 // ============================ 时间直方图 / 趋势图 ============================
 
-interface Bucket { index: number; start: number; end: number; count: number; }
-
-function buildHistogram(events: ActivityEvent[], start: number, end: number, bucketCount: number): Bucket[] {
-  const span = Math.max(1, end - start);
-  const ms = span / bucketCount;
-  const counts = new Array(bucketCount).fill(0);
-  for (const e of events) {
-    if (e.ts < start || e.ts > end) continue;
-    let idx = Math.floor((e.ts - start) / ms);
-    if (idx < 0) idx = 0;
-    if (idx >= bucketCount) idx = bucketCount - 1;
-    counts[idx]++;
-  }
-  return counts.map((count, index) => ({ index, start: start + index * ms, end: start + (index + 1) * ms, count }));
-}
-
 function formatBucketLabel(ts: number, spanMs: number): string {
   const s = new Date(ts);
   if (spanMs <= DAY) return `${s.getHours().toString().padStart(2, '0')}:00`;
@@ -89,11 +73,23 @@ function smoothPath(pts: { x: number; y: number }[]): string {
   return d.join(' ');
 }
 
-function TrendChart({ events, start, end }: { events: ActivityEvent[]; start: number; end: number }) {
+function TrendChart({ sessions, start, end }: { sessions: SessionMapItem[]; start: number; end: number }) {
   const W = 220, H = 44, PAD = 3;
-  const BUCKET_COUNT = 28;
-  const buckets = useMemo(() => buildHistogram(events, start, end, BUCKET_COUNT), [events, start, end]);
-  const counts = buckets.map(b => b.count);
+  // 按会话「最后活动时间」lastRequestAt 计数，按小时分桶
+  const counts = useMemo(() => {
+    const spanMs = Math.max(1, end - start);
+    const bucketCount = Math.max(1, Math.min(96, Math.round(spanMs / HOUR))); // 每小时一桶（上限 96）
+    const arr = new Array(bucketCount).fill(0);
+    for (const s of sessions) {
+      const ts = s.lastRequestAt;
+      if (ts < start || ts > end) continue;
+      let idx = Math.floor((ts - start) / (spanMs / bucketCount));
+      if (idx < 0) idx = 0;
+      if (idx >= bucketCount) idx = bucketCount - 1;
+      arr[idx]++;
+    }
+    return arr;
+  }, [sessions, start, end]);
   const maxCount = Math.max(1, ...counts);
   const total = counts.reduce((a, b) => a + b, 0);
   const spanMs = end - start;
@@ -106,8 +102,8 @@ function TrendChart({ events, start, end }: { events: ActivityEvent[]; start: nu
     ? `${line} L ${pts[pts.length - 1].x.toFixed(2)} ${H} L ${pts[0].x.toFixed(2)} ${H} Z`
     : '';
   return (
-    <div className="am-trend" title={`区间内活动趋势：共 ${total} 次活动`}>
-      <span className="am-trend-label">活动趋势</span>
+    <div className="am-trend" title={`区间内会话最后活动分布：共 ${total} 个会话（按小时统计）`}>
+      <span className="am-trend-label">会话趋势</span>
       <svg className="am-trend-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
         <defs>
           <linearGradient id="am-trend-grad" x1="0" y1="0" x2="0" y2="1">
@@ -490,7 +486,7 @@ export default function AgentMapPage() {
                   <button key={p.key} className={`am-chip${preset === p.key ? ' am-chip--active' : ''}`} onClick={() => setPreset(p.key)}>{p.label}</button>
                 ))}
               </div>
-              <TrendChart events={feedEvents} start={trendStart} end={trendEnd} />
+              <TrendChart sessions={sessionList} start={trendStart} end={trendEnd} />
             </div>
             {hasTimeFilter && (
               <div className="am-timefilter-hint">
