@@ -489,6 +489,8 @@ export interface SessionMapItem {
   lastRequestAt: number;
   requestCount: number;
   totalTokens: number;
+  inputTokens: number;                              // 累计输入 token（运行时累加，重启归零）
+  outputTokens: number;                             // 累计输出 token（运行时累加，重启归零）
   lastToolName?: string;
   lastActivitySummary?: string;
   lastStatusCode?: number;

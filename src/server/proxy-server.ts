@@ -3781,13 +3781,14 @@ export class ProxyServer {
     }
 
     if (format === 'completions' || format === 'responses') {
-      const usage = responseData?.usage;
+      // 标准 Responses 非流式 usage 在顶层；个别上游/中转会嵌在 response.usage 下，做兜底
+      const usage = responseData?.usage ?? responseData?.response?.usage;
       if (!usage) return undefined;
       return {
         inputTokens: usage?.input_tokens || usage?.prompt_tokens || 0,
         outputTokens: usage?.output_tokens || usage?.completion_tokens || 0,
         totalTokens: usage?.total_tokens || 0,
-        cacheReadInputTokens: usage?.cached_tokens || usage?.cache_read_input_tokens || 0,
+        cacheReadInputTokens: usage?.cached_tokens || usage?.cache_read_input_tokens || usage?.input_tokens_details?.cached_tokens || 0,
       };
     }
 
@@ -4067,6 +4068,9 @@ export class ProxyServer {
           // 避免规则未配置 targetModel 时回退成编程工具提交的 req.body.model
           model: requestBody?.model || req.body?.model,
           tokensDelta: _tokensDelta,
+          // 输入/输出拆分（3D 连线两段用）；usageForLog 已规范化为驼峰字段
+          inputTokensDelta: usageForLog?.inputTokens || 0,
+          outputTokensDelta: usageForLog?.outputTokens || 0,
           body: req.body,
           downstreamResponseBody: downstreamResponseBodyForLog ?? responseBodyForLog,
           responseBody: responseBodyForLog,

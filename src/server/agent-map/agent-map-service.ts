@@ -50,6 +50,8 @@ interface RuntimeState {
   lastRequestAt: number;
   requestCount: number;
   totalTokens: number;
+  inputTokens: number;       // 累计输入 token（运行时累加，重启归零；3D 连线输入段用）
+  outputTokens: number;      // 累计输出 token（运行时累加，重启归零；3D 连线输出段用）
   lastToolName?: string;
   lastActivitySummary?: string;
   lastStatusCode?: number;
@@ -75,6 +77,8 @@ export interface FinalizeContext {
   statusCode?: number;
   model?: string;
   tokensDelta?: number;
+  inputTokensDelta?: number;   // 本次请求输入 token 增量（3D 连线输入段）
+  outputTokensDelta?: number;  // 本次请求输出 token 增量（3D 连线输出段）
   body?: any;
   downstreamResponseBody?: any;
   responseBody?: any;
@@ -154,6 +158,8 @@ export class AgentMapService extends EventEmitter {
           lastRequestAt,
           requestCount: s.requestCount || 0,
           totalTokens: s.totalTokens || 0,
+          inputTokens: 0,
+          outputTokens: 0,
           lastToolName: s.lastToolName,
           lastActivitySummary: s.lastActivitySummary,
           lastStatusCode: s.lastStatusCode,
@@ -302,6 +308,8 @@ export class AgentMapService extends EventEmitter {
         lastRequestAt: now,
         requestCount: 0,
         totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
         status: 'active',
         statusReason: 'in-flight',
         inFlight: 0,
@@ -376,6 +384,8 @@ export class AgentMapService extends EventEmitter {
         lastRequestAt: ctx.timestamp,
         requestCount: 0,
         totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
         status: 'active',
         inFlight: 0,
       };
@@ -390,6 +400,8 @@ export class AgentMapService extends EventEmitter {
     st.lastRequestAt = ctx.timestamp;
     st.requestCount += 1;
     if (ctx.tokensDelta) st.totalTokens += ctx.tokensDelta;
+    if (ctx.inputTokensDelta) st.inputTokens += ctx.inputTokensDelta;
+    if (ctx.outputTokensDelta) st.outputTokens += ctx.outputTokensDelta;
     if (ctx.model) st.lastModel = ctx.model;
     if (ctx.statusCode != null) st.lastStatusCode = ctx.statusCode;
     if (summary) st.lastActivitySummary = summary;
@@ -628,6 +640,8 @@ export class AgentMapService extends EventEmitter {
       lastRequestAt: st.lastRequestAt,
       requestCount: st.requestCount,
       totalTokens: st.totalTokens,
+      inputTokens: st.inputTokens,
+      outputTokens: st.outputTokens,
       lastToolName: st.lastToolName,
       lastActivitySummary: st.lastActivitySummary,
       lastStatusCode: st.lastStatusCode,

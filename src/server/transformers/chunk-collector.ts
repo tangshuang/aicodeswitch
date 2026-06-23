@@ -334,6 +334,19 @@ export class SSEEventCollectorTransform extends Transform {
         if (typeof usage.cached_tokens === 'number') cache_read_input_tokens = usage.cached_tokens;
       }
 
+      // OpenAI Responses 流式：usage 在最终 response.completed / response.done 事件的 data.response.usage 下
+      // （Codex 默认走 Responses 流式，此前漏读此处导致 Codex token 恒为 0）
+      const respUsage = data?.response?.usage;
+      if (respUsage) {
+        if (typeof respUsage.input_tokens === 'number') input_tokens = respUsage.input_tokens;
+        if (typeof respUsage.output_tokens === 'number') output_tokens = respUsage.output_tokens;
+        if (typeof respUsage.total_tokens === 'number') total_tokens = respUsage.total_tokens;
+        if (typeof respUsage.prompt_tokens === 'number') input_tokens = respUsage.prompt_tokens;
+        if (typeof respUsage.completion_tokens === 'number') output_tokens = respUsage.completion_tokens;
+        const cached = respUsage.input_tokens_details?.cached_tokens;
+        if (typeof cached === 'number') cache_read_input_tokens = cached;
+      }
+
       // OpenAI: choices[].usage（部分上游把 usage 放在最后一个 choice 上）
       if (Array.isArray(data?.choices) && data.choices.length > 0) {
         const lastChoice = data.choices[data.choices.length - 1];

@@ -93,7 +93,7 @@ interface BackendAPI {
   importData: (encryptedData: string, password: string) => Promise<ImportResult>;
 
   writeClaudeConfig: (enableAgentTeams?: boolean, enableBypassPermissionsSupport?: boolean, permissionsDefaultMode?: ClaudePermissionDefaultMode) => Promise<boolean>;
-  writeCodexConfig: (modelReasoningEffort?: CodexReasoningEffort) => Promise<boolean>;
+  writeCodexConfig: (modelReasoningEffort?: CodexReasoningEffort, enableMemories?: boolean) => Promise<boolean>;
   restoreClaudeConfig: () => Promise<boolean>;
   restoreCodexConfig: () => Promise<boolean>;
   checkClaudeBackup: () => Promise<{ exists: boolean }>;
@@ -465,10 +465,10 @@ export const api: BackendAPI = {
       method: 'POST',
       body: JSON.stringify({ enableAgentTeams, enableBypassPermissionsSupport, permissionsDefaultMode })
     }),
-  writeCodexConfig: (modelReasoningEffort?: CodexReasoningEffort) =>
+  writeCodexConfig: (modelReasoningEffort?: CodexReasoningEffort, enableMemories?: boolean) =>
     requestJson(buildUrl('/api/write-config/codex'), {
       method: 'POST',
-      body: JSON.stringify({ modelReasoningEffort })
+      body: JSON.stringify({ modelReasoningEffort, enableMemories })
     }),
   restoreClaudeConfig: () => requestJson(buildUrl('/api/restore-config/claude'), { method: 'POST' }),
   restoreCodexConfig: () => requestJson(buildUrl('/api/restore-config/codex'), { method: 'POST' }),

@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-06-23: 修复 Codex（OpenAI Responses 流式）token 恒为 0
+
+### 修复
+- **任务雷达/服务性能里几乎所有 Codex 会话 token 为 0**：Codex 默认走 OpenAI Responses API 流式，usage 在最终 `response.completed` 事件的 `data.response.usage` 下；而 `chunk-collector.extractUsage` 只解析了 `data.message.usage` / `data.usage` / `data.choices[].usage` / `data.usageMetadata` / 顶级裸字段，漏了 `data.response.usage`，导致流式 `extractUsage()` 恒返回 null → `usageForLog = undefined` → `_tokensDelta = 0`。Claude Code 因 Anthropic usage 在 `data.message.usage`/`data.usage` 而正常。
+- `chunk-collector.ts extractUsage` 新增 `data.response.usage` 分支，读取 `input_tokens`/`output_tokens`/`total_tokens` 与 `input_tokens_details.cached_tokens`。该 collector 同时服务于 Agent Map 与服务性能统计，故 Codex 的「服务性能·Token量」面板一并修复。
+- 防御：`proxy-server.ts extractTokenUsageFromResponse` 的 `completions/responses` 非流式分支改为 `responseData?.usage ?? responseData?.response?.usage` 兜底，并补 `input_tokens_details.cached_tokens`，覆盖个别把 usage 嵌在 `response.usage` 下的上游。
+
+## 2026-06-23: 恢复任务雷达 2D 节点呼吸圈的 transform: scale 效果
+
+- `@keyframes am-pulse`（2D 视图 `.am-node-glow` 外围呼吸圈 + busy 节点圆心）重新加入 `transform: scale(1 → 1.12)`，与 `opacity` 叠加呼吸；圆环以 (0,0) 为圆心绘制，scale 默认以 0 0 为原点即圆心，无需额外 `transform-origin`。覆盖上一条「去掉 scale 改纯 opacity」的合规改动（用户显式要求恢复）。
+
+## 2026-06-23: 任务雷达新增 3D 视图（Token 下沉锥体 + 两段式连线 + 土星环节点）
+
+### 新增
+- **任务雷达 2D/3D 视图切换**：右下角浮动控件组（缩放按钮左侧）新增「2D / 3D」分段切换，默认 2D（省性能）。3D 视图以纯 SVG 伪 3D 实现，0 新依赖、不引入 WebGL。
+- **3D 几何**：2D 中心点变为锥体顶点（最高/最近），节点水平位置（角度=sessionId 哈希、半径=会话年龄）与 2D 完全一致，**Token 总量只驱动垂直下沉**（对数缩放，避免大数值飞出屏幕）；同心圆按倾角压扁为椭圆地面。
+- **三层叠加连线**：顶点→节点连线始终先画一根中性背景线，再叠输入段（靠顶点）与输出段（靠节点）两根彩色线，按 input/output 占比切分；无 input/output 数据（如冷启动归零）时遮罩线不画，自然退化为一根背景线。
+- **土星环球体节点**：3D 下节点从脉冲圆点改为带倾斜椭圆环的球体（左上高光营造体积），状态着色复用现有配色，并按深度做 painter's algorithm 排序。
+- **顺带合规**：`am-pulse` 动画去掉 `transform: scale()`，改为纯 `opacity`（项目规范禁止 GPU 密集 CSS），2D 视觉语义不变。
+
+### 后端
+- **透传 input/output token 到 Agent Map 节点**：`SessionMapItem` / `RuntimeState` / `FinalizeContext` 新增 `inputTokens` / `outputTokens`（及 delta）；`proxy-server.ts` 折叠点在原 `tokensDelta` 之外，把已规范化的 `usageForLog.inputTokens` / `outputTokens` 单独传入 `agentMapService.onFinalized`；`agent-map-service` 累加并经 `toMapItem` 暴露。input/output 为运行时累加（重启归零），Z 轴深度仍用已持久化的 `totalTokens` 保证稳定。详情 popover 展示输入/输出/总量三个值。
+
 ## 2026-06-23: 修复 Token量 指标中「输入/总量」恒为空
 
 ### 修复

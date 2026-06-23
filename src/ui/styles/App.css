@@ -2634,8 +2634,90 @@ div:hover > .route-icon-popover {
 
 @keyframes am-pulse {
   0%, 100% { opacity: 0.35; transform: scale(1); }
-  50% { opacity: 0.8; transform: scale(1.08); }
+  50% { opacity: 0.8; transform: scale(1.12); }
 }
+/* SVG 圆环以 (0,0) 为圆心绘制，scale 默认以 0 0 为原点即圆心，无需额外 transform-origin */
+/* 3D 土星环旋转：虚线沿环流动（dasharray 周期 18，-180=10 个周期，无缝循环） */
+@keyframes am-ring-spin {
+  to { stroke-dashoffset: -180; }
+}
+
+/* ===== 3D 视图：土星环球体节点 ===== */
+.am-node-3d .am-node-sphere {
+  fill: var(--bg-card);
+  stroke: var(--border-color);
+  stroke-width: 2;
+  transition: stroke 0.2s, fill 0.2s;
+}
+.am-node-shine { pointer-events: none; }
+.am-node-ring {
+  fill: none;
+  stroke-width: 2;
+  stroke-dasharray: 11 7;     /* 流动虚线：配合 dashoffset 形成「环在旋转」的视觉 */
+  pointer-events: none;
+  animation: am-ring-spin 5s linear infinite;
+}
+/* 状态着色（球体）；环仅 active 节点渲染，仅旋转（不再呼吸） */
+.am-node-3d.am-node--active .am-node-sphere { stroke: var(--accent-primary); fill: color-mix(in srgb, var(--accent-primary) 22%, var(--bg-card)); }
+.am-node-3d.am-node--active .am-node-ring { stroke: var(--accent-primary); opacity: 0.85; }
+.am-node-3d.am-node--idle .am-node-sphere { stroke: var(--accent-warning); fill: color-mix(in srgb, var(--accent-warning) 16%, var(--bg-card)); }
+.am-node-3d.am-node--error .am-node-sphere { stroke: var(--accent-danger); fill: color-mix(in srgb, var(--accent-danger) 22%, var(--bg-card)); }
+.am-node-3d.am-node--completed { opacity: 0.55; }
+.am-node-3d.am-node--completed .am-node-sphere { stroke: var(--border-secondary); stroke-dasharray: 3 3; }
+.am-node-3d.am-node--selected .am-node-sphere { stroke-width: 4; }
+
+/* ===== 3D 视图：三层叠加连线（背景/输入/输出） ===== */
+.am-link3d { stroke-width: 2.5; stroke-linecap: round; }
+.am-link3d--bg { stroke: var(--border-secondary); stroke-width: 2; opacity: 0.5; }
+.am-link3d--in { stroke: var(--accent-secondary); }   /* 输入段：靠顶点 */
+.am-link3d--out { stroke: var(--accent-primary); }    /* 输出段：靠节点 */
+
+/* 顶点标记（3D 锥尖） */
+.am-center-mark--apex { fill: var(--accent-primary); }
+/* 3D 底层平面（侧视压扁椭圆，token=0 与最大值齐平于此） */
+.am-floor { stroke: var(--border-secondary); stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.4; }
+
+/* ===== 浮动控件组（右下角：视图切换 + 缩放） ===== */
+.am-float-controls {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.am-float-controls .am-zoom { position: static; box-shadow: var(--shadow-secondary); }
+.am-view-toggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 3px;
+  box-shadow: var(--shadow-secondary);
+}
+.am-view-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 5px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.am-view-btn:hover { background: var(--bg-hover); color: var(--text-light); }
+.am-view-btn--active { background: color-mix(in srgb, var(--accent-primary) 18%, transparent); color: var(--accent-primary); }
+
+/* 详情 popover：token 输入/输出拆分 */
+.am-detail-tokens { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.am-detail-tokens-split { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted); }
+.am-tok { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-left: 4px; }
+.am-tok--in { background: var(--accent-secondary); }
+.am-tok--out { background: var(--accent-primary); }
 
 /* 图例 */
 .am-legend {
