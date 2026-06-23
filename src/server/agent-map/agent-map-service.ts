@@ -16,6 +16,7 @@ import { EventEmitter } from 'events';
 import type {
   ActivityEvent,
   AgentMapStats,
+  AppConfig,
   RequestLog,
   SessionMapItem,
   SessionStatus,
@@ -33,6 +34,9 @@ type DbManagerLike = {
     sessionIds: string[],
     opts?: { since?: number; perSessionLimit?: number }
   ) => Promise<Map<string, RequestLog[]>>;
+  // 配置读写（用于持久化通知开关 agentMapNotifyEnabled）
+  getConfig?: () => AppConfig;
+  updateConfig?: (config: AppConfig) => Promise<boolean>;
 };
 
 interface RuntimeState {
@@ -112,6 +116,10 @@ export class AgentMapService extends EventEmitter {
   /** 由 main.ts 在 dbManager 就绪后调用 */
   attach(db: DbManagerLike) {
     this.db = db;
+    // 恢复持久化的通知开关，使重启后无需浏览器即可正常弹通知
+    try {
+      this.notifyEnabled = !!db.getConfig?.()?.agentMapNotifyEnabled;
+    } catch { /* ignore */ }
     this.seedFromDb().catch(err => {
       console.error('[AgentMap] seed error:', err);
     });
@@ -450,7 +458,20 @@ export class AgentMapService extends EventEmitter {
 
   // ============ 任务结束 OS 通知 ============
 
-  setNotifyEnabled(enabled: boolean) { this.notifyEnabled = !!enabled; }
+  setNotifyEnabled(enabled: boolean) {
+    this.notifyEnabled = !!enabled;
+    this.persistNotifyEnabled(this.notifyEnabled);
+  }
+  /** 异步把通知开关写入 AppConfig（read-modify-write，best-effort，不阻塞调用） */
+  private async persistNotifyEnabled(enabled: boolean) {
+    if (!this.db?.getConfig || !this.db?.updateConfig) return;
+    try {
+      const cfg = this.db.getConfig();
+      if (cfg.agentMapNotifyEnabled === enabled) return;
+      cfg.agentMapNotifyEnabled = enabled;
+      await this.db.updateConfig(cfg);
+    } catch { /* ignore */ }
+  }
   /** 兼容旧端点：不再区分前后台，调用为 no-op（开关开启后始终弹） */
   setPageHidden(_hidden: boolean) { /* no-op */ }
   getNotifyEnabled() { return this.notifyEnabled; }

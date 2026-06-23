@@ -280,6 +280,8 @@ export interface AppConfig {
   proxyPassword?: string;  // 代理认证密码
   // 局域网同步
   enableLanDiscovery?: boolean;  // 是否允许局域网发现并拉取配置，默认 false
+  // Agent Map「一轮结束」OS 通知开关（持久化；Node 端据此决定是否弹，重启不丢）
+  agentMapNotifyEnabled?: boolean;
   // API 路径路由映射
 }
 

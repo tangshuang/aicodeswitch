@@ -2,12 +2,9 @@
  * 任务结束 OS 通知（服务端交付，全应用跨页面）
  *
  * 设计：
- * - 通知由后端用 OS 原生通知（osascript/notify-send/PowerShell toast）弹出，更可靠，
- *   浏览器/Tab 关掉也能弹；不再依赖浏览器 Notification API（避免「授权 OK 但系统层关闭」盲区）。
- * - 开关偏好：localStorage 为 UI 真相源；挂载时同步到后端；切换时 POST 给后端。
- * - 后台闸门：前端在 visibilitychange（及挂载时）上报 document.hidden；后端仅在「页面后台」时弹。
- *
- * 触发信号在后端 agent-map-service（active → idle = 一轮结束，见 detectTurnEnd）。
+ * - 通知由后端用 OS 原生通知弹出；触发信号在后端 agent-map-service（active → idle，见 detectTurnEnd）。
+ * - 开关以**后端为权威**（持久化在 AppConfig），前端挂载时 GET 回填、切换时 POST 持久化。
+ *   这样重启服务后、关闭浏览器都不影响——Node 端凭持久化标志即可弹通知。
  */
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
@@ -26,26 +23,18 @@ export function useAgentNotifications(): AgentNotificationsValue {
 }
 
 export function AgentNotificationsProvider({ children }: { children: ReactNode }) {
-  const [enabled, setEnabled] = useState<boolean>(() => {
-    try { return localStorage.getItem('agent-map-notify') === 'on'; } catch { return false; }
-  });
+  const [enabled, setEnabled] = useState<boolean>(false);
 
-  // 挂载时：把本地偏好同步到后端（解决后端重启后丢失）+ 上报一次可见性
+  // 挂载时：从后端取持久化的开关值（后端为权威来源）
   useEffect(() => {
-    api.setAgentMapNotify(enabled).catch(() => { /* ignore */ });
-    const reportFocus = () => {
-      api.setAgentMapNotifyFocus(typeof document !== 'undefined' ? document.hidden : true).catch(() => { /* ignore */ });
-    };
-    reportFocus();
-    document.addEventListener('visibilitychange', reportFocus);
-    return () => document.removeEventListener('visibilitychange', reportFocus);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    api.getAgentMapNotify()
+      .then(r => setEnabled(!!r.enabled))
+      .catch(() => { /* ignore */ });
   }, []);
 
   const toggle = useCallback(() => {
     setEnabled(prev => {
       const next = !prev;
-      try { localStorage.setItem('agent-map-notify', next ? 'on' : 'off'); } catch { /* ignore */ }
       api.setAgentMapNotify(next).catch(() => { /* ignore */ });
       return next;
     });
