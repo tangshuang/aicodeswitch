@@ -496,7 +496,7 @@ export default function AgentMapPage() {
             <span>符号说明</span>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transition: 'transform 0.18s', transform: helpOpen ? 'rotate(180deg)' : 'none' }}><polyline points="6 9 12 15 18 9" /></svg>
           </button>
-          <div className="am-notify-switch" title={notifyEnabled ? '已开启：本页处于后台时，Agent 一轮工作结束会弹系统通知' : '开启：本页处于后台时，Agent 一轮工作结束会弹系统通知'}>
+          <div className="am-notify-switch" title={notifyEnabled ? '已开启：每个会话的一轮任务结束时（请求完成、流结束，或停滞超过阈值）会弹一次系统通知' : '开启：每个会话的一轮任务结束时（请求完成、流结束，或停滞超过阈值）会弹一次系统通知'}>
             <Switch checked={notifyEnabled} onChange={toggleNotify} label="🔔 通知" />
             {notifyEnabled && (
               <button type="button" className="am-notify-test" onClick={() => api.testAgentMapNotify()} title="发一条测试通知，验证系统是否真的弹（若没弹，请在系统设置里允许 AICodeSwitch/终端 的通知）">测试</button>

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-06-23: 重构会话级任务通知系统（修复「永远卡在进行中」+ 通知随机/不触发）
+
+### 重构
+- **根因修复：节点 5 小时前最后活动却仍显示「进行中」**。旧状态机 `inferStatus` 把 `inFlight > 0` 直接判为 active，而 `startRequest` 一旦因早退（编程套餐拒绝、配额拦截、异常等导致 `finalizeLog` 未被调用）未配对 `endRequest`，在途计数就永久泄漏 → 节点永远 active。新版**在途陈旧度清扫**：SSE 流已开始产出后 30s 无新 chunk、或同步请求 5min 未返回（首 Token 前按 5min 等待，兼容思考类模型长 TTFT），即判为停滞并**清零泄漏的在途计数器**，最长 5min 必然脱离「进行中」。
+- **通知随机/不触发的根因修复**。旧逻辑依赖 `detectTurnEnd` 正则匹配下游响应的 `stop_reason`/`response.completed`，流式分包或非 Anthropic 格式时常返回 null → 回退到 `lastRequestAt` 的 60s 窗口；而请求刚结束时 `lastRequestAt≈now`，状态被强行保持 active 60s，期间任何后台续发请求（count_tokens/compact）再次刷新时间 → active→idle 永不发生或随机命中。新版改用**真实活动时钟** `lastActivityAt`：由请求开始、**每个 SSE 下游 chunk（heartbeat）**、请求结束共同刷新；`active` 严格意味着「确有在途请求且存活」。请求一结束（inFlight→0）`onFinalized` 立即把状态转 idle → 即时弹通知，不再依赖正则或 60s 窗口。
+- **在途泄漏兜底**：`proxyRequest` 在 `startRequest` 时挂 `res.on('close')` 安全网，确保即便 `finalizeLog` 被跳过，`endRequest` 也必触发一次，从源头杜绝泄漏。
+- **通知精度**：新增 `notifiedForTurn` 标记，每个主任务轮只弹一次；后台类请求（`background`/`compact`/`count_tokens`）不重置该标记，故主任务结束后的续发请求不会重复弹通知（另保留 60s 冷却兜底）。
+- **异常也通知**：`active → error`（上游 5xx）也触发一次通知（⚠️ 标识），便于及时感知失败；用户主动取消（499）不弹。
+
+### 改动
+- `src/server/agent-map/agent-map-service.ts`：`RuntimeState` 新增 `lastActivityAt`/`streamingInFlight`/`streamFirstChunkAt`/`inFlightSince`/`notifiedForTurn`；新增 `markStreaming`/`heartbeat`/`reevaluate`；重写 `inferStatus`（在途 + 陈旧度判定，移除 `turnEnd`/60s 窗口作为主信号）；`sweep` 增加泄漏计数器清零；`maybeNotifyTurnEnd` 改为基于 `notifiedForTurn`。
+- `src/server/proxy-server.ts`（`proxyRequest`）：`startRequest` 增加 `background` 标记；新增 `res.on('close')` 安全网；流式 pipeline 注入 `markStreaming` + `ChunkCollectorTransform` 回调里调 `heartbeat`；`endRequest` 传 `isStream`。
+- `src/ui/pages/AgentMapPage.tsx`：通知开关 tooltip 更新为新语义（任务结束/流结束/停滞超阈值即弹，每轮一次）。
+
 ## 2026-06-23: 任务雷达 3D 视图改用 Three.js + 2D/3D 画布拆分为独立组件
 
 ### 重构

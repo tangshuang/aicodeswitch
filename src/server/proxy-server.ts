@@ -3854,10 +3854,25 @@ export class ProxyServer {
 
     // Agent Map：在途请求注册（active 状态判定依据）
     const _accessKeyCtxAtStart = (req as any)._accessKeyCtx as { accessKey: AccessKey; policy: Policy } | undefined;
+    // 后台类请求（count_tokens / compact / background 规则）不重置「本轮通知标记」，避免主任务结束后的
+    // 续发请求重复触发结束通知
+    const _isBgRequest = rule.contentType === 'background'
+      || rule.contentType === 'compact'
+      || this.isCountTokensPath(req.path)
+      || this.isCountTokensPath(req.originalUrl);
     agentMapService.startRequest(sessionId, targetType, {
       source: _accessKeyCtxAtStart ? 'access-key' : 'global',
       keyId: _accessKeyCtxAtStart?.accessKey?.id,
       keyName: _accessKeyCtxAtStart?.accessKey?.name,
+      background: _isBgRequest,
+    });
+    // 安全网：无论走哪条分支（含编程套餐拒绝、配额拦截、异常等早退，导致 finalizeLog 未被调用），
+    // 都在响应关闭时确保 endRequest 配对执行一次，杜绝在途计数泄漏（「永远卡在进行中」）。
+    res.on('close', () => {
+      if ((res.locals as any)._agentMapRecorded) return;
+      (res.locals as any)._agentMapRecorded = true;
+      agentMapService.endRequest(sessionId, { isStream: !!(res.locals as any)._agentMapStream });
+      agentMapService.reevaluate(sessionId);
     });
 
     const vendor = this.dbManager.getVendorByServiceId(service.id);
@@ -4051,7 +4066,7 @@ export class ProxyServer {
       // Agent Map：在途请求注销 + 活动/状态采集广播（独立于 enableLogging，仅执行一次）
       if (!res.locals._agentMapRecorded) {
         res.locals._agentMapRecorded = true;
-        agentMapService.endRequest(sessionId);
+        agentMapService.endRequest(sessionId, { isStream: !!res.locals._agentMapStream });
         const _akCtx = (req as any)._accessKeyCtx as { accessKey: AccessKey; policy: Policy } | undefined;
         const _tokensDelta = usageForLog?.totalTokens ||
           ((usageForLog?.inputTokens || 0) + (usageForLog?.outputTokens || 0));
@@ -4656,9 +4671,14 @@ export class ProxyServer {
         const serializer = new SSESerializerTransform();
         const downstreamChunkCollector = new ChunkCollectorTransform(() => {
           rulesStatusBroadcaster.refreshRuleInUse(route.id, rule.id);
+          // Agent Map 心跳：每个流经的下游 chunk 都视为「会话仍活跃」，刷新活动时钟（节流由 ChunkCollector 内部 5s 上限控制）
+          agentMapService.heartbeat(sessionId);
         });
         // 服务性能打点：记录首/末 SSE 事件时间，用于 TTFT 与生成阶段吞吐
         streamTiming = new StreamTimingTransform(startTime);
+        // Agent Map：SSE 流已建立 —— 记一个在途流，状态机据此区分「同步/流式」活跃判定
+        (res.locals as any)._agentMapStream = true;
+        agentMapService.markStreaming(sessionId);
         const compactResponseSanitizer = rule.contentType === 'compact' && targetType === 'claude-code'
           ? new ClaudeCompactResponseSanitizer()
           : null;

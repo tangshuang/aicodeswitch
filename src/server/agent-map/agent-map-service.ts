@@ -61,9 +61,15 @@ interface RuntimeState {
   inFlight: number;
   projectPath?: string;
   metaResolved?: boolean; // 是否已尝试解析本地会话元信息（避免重复扫盘）
-  lastTurnEnd?: boolean | null; // 末轮响应是否表示「一轮结束」（精确信号，见 detectTurnEnd）
+  lastTurnEnd?: boolean | null; // 末轮响应是否表示「一轮结束」（仅作展示参考，不再作为状态判定主信号）
   lastPromptSummary?: string; // 最近一次真正写入的 prompt 文本，用于跨轮次去重
   lastNotifyAt?: number; // 最近一次「一轮结束」OS 通知时间，用于冷却去重
+  // ── 可靠活动追踪（替代旧的 lastRequestAt 60s 窗口 + detectTurnEnd 正则）──
+  lastActivityAt: number;      // 最近一次「真实活动」时刻：请求开始 / SSE chunk / 请求结束
+  streamingInFlight: number;   // 当前在途的 SSE 流数量（用于区分同步 / 流式活跃判定）
+  streamFirstChunkAt: number;  // 本轮流首个 chunk 时刻（0=尚未收到 chunk，仍在等首 Token）
+  inFlightSince: number;       // 在途计数从 0→正 的时刻（同步请求 5min 超时基线）
+  notifiedForTurn: boolean;    // 本轮（主任务）是否已弹过结束通知；新一轮主请求会重置
 }
 
 export interface FinalizeContext {
@@ -84,12 +90,16 @@ export interface FinalizeContext {
   responseBody?: any;
 }
 
-const ACTIVE_WINDOW_MS = 60_000;       // 最近 60s 内有活动 → active
-const IDLE_WINDOW_MS = 10 * 60_000;    // 10min 内有活动但超过 active 窗口 → idle；超出 → completed
-const SWEEP_INTERVAL_MS = 15_000;      // 每 15s 扫描一次状态迁移
+const IDLE_WINDOW_MS = 10 * 60_000;    // 无在途请求后，10min 内 → idle；超出 → completed
+const SWEEP_INTERVAL_MS = 15_000;      // 每 15s 扫描一次状态迁移（含在途陈旧度检查）
 const MAX_EVENTS_PER_SESSION = 200;
 const MAX_GLOBAL_EVENTS = 500;
 const RECENT_WINDOW_FOR_STATS_MS = 60_000;
+// SSE 流「静默」判定：流已开始产出后，超过该时长无新 chunk 视为停滞（用户规范：30s）。
+const SSE_SILENCE_MS = 30_000;
+// 同步请求 / SSE 首 Token 前的「最长存活」保护：服务中断导致请求永不返回时，
+// 超过该时长强制结束（用户规范：5min），避免会话永远卡在「进行中」。
+const SYNC_MAX_MS = 5 * 60_000;
 // 「一轮结束」OS 通知冷却：同一会话在此窗口内的多次 active→idle（典型来自主轮之后的
 // 后台/计数/compact 等续发请求，每个 end_turn 都会再触发一次迁移）只弹一次，避免重复打扰。
 const NOTIFY_COOLDOWN_MS = 60_000;
@@ -109,8 +119,9 @@ export class AgentMapService extends EventEmitter {
   private notifyEnabled = false;
 
   // 阈值可调（供测试/配置覆盖）
-  public readonly activeWindowMs = ACTIVE_WINDOW_MS;
   public readonly idleWindowMs = IDLE_WINDOW_MS;
+  public readonly sseSilenceMs = SSE_SILENCE_MS;
+  public readonly syncMaxMs = SYNC_MAX_MS;
 
   constructor() {
     super();
@@ -144,9 +155,12 @@ export class AgentMapService extends EventEmitter {
         if (this.states.has(s.id)) continue;
         const lastRequestAt = s.lastRequestAt || s.firstRequestAt || now;
         const { status, reason } = this.inferStatus({
-          lastRequestAt,
+          lastActivityAt: lastRequestAt,
           lastStatusCode: s.lastStatusCode,
           inFlight: 0,
+          streamingInFlight: 0,
+          streamFirstChunkAt: 0,
+          inFlightSince: 0,
           now,
         });
         this.states.set(s.id, {
@@ -167,6 +181,11 @@ export class AgentMapService extends EventEmitter {
           status,
           statusReason: reason,
           inFlight: 0,
+          lastActivityAt: lastRequestAt,
+          streamingInFlight: 0,
+          streamFirstChunkAt: 0,
+          inFlightSince: 0,
+          notifiedForTurn: false,
         });
       }
       this.broadcastStats();
@@ -290,9 +309,18 @@ export class AgentMapService extends EventEmitter {
     }
   }
 
-  // ============ 在途请求注册表 ============
+  // ============ 在途请求注册表 + 可靠活动追踪 ============
 
-  startRequest(sessionId: string, agent: ToolType, opts?: { source?: 'global' | 'access-key'; keyId?: string; keyName?: string; title?: string }) {
+  /**
+   * 请求开始：在途计数 + 活动时钟刷新。
+   * - background=true（count_tokens / compact / 后台请求）：刷新活动、计入在途，用于「是否还活着」判定；
+   *   但不重置 notifiedForTurn —— 这样主任务结束后紧跟的后台请求不会再次触发结束通知。
+   * - background=false（主轮请求）：视为「新一轮用户任务」，重置 notifiedForTurn，允许结束时再弹一次通知。
+   */
+  startRequest(sessionId: string, agent: ToolType, opts?: {
+    source?: 'global' | 'access-key'; keyId?: string; keyName?: string; title?: string;
+    background?: boolean;
+  }) {
     if (!sessionId || sessionId === '-') return;
     const now = Date.now();
     let st = this.states.get(sessionId);
@@ -313,11 +341,26 @@ export class AgentMapService extends EventEmitter {
         status: 'active',
         statusReason: 'in-flight',
         inFlight: 0,
+        lastActivityAt: now,
+        streamingInFlight: 0,
+        streamFirstChunkAt: 0,
+        inFlightSince: now,
+        notifiedForTurn: false,
       };
       this.states.set(sessionId, st);
     }
+    if (st.inFlight === 0) {
+      // 新的一批在途开始：记录起跑时刻（同步请求 5min 超时基线）
+      st.inFlightSince = now;
+      st.streamFirstChunkAt = 0;
+    }
     st.inFlight += 1;
     st.lastRequestAt = now;
+    st.lastActivityAt = now;
+    if (!opts?.background) {
+      // 主轮（用户发起的新任务）：重置通知标记，本轮结束时允许再弹一次
+      st.notifiedForTurn = false;
+    }
     // 有在途请求必然 active
     if (st.status !== 'active') {
       st.status = 'active';
@@ -326,12 +369,64 @@ export class AgentMapService extends EventEmitter {
     this.emitSession(st);
   }
 
-  endRequest(sessionId: string) {
+  /** SSE 流真正开始（pipeline 已建立）。记一个在途流，并刷新活动时钟（首 Token 仍待 heartbeat 标记）。 */
+  markStreaming(sessionId: string) {
+    if (!sessionId || sessionId === '-') return;
+    const st = this.states.get(sessionId);
+    if (!st) return;
+    st.streamingInFlight += 1;
+    st.lastActivityAt = Date.now();
+  }
+
+  /** SSE chunk 心跳：每流经一个下游 chunk 刷新一次活动时钟（节流由调用方负责）。 */
+  heartbeat(sessionId: string) {
+    if (!sessionId || sessionId === '-') return;
+    const st = this.states.get(sessionId);
+    if (!st) return;
+    const now = Date.now();
+    st.lastActivityAt = now;
+    if (st.streamFirstChunkAt === 0) st.streamFirstChunkAt = now;
+  }
+
+  /** 请求结束：在途计数递减（流式请求同时递减在途流计数）。不立即改 status，由 onFinalized / reevaluate / sweep 决定。 */
+  endRequest(sessionId: string, opts?: { isStream?: boolean }) {
     if (!sessionId || sessionId === '-') return;
     const st = this.states.get(sessionId);
     if (!st) return;
     st.inFlight = Math.max(0, st.inFlight - 1);
-    // 不立即改 status，由 onFinalized 的重算决定
+    if (opts?.isStream) st.streamingInFlight = Math.max(0, st.streamingInFlight - 1);
+    st.lastActivityAt = Date.now();
+    if (st.inFlight === 0) {
+      st.inFlightSince = 0;
+      st.streamingInFlight = 0;
+      st.streamFirstChunkAt = 0;
+    }
+  }
+
+  /**
+   * 重算单个会话状态并广播（含通知判定）。供 onFinalized / 安全网 / REST 主动刷新复用。
+   * 返回是否有状态变化。
+   */
+  reevaluate(sessionId: string): boolean {
+    if (!sessionId || sessionId === '-') return false;
+    const st = this.states.get(sessionId);
+    if (!st) return false;
+    const prevStatus = st.status;
+    const { status, reason } = this.inferStatus({
+      lastActivityAt: st.lastActivityAt,
+      lastStatusCode: st.lastStatusCode,
+      inFlight: st.inFlight,
+      streamingInFlight: st.streamingInFlight,
+      streamFirstChunkAt: st.streamFirstChunkAt,
+      inFlightSince: st.inFlightSince,
+      now: Date.now(),
+    });
+    if (status === prevStatus && reason === st.statusReason) return false;
+    st.status = status;
+    st.statusReason = reason;
+    this.maybeNotifyTurnEnd(prevStatus, st);
+    this.emitSession(st);
+    return true;
   }
 
   // ============ 请求收尾：抽事件 + 重算状态 + 广播 ============
@@ -388,6 +483,11 @@ export class AgentMapService extends EventEmitter {
         outputTokens: 0,
         status: 'active',
         inFlight: 0,
+        lastActivityAt: ctx.timestamp,
+        streamingInFlight: 0,
+        streamFirstChunkAt: 0,
+        inFlightSince: ctx.timestamp,
+        notifiedForTurn: false,
       };
       this.states.set(ctx.sessionId, st);
     }
@@ -407,18 +507,20 @@ export class AgentMapService extends EventEmitter {
     if (summary) st.lastActivitySummary = summary;
     if (toolName) st.lastToolName = toolName;
 
-    // 本轮响应是否表示「一轮结束」（精确信号，替代纯时间窗）
+    // 本轮响应是否表示「一轮结束」（仅作展示参考；状态判定已改用「在途 + 真实活动时钟」，不再依赖该正则信号）
     const turnEnd = detectTurnEnd(ctx.agent, ctx.downstreamResponseBody, ctx.responseBody);
     st.lastTurnEnd = turnEnd;
 
-    // 重算状态（onFinalized 时请求已结束，inFlight 会被 endRequest 减，但可能尚未调用）
+    // 重算状态：请求已结束（endRequest 已把 inFlight 减 1），无在途即转 idle → 触发结束通知。
     const prevStatus = st.status;
     const { status, reason } = this.inferStatus({
-      lastRequestAt: st.lastRequestAt,
+      lastActivityAt: st.lastActivityAt,
       lastStatusCode: st.lastStatusCode,
       inFlight: st.inFlight,
+      streamingInFlight: st.streamingInFlight,
+      streamFirstChunkAt: st.streamFirstChunkAt,
+      inFlightSince: st.inFlightSince,
       now,
-      turnEnd,
     });
     st.status = status;
     st.statusReason = reason;
@@ -493,21 +595,27 @@ export class AgentMapService extends EventEmitter {
     notify({ title: '🔔 AICodeSwitch', body: '测试通知：通知功能可用' });
   }
 
-  /** active → idle 迁移时，只要开关开启就弹 OS 通知（一轮工作结束）。不再看页面是否后台。 */
+  /**
+   * 任务结束通知：从 active 迁出（→ idle / completed / error）即代表「本轮工作进行中 → 不再进行」。
+   * 每轮主任务只弹一次（notifiedForTurn）；后台续发请求（count_tokens / compact）不重置该标记，
+   * 因此主任务结束后的后台请求不会重复弹通知。另保留 60s 冷却作为兜底。
+   */
   private maybeNotifyTurnEnd(prevStatus: SessionStatus, st: RuntimeState) {
     if (!this.notifyEnabled) return;
-    if (prevStatus !== 'active' || st.status !== 'idle') return;
+    if (prevStatus !== 'active') return;            // 只关心「进行中 → 不再进行中」
+    if (st.status === 'active') return;
+    if (st.notifiedForTurn) return;                 // 本轮已弹过
     // 499 = 用户主动放弃停止任务，属于预期行为，不弹系统通知
     if (st.lastStatusCode === 499) return;
-    // 冷却去重：主轮结束后常伴有后台/计数/compact 等续发请求，各自 end_turn 会重复触发 active→idle，
-    // 在冷却窗口内只弹一次，避免同一任务弹两条通知。
     const now = Date.now();
     if (st.lastNotifyAt && now - st.lastNotifyAt < NOTIFY_COOLDOWN_MS) return;
+    st.notifiedForTurn = true;
     st.lastNotifyAt = now;
     const agentName = st.agent === 'codex' ? 'Codex' : 'Claude Code';
+    const ok = st.status === 'error';
     notify({
-      title: `✅ AICodeSwitch · ${agentName}`,
-      body: st.title || st.lastActivitySummary || '任务已暂停，等待下一步',
+      title: `${ok ? '⚠️' : '✅'} AICodeSwitch · ${agentName}`,
+      body: st.title || st.lastActivitySummary || (ok ? '任务出现异常' : '任务已结束，等待下一步'),
     });
   }
 
@@ -525,34 +633,39 @@ export class AgentMapService extends EventEmitter {
     }
   }
 
-  // ============ 状态推断（纯函数，基于活跃度） ============
+  // ============ 状态推断（纯函数，基于「在途 + 真实活动时钟」） ============
 
   private inferStatus(args: {
-    lastRequestAt: number; lastStatusCode?: number; inFlight: number; now: number;
-    turnEnd?: boolean | null;
+    lastActivityAt: number; lastStatusCode?: number; inFlight: number;
+    streamingInFlight: number; streamFirstChunkAt: number; inFlightSince: number; now: number;
   }): { status: SessionStatus; reason: string } {
-    // 在途请求 → active
-    if (args.inFlight > 0) return { status: 'active', reason: 'in-flight' };
-    // 末次失败 → error（即使时间较近也标 error，下一次成功会刷回 active）
+    // 末次上游 5xx → error（即使时间较近也标 error，下一次成功会刷回 active）
     if (args.lastStatusCode != null && args.lastStatusCode >= 500) {
       return { status: 'error', reason: `upstream ${args.lastStatusCode}` };
     }
-    const elapsed = args.now - args.lastRequestAt;
-    // 499 = 客户端主动断开（用户放弃停止任务）：视为「已取消」，立即停止脉冲进入 idle，过 idleWindow 再 completed
+    // 在途请求：判定是否「真正存活」（区分同步 / SSE）
+    if (args.inFlight > 0) {
+      if (args.streamingInFlight > 0) {
+        // SSE 流：首 Token 前给足最长保护（思考类模型 TTFT 可能较长，按同步超时 5min 等待）；
+        // 已开始产出后，30s 无新 chunk 即视为停滞。
+        const since = args.streamFirstChunkAt || args.inFlightSince || args.lastActivityAt;
+        const limit = args.streamFirstChunkAt ? this.sseSilenceMs : this.syncMaxMs;
+        if (args.now - since <= limit) return { status: 'active', reason: args.streamFirstChunkAt ? 'streaming' : 'awaiting first token' };
+        return { status: 'idle', reason: 'stream stalled' };
+      }
+      // 同步请求：5min 内视为仍在处理；超过则视作服务中断、强制结束
+      const since = args.inFlightSince || args.lastActivityAt;
+      if (args.now - since <= this.syncMaxMs) return { status: 'active', reason: 'in-flight' };
+      return { status: 'idle', reason: 'sync timeout' };
+    }
+    // 无在途请求：按距最近活动的时长判 idle / completed
+    const elapsed = args.now - args.lastActivityAt;
+    // 499 = 客户端主动断开（用户放弃停止任务）：视为「已取消」，立即进入 idle
     if (args.lastStatusCode === 499) {
       if (elapsed <= this.idleWindowMs) return { status: 'idle', reason: 'client cancelled' };
       return { status: 'completed', reason: 'cancelled earlier' };
     }
-    // 精确信号：本轮响应明确「结束」→ 立即停止脉冲，进入 idle（超时再 completed）
-    if (args.turnEnd === true) {
-      if (elapsed <= this.idleWindowMs) return { status: 'idle', reason: 'turn ended' };
-      return { status: 'completed', reason: 'inactive' };
-    }
-    // 仍将继续（tool_use）或信号未知 → 回退到活跃时间窗
-    if (elapsed <= this.activeWindowMs) {
-      return { status: 'active', reason: args.turnEnd === false ? 'tool loop' : 'recent request' };
-    }
-    if (elapsed <= this.idleWindowMs) return { status: 'idle', reason: 'no recent activity' };
+    if (elapsed <= this.idleWindowMs) return { status: 'idle', reason: 'turn ended' };
     return { status: 'completed', reason: 'inactive' };
   }
 
@@ -564,13 +677,25 @@ export class AgentMapService extends EventEmitter {
     this.states.forEach(st => {
       const prevStatus = st.status;
       const { status, reason } = this.inferStatus({
-        lastRequestAt: st.lastRequestAt,
+        lastActivityAt: st.lastActivityAt,
         lastStatusCode: st.lastStatusCode,
         inFlight: st.inFlight,
+        streamingInFlight: st.streamingInFlight,
+        streamFirstChunkAt: st.streamFirstChunkAt,
+        inFlightSince: st.inFlightSince,
         now,
-        turnEnd: st.lastTurnEnd,
       });
-      if (status !== prevStatus) {
+      // 状态迁移，或在途请求已陈旧/泄漏（inFlight>0 却不再存活）→ 清零泄漏的计数器
+      const statusChanged = status !== prevStatus;
+      const leakedInFlight = st.inFlight > 0 && status !== 'active';
+      if (statusChanged || leakedInFlight) {
+        if (leakedInFlight) {
+          // 修复「永远卡在进行中」：endRequest 未配对到达（早退/异常）导致的在途泄漏，这里兜底清零
+          st.inFlight = 0;
+          st.streamingInFlight = 0;
+          st.inFlightSince = 0;
+          st.streamFirstChunkAt = 0;
+        }
         st.status = status;
         st.statusReason = reason;
         changed = true;

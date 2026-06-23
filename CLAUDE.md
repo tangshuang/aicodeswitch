@@ -252,11 +252,12 @@ aicos version            # Show current version information
 - **Purpose**: 任务可视化节点地图（observe-only），把每个 Claude Code / Codex Session 画成画布节点，状态由活跃度自动推断并经 SSE 实时推送
 - **设计要点**：
   - 纯观测，不驱动 Agent / 不涉及 ATO；数据全部来自代理 `finalizeLog` 采集点
-  - **状态推断**：`active`（60s 内有活动或有在途请求）/ `idle`（10min 内）/ `completed`（超 10min 且末轮正常）/ `error`（末次 5xx）
-  - **在途注册表**：`proxyRequest` 入口 `startRequest`、`finalizeLog` 内 `endRequest`，用于 active 判定 + "正在处理"指示
+  - **状态推断**（可靠活动时钟，2026-06-23 重构）：`active` 严格 =「有在途请求且存活」——SSE 流已开始产出后 30s 内有新 chunk（`heartbeat`）/首 Token 前在 5min 内；同步请求在 5min 内。无在途则按距 `lastActivityAt` 的时长判 `idle`（10min 内）/ `completed`（超 10min）；末次 5xx → `error`。`lastTurnEnd`（`detectTurnEnd` 正则）仅作展示参考，不再作为状态判定主信号（旧版正则不可靠导致通知随机）。
+  - **在途注册表 + 陈旧度清扫**：`proxyRequest` 入口 `startRequest`、流式建立时 `markStreaming`、每个下游 chunk `heartbeat`、`finalizeLog` 内 `endRequest`。15s `sweep` 检测在途陈旧（SSE 30s / 同步 5min）→ 强制转 idle 并**清零泄漏的在途计数器**（修复「永远卡在进行中」）；`startRequest` 还挂 `res.on('close')` 安全网，确保早退场景 `endRequest` 必触发一次。
+  - **任务结束通知**：`active → 非active`（idle/completed/error）即触发 OS 通知（`notifier.ts`），每轮主任务只弹一次（`notifiedForTurn`）；后台类请求（`background`/`compact`/`count_tokens`）不重置该标记，避免续发请求重复打扰；499（用户取消）不弹。开关 `AppConfig.agentMapNotifyEnabled` 持久化。
   - **活动解析**：`activity-extractor.ts` 从单次请求抽出 `ActivityEvent`（prompt/tool_use/response/thinking/error），兼容 Claude/OpenAI/Responses/流式四种格式
   - 服务自持运行时态（不依赖 dbManager 做状态推断，兼容 global/access-key 两套会话存储）；dbManager 仅用于 attach 时种子化已有全局 Session
-- **Key Files**: `agent-map-service.ts`（单例：在途注册表 + 状态引擎 + 事件环形缓冲 + EventEmitter 广播 + 15s 清扫）、`activity-extractor.ts`、`routes.ts`、`index.ts`
+- **Key Files**: `agent-map-service.ts`（单例：在途注册表 + 可靠活动时钟 + 状态引擎 + 事件环形缓冲 + EventEmitter 广播 + 15s 清扫）、`activity-extractor.ts`、`routes.ts`、`index.ts`
 - **HTTP API**: `GET /api/agent-map/stream`（SSE：init 快照 + session-update/activity/stats/heartbeat + 3s 心跳）、`/sessions`、`/sessions/:id/events?since=`、`/stats`
 - **main.ts 接线**: `agentMapService.attach(dbManager)` + `registerAgentMapRoutes(app, agentMapService)`
 - **proxy-server 归因**: `finalizeLog` 内 `onFinalized` 提取活动/重算状态/广播（覆盖普通路由 + AccessKey 两条分支，独立于 enableLogging）
