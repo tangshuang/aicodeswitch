@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-06-24: 任务雷达会话标题与会话列表对齐
+
+### 修复
+- 任务雷达（AgentMap）不再用本机会话文件（Claude `ai-title` / Codex `thread_name`）覆盖会话标题，改为统一沿用 proxy 抽取的标题，确保「任务雷达」与「会话列表」两边标题一致。`agent-map-service.ts` 的 `enrichSession` / `getSessionMeta` 去掉 `meta.title` 覆盖逻辑（仍保留项目路径 `projectPath` 的解析回填）。
+
 ## 2026-06-24: Skills 支持 OpenCode + 加宽 skill 卡片
 
 ### 新增
