@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-06-24: Windows 桌面版卡在启动页的错误兜底与 CLI 降级
+
+### 修复
+- 关闭桌面版启动页的静默卡死分支：`main.rs` 中 `window.navigate()` 失败原先只写日志、不报错，导致启动页停在「服务已就绪，正在加载…」后冻结；现在改为经 `build_failure_report` 生成诊断后 `emit("startup-error")`，让用户能看到错误。窗口获取失败的提前返回分支也改为 `emit("startup-error")`，避免无限转圈。
+
+### 新增
+- 启动页前端 `tauri/screens/index.html` 增强（构建时同步到 `resources/screens/`）：
+  - **看门狗超时兜底**：45s 内既未收到 `startup-error` 也未成功跳转时，主动展示错误面板 + CLI 兜底，覆盖导航失败被吞、async 任务 panic 等静默卡死场景（成功跳转会卸载页面，定时器天然失效）。
+  - 错误面板新增**反馈渠道**（GitHub Issues 链接 + 一键复制）。
+  - 错误面板新增**改用命令行（CLI）版本**区块：展示 `npm i -g aicodeswitch` / `aicos ui` 命令与 Node.js 18+ 前置条件，附一键复制按钮。
+
 ## 2026-06-24: 任务雷达会话标题与会话列表对齐
 
 ### 修复

@@ -789,7 +789,13 @@ fn main() {
                     w
                 }
                 None => {
+                    // 兜底：拿不到主窗口时，也尽力 emit 一个错误，避免启动页无限转圈。
+                    // （若无窗口则该事件无监听者，属 best-effort。）
                     debug_log("✗ 无法获取主窗口");
+                    let _ = app_handle.emit(
+                        "startup-error",
+                        "无法获取主窗口，界面未能初始化，请改用 CLI 版本（见错误面板）。",
+                    );
                     return Ok(());
                 }
             };
@@ -823,7 +829,16 @@ fn main() {
                         let _ = app_handle.emit("startup-log", "服务已就绪，正在加载...");
                         match window.navigate(server_url.parse().unwrap()) {
                             Ok(_) => debug_log("✓ 导航成功"),
-                            Err(e) => debug_log(&format!("✗ 导航失败: {}", e)),
+                            Err(e) => {
+                                // 关键兜底：服务已就绪但无法打开管理界面时，必须 emit 错误，
+                                // 否则启动页会一直停在“服务已就绪，正在加载…”后冻结。
+                                debug_log(&format!("✗ 导航失败: {}", e));
+                                let reason = format!("服务已就绪，但无法打开管理界面：{}", e);
+                                let report = build_failure_report(&app_handle, port, &reason);
+                                debug_log(&format!("✗ 启动失败诊断报告:\n{}", report));
+                                force_kill_child(&state);
+                                let _ = app_handle.emit("startup-error", &report);
+                            }
                         }
                     }
                     Err(e) => {
