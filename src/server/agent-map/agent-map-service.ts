@@ -598,17 +598,17 @@ export class AgentMapService extends EventEmitter {
     this.enrichSession(st);
   }
 
-  /** 从本机 Claude/Codex 会话存储读取项目路径与原始标题并回填（access-key 不解析） */
+  /** 从本机 Claude/Codex 会话存储读取项目路径并回填（access-key 不解析）。
+   *  注意：不在此处覆盖标题——统一沿用 proxy 抽取的标题（与会话列表一致），避免两边标题分叉。 */
   private async enrichSession(st: RuntimeState) {
     if (st.source === 'access-key' || st.metaResolved) return;
     st.metaResolved = true;
     try {
       const meta = await resolveSessionMeta(st.sessionId, st.agent);
-      let changed = false;
-      if (meta.projectPath && !st.projectPath) { st.projectPath = meta.projectPath; changed = true; }
-      // 原始标题更标准，命中即覆盖日志截取的标题
-      if (meta.title) { st.title = meta.title; changed = true; }
-      if (changed) this.emitSession(st);
+      if (meta.projectPath && !st.projectPath) {
+        st.projectPath = meta.projectPath;
+        this.emitSession(st);
+      }
     } catch { /* ignore */ }
   }
 
@@ -619,16 +619,15 @@ export class AgentMapService extends EventEmitter {
     if (source === 'access-key' || source === 'unknown') {
       return { source, projectPath: st?.projectPath, title: st?.title };
     }
-    // global：命中缓存或现解析
+    // global：命中缓存或现解析（仅项目路径；标题沿用 proxy 抽取值，与会话列表保持一致）
     const meta = await resolveSessionMeta(sessionId, st?.agent || 'claude-code');
     if (st) {
       if (meta.projectPath && !st.projectPath) st.projectPath = meta.projectPath;
-      if (meta.title) st.title = meta.title;
       st.metaResolved = true;
       // legacy 会话（修复前累积、拆分从未持久化）：点开详情时按日志回填输入/输出拆分
       this.backfillTokenSplit(st).catch(err => console.error('[AgentMap] backfillTokenSplit error:', err));
     }
-    return { source, projectPath: meta.projectPath || st?.projectPath, title: meta.title || st?.title };
+    return { source, projectPath: meta.projectPath || st?.projectPath, title: st?.title };
   }
 
   /**
@@ -710,6 +709,7 @@ export class AgentMapService extends EventEmitter {
     if (!this.notifyEnabled) return;
     if (st.notifiedForTurn) return;                 // 本轮已调度
     if (st.lastStatusCode === 499) return;          // 用户主动取消，不弹
+    if (st.thinkingInFlight > 0) return;            // 仍有思考请求在途，暂不弹结束通知
     st.notifiedForTurn = true;
     this.scheduleNotify(st, isError);
   }
@@ -790,7 +790,9 @@ export class AgentMapService extends EventEmitter {
         }
         // 已开始产出：思考请求用更宽的 THINKING_SILENCE_MS，否则 SSE_SILENCE_MS（30s）
         const limit = args.thinkingInFlight > 0 ? this.thinkingSilenceMs : this.sseSilenceMs;
-        const since = args.streamFirstChunkAt;
+        // 静默基准用「最近一次活动」（每个下游 chunk 经 heartbeat 刷新），而非首个 chunk 时刻：
+        // 否则任何总时长超过 30s 的流式响应都会被误判为停滞，在响应仍正常输出时弹出「任务已结束」通知。
+        const since = args.lastActivityAt;
         if (args.now - since <= limit) {
           return { status: 'active', reason: args.thinkingInFlight > 0 ? 'thinking' : 'streaming', notifyEligible: true };
         }

@@ -54,10 +54,25 @@ export const CODEX_AUTH_MANAGED_FIELDS: ManagedFieldPath[] = [
 ];
 
 /**
+ * OpenCode opencode.json 管理字段定义
+ *
+ * OpenCode 配置为纯 JSON，使用自定义 provider 指向本代理。
+ * 托管整个 `provider.aicodeswitch` section（npm/name/options/models）
+ * 以及 `model` / `small_model` 两个模型选择字段。其余字段（其它 provider、
+ * agent、command、mcp、theme 等）一律保留给用户。
+ */
+export const OPENCODE_CONFIG_MANAGED_FIELDS: ManagedFieldPath[] = [
+  { path: ['provider', 'aicodeswitch'], isSection: true },
+  { path: ['model'] },
+  { path: ['small_model'], optional: true },
+  { path: ['mcp'], isSection: true, optional: true },
+];
+
+/**
  * 根据配置类型和文件路径获取管理字段列表
  */
 export const getManagedFields = (
-  configType: 'claude' | 'codex',
+  configType: 'claude' | 'codex' | 'opencode',
   filePath: string
 ): ManagedFieldPath[] => {
   if (configType === 'claude') {
@@ -71,6 +86,10 @@ export const getManagedFields = (
       return CODEX_CONFIG_MANAGED_FIELDS;
     } else if (filePath.endsWith('auth.json')) {
       return CODEX_AUTH_MANAGED_FIELDS;
+    }
+  } else if (configType === 'opencode') {
+    if (filePath.endsWith('opencode.json')) {
+      return OPENCODE_CONFIG_MANAGED_FIELDS;
     }
   }
   return [];

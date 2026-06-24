@@ -15,9 +15,9 @@ export interface Vendor {
 /** 供应商API接口的数据结构标准类型 */
 export type SourceType = 'openai-chat' | 'openai' | 'claude-chat' | 'claude' | 'gemini' | 'gemini-chat';
 /** 工具名称（用于工具绑定，独立于路由） */
-export type ToolName = 'claude-code' | 'codex';
+export type ToolName = 'claude-code' | 'codex' | 'opencode';
 /** 路由的目标对象类型，保留用于日志、统计等向后兼容场景 */
-export type ToolType = 'claude-code' | 'codex';
+export type ToolType = 'claude-code' | 'codex' | 'opencode';
 /** TargetType 是 ToolType 的别名，用于向后兼容 */
 export type TargetType = ToolType;
 
@@ -273,6 +273,7 @@ export interface AppConfig {
   codexModelReasoningEffort?: CodexReasoningEffort;  // Codex reasoning effort（全局）
   codexEnableMemories?: boolean;  // Codex 记忆功能（全局）
   codexDefaultModel?: string;  // Codex 默认模型（全局）
+  opencodeDefaultModel?: string;  // OpenCode 默认模型（全局）
   // 代理配置
   proxyEnabled?: boolean;  // 是否启用代理
   proxyUrl?: string;  // 代理地址，例如: proxy.example.com:8080
@@ -740,7 +741,7 @@ export interface AccessKey {
 /** 写入本地记录（持久化哪些 AccessKey 被写入了哪些工具的配置文件） */
 export interface WriteLocalRecord {
   accessKeyId: string;
-  targets: string[];      // 'claude-code' | 'codex'
+  targets: string[];      // 'claude-code' | 'codex' | 'opencode'
   timestamp: number;
 }
 

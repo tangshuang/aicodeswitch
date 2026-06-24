@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-06-24: 任务雷达会话标题与会话列表对齐
+
+### 修复
+- 任务雷达（AgentMap）不再用本机会话文件（Claude `ai-title` / Codex `thread_name`）覆盖会话标题，改为统一沿用 proxy 抽取的标题，确保「任务雷达」与「会话列表」两边标题一致。`agent-map-service.ts` 的 `enrichSession` / `getSessionMeta` 去掉 `meta.title` 覆盖逻辑（仍保留项目路径 `projectPath` 的解析回填）。
+
+## 2026-06-24: Skills 支持 OpenCode + 加宽 skill 卡片
+
+### 新增
+- **Skills 支持 OpenCode**：OpenCode 无 skills 目录/symlink 机制，故把启用到 opencode 的 Skill 转写为全局 command 写入 `~/.config/opencode/commands/<skillId>.md`（frontmatter `description`+`agent: build`，正文取自 `SKILL.md` body）。`createSkillSymlink`/`removeSkillSymlink`/`isSkillSymlinkExists` 增加 opencode 分支（普通文件而非 symlink）；`getInstalledSkills` 与删 Skill 的 forEach、enable/disable 端点的 target 校验、tool-bindings activate/deactivate 校验均含 opencode。
+- SkillsPage UI：安装弹窗、创建表单、已安装卡片均新增 OpenCode 目标勾选/Switch；`SkillSwitch` 与 toast 文案三态显示。
+- 语义差异（已知）：OpenCode command 是 `/skill-id` 显式触发的提示词模板，非 Claude Skill 的按需能力包；含多文件/脚本的复杂 Skill 仅同步提示词部分。
+
+### 调整
+- Skills 管理页单个 skill 卡片加宽：`.skills-grid` 列最小宽度 360px → 460px。
+
+## 2026-06-24: 新增 OpenCode 作为第三个目标工具（与 Claude Code / Codex 平级）
+
+### 新增
+- 将 `ToolType`/`ToolName` 判别轴从二元扩展为 `claude-code | codex | opencode`，OpenCode 客户端经 `@ai-sdk/openai-compatible` 用 **OpenAI Chat Completions** 格式直连代理 `/opencode/v1/*`（baseURL `http://127.0.0.1:{PORT}/opencode/v1`）。
+- **代理路由**：`proxy-server.ts` 新增 `/opencode/*` 固定路由、路径识别、前缀剥离、错误格式（OpenAI 风格）、跨格式 URL 规则（opencode→claude 源走 `/v1/messages`、→responses 源走 `/v1/responses`）；抽取 `clientFormatForTool()` 统一 tool→Format 映射（opencode→`completions`），替换 4 处散落 ternary，并修复「未知工具静默回落 claude-code」隐患。
+- **配置生命周期**：新增 `writeOpencodeConfig`/`restoreOpencodeConfig`（写入 `~/.config/opencode/opencode.json` 的 `provider.aicodeswitch` 段，复用 `mergeJsonConfig`）；`config-managed-fields`/`config-metadata`/`original-config-reader` 扩展 `'opencode'` configType（含 `isOpencodeProxyConfig` 检测、`checkOpencodeConfigStatus`、`readOpencodeOriginalConfig`）；接入启动/全局配置更新/关闭三处生命周期与 4 个 API 端点；CLI `aicos restore opencode`。
+- **会话/统计/Agent Map**：opencode 会话标识提取（header 兜底）、`detectTurnEnd` 新增 OpenAI Chat 完成态识别、`AgentIcon` 新增 `OpenCodeIcon`、`activity-extractor`/`session-migration` agent 类型扩展。
+- **Coding Plan**：`coding-plan.ts` 新增 OpenCode User-Agent 识别（completions 格式 body 检测本已覆盖）。
+- **MCP**：`writeMCPConfig`/`removeMCPFromConfig` 新增 opencode 分支，按 OpenCode 的 `mcp` 段格式（`local`/`remote` + `enabled`）写入；MCPPage UI 新增 OpenCode 目标勾选。
+- **UI**：`TARGET_TYPE` 加 opencode、RoutesPage 新增「OpenCode 全局配置」绑定卡 + 路由绑定图标 + 默认模型输入、`badge-opencode` 样式、API client `writeOpencodeConfig`/`restoreOpencodeConfig`。
+- 转换引擎无需改动（format-driven，`completions` 转换对已现成）。
+- 待办（次要）：Skills 同步暂未覆盖 OpenCode（其用 `.opencode/commands/` markdown，机制不同于 symlink）。
+
+## 2026-06-24: 修复任务地图「结束提醒」在长响应/思考过程中误弹通知
+
+### 修复
+- **根因**：`agent-map-service.ts` 的 `inferStatus` 判断流式是否停滞时，静默时长以「首个 chunk 时刻」(`streamFirstChunkAt`) 为基准，而该字段只在首个 chunk 设置一次、之后永不更新。导致任何总时长超过 30s 的流式响应（思考类超过 3min）即使 chunk 持续到达，也会被 15s sweep 误判为 `stream stalled` → 清零在途计数 → 弹出「任务已结束」通知，体感为「思考/对话过程中反复弹通知」。
+- **修复**：将流式静默基准改为「最近一次活动时刻」(`lastActivityAt`，每个下游 chunk 经 `heartbeat` 刷新)，语义修正为「距上一个 chunk 超过 30s/3min 才算停滞」。chunk 持续到达即保持 active，只有真实静默间隙才落 idle。
+- **加固**：`considerEndNotify` 增加 `thinkingInFlight > 0` 时抑制结束通知，避免思考计数未归零的边角场景误弹。
+- 文件：`src/server/agent-map/agent-map-service.ts`。
+
 ## 2026-06-23: 移除 Claude Code / Codex 安装检查功能
 
 - 删除启动时检测工具是否安装及一键安装的全部逻辑：后端 `tools-service.ts`、`websocket-service.ts`、`/api/tools/status`、`/api/tools/install`（WS），前端 `ToolsInstallModal.tsx`、`NotificationBar.tsx`、`Terminal.tsx`，以及 App.tsx 的启动检查与 api/client.ts、types 的相关代码。

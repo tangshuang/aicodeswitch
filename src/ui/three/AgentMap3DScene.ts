@@ -34,6 +34,7 @@ import {
 // 客户端 logo（SVG，运行时光栅化为纹理贴在球面朝向相机一侧）
 import claudeLogoRaw from '../assets/claudecode-color.svg?raw';
 import codexLogoRaw from '../assets/codex-color.svg?raw';
+import opencodeLogoRaw from '../assets/opencode-color.svg?raw';
 
 export interface AgentMap3DSceneCallbacks {
   onSelect: (sessionId: string | null) => void;
@@ -389,7 +390,7 @@ export class AgentMap3DScene {
   private ensureLogoImg(agent: string): Promise<HTMLImageElement> {
     const existing = this.logoImg[agent];
     if (existing && existing.complete) return Promise.resolve(existing);
-    const raw = agent === 'codex' ? codexLogoRaw : claudeLogoRaw;
+    const raw = agent === 'codex' ? codexLogoRaw : agent === 'opencode' ? opencodeLogoRaw : claudeLogoRaw;
     // 以高分辨率（512）光栅化 SVG，再缩小绘制，保证小尺寸下无锯齿
     const sized = raw.replace(/width="[^"]*"/, 'width="512"').replace(/height="[^"]*"/, 'height="512"');
     const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(sized);

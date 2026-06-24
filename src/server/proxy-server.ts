@@ -56,7 +56,7 @@ type ContentTypeDetector = {
   match: (req: Request, body: any, sessionId?: string | null, routeId?: string) => boolean;
 };
 
-const SUPPORTED_TARGETS = ['claude-code', 'codex'];
+const SUPPORTED_TARGETS = ['claude-code', 'codex', 'opencode'];
 
 /**
  * Fallback（回退原始配置）路径的虚拟供应商归属。
@@ -118,6 +118,18 @@ function apiPathToClientFormat(apiPath: ApiPath): Format | null {
     case '/v1beta/models': return 'gemini';
     case '/v1/models': return null;
   }
+}
+
+/**
+ * 根据客户端工具类型推断其原生 API 格式（Format）。
+ * - claude-code → claude（Anthropic Messages）
+ * - codex → responses（OpenAI Responses）
+ * - opencode → completions（OpenAI Chat Completions，经由 @ai-sdk/openai-compatible）
+ */
+function clientFormatForTool(tool: ToolType): Format {
+  if (tool === 'codex') return 'responses';
+  if (tool === 'opencode') return 'completions';
+  return 'claude';
 }
 
 type ProxyRequestOptions = {
@@ -372,6 +384,9 @@ export class ProxyServer {
     if (path === '/codex' || path.startsWith('/codex/')) {
       return 'codex';
     }
+    if (path === '/opencode' || path.startsWith('/opencode/')) {
+      return 'opencode';
+    }
     return undefined;
   }
 
@@ -379,6 +394,7 @@ export class ProxyServer {
     const path = req.path || '';
     if (path.startsWith('/claude-code')) return 'claude-code';
     if (path.startsWith('/codex')) return 'codex';
+    if (path.startsWith('/opencode')) return 'opencode';
     return 'claude-code';
   }
 
@@ -811,7 +827,7 @@ export class ProxyServer {
         });
 
         // 确定目标类型
-        const targetType: ToolType = req.path.startsWith('/claude-code/') ? 'claude-code' : 'codex';
+        const targetType: ToolType = this.inferToolFromRequest(req);
 
         // 记录错误日志 - 包含请求详情和最后失败的服务信息
         const _lastFailedVendor = lastFailedService ? this.dbManager.getVendorByServiceId(lastFailedService.id) : undefined;
@@ -876,7 +892,7 @@ export class ProxyServer {
         }
         // Add error log - 包含请求详情
         if (!accessKeyCtx) {
-          const targetType: ToolType = req.path.startsWith('/claude-code/') ? 'claude-code' : 'codex';
+          const targetType: ToolType = this.inferToolFromRequest(req);
           await this.dbManager.addErrorLog({
             timestamp: Date.now(),
             method: req.method,
@@ -919,6 +935,8 @@ export class ProxyServer {
     this.app.use('/claude-code', this.createFixedRouteHandler('claude-code'));
     this.app.use('/codex/', this.createFixedRouteHandler('codex'));
     this.app.use('/codex', this.createFixedRouteHandler('codex'));
+    this.app.use('/opencode/', this.createFixedRouteHandler('opencode'));
+    this.app.use('/opencode', this.createFixedRouteHandler('opencode'));
   }
 
   private createFixedRouteHandler(targetType: ToolName) {
@@ -1304,6 +1322,8 @@ export class ProxyServer {
       tool = 'claude-code';
     } else if (req.path.startsWith('/codex/')) {
       tool = 'codex';
+    } else if (req.path.startsWith('/opencode/')) {
+      tool = 'opencode';
     }
 
     if (!tool) return undefined;
@@ -1343,6 +1363,8 @@ export class ProxyServer {
       targetType = 'claude-code';
     } else if (req.path.startsWith('/codex/')) {
       targetType = 'codex';
+    } else if (req.path.startsWith('/opencode/')) {
+      targetType = 'opencode';
     }
 
     if (!targetType) {
@@ -1407,7 +1429,7 @@ export class ProxyServer {
         apiUrl: originalConfig.apiUrl,
         apiKey: originalConfig.apiKey,
         authType: originalConfig.authType,
-        sourceType: originalConfig.sourceType || (targetType === 'claude-code' ? 'claude' : 'openai'),
+        sourceType: originalConfig.sourceType || (targetType === 'claude-code' ? 'claude' : targetType === 'opencode' ? 'openai-chat' : 'openai'),
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -3468,6 +3490,15 @@ export class ProxyServer {
       if (Array.isArray(sessionId)) {
         return sessionId[0] || null;
       }
+    } else if (type === 'opencode') {
+      // OpenCode 经 @ai-sdk/openai-compatible 发送 chat completions，尝试从 headers 提取 session 标识
+      const sessionId = request.headers['session-id'] || request.headers['session_id'] || request.headers['x-session-id'];
+      if (typeof sessionId === 'string') {
+        return sessionId;
+      }
+      if (Array.isArray(sessionId)) {
+        return sessionId[0] || null;
+      }
     }
     return null;
   }
@@ -3667,6 +3698,16 @@ export class ProxyServer {
       return `${apiUrl}/v1/messages`;
     }
 
+    // opencode 请求 claude 类型接口，使用 claude messages 接口处理
+    if (tool === 'opencode' && this.isClaudeSource(source)) {
+      return `${apiUrl}/v1/messages`;
+    }
+
+    // opencode 请求 openai(responses) 类型接口，使用 responses 接口处理
+    if (tool === 'opencode' && this.isOpenAISource(source)) {
+      return `${apiUrl}/v1/responses`;
+    }
+
     // 透传路径
     return `${apiUrl}${originalPath}`;
   }
@@ -3681,7 +3722,7 @@ export class ProxyServer {
    * @returns 转换后往服务商API接口的数据
    */
   private transformRequestToUpstream(tool: ToolType, source: SourceType, payloadData: any, targetModel: string, providerConfig?: any, serverToolConfig?: any, sanitizeBody?: boolean): any {
-    const clientFormat: Format = tool === 'codex' ? 'responses' : 'claude';
+    const clientFormat: Format = clientFormatForTool(tool);
     const upstreamFormat = sourceTypeToFormat(source);
 
     const result = convertRequest({ fromFormat: clientFormat, toFormat: upstreamFormat, body: payloadData, providerConfig, serverToolConfig, sanitizeBody });
@@ -3705,7 +3746,7 @@ export class ProxyServer {
    * @param responseData
    */
   private transformResponseToTool(tool: ToolType, source: SourceType, responseData: any): any {
-    const clientFormat: Format = tool === 'codex' ? 'responses' : 'claude';
+    const clientFormat: Format = clientFormatForTool(tool);
     const upstreamFormat = sourceTypeToFormat(source);
     return convertResponse({ fromFormat: upstreamFormat, toFormat: clientFormat, response: responseData });
   }
@@ -3720,7 +3761,7 @@ export class ProxyServer {
     converter: Transform | null;
     extractUsage?: (usage: any) => any;
   } {
-    const clientFormat: Format = targetType === 'codex' ? 'responses' : 'claude';
+    const clientFormat: Format = clientFormatForTool(targetType);
     const upstreamFormat = sourceTypeToFormat(sourceType);
 
     if (upstreamFormat === clientFormat) {
@@ -3905,7 +3946,7 @@ export class ProxyServer {
     const extraTagsForLog: string[] = [];
 
     // 编程套餐限制检查
-    const clientFormat: Format = targetType === 'codex' ? 'responses' : 'claude';
+    const clientFormat: Format = clientFormatForTool(targetType);
     if (!this.checkCodingPlan(req, res, service, clientFormat)) return;
 
     // Compact 请求消息清理：确保 tool_use/tool_result 配对完整
@@ -4515,6 +4556,8 @@ export class ProxyServer {
         pathToRequest = req.path.slice('/claude-code'.length);
       } else if (targetType === 'codex' && req.path.startsWith('/codex')) {
         pathToRequest = req.path.slice('/codex'.length);
+      } else if (targetType === 'opencode' && req.path.startsWith('/opencode')) {
+        pathToRequest = req.path.slice('/opencode'.length);
       }
 
       // 使用 mapRequestPathToUpstreamUrl 统一构建上游 URL

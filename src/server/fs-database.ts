@@ -86,6 +86,7 @@ export class FileSystemDatabaseManager {
   private toolBindings: ToolBindings = {
     'claude-code': { tool: 'claude-code', routeId: null },
     'codex': { tool: 'codex', routeId: null },
+    'opencode': { tool: 'opencode', routeId: null },
   };
 
   // 持久化统计数据
@@ -478,12 +479,14 @@ export class FileSystemDatabaseManager {
       this.toolBindings = {
         'claude-code': parsed['claude-code'] || { tool: 'claude-code', routeId: null },
         'codex': parsed['codex'] || { tool: 'codex', routeId: null },
+        'opencode': parsed['opencode'] || { tool: 'opencode', routeId: null },
       };
     } catch {
       // File doesn't exist yet, use defaults
       this.toolBindings = {
         'claude-code': { tool: 'claude-code', routeId: null },
         'codex': { tool: 'codex', routeId: null },
+        'opencode': { tool: 'opencode', routeId: null },
       };
     }
   }
@@ -831,7 +834,7 @@ export class FileSystemDatabaseManager {
         // Only migrate routes that are explicitly active and have a targetType
         if (route.isActive === true && route.targetType) {
           const tool = route.targetType as ToolName;
-          if (tool === 'claude-code' || tool === 'codex') {
+          if (tool === 'claude-code' || tool === 'codex' || tool === 'opencode') {
             // Only write if tool-bindings doesn't already have a binding
             // (avoid overwriting user's newer tool-binding choices)
             if (!this.toolBindings[tool]?.routeId) {

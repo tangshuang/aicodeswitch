@@ -489,7 +489,7 @@ function StatisticsPage() {
               {statistics.byTargetType.map((item) => (
                 <tr key={item.targetType} style={{ borderBottom: '1px solid var(--border-secondary)' }}>
                   <td style={{ padding: '12px', color: 'var(--text-primary)' }}>
-                    {item.targetType === 'claude-code' ? 'Claude Code' : 'Codex'}
+                    {item.targetType === 'claude-code' ? 'Claude Code' : item.targetType === 'opencode' ? 'OpenCode' : 'Codex'}
                   </td>
                   <td style={{ padding: '12px', textAlign: 'right', color: 'var(--text-primary)' }}>
                     {formatNumber(item.totalRequests)}

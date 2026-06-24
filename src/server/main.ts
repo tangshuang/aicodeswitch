@@ -45,6 +45,8 @@ import {
   deleteMetadata,
   checkClaudeConfigStatus,
   checkCodexConfigStatus,
+  checkOpencodeConfigStatus,
+  getOpencodeConfigPath,
   cleanupInvalidMetadata,
   type ConfigMetadata
 } from './config-metadata';
@@ -59,7 +61,8 @@ import {
   CLAUDE_SETTINGS_MANAGED_FIELDS,
   CLAUDE_JSON_MANAGED_FIELDS,
   CODEX_CONFIG_MANAGED_FIELDS,
-  CODEX_AUTH_MANAGED_FIELDS
+  CODEX_AUTH_MANAGED_FIELDS,
+  OPENCODE_CONFIG_MANAGED_FIELDS
 } from './config-managed-fields';
 import { SKILLSMP_API_KEY } from './config';
 import { extractSessionContent, previewMigration, migrateSession } from './session-migration';
@@ -212,6 +215,24 @@ function applyWriteLocalRecords(proxyServer: ProxyServer): void {
           }
           auth.OPENAI_API_KEY = key.apiKey;
           atomicWriteFile(authPath, JSON.stringify(auth, null, 2));
+        } else if (target === 'opencode') {
+          // 将真实 Key 写入 opencode.json 的 provider.aicodeswitch.options.apiKey
+          const opencodeConfigPath = getOpencodeConfigPath();
+          const opencodeDir = path.dirname(opencodeConfigPath);
+          if (!fs.existsSync(opencodeDir)) {
+            fs.mkdirSync(opencodeDir, { recursive: true });
+          }
+          let oc: Record<string, any> = {};
+          if (fs.existsSync(opencodeConfigPath)) {
+            try { oc = JSON.parse(fs.readFileSync(opencodeConfigPath, 'utf-8')); } catch { /* ignore */ }
+          }
+          if (!oc.provider) oc.provider = {};
+          if (!oc.provider.aicodeswitch || typeof oc.provider.aicodeswitch !== 'object') {
+            oc.provider.aicodeswitch = { npm: '@ai-sdk/openai-compatible', name: 'AICodeSwitch', options: {} };
+          }
+          if (!oc.provider.aicodeswitch.options) oc.provider.aicodeswitch.options = {};
+          oc.provider.aicodeswitch.options.apiKey = key.apiKey;
+          atomicWriteFile(opencodeConfigPath, JSON.stringify(oc, null, 2));
         }
       } catch (error) {
         console.error(`[WriteLocal] Failed to apply key ${record.accessKeyId} to ${target}:`, error);
@@ -828,6 +849,171 @@ const restoreCodexConfig = async (): Promise<boolean> => {
   }
 };
 
+/**
+ * 默认 OpenCode 模型（当用户未配置 opencodeDefaultModel 时使用）
+ */
+const DEFAULT_OPENCODE_MODEL = 'claude-sonnet-4-20250514';
+
+/**
+ * 写入 OpenCode 配置（~/.config/opencode/opencode.json）
+ *
+ * 注入一个自定义 provider `aicodeswitch`，经 @ai-sdk/openai-compatible 指向本代理
+ * 的 /opencode/v1 端点（OpenAI Chat Completions 格式）。仅托管 provider.aicodeswitch
+ * 段与 model/small_model/mcp 字段，其余用户配置（其它 provider、agent、command 等）保留。
+ */
+const writeOpencodeConfig = async (
+  _dbManager: FileSystemDatabaseManager,
+  defaultModel?: string,
+  options: ToolConfigWriteOptions = {}
+): Promise<boolean> => {
+  try {
+    const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 4567;
+    const configPath = getOpencodeConfigPath();
+    const configBakPath = `${configPath}.aicodeswitch_backup`;
+    const configDir = path.dirname(configPath);
+
+    const configStatus = checkOpencodeConfigStatus();
+    const isRuntimeRefresh = options.allowOverwriteRefresh === true && configStatus.isOverwritten;
+
+    if (configStatus.isOverwritten && !isRuntimeRefresh) {
+      console.error('OpenCode config has already been overwritten. Please restore the original config first.');
+      return false;
+    }
+
+    let originalHash: string | undefined = isRuntimeRefresh
+      ? configStatus.metadata?.originalHash
+      : undefined;
+
+    if (!isRuntimeRefresh) {
+      if (!fs.existsSync(configBakPath)) {
+        if (fs.existsSync(configPath)) {
+          originalHash = createHash('sha256').update(fs.readFileSync(configPath, 'utf-8')).digest('hex');
+          fs.renameSync(configPath, configBakPath);
+        }
+      } else {
+        console.log('OpenCode backup file already exists, skipping backup step');
+      }
+    }
+
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+
+    // 读取当前配置（保留用户其它 provider/agent/command 等）
+    let currentConfig: Record<string, any> = {};
+    if (fs.existsSync(configPath)) {
+      try {
+        currentConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      } catch (error) {
+        console.warn('Failed to parse current opencode.json, using empty object:', error);
+      }
+    }
+
+    const model = (defaultModel && typeof defaultModel === 'string' && defaultModel.trim())
+      ? defaultModel.trim()
+      : DEFAULT_OPENCODE_MODEL;
+
+    // 构建代理配置
+    const proxyConfig: Record<string, any> = {
+      provider: {
+        aicodeswitch: {
+          npm: '@ai-sdk/openai-compatible',
+          name: 'AICodeSwitch',
+          options: {
+            baseURL: `http://${clientHost}:${port}/opencode/v1`,
+            apiKey: 'api_key'
+          },
+          models: {
+            [model]: { name: model }
+          }
+        }
+      },
+      model: `aicodeswitch/${model}`
+    };
+
+    const mergedConfig = mergeJsonConfig(
+      proxyConfig,
+      currentConfig,
+      OPENCODE_CONFIG_MANAGED_FIELDS
+    );
+
+    atomicWriteFile(configPath, JSON.stringify(mergedConfig, null, 2));
+
+    // 保存元数据
+    const currentHash = createHash('sha256').update(fs.readFileSync(configPath, 'utf-8')).digest('hex');
+    const metadata: ConfigMetadata = {
+      configType: 'opencode',
+      timestamp: Date.now(),
+      originalHash,
+      proxyMarker: `http://${host}:${port}/opencode`,
+      files: [
+        {
+          originalPath: configPath,
+          backupPath: configBakPath,
+          currentHash
+        }
+      ]
+    };
+    saveMetadata(metadata);
+
+    return true;
+  } catch (error) {
+    console.error('Failed to write OpenCode config file:', error);
+    return false;
+  }
+};
+
+const restoreOpencodeConfig = async (): Promise<boolean> => {
+  try {
+    const configPath = getOpencodeConfigPath();
+    const configBakPath = `${configPath}.aicodeswitch_backup`;
+    let restoredAnyFile = false;
+
+    if (fs.existsSync(configBakPath)) {
+      const backupConfig: Record<string, any> = JSON.parse(
+        fs.readFileSync(configBakPath, 'utf-8')
+      );
+
+      let currentConfig: Record<string, any> = {};
+      if (fs.existsSync(configPath)) {
+        try {
+          currentConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        } catch (error) {
+          console.warn('Failed to parse current opencode.json during restore, using empty object:', error);
+        }
+      }
+
+      // 备份作为基础，合并当前的非管理字段
+      const mergedConfig = mergeJsonConfig(
+        backupConfig,
+        currentConfig,
+        OPENCODE_CONFIG_MANAGED_FIELDS
+      );
+
+      atomicWriteFile(configPath, JSON.stringify(mergedConfig, null, 2));
+      fs.unlinkSync(configBakPath);
+      restoredAnyFile = true;
+    }
+
+    deleteMetadata('opencode');
+
+    return restoredAnyFile;
+  } catch (error) {
+    console.error('Failed to restore OpenCode config file:', error);
+    return false;
+  }
+};
+
+const checkOpencodeBackupExists = (): boolean => {
+  try {
+    const status = checkOpencodeConfigStatus();
+    return status.hasBackup;
+  } catch (error) {
+    console.error('Failed to check OpenCode backup:', error);
+    return false;
+  }
+};
+
 const checkClaudeBackupExists = (): boolean => {
   try {
     // 清理可能的无效元数据
@@ -888,6 +1074,12 @@ const syncConfigsOnServerStartup = async (dbManager: FileSystemDatabaseManager):
     config.codexEnableMemories
   );
   console.log(`[Startup Config Sync] Codex config ${codexWritten ? 'written' : 'skipped'}`);
+
+  const opencodeWritten = await writeOpencodeConfig(
+    dbManager,
+    config.opencodeDefaultModel
+  );
+  console.log(`[Startup Config Sync] OpenCode config ${opencodeWritten ? 'written' : 'skipped'}`);
 };
 
 const syncConfigsOnGlobalConfigUpdate = async (dbManager: FileSystemDatabaseManager): Promise<void> => {
@@ -919,6 +1111,13 @@ const syncConfigsOnGlobalConfigUpdate = async (dbManager: FileSystemDatabaseMana
     { allowOverwriteRefresh: true }
   );
   console.log(`[Config Update Sync] Codex config ${codexUpdated ? 'written' : 'skipped'}`);
+
+  const opencodeUpdated = await writeOpencodeConfig(
+    dbManager,
+    config.opencodeDefaultModel,
+    { allowOverwriteRefresh: true }
+  );
+  console.log(`[Config Update Sync] OpenCode config ${opencodeUpdated ? 'written' : 'skipped'}`);
 };
 
 const getCentralSkillsDir = (): string => {
@@ -941,6 +1140,10 @@ function getSkillDirByName(name: string): string {
 }
 
 const getSkillSymlinkPath = (skillId: string, targetType: TargetType): string => {
+  if (targetType === 'opencode') {
+    // OpenCode 没有 skills 目录，映射为全局 command：~/.config/opencode/commands/<skillId>.md
+    return path.join(os.homedir(), '.config', 'opencode', 'commands', `${skillId}.md`);
+  }
   const baseDir = targetType === 'claude-code' ? '.claude' : '.codex';
   return path.join(os.homedir(), baseDir, 'skills', skillId);
 };
@@ -949,6 +1152,10 @@ function isSkillSymlinkExists(skillId: string, targetType: TargetType): boolean 
   const symlinkPath = getSkillSymlinkPath(skillId, targetType);
 
   try {
+    if (targetType === 'opencode') {
+      // OpenCode 是普通文件，不是 symlink
+      return fs.existsSync(symlinkPath);
+    }
     const stats = fs.lstatSync(symlinkPath);
     return stats.isSymbolicLink();
   } catch (error) {
@@ -956,15 +1163,83 @@ function isSkillSymlinkExists(skillId: string, targetType: TargetType): boolean 
   }
 }
 
+/**
+ * 从 SKILL.md 内容中剥离前导 YAML frontmatter，返回 { description?, body }
+ * 没有 frontmatter 时，description 为 undefined，body 为原文。
+ */
+function parseSkillMd(skillMdContent: string): { description?: string; body: string } {
+  const trimmed = skillMdContent.replace(/^﻿/, '');
+  const fmMatch = trimmed.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!fmMatch) {
+    return { body: trimmed };
+  }
+  const frontmatter = fmMatch[1];
+  const body = fmMatch[2];
+  const descMatch = frontmatter.match(/^description:\s*(.+)$/m);
+  return {
+    description: descMatch ? descMatch[1].replace(/^["']|["']$/g, '').trim() : undefined,
+    body: body.trim(),
+  };
+}
+
+/**
+ * 为 OpenCode 生成 command markdown 文件内容。
+ * frontmatter 用 description（OpenCode 在 TUI 展示），正文用 SKILL.md 的 body。
+ */
+function buildOpencodeSkillCommandMarkdown(skillDir: string, skillId: string, fallbackDescription?: string): string {
+  let description = fallbackDescription || '';
+  let body = '';
+
+  const skillMdPath = path.join(skillDir, 'SKILL.md');
+  if (fs.existsSync(skillMdPath)) {
+    try {
+      const parsed = parseSkillMd(fs.readFileSync(skillMdPath, 'utf-8'));
+      body = parsed.body || '';
+      if (!description && parsed.description) {
+        description = parsed.description;
+      }
+    } catch { /* ignore */ }
+  }
+
+  if (!description) {
+    description = skillId;
+  }
+
+  const bodySection = body ? `\n${body}\n` : '\n';
+  return `---\ndescription: ${description.replace(/\n/g, ' ')}\nagent: build\n---\n${bodySection}`;
+}
+
 async function createSkillSymlink(skillId: string, targetType: TargetType): Promise<{ success: boolean; error?: string }> {
   try {
     const centralDir = getCentralSkillsDir();
     const skillDir = path.join(centralDir, skillId);
-    const symlinkPath = getSkillSymlinkPath(skillId, targetType);
 
     if (!fs.existsSync(skillDir)) {
       return { success: false, error: 'Skill目录不存在' };
     }
+
+    // OpenCode：生成 command markdown 写入 ~/.config/opencode/commands/<skillId>.md
+    if (targetType === 'opencode') {
+      const commandPath = getSkillSymlinkPath(skillId, targetType);
+      const commandDir = path.dirname(commandPath);
+      if (!fs.existsSync(commandDir)) {
+        fs.mkdirSync(commandDir, { recursive: true });
+      }
+
+      let fallbackDescription: string | undefined;
+      const metadataPath = path.join(skillDir, 'skill.json');
+      if (fs.existsSync(metadataPath)) {
+        try {
+          fallbackDescription = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))?.description;
+        } catch { /* ignore */ }
+      }
+
+      const content = buildOpencodeSkillCommandMarkdown(skillDir, skillId, fallbackDescription);
+      atomicWriteFile(commandPath, content);
+      return { success: true };
+    }
+
+    const symlinkPath = getSkillSymlinkPath(skillId, targetType);
 
     const targetBaseDir = path.dirname(symlinkPath);
     if (!fs.existsSync(targetBaseDir)) {
@@ -996,6 +1271,14 @@ async function createSkillSymlink(skillId: string, targetType: TargetType): Prom
 async function removeSkillSymlink(skillId: string, targetType: TargetType): Promise<{ success: boolean; error?: string }> {
   try {
     const symlinkPath = getSkillSymlinkPath(skillId, targetType);
+
+    if (targetType === 'opencode') {
+      // OpenCode：删除 command 文件
+      if (fs.existsSync(symlinkPath)) {
+        fs.unlinkSync(symlinkPath);
+      }
+      return { success: true };
+    }
 
     if (!fs.existsSync(symlinkPath)) {
       return { success: true };
@@ -1303,7 +1586,7 @@ const listInstalledSkills = (): InstalledSkill[] => {
 
       const enabledTargets: TargetType[] = [];
 
-      ['claude-code', 'codex'].forEach((targetType) => {
+      ['claude-code', 'codex', 'opencode'].forEach((targetType) => {
         if (isSkillSymlinkExists(skillId, targetType as TargetType)) {
           enabledTargets.push(targetType as TargetType);
         }
@@ -1467,7 +1750,7 @@ const registerRoutes = async (dbManager: FileSystemDatabaseManager, proxyServer:
       if (!tool || !routeId) {
         return res.status(400).json({ error: 'tool and routeId are required' });
       }
-      if (tool !== 'claude-code' && tool !== 'codex') {
+      if (tool !== 'claude-code' && tool !== 'codex' && tool !== 'opencode') {
         return res.status(400).json({ error: 'Invalid tool name' });
       }
       const route = dbManager.getRoute(routeId);
@@ -1494,7 +1777,7 @@ const registerRoutes = async (dbManager: FileSystemDatabaseManager, proxyServer:
     '/api/tool-bindings/deactivate',
     asyncHandler(async (req, res) => {
       const { tool } = req.body as { tool: ToolName };
-      if (!tool || (tool !== 'claude-code' && tool !== 'codex')) {
+      if (!tool || (tool !== 'claude-code' && tool !== 'codex' && tool !== 'opencode')) {
         return res.status(400).json({ error: 'Invalid tool name' });
       }
 
@@ -2497,7 +2780,7 @@ ${instruction}
       const { skillId } = req.params;
       const { targetType } = req.body as { targetType: TargetType };
 
-      if (!targetType || (targetType !== 'claude-code' && targetType !== 'codex')) {
+      if (!targetType || (targetType !== 'claude-code' && targetType !== 'codex' && targetType !== 'opencode')) {
         res.status(400).json({ success: false, error: '无效的目标类型' });
         return;
       }
@@ -2539,7 +2822,7 @@ ${instruction}
       const { skillId } = req.params;
       const { targetType } = req.body as { targetType: TargetType };
 
-      if (!targetType || (targetType !== 'claude-code' && targetType !== 'codex')) {
+      if (!targetType || (targetType !== 'claude-code' && targetType !== 'codex' && targetType !== 'opencode')) {
         res.status(400).json({ success: false, error: '无效的目标类型' });
         return;
       }
@@ -2580,7 +2863,7 @@ ${instruction}
         return;
       }
 
-      ['claude-code', 'codex'].forEach(async (targetType) => {
+      ['claude-code', 'codex', 'opencode'].forEach(async (targetType) => {
         await removeSkillSymlink(skillId, targetType as TargetType);
       });
 
@@ -2641,6 +2924,21 @@ ${instruction}
         modelReasoningEffort,
         appConfig.codexDefaultModel,
         enableMemories
+      );
+      applyWriteLocalRecords(proxyServer);
+      res.json(result);
+    })
+  );
+
+  app.post(
+    '/api/write-config/opencode',
+    asyncHandler(async (req, res) => {
+      const appConfig = dbManager.getConfig();
+      const requestedModel = typeof req.body?.defaultModel === 'string' ? req.body.defaultModel : undefined;
+      const defaultModel = requestedModel || appConfig.opencodeDefaultModel;
+      const result = await writeOpencodeConfig(
+        dbManager,
+        defaultModel
       );
       applyWriteLocalRecords(proxyServer);
       res.json(result);
@@ -2730,12 +3028,24 @@ ${instruction}
     })
   );
 
+  app.post(
+    '/api/restore-config/opencode',
+    asyncHandler(async (_req, res) => {
+      const result = await restoreOpencodeConfig();
+      res.json(result);
+    })
+  );
+
   app.get('/api/check-backup/claude', (_req, res) => {
     res.json({ exists: checkClaudeBackupExists() });
   });
 
   app.get('/api/check-backup/codex', (_req, res) => {
     res.json({ exists: checkCodexBackupExists() });
+  });
+
+  app.get('/api/check-backup/opencode', (_req, res) => {
+    res.json({ exists: checkOpencodeBackupExists() });
   });
 
   // 新的详细配置状态 API 端点
@@ -2746,6 +3056,11 @@ ${instruction}
 
   app.get('/api/config-status/codex', (_req, res) => {
     const status = checkCodexConfigStatus();
+    res.json(status);
+  });
+
+  app.get('/api/config-status/opencode', (_req, res) => {
+    const status = checkOpencodeConfigStatus();
     res.json(status);
   });
 
@@ -3691,6 +4006,30 @@ ${instruction}
           auth.OPENAI_API_KEY = key.apiKey;
           atomicWriteFile(authPath, JSON.stringify(auth, null, 2));
           results['codex'] = true;
+        } else if (target === 'opencode') {
+          // 写入 ~/.config/opencode/opencode.json 的 provider.aicodeswitch.options.apiKey
+          const opencodeConfigPath = getOpencodeConfigPath();
+          const opencodeDir = path.dirname(opencodeConfigPath);
+          if (!fs.existsSync(opencodeDir)) {
+            fs.mkdirSync(opencodeDir, { recursive: true });
+          }
+
+          let oc: Record<string, any> = {};
+          if (fs.existsSync(opencodeConfigPath)) {
+            try {
+              oc = JSON.parse(fs.readFileSync(opencodeConfigPath, 'utf-8'));
+            } catch { /* ignore */ }
+          }
+
+          if (!oc.provider) oc.provider = {};
+          if (!oc.provider.aicodeswitch || typeof oc.provider.aicodeswitch !== 'object') {
+            oc.provider.aicodeswitch = { npm: '@ai-sdk/openai-compatible', name: 'AICodeSwitch', options: {} };
+          }
+          if (!oc.provider.aicodeswitch.options) oc.provider.aicodeswitch.options = {};
+          oc.provider.aicodeswitch.options.apiKey = key.apiKey;
+
+          atomicWriteFile(opencodeConfigPath, JSON.stringify(oc, null, 2));
+          results['opencode'] = true;
         }
       } catch (error) {
         console.error(`Failed to write local config for ${target}:`, error);
@@ -4108,6 +4447,82 @@ ${instruction}
 
         console.log(`[MCP] Codex MCP config written: ${writtenMcpIds.length} server(s)`);
         return true;
+      } else if (targetType === 'opencode') {
+        // OpenCode 使用 JSON 格式的 opencode.json，MCP 配置位于 mcp 段
+        // 格式：local → { type:"local", command:[...], enabled:true, env? }
+        //       remote → { type:"remote", url, enabled:true, headers? }
+        const opencodeConfigPath = getOpencodeConfigPath();
+        const opencodeDir = path.dirname(opencodeConfigPath);
+
+        if (!fs.existsSync(opencodeDir)) {
+          fs.mkdirSync(opencodeDir, { recursive: true });
+        }
+
+        let currentConfig: Record<string, any> = {};
+        if (fs.existsSync(opencodeConfigPath)) {
+          try {
+            currentConfig = JSON.parse(fs.readFileSync(opencodeConfigPath, 'utf-8'));
+          } catch (error) {
+            console.warn('[MCP] Failed to parse opencode.json:', error);
+          }
+        }
+
+        // 清除代理上次写入的 mcp 条目（通过 metadata 追踪，避免误删用户自配的 mcp）
+        const mcpMetaPath = path.join(opencodeDir, '.aicodeswitch_mcp_servers.json');
+        let previousMcpIds: string[] = [];
+        if (fs.existsSync(mcpMetaPath)) {
+          try {
+            previousMcpIds = JSON.parse(fs.readFileSync(mcpMetaPath, 'utf8'));
+            for (const id of previousMcpIds) {
+              if (currentConfig.mcp && currentConfig.mcp[id]) {
+                delete currentConfig.mcp[id];
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        if (!currentConfig.mcp) {
+          currentConfig.mcp = {};
+        }
+
+        const writtenMcpIds: string[] = [];
+        for (const mcp of mcps) {
+          const mcpConfig: Record<string, any> = { enabled: true };
+
+          if (mcp.type === 'stdio') {
+            mcpConfig.type = 'local';
+            const cmdParts = [mcp.command || ''];
+            if (Array.isArray(mcp.args)) {
+              cmdParts.push(...mcp.args);
+            }
+            mcpConfig.command = cmdParts.filter((c, i) => i === 0 ? c !== '' : true);
+            if (mcp.env && Object.keys(mcp.env).length > 0) {
+              mcpConfig.environment = { ...mcp.env };
+            }
+          } else {
+            // http / sse 均使用 remote 类型
+            mcpConfig.type = 'remote';
+            mcpConfig.url = mcp.url || '';
+            if (mcp.headers && Object.keys(mcp.headers).length > 0) {
+              mcpConfig.headers = { ...mcp.headers };
+            }
+          }
+
+          currentConfig.mcp[mcp.id] = mcpConfig;
+          writtenMcpIds.push(mcp.id);
+        }
+
+        if (Object.keys(currentConfig.mcp).length === 0) {
+          delete currentConfig.mcp;
+        }
+
+        atomicWriteFile(opencodeConfigPath, JSON.stringify(currentConfig, null, 2));
+        fs.writeFileSync(mcpMetaPath, JSON.stringify(writtenMcpIds, null, 2));
+
+        console.log(`[MCP] OpenCode MCP config written: ${writtenMcpIds.length} server(s)`);
+        return true;
       }
 
       return false;
@@ -4177,6 +4592,45 @@ ${instruction}
           }
 
           console.log(`[MCP] Removed MCP ${mcpId} from Codex config`);
+        }
+
+        return true;
+      } else if (targetType === 'opencode') {
+        const opencodeConfigPath = getOpencodeConfigPath();
+
+        if (!fs.existsSync(opencodeConfigPath)) {
+          return true;
+        }
+
+        let currentConfig: Record<string, any> = {};
+        try {
+          currentConfig = JSON.parse(fs.readFileSync(opencodeConfigPath, 'utf-8'));
+        } catch (error) {
+          console.warn('[MCP] Failed to parse opencode.json for removal:', error);
+          return false;
+        }
+
+        if (currentConfig.mcp && currentConfig.mcp[mcpId]) {
+          delete currentConfig.mcp[mcpId];
+          if (Object.keys(currentConfig.mcp).length === 0) {
+            delete currentConfig.mcp;
+          }
+
+          atomicWriteFile(opencodeConfigPath, JSON.stringify(currentConfig, null, 2));
+
+          const opencodeDir = path.dirname(opencodeConfigPath);
+          const mcpMetaPath = path.join(opencodeDir, '.aicodeswitch_mcp_servers.json');
+          if (fs.existsSync(mcpMetaPath)) {
+            try {
+              const previousIds: string[] = JSON.parse(fs.readFileSync(mcpMetaPath, 'utf8'));
+              const updatedIds = previousIds.filter(id => id !== mcpId);
+              fs.writeFileSync(mcpMetaPath, JSON.stringify(updatedIds, null, 2));
+            } catch {
+              // ignore
+            }
+          }
+
+          console.log(`[MCP] Removed MCP ${mcpId} from OpenCode config`);
         }
 
         return true;
@@ -4412,6 +4866,13 @@ const start = async () => {
         console.log(`[Shutdown ...] Codex config ${codexRestored ? 'restored' : 'was not modified'}`);
       } catch (error) {
         console.error('[Shutdown ...] Failed to restore Codex config:', error);
+      }
+
+      try {
+        const opencodeRestored = await restoreOpencodeConfig();
+        console.log(`[Shutdown ...] OpenCode config ${opencodeRestored ? 'restored' : 'was not modified'}`);
+      } catch (error) {
+        console.error('[Shutdown ...] Failed to restore OpenCode config:', error);
       }
 
       // Shutdown AccessKey module

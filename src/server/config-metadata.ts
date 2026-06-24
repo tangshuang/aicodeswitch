@@ -6,7 +6,7 @@ import os from 'os';
  * 配置元数据结构
  */
 export interface ConfigMetadata {
-  configType: 'claude' | 'codex';
+  configType: 'claude' | 'codex' | 'opencode';
   timestamp: number; // 写入时间戳
   originalHash?: string; // 原始配置文件的 SHA256 hash(如果存在)
   proxyMarker: string; // 代理配置标记(用于识别当前配置是否是我们的代理配置)
@@ -41,7 +41,7 @@ const getMetadataDirs = () => {
 /**
  * 获取元数据文件路径
  */
-const getMetadataFilePath = (configType: 'claude' | 'codex', useLegacy = false): string => {
+const getMetadataFilePath = (configType: 'claude' | 'codex' | 'opencode', useLegacy = false): string => {
   const dirs = getMetadataDirs();
   const baseDir = useLegacy ? dirs.legacy : dirs.primary;
   return path.join(baseDir, `.${configType}-metadata.json`);
@@ -71,7 +71,7 @@ export const saveMetadata = (metadata: ConfigMetadata): boolean => {
 /**
  * 读取配置元数据
  */
-export const loadMetadata = (configType: 'claude' | 'codex'): ConfigMetadata | null => {
+export const loadMetadata = (configType: 'claude' | 'codex' | 'opencode'): ConfigMetadata | null => {
   try {
     const metadataPath = getMetadataFilePath(configType);
     if (fs.existsSync(metadataPath)) {
@@ -109,7 +109,7 @@ export const loadMetadata = (configType: 'claude' | 'codex'): ConfigMetadata | n
 /**
  * 删除配置元数据
  */
-export const deleteMetadata = (configType: 'claude' | 'codex'): boolean => {
+export const deleteMetadata = (configType: 'claude' | 'codex' | 'opencode'): boolean => {
   try {
     const metadataPath = getMetadataFilePath(configType);
     const legacyPath = getMetadataFilePath(configType, true);
@@ -321,10 +321,96 @@ export const checkCodexConfigStatus = (): ConfigStatus => {
 };
 
 /**
+ * 检查 OpenCode 配置文件是否包含我们的代理特征
+ */
+const isOpencodeProxyConfig = (filePath: string): boolean => {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return false;
+    }
+
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const config = JSON.parse(content);
+
+    // 检查是否包含我们的自定义 provider（provider.aicodeswitch）
+    const provider = config?.provider?.aicodeswitch;
+    if (provider && typeof provider === 'object') {
+      const baseUrl = provider.options?.baseURL;
+      // baseURL 指向本代理的 /opencode 路径
+      if (baseUrl && typeof baseUrl === 'string' && /\/opencode(\/|$)/.test(baseUrl)) {
+        return true;
+      }
+    }
+
+    return false;
+  } catch (error) {
+    console.error(`Failed to check OpenCode config:`, error);
+    return false;
+  }
+};
+
+/**
+ * OpenCode 配置文件路径（~/.config/opencode/opencode.json）
+ */
+export const getOpencodeConfigPath = (): string => {
+  const homeDir = os.homedir();
+  return path.join(homeDir, '.config', 'opencode', 'opencode.json');
+};
+
+/**
+ * 检查 OpenCode 配置状态
+ */
+export const checkOpencodeConfigStatus = (): ConfigStatus => {
+  const configPath = getOpencodeConfigPath();
+  const configBakPath = `${configPath}.aicodeswitch_backup`;
+
+  // 检查备份文件是否存在
+  const hasBackup = fs.existsSync(configBakPath);
+
+  // 尝试加载元数据
+  const metadata = loadMetadata('opencode');
+
+  if (metadata) {
+    const currentHash = calculateFileHash(configPath);
+    const isProxyConfig = isOpencodeProxyConfig(configPath);
+
+    let isModified = false;
+    if (currentHash && metadata.files[0]?.currentHash) {
+      isModified = currentHash !== metadata.files[0].currentHash;
+    }
+
+    const isOverwritten = isProxyConfig;
+
+    return {
+      isOverwritten,
+      isModified,
+      hasBackup,
+      metadata
+    };
+  }
+
+  if (hasBackup) {
+    const isProxyConfig = isOpencodeProxyConfig(configPath);
+    return {
+      isOverwritten: isProxyConfig,
+      isModified: false,
+      hasBackup
+    };
+  }
+
+  const isProxyConfig = isOpencodeProxyConfig(configPath);
+  return {
+    isOverwritten: isProxyConfig,
+    isModified: false,
+    hasBackup: false
+  };
+};
+
+/**
  * 清理无效的元数据
  * 当备份文件不存在但元数据存在时,说明状态不一致,需要清理
  */
-export const cleanupInvalidMetadata = (configType: 'claude' | 'codex'): boolean => {
+export const cleanupInvalidMetadata = (configType: 'claude' | 'codex' | 'opencode'): boolean => {
   try {
     const metadata = loadMetadata(configType);
 

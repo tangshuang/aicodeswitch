@@ -154,6 +154,7 @@ function SessionsPage() {
   const getTargetTypeBadge = (targetType: string) => {
     if (targetType === 'claude-code') return <span className="badge badge-claude-code">Claude Code</span>;
     else if (targetType === 'codex') return <span className="badge badge-codex">Codex</span>;
+    else if (targetType === 'opencode') return <span className="badge badge-opencode">OpenCode</span>;
     return <span className="badge">{targetType}</span>;
   };
 
@@ -392,6 +393,7 @@ function SessionsPage() {
               <option value="">全部</option>
               <option value="claude-code">Claude Code</option>
               <option value="codex">Codex</option>
+              <option value="opencode">OpenCode</option>
             </select>
           </div>
 

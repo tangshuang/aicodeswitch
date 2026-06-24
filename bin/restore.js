@@ -5,7 +5,7 @@ const chalk = require('chalk');
 const boxen = require('boxen');
 const ora = require('ora');
 const { parseToml, stringifyToml, mergeJsonSettings, mergeTomlSettings, atomicWriteFile } = require('./utils/config-helpers');
-const { CLAUDE_SETTINGS_MANAGED_FIELDS, CLAUDE_JSON_MANAGED_FIELDS, CODEX_CONFIG_MANAGED_FIELDS, CODEX_AUTH_MANAGED_FIELDS } = require('./utils/managed-fields');
+const { CLAUDE_SETTINGS_MANAGED_FIELDS, CLAUDE_JSON_MANAGED_FIELDS, CODEX_CONFIG_MANAGED_FIELDS, CODEX_AUTH_MANAGED_FIELDS, OPENCODE_CONFIG_MANAGED_FIELDS } = require('./utils/managed-fields');
 const { isServerRunning, getServerInfo } = require('./utils/get-server');
 const { findPidByPort } = require('./utils/port-utils');
 
@@ -240,10 +240,57 @@ const restoreCodexConfig = () => {
   return results;
 };
 
+// 恢复 OpenCode 配置（使用智能合并）
+const restoreOpencodeConfig = () => {
+  const results = {
+    restored: [],
+    notFound: [],
+    errors: []
+  };
+
+  try {
+    const homeDir = os.homedir();
+    const opencodeConfigPath = path.join(homeDir, '.config', 'opencode', 'opencode.json');
+    const opencodeConfigBakPath = `${opencodeConfigPath}.aicodeswitch_backup`;
+
+    if (fs.existsSync(opencodeConfigBakPath)) {
+      try {
+        const backupConfig = JSON.parse(fs.readFileSync(opencodeConfigBakPath, 'utf-8'));
+        let currentConfig = {};
+        if (fs.existsSync(opencodeConfigPath)) {
+          try {
+            currentConfig = JSON.parse(fs.readFileSync(opencodeConfigPath, 'utf-8'));
+          } catch (e) {
+            // 忽略解析错误
+          }
+        }
+
+        const mergedConfig = mergeJsonSettings(
+          backupConfig,
+          currentConfig,
+          OPENCODE_CONFIG_MANAGED_FIELDS
+        );
+
+        atomicWriteFile(opencodeConfigPath, JSON.stringify(mergedConfig, null, 2));
+        fs.unlinkSync(opencodeConfigBakPath);
+        results.restored.push('opencode.json');
+      } catch (error) {
+        results.errors.push({ file: 'opencode.json', error: error.message });
+      }
+    } else {
+      results.notFound.push('opencode.json.aicodeswitch_backup');
+    }
+  } catch (err) {
+    results.errors.push({ file: 'opencode.json', error: err.message });
+  }
+
+  return results;
+};
+
 // 显示恢复结果
 const showRestoreResult = (target, results) => {
-  const targetName = target === 'claude-code' ? 'Claude Code' : 'Codex';
-  const targetColor = target === 'claude-code' ? chalk.cyan : chalk.magenta;
+  const targetName = target === 'claude-code' ? 'Claude Code' : target === 'opencode' ? 'OpenCode' : 'Codex';
+  const targetColor = target === 'claude-code' ? chalk.cyan : target === 'opencode' ? chalk.blue : chalk.magenta;
 
   let message = targetColor.bold(`${targetName} Configuration Restore\n\n`);
 
@@ -276,6 +323,8 @@ const showRestoreResult = (target, results) => {
     message += chalk.yellow.bold('⚠️  Important:\n\n');
     if (target === 'claude-code') {
       message += chalk.white('Please restart ') + chalk.cyan.bold('Claude Code') + chalk.white(' to apply the restored configuration.\n');
+    } else if (target === 'opencode') {
+      message += chalk.white('Please restart ') + chalk.blue.bold('OpenCode') + chalk.white(' to apply the restored configuration.\n');
     } else {
       message += chalk.white('Please restart ') + chalk.magenta.bold('Codex') + chalk.white(' to apply the restored configuration.\n');
     }
@@ -307,7 +356,7 @@ const restore = async () => {
 
   console.log('\n');
 
-  const validTargets = ['claude-code', 'codex', undefined];
+  const validTargets = ['claude-code', 'codex', 'opencode', undefined];
 
   if (target && !validTargets.includes(target)) {
     console.log(boxen(
@@ -316,6 +365,7 @@ const restore = async () => {
       chalk.white('Targets:\n') +
       chalk.white('  claude-code   Restore Claude Code configuration\n') +
       chalk.white('  codex         Restore Codex configuration\n') +
+      chalk.white('  opencode      Restore OpenCode configuration\n') +
       chalk.white('  (no arg)      Restore all configurations\n'),
       {
         padding: 1,
@@ -377,6 +427,19 @@ const restore = async () => {
     const codexResults = restoreCodexConfig();
     spinner.succeed(chalk.green('Codex restore complete'));
     showRestoreResult('codex', codexResults);
+  }
+
+  if (target === 'opencode' || !target) {
+    if (!target) console.log('');
+
+    const spinner = ora({
+      text: chalk.blue('Restoring OpenCode configuration...'),
+      color: 'blue'
+    }).start();
+
+    const opencodeResults = restoreOpencodeConfig();
+    spinner.succeed(chalk.green('OpenCode restore complete'));
+    showRestoreResult('opencode', opencodeResults);
   }
 
   // 停用所有激活的路由

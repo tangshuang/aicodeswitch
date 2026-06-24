@@ -269,6 +269,78 @@ export const readCodexOriginalConfig = (): OriginalConfig | null => {
 };
 
 /**
+ * 读取 OpenCode 原始配置
+ * fallback 场景下仅从备份文件（~/.config/opencode/opencode.json.aicodeswitch_backup）读取
+ *
+ * OpenCode 的模型形如 "<providerId>/<modelId>"，真实上游由用户原始 opencode.json 中的
+ * provider 段（options.baseURL + options.apiKey）决定。此处解析备份中的真实 provider。
+ */
+export const readOpencodeOriginalConfig = (): OriginalConfig | null => {
+  try {
+    const homeDir = os.homedir();
+    const configBakPath = path.join(homeDir, '.config', 'opencode', 'opencode.json.aicodeswitch_backup');
+
+    if (!fs.existsSync(configBakPath)) {
+      console.log('No OpenCode backup config file found');
+      return null;
+    }
+
+    const content = fs.readFileSync(configBakPath, 'utf-8');
+    const config = JSON.parse(content);
+
+    // 解析 model："providerId/modelId"
+    const modelField = typeof config.model === 'string' ? config.model : '';
+    const [providerId, modelId] = modelField.split('/');
+    const providers = (config.provider && typeof config.provider === 'object') ? config.provider as Record<string, any> : {};
+
+    // 选定真实 provider：优先 model 中声明的 providerId，否则取第一个非 aicodeswitch 的 provider
+    let providerConfig: Record<string, any> | undefined;
+    let resolvedProviderId = '';
+    if (providerId && providers[providerId]) {
+      providerConfig = providers[providerId];
+      resolvedProviderId = providerId;
+    } else {
+      for (const [pid, pc] of Object.entries(providers)) {
+        if (pid !== 'aicodeswitch' && pc && typeof pc === 'object') {
+          providerConfig = pc as Record<string, any>;
+          resolvedProviderId = pid;
+          break;
+        }
+      }
+    }
+
+    const baseUrlRaw = providerConfig?.options?.baseURL || '';
+    const baseUrl = normalizeApiUrl(baseUrlRaw);
+    // apiKey 可能内联在 options.apiKey，也可能经 {env:XXX}/{file:xxx} 引用（fallback 无法解析，置空）
+    let apiKey = '';
+    if (typeof providerConfig?.options?.apiKey === 'string') {
+      const raw = providerConfig.options.apiKey.trim();
+      if (raw && !raw.startsWith('{env:') && !raw.startsWith('{file:')) {
+        apiKey = raw;
+      }
+    }
+
+    if (!baseUrl) {
+      console.log('No baseURL found in OpenCode backup config provider:', resolvedProviderId);
+      return null;
+    }
+
+    const sourceType = inferSourceTypeFromBaseUrlAndWireApi(baseUrl, undefined);
+
+    return {
+      apiUrl: baseUrl,
+      apiKey,
+      authType: inferAuthTypeFromSource(sourceType),
+      sourceType,
+      model: modelId || modelField || undefined,
+    };
+  } catch (error) {
+    console.error('Failed to read OpenCode original config:', error);
+    return null;
+  }
+};
+
+/**
  * 根据目标类型读取原始配置
  */
 export const readOriginalConfig = (targetType: TargetType): OriginalConfig | null => {
@@ -276,6 +348,8 @@ export const readOriginalConfig = (targetType: TargetType): OriginalConfig | nul
     return readClaudeOriginalConfig();
   } else if (targetType === 'codex') {
     return readCodexOriginalConfig();
+  } else if (targetType === 'opencode') {
+    return readOpencodeOriginalConfig();
   }
   return null;
 };

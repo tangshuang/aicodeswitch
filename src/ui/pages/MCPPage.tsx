@@ -496,6 +496,19 @@ function MCPPage() {
                     label="Codex"
                     labelPosition="right"
                   />
+                  <Switch
+                    checked={mcp.targets?.includes('opencode') ?? false}
+                    onChange={async (checked) => {
+                      const targets = mcp.targets || [];
+                      const newTargets = checked
+                        ? [...targets, 'opencode'] as TargetType[]
+                        : targets.filter((t) => t !== 'opencode');
+                      await api.updateMCP(mcp.id, { targets: newTargets });
+                      await loadMCPs();
+                    }}
+                    label="OpenCode"
+                    labelPosition="right"
+                  />
                 </div>
               </div>
             </div>
@@ -677,6 +690,21 @@ function MCPPage() {
                           disabled={formLoading}
                         />
                         <span>Codex</span>
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={formData.targets.includes('opencode')}
+                          onChange={(e) => setFormData({
+                            ...formData,
+                            targets: e.target.checked
+                              ? [...formData.targets, 'opencode']
+                              : formData.targets.filter((t) => t !== 'opencode')
+                          })}
+                          style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                          disabled={formLoading}
+                        />
+                        <span>OpenCode</span>
                       </label>
                     </div>
                   </div>

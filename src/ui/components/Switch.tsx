@@ -71,7 +71,7 @@ interface SkillSwitchProps {
 }
 
 export function SkillSwitch({ skillId, targetType, enabled, onChange, disabled }: SkillSwitchProps) {
-  const label = targetType === 'claude-code' ? 'Claude Code' : 'Codex';
+  const label = targetType === 'claude-code' ? 'Claude Code' : targetType === 'opencode' ? 'OpenCode' : 'Codex';
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
