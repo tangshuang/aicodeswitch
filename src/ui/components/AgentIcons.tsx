@@ -1,14 +1,16 @@
 /**
- * Claude Code / Codex 品牌图标组件
+ * Claude Code / Codex / OpenCode 品牌图标组件
  *
  * 数据取自 src/ui/assets/claudecode-color.svg 与 codex-color.svg，
  * 封装为可直接使用的 React 组件（不再用 emoji 替代）。
  *
  * 既可用于 HTML 上下文（inline svg），也可嵌入 SVG <g> 作为嵌套 <svg>（通过 x/y 定位）。
  * Codex 去掉了原本的白色方形底，仅保留渐变标识，适配明/暗主题。
+ * OpenCode 暂用通用代码括号占位图标（品牌资产待补充）。
  */
 import { useId } from 'react';
 import type { CSSProperties } from 'react';
+import type { ToolType } from '../../types';
 
 export interface AgentIconProps {
   size?: number;
@@ -76,7 +78,33 @@ export function CodexIcon({ size = 16, x, y, style, className, title }: AgentIco
   );
 }
 
+export function OpenCodeIcon({ size = 16, x, y, style, className, title }: AgentIconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      x={x}
+      y={y}
+      style={style}
+      className={className}
+      xmlns="http://www.w3.org/2000/svg"
+      role="img"
+      aria-label={title ?? 'OpenCode'}
+    >
+      <title>{title ?? 'OpenCode'}</title>
+      <path
+        d="M16 6H8v12h8V6zm4 16H4V2h16v20z"
+        fillRule="evenodd"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
 /** 根据 agent 类型返回对应图标组件 */
-export function AgentIcon({ agent, ...rest }: { agent: 'claude-code' | 'codex' } & AgentIconProps) {
-  return agent === 'codex' ? <CodexIcon {...rest} /> : <ClaudeCodeIcon {...rest} />;
+export function AgentIcon({ agent, ...rest }: { agent: ToolType } & AgentIconProps) {
+  if (agent === 'codex') return <CodexIcon {...rest} />;
+  if (agent === 'opencode') return <OpenCodeIcon {...rest} />;
+  return <ClaudeCodeIcon {...rest} />;
 }

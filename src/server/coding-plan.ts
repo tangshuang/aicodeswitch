@@ -43,6 +43,8 @@ export function isCodingToolRequest(
     if (ua.includes('codex')) return { isCoding: true, reason: '' };
     // Codex: originator header
     if ((headers['originator'] || '').toLowerCase().includes('codex')) return { isCoding: true, reason: '' };
+    // OpenCode: user-agent 包含 "opencode"
+    if (ua.includes('opencode')) return { isCoding: true, reason: '' };
   }
 
   // ── Layer 2: Claude Messages API ───────────────────────────────────

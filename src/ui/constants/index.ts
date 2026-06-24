@@ -1,9 +1,10 @@
-import { SourceType, AuthType } from '../../types';
+import { SourceType, AuthType, ToolType } from '../../types';
 
 /** 终端对象类型 */
-export const TARGET_TYPE = {
+export const TARGET_TYPE: Record<ToolType, string> = {
   'claude-code': 'Claude Code',
   'codex': 'Codex',
+  'opencode': 'OpenCode',
 };
 
 /** 数据源类型 */

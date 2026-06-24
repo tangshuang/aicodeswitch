@@ -3,7 +3,7 @@
  * 父页面与两个独立画布组件（AgentMapCanvas2D / AgentMapCanvas3D）都从这里取，
  * 避免重复定义与循环依赖。
  */
-import { ClaudeCodeIcon, CodexIcon } from '../components/AgentIcons';
+import { ClaudeCodeIcon, CodexIcon, OpenCodeIcon } from '../components/AgentIcons';
 import type { SessionMapItem } from '../../types';
 
 // ============================ 常量 ============================
@@ -112,7 +112,9 @@ export function SessionNodeSvg({ item, pos, selected }: {
       <circle r={r} className="am-node-circle" vectorEffect="non-scaling-stroke" />
       {item.agent === 'codex'
         ? <CodexIcon size={iconSize} x={-iconSize / 2} y={-iconSize / 2} />
-        : <ClaudeCodeIcon size={iconSize} x={-iconSize / 2} y={-iconSize / 2} />}
+        : item.agent === 'opencode'
+          ? <OpenCodeIcon size={iconSize} x={-iconSize / 2} y={-iconSize / 2} />
+          : <ClaudeCodeIcon size={iconSize} x={-iconSize / 2} y={-iconSize / 2} />}
       <text textAnchor="middle" dy={r + 16} className="am-node-title">
         {(item.title || item.sessionId.slice(-8)).slice(0, 18)}
       </text>

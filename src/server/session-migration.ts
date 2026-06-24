@@ -295,6 +295,7 @@ function generateMigrationPrompt(content: MigrationContent, targetTool: ToolType
   const toolLabels: Record<ToolType, string> = {
     'claude-code': 'Claude Code',
     'codex': 'Codex',
+    'opencode': 'OpenCode',
   };
   const sourceLabel = toolLabels[content.sourceTool];
   const targetLabel = toolLabels[targetTool];

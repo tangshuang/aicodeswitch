@@ -1109,6 +1109,18 @@ table th {
   color: white;
 }
 
+.badge-opencode {
+  background: transparent;
+  color: #4b5563;
+  border: 1px solid #000;
+}
+
+[data-theme="dark"] .badge-opencode {
+  background: #000;
+  color: #9ca3af;
+  border: 1px solid #fff;
+}
+
 .empty-state {
   text-align: center;
   padding: 60px 20px;
@@ -1736,7 +1748,7 @@ table th {
 
 .skills-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
   gap: 16px;
 }
 

@@ -137,7 +137,7 @@ aicos version            # Show current version information
 - Initializes proxy server
 
 #### 2. Proxy Server - `server/proxy-server.ts`
-- **Route Matching**: Finds active route based on target type (claude-code/codex)
+- **Route Matching**: Finds active route based on target type (claude-code/codex/opencode)
 - **Rule Matching**: Determines content type from request (image-understanding/thinking/long-context/background/default/compact)
 - **Request Transformation**: Converts between different API formats (Claude ↔ OpenAI Chat)
 - **Streaming**: Handles SSE (Server-Sent Events) streaming responses with real-time transformation
@@ -296,7 +296,15 @@ aicos version            # Show current version information
   - Configuration
   - Token usage tracking
   - **SourceType**: API 服务的数据格式类型（'openai-chat', 'openai', 'claude-chat', 'claude', 等）
-  - **TargetType**: 路由目标类型（'claude-code', 'codex'）
+  - **TargetType**: 路由目标类型（'claude-code', 'codex', 'opencode'）
+
+#### 9.5 OpenCode 目标工具（与 Claude Code / Codex 平级）
+
+- **协议**：OpenCode 客户端经 `@ai-sdk/openai-compatible` 使用 **OpenAI Chat Completions** 格式直连代理，`baseURL = http://127.0.0.1:{PORT}/opencode/v1`，代理实际收到 `/opencode/v1/chat/completions`、`/opencode/v1/models`。内部映射为 `Format = 'completions'`（由 `clientFormatForTool()` 统一），复用既有 completions↔claude/responses/gemini 转换对，**无需新增转换代码**。
+- **配置文件生命周期**：`~/.config/opencode/opencode.json`（纯 JSON，复用 `mergeJsonConfig`）。托管字段为 `provider.aicodeswitch` 段 + `model`/`small_model`/`mcp`（见 `config-managed-fields.ts` 的 `OPENCODE_CONFIG_MANAGED_FIELDS`）。`writeOpencodeConfig`/`restoreOpencodeConfig` 接入启动/全局更新/关闭三处生命周期；检测器 `isOpencodeProxyConfig`/`checkOpencodeConfigStatus`；fallback 读 `readOpencodeOriginalConfig`。CLI `aicos restore opencode`。
+- **与 Claude Code 的差异**：OpenCode 无 count_tokens 端点、无类似 Claude Code 的特殊 compact 端点（其 compaction 是客户端内部行为，发普通 chat completion），故不触发 `shouldHandleCountTokensLocally` / compact guardrails（这些逻辑均门控在 `targetType === 'claude-code'`）。
+- **MCP**：写入 `opencode.json` 的 `mcp` 段，格式 `{ type: 'local'|'remote', command?: [...], url?, enabled, env?/headers? }`（见 `writeMCPConfig` 的 opencode 分支）。
+- **Skills**：OpenCode 没有 skills 目录/symlink 机制，故把每个启用到 opencode 的 Skill **转写为全局 command** 写入 `~/.config/opencode/commands/<skillId>.md`（frontmatter `description`+`agent: build`，正文取自 `SKILL.md` body）。复用 `createSkillSymlink`/`removeSkillSymlink`/`isSkillSymlinkExists` 的 opencode 分支（普通文件而非 symlink）；`getInstalledSkills` 与删 Skill 的 forEach、enable/disable 端点的 target 校验均含 opencode。语义差异：OpenCode command 是 `/skill-id` 显式触发的提示词模板，非 Claude Skill 的按需能力包。
 
 #### 9. Tauri Desktop Application - `tauri/`
 - **src/main.rs**: Tauri main process (Rust)
@@ -666,7 +674,7 @@ aicos version            # Show current version information
 3. **Config File**: `~/.aicodeswitch/aicodeswitch.conf` (PORT, AUTH)。监听地址由 AUTH 决定（AUTH 开→`0.0.0.0` / AUTH 关→`127.0.0.1`），`HOST` 已忽略；写入本地工具配置与 UI/CLI 展示地址恒为 `127.0.0.1`
 4. **Dev Ports**: UI (4568), Server (4567) - configured in `vite.config.ts` and `server/main.ts`
 5. **Skills Search**: `SKILLSMP_API_KEY` is required for Skills discovery via SkillsMP
-6. **API Endpoints**: All routes are prefixed with `/api/` except proxy routes (`/claude-code/`, `/codex/`)
+6. **API Endpoints**: All routes are prefixed with `/api/` except proxy routes (`/claude-code/`, `/codex/`, `/opencode/`)
 
 ### Tauri Development Tips
 

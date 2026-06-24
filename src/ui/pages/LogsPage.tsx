@@ -249,7 +249,7 @@ function LogsPage() {
               <td>{dayjs(log.timestamp).format('YYYY-MM-DD HH:mm:ss')}</td>
               <td>
                 {TARGET_TYPE[log.targetType!] ? (
-                  <span className={`badge ${log.targetType === 'claude-code' ? 'badge-claude-code' : log.targetType === 'codex' ? 'badge-codex' : 'badge-info'}`}>
+                  <span className={`badge ${log.targetType === 'claude-code' ? 'badge-claude-code' : log.targetType === 'codex' ? 'badge-codex' : log.targetType === 'opencode' ? 'badge-opencode' : 'badge-info'}`}>
                     {TARGET_TYPE[log.targetType!]}
                   </span>
                 ) : '-'}
@@ -406,6 +406,7 @@ function LogsPage() {
               <option value="">全部</option>
               <option value="claude-code">Claude Code</option>
               <option value="codex">Codex</option>
+              <option value="opencode">OpenCode</option>
             </select>
           </div>
           <div style={filterItemStyle}>

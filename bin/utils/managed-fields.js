@@ -56,9 +56,21 @@ const CODEX_AUTH_MANAGED_FIELDS = [
   'OPENAI_API_KEY',
 ];
 
+/**
+ * OpenCode opencode.json 管理字段列表
+ * 托管整个 provider.aicodeswitch 段与 model/small_model/mcp
+ */
+const OPENCODE_CONFIG_MANAGED_FIELDS = [
+  'provider.aicodeswitch',
+  'model',
+  'small_model',
+  'mcp',
+];
+
 module.exports = {
   CLAUDE_SETTINGS_MANAGED_FIELDS,
   CLAUDE_JSON_MANAGED_FIELDS,
   CODEX_CONFIG_MANAGED_FIELDS,
   CODEX_AUTH_MANAGED_FIELDS,
+  OPENCODE_CONFIG_MANAGED_FIELDS,
 };

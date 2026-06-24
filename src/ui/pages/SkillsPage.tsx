@@ -16,6 +16,9 @@ type InstallState = {
   selectedTargets: TargetType[];
 };
 
+const toolDisplayName = (t: TargetType): string =>
+  t === 'claude-code' ? 'Claude Code' : t === 'opencode' ? 'OpenCode' : 'Codex';
+
 interface DeleteConfirmState {
   skillId: string | null;
   skillName: string;
@@ -182,7 +185,7 @@ function SkillsPage() {
           progress: 100,
         }));
         if (targets.length > 0) {
-          toast.success(`已安装到 ${targets.map(t => t === 'claude-code' ? 'Claude Code' : 'Codex').join(', ')}`);
+          toast.success(`已安装到 ${targets.map(t => toolDisplayName(t)).join(', ')}`);
         } else {
           toast.success('安装完成！可在列表中启用目标');
         }
@@ -223,10 +226,10 @@ function SkillsPage() {
     try {
       if (enabled) {
         await api.enableSkill(skillId, targetType);
-        toast.success(`已启用 ${targetType === 'claude-code' ? 'Claude Code' : 'Codex'}`);
+        toast.success(`已启用 ${toolDisplayName(targetType)}`);
       } else {
         await api.disableSkill(skillId, targetType);
-        toast.success(`已禁用 ${targetType === 'claude-code' ? 'Claude Code' : 'Codex'}`);
+        toast.success(`已禁用 ${toolDisplayName(targetType)}`);
       }
       await loadInstalledSkills();
     } catch (error) {
@@ -443,6 +446,12 @@ function SkillsPage() {
                 enabled={skill.enabledTargets.includes('codex')}
                 onChange={handleSkillSwitchChange}
               />
+              <SkillSwitch
+                skillId={skill.id}
+                targetType="opencode"
+                enabled={skill.enabledTargets.includes('opencode')}
+                onChange={handleSkillSwitchChange}
+              />
             </div>
           </div>
         ))}
@@ -615,6 +624,15 @@ function SkillsPage() {
                             style={{ width: '18px', height: '18px', cursor: 'pointer' }}
                           />
                           <span style={{ fontSize: '14px' }}>Codex</span>
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={installState.selectedTargets.includes('opencode')}
+                            onChange={(e) => handleTargetCheckboxChange('opencode', e.target.checked)}
+                            style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                          />
+                          <span style={{ fontSize: '14px' }}>OpenCode</span>
                         </label>
                       </div>
                     </div>
@@ -832,6 +850,20 @@ function SkillsPage() {
                       }}
                     />
                     Codex
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={createSkillForm.targets.includes('opencode')}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setCreateSkillForm(prev => ({ ...prev, targets: [...prev.targets, 'opencode'] }));
+                        } else {
+                          setCreateSkillForm(prev => ({ ...prev, targets: prev.targets.filter(t => t !== 'opencode') }));
+                        }
+                      }}
+                    />
+                    OpenCode
                   </label>
                 </div>
               </div>

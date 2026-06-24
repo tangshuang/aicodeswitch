@@ -9,6 +9,7 @@ import { useRulesStatus } from '../hooks/useRulesStatus';
 import QuickSetupModal from '../components/QuickSetupModal';
 import openaiIcon from '../assets/openai.webp';
 import claudeIcon from '../assets/claude.webp';
+import { OpenCodeIcon } from '../components/AgentIcons';
 
 const CONTENT_TYPE_OPTIONS = [
   { value: 'compact', label: '压缩对话', icon: '📦' },
@@ -179,6 +180,8 @@ export default function RoutesPage() {
   const [autocompactPctDirty, setAutocompactPctDirty] = useState(false);
   const [codexDefaultModelInput, setCodexDefaultModelInput] = useState<string>('');
   const [codexDefaultModelDirty, setCodexDefaultModelDirty] = useState(false);
+  const [opencodeDefaultModelInput, setOpencodeDefaultModelInput] = useState<string>('');
+  const [opencodeDefaultModelDirty, setOpencodeDefaultModelDirty] = useState(false);
 
   // 路由绑定会话相关状态
   const [boundSessionCounts, setBoundSessionCounts] = useState<Record<string, number>>({});
@@ -381,6 +384,8 @@ export default function RoutesPage() {
       setAutocompactPctDirty(false);
       setCodexDefaultModelInput(data.codexDefaultModel || '');
       setCodexDefaultModelDirty(false);
+      setOpencodeDefaultModelInput(data.opencodeDefaultModel || '');
+      setOpencodeDefaultModelDirty(false);
       setRuleGlobalTimeout(
         typeof data.ruleGlobalTimeout === 'number' && data.ruleGlobalTimeout > 0
           ? String(data.ruleGlobalTimeout)
@@ -817,6 +822,21 @@ export default function RoutesPage() {
     }
   };
 
+  const handleSaveOpencodeDefaultModel = async () => {
+    try {
+      const current = appConfig || {};
+      await api.updateConfig({
+        ...current,
+        opencodeDefaultModel: opencodeDefaultModelInput.trim() || undefined,
+      });
+      toast.success('默认模型已保存（重启 OpenCode 后生效）');
+      setOpencodeDefaultModelDirty(false);
+      await loadAppConfig();
+    } catch (error: any) {
+      toast.error('保存失败: ' + error.message);
+    }
+  };
+
   const handleUpdateRuleGlobalTimeout = async () => {
     try {
       const current = appConfig || {};
@@ -1209,6 +1229,38 @@ export default function RoutesPage() {
                             />
                             <span className="route-icon-popover">
                               {toolBindings?.['claude-code']?.routeId === route.id ? 'Claude Code 已绑定此路由，点击解绑' : '点击将 Claude Code 绑定到此路由'}
+                            </span>
+                          </div>
+                          {/* OpenCode 绑定图标 */}
+                          <div style={{ position: 'relative' }}>
+                            <div
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isConfiguringBinding) return;
+                                if (toolBindings?.['opencode']?.routeId === route.id) {
+                                  handleDeactivateToolRoute('opencode');
+                                } else {
+                                  handleActivateToolRoute('opencode', route.id);
+                                }
+                              }}
+                              style={{
+                                width: '18px',
+                                height: '18px',
+                                borderRadius: '50%',
+                                cursor: isConfiguringBinding ? 'wait' : 'pointer',
+                                opacity: toolBindings?.['opencode']?.routeId === route.id ? 1 : 0.1,
+                                transition: 'opacity 0.2s ease',
+                                flexShrink: 0,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                color: '#10B981',
+                              }}
+                            >
+                              <OpenCodeIcon size={18} />
+                            </div>
+                            <span className="route-icon-popover">
+                              {toolBindings?.['opencode']?.routeId === route.id ? 'OpenCode 已绑定此路由，点击解绑' : '点击将 OpenCode 绑定到此路由'}
                             </span>
                           </div>
                         </div>
@@ -2096,6 +2148,84 @@ export default function RoutesPage() {
         </div>
       </div>
 
+      <div className="card" style={{ marginTop: '20px' }}>
+        <div className="toolbar">
+          <h3>OpenCode 全局配置</h3>
+        </div>
+        <div style={{ padding: '20px' }}>
+          <div className="tool-binding-block">
+            <div className="tool-binding-label">
+              <span className="tool-binding-label-icon">⚡</span>
+              激活路由
+            </div>
+            <div className="tool-binding-row">
+              <select
+                id="opencode-route-binding"
+                value={toolBindings?.['opencode']?.routeId || ''}
+                onChange={(e) => {
+                  const routeId = e.target.value || null;
+                  if (routeId) {
+                    handleActivateToolRoute('opencode', routeId);
+                  }
+                }}
+                disabled={isConfiguringBinding === 'opencode'}
+              >
+                <option value="">选择要激活的路由...</option>
+                {routes.map(r => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}{toolBindings?.['opencode']?.routeId === r.id ? ' (已激活)' : ''}
+                  </option>
+                ))}
+              </select>
+              {toolBindings?.['opencode']?.routeId && (
+                <button
+                  className="btn btn-warning tool-binding-deactivate-btn"
+                  onClick={() => handleDeactivateToolRoute('opencode')}
+                  disabled={isConfiguringBinding === 'opencode'}
+                >
+                  {isConfiguringBinding === 'opencode' ? '处理中...' : '停用'}
+                </button>
+              )}
+            </div>
+            <div className="tool-binding-desc">
+              选择一条路由用于 OpenCode 代理请求。激活后，/opencode/ 路径的请求将使用该路由的规则。
+            </div>
+          </div>
+          <div
+            className="form-group"
+            style={{
+              marginBottom: '0',
+              maxWidth: '420px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+            }}
+          >
+            <label
+              htmlFor="opencode-default-model"
+              style={{ marginBottom: 0, minWidth: '100px', whiteSpace: 'nowrap' }}
+            >
+              默认模型
+            </label>
+            <input
+              id="opencode-default-model"
+              type="text"
+              value={opencodeDefaultModelInput}
+              onChange={(e) => {
+                setOpencodeDefaultModelInput(e.target.value);
+                setOpencodeDefaultModelDirty(e.target.value !== (appConfig?.opencodeDefaultModel || ''));
+              }}
+              onBlur={() => { if (opencodeDefaultModelDirty) handleSaveOpencodeDefaultModel(); }}
+              placeholder="例如：claude-sonnet-4-20250514"
+              style={{ flex: 1, minWidth: 0 }}
+            />
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+            设置后写入 ~/.config/opencode/opencode.json 的 provider.aicodeswitch 模型映射，重启 OpenCode 后生效。留空则使用默认模型。
+          </div>
+        </div>
+      </div>
+
       {/* 配置文件自动管理说明 - 独立容器 */}
       <div className="card" style={{ marginTop: '20px' }}>
         <div className="toolbar">
@@ -2162,6 +2292,7 @@ export default function RoutesPage() {
             <ul style={{ marginTop: '8px', paddingLeft: '20px', color: '#666' }}>
               <li><strong>Claude Code:</strong> ~/.claude/settings.json, ~/.claude.json</li>
               <li><strong>Codex:</strong> ~/.codex/config.toml, ~/.codex/auth.json</li>
+              <li><strong>OpenCode:</strong> ~/.config/opencode/opencode.json（写入 provider.aicodeswitch 段，经 @ai-sdk/openai-compatible 指向 /opencode/v1，使用 OpenAI Chat Completions 格式）</li>
             </ul>
           </details>
         </div>
@@ -2866,8 +2997,8 @@ export default function RoutesPage() {
                         {s.title?.replace(/<\/?session>/g, '').trim() || s.id.slice(0, 8)}
                       </div>
                       <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', display: 'flex', gap: '12px', alignItems: 'center' }}>
-                        <span className={`badge ${s.targetType === 'claude-code' ? 'badge-claude-code' : 'badge-codex'}`} style={{ fontSize: '11px' }}>
-                          {s.targetType === 'claude-code' ? 'Claude Code' : 'Codex'}
+                        <span className={`badge ${s.targetType === 'claude-code' ? 'badge-claude-code' : s.targetType === 'opencode' ? 'badge-opencode' : 'badge-codex'}`} style={{ fontSize: '11px' }}>
+                          {s.targetType === 'claude-code' ? 'Claude Code' : s.targetType === 'opencode' ? 'OpenCode' : 'Codex'}
                         </span>
                         <span>{s.requestCount} 次请求</span>
                         <span>{s.totalTokens.toLocaleString()} tokens</span>

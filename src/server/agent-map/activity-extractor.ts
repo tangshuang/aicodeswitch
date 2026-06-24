@@ -9,12 +9,12 @@
  * - 兼容 Claude / OpenAI Chat / OpenAI Responses / Gemini 四种格式 + 流式 / 非流式
  * - 复用前端 session-chat-utils 的解析思路（服务端实现一份，避免跨进程共享 .tsx）
  */
-import type { ActivityEvent } from '../../types';
+import type { ActivityEvent, ToolType } from '../../types';
 
 /** 解析输入参数 */
 export interface ExtractInput {
   sessionId: string;
-  agent: 'claude-code' | 'codex';
+  agent: ToolType;
   timestamp: number;
   source?: 'global' | 'access-key';
   keyId?: string;
@@ -291,7 +291,7 @@ function nextId(ts: number): string {
  * 解析下游响应（downstreamResponseBody，已是客户端协议格式）；兼容流式 SSE 文本与非流式 JSON。
  */
 export function detectTurnEnd(
-  agent: 'claude-code' | 'codex',
+  agent: ToolType,
   downstream: any,
   responseBody?: any,
 ): boolean | null {
@@ -304,6 +304,12 @@ export function detectTurnEnd(
     // Responses：含 function_call → 还要继续；否则有完成态 → 本轮结束
     if (/"type"\s*:\s*"function_call"/.test(raw)) return false;
     if (/"type"\s*:\s*"response\.completed"/.test(raw) || /"status"\s*:\s*"completed"/.test(raw)) return true;
+    return null;
+  }
+  if (agent === 'opencode') {
+    // OpenAI Chat Completions：tool_calls 仍在 → 继续；finish_reason=stop / [DONE] → 本轮结束
+    if (/"finish_reason"\s*:\s*"tool_calls"/.test(raw)) return false;
+    if (/"finish_reason"\s*:\s*"(stop|length|content_filter)"/.test(raw) || /\[DONE\]/.test(raw)) return true;
     return null;
   }
   // Claude：看 stop_reason（流式 message_delta 或非流式 JSON 都带该字段）

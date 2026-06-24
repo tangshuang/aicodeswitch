@@ -93,8 +93,10 @@ interface BackendAPI {
 
   writeClaudeConfig: (enableAgentTeams?: boolean, enableBypassPermissionsSupport?: boolean, permissionsDefaultMode?: ClaudePermissionDefaultMode) => Promise<boolean>;
   writeCodexConfig: (modelReasoningEffort?: CodexReasoningEffort, enableMemories?: boolean) => Promise<boolean>;
+  writeOpencodeConfig: (defaultModel?: string) => Promise<boolean>;
   restoreClaudeConfig: () => Promise<boolean>;
   restoreCodexConfig: () => Promise<boolean>;
+  restoreOpencodeConfig: () => Promise<boolean>;
   checkClaudeBackup: () => Promise<{ exists: boolean }>;
   checkCodexBackup: () => Promise<{ exists: boolean }>;
   updateClaudeAgentTeams: (enableAgentTeams: boolean) => Promise<boolean>;
@@ -460,8 +462,14 @@ export const api: BackendAPI = {
       method: 'POST',
       body: JSON.stringify({ modelReasoningEffort, enableMemories })
     }),
+  writeOpencodeConfig: (defaultModel?: string) =>
+    requestJson(buildUrl('/api/write-config/opencode'), {
+      method: 'POST',
+      body: JSON.stringify({ defaultModel })
+    }),
   restoreClaudeConfig: () => requestJson(buildUrl('/api/restore-config/claude'), { method: 'POST' }),
   restoreCodexConfig: () => requestJson(buildUrl('/api/restore-config/codex'), { method: 'POST' }),
+  restoreOpencodeConfig: () => requestJson(buildUrl('/api/restore-config/opencode'), { method: 'POST' }),
   updateClaudeAgentTeams: (enableAgentTeams: boolean) =>
     requestJson(buildUrl('/api/update-claude-agent-teams'), {
       method: 'POST',
