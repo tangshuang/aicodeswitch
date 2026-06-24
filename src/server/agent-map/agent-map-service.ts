@@ -710,6 +710,7 @@ export class AgentMapService extends EventEmitter {
     if (!this.notifyEnabled) return;
     if (st.notifiedForTurn) return;                 // 本轮已调度
     if (st.lastStatusCode === 499) return;          // 用户主动取消，不弹
+    if (st.thinkingInFlight > 0) return;            // 仍有思考请求在途，暂不弹结束通知
     st.notifiedForTurn = true;
     this.scheduleNotify(st, isError);
   }
@@ -790,7 +791,9 @@ export class AgentMapService extends EventEmitter {
         }
         // 已开始产出：思考请求用更宽的 THINKING_SILENCE_MS，否则 SSE_SILENCE_MS（30s）
         const limit = args.thinkingInFlight > 0 ? this.thinkingSilenceMs : this.sseSilenceMs;
-        const since = args.streamFirstChunkAt;
+        // 静默基准用「最近一次活动」（每个下游 chunk 经 heartbeat 刷新），而非首个 chunk 时刻：
+        // 否则任何总时长超过 30s 的流式响应都会被误判为停滞，在响应仍正常输出时弹出「任务已结束」通知。
+        const since = args.lastActivityAt;
         if (args.now - since <= limit) {
           return { status: 'active', reason: args.thinkingInFlight > 0 ? 'thinking' : 'streaming', notifyEligible: true };
         }

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-06-24: 修复任务地图「结束提醒」在长响应/思考过程中误弹通知
+
+### 修复
+- **根因**：`agent-map-service.ts` 的 `inferStatus` 判断流式是否停滞时，静默时长以「首个 chunk 时刻」(`streamFirstChunkAt`) 为基准，而该字段只在首个 chunk 设置一次、之后永不更新。导致任何总时长超过 30s 的流式响应（思考类超过 3min）即使 chunk 持续到达，也会被 15s sweep 误判为 `stream stalled` → 清零在途计数 → 弹出「任务已结束」通知，体感为「思考/对话过程中反复弹通知」。
+- **修复**：将流式静默基准改为「最近一次活动时刻」(`lastActivityAt`，每个下游 chunk 经 `heartbeat` 刷新)，语义修正为「距上一个 chunk 超过 30s/3min 才算停滞」。chunk 持续到达即保持 active，只有真实静默间隙才落 idle。
+- **加固**：`considerEndNotify` 增加 `thinkingInFlight > 0` 时抑制结束通知，避免思考计数未归零的边角场景误弹。
+- 文件：`src/server/agent-map/agent-map-service.ts`。
+
 ## 2026-06-23: 移除 Claude Code / Codex 安装检查功能
 
 - 删除启动时检测工具是否安装及一键安装的全部逻辑：后端 `tools-service.ts`、`websocket-service.ts`、`/api/tools/status`、`/api/tools/install`（WS），前端 `ToolsInstallModal.tsx`、`NotificationBar.tsx`、`Terminal.tsx`，以及 App.tsx 的启动检查与 api/client.ts、types 的相关代码。
