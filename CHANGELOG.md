@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-06-26: 修复 GLM 等第三方 Claude 端点报 `Unsupported content type: server_tool_use`
+
+### 修复
+- Claude Code 使用 Anthropic 内置 Web Search / Web Fetch 等服务端工具后，history 里会带回 `server_tool_use` / `web_search_tool_result` / `server_tool_result` / `advisor_tool_result` 等 Anthropic 专有内容块，GLM、MiniMax 等第三方 Claude 兼容端点不识别，报 `Unsupported content type: server_tool_use`。
+- 扩展 `conversions/server-tool/mapper.ts`（`sanitizeServerToolArtifacts`）：转发到非 Anthropic 原生端点前，把 `server_tool_use` 改名为 `tool_use`、把各类服务端结果块降级为标准 `tool_result`（保持 id 配对）、并从 `tools` 数组剔除服务端工具定义（`web_search_*` / `computer_*` / `bash_*` / `text_editor_*` / `code_execution_*` 等）。
+- 修复 `conversions/index.ts` `transformRequest` 未把 `serverToolConfig` 透传给 `buildTargetBody` 的接线 Bug，使 `getServerToolSupport` 的 provider 判定真实生效（Anthropic 原生端点保留原块，其余端点命中清理）。
+
 ## 2026-06-24: 任务雷达会话标题与会话列表对齐
 
 ### 修复

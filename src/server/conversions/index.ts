@@ -21,7 +21,7 @@ export { detectRequestFormat, isOfficialOpenAiApi } from './detector.js';
 export { getReasoningConfig } from './thinking/providers.js';
 import { applyReasoningConfig } from './thinking/providers.js';
 export { getServerToolSupport } from './server-tool/providers.js';
-import { convertServerToolUseToToolUse } from './server-tool/mapper.js';
+import { sanitizeServerToolArtifacts } from './server-tool/mapper.js';
 
 // --- Body sanitizer ---
 export { sanitizeRequestBody } from './body-sanitizer.js';
@@ -113,9 +113,9 @@ import { claudeThinkingToReasoningEffort } from './thinking/effort.js';
  * Transform a request body from one format to another.
  */
 export function transformRequest(options: TransformRequestOptions): TransformResult {
-  const { fromFormat, toFormat, body, sanitizeBody, providerConfig } = options;
+  const { fromFormat, toFormat, body, sanitizeBody, providerConfig, serverToolConfig } = options;
 
-  const targetBody = buildTargetBody({ fromFormat, toFormat, body, sanitizeBody, providerConfig });
+  const targetBody = buildTargetBody({ fromFormat, toFormat, body, sanitizeBody, providerConfig, serverToolConfig });
 
   return { body: targetBody, headers: {} };
 }
@@ -242,11 +242,13 @@ export function createStreamConverter(options: StreamConverterOptions): StreamCo
 export function buildTargetBody(options: Pick<TransformRequestOptions, 'fromFormat' | 'toFormat' | 'body' | 'sanitizeBody' | 'providerConfig' | 'serverToolConfig'>): any {
   const { fromFormat, toFormat, sanitizeBody, providerConfig, serverToolConfig } = options;
 
-  // Pre-processing: convert server_tool_use → tool_use when upstream doesn't support it.
+  // Pre-processing: strip Anthropic server-tool artifacts (server_tool_use,
+  // web_search_tool_result, server_tool_result, advisor_tool_result, and server-tool
+  // definitions in `tools`) when the upstream doesn't support them.
   // Must happen before format conversion so all pair transformers handle the blocks correctly.
   let processedBody = options.body;
   if (fromFormat === 'claude' && !serverToolConfig?.supportsServerToolUse) {
-    processedBody = convertServerToolUseToToolUse(processedBody);
+    processedBody = sanitizeServerToolArtifacts(processedBody);
   }
 
   // Dispatch to the correct conversion pair
