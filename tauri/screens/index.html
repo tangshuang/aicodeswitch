@@ -206,6 +206,7 @@
       margin-top: 10px;
       display: flex;
       gap: 8px;
+      flex-wrap: wrap;
     }
 
     .error-panel .error-actions button {
@@ -228,6 +229,72 @@
       font-size: 0.75rem;
       margin-top: 12px;
       line-height: 1.5;
+    }
+
+    /* 兜底信息区块（反馈渠道 + CLI 降级） */
+    .fallback-block {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px dashed var(--border-subtle);
+    }
+
+    .fallback-block .fallback-title {
+      color: var(--text-secondary);
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .fallback-block .fallback-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 6px 0;
+    }
+
+    .fallback-block .fallback-row .label {
+      color: var(--text-dim);
+      font-size: 0.75rem;
+      flex-shrink: 0;
+    }
+
+    .fallback-block .fallback-row .value {
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+      font-family: 'SF Mono', 'Menlo', monospace;
+      word-break: break-all;
+    }
+
+    .fallback-block .cli-code {
+      display: block;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin: 6px 0;
+      color: #d8f3dc;
+      font-size: 0.76rem;
+      line-height: 1.6;
+      font-family: 'SF Mono', 'Menlo', monospace;
+      white-space: pre-wrap;
+      user-select: all;
+    }
+
+    .fallback-block .mini-btn {
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-dim);
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.2s;
+    }
+
+    .fallback-block .mini-btn:hover {
+      background: rgba(45, 106, 79, 0.4);
+      color: var(--text-secondary);
     }
 
     /* 版本号 */
@@ -262,7 +329,31 @@
         <button id="copyDiagBtn" type="button">复制诊断信息</button>
       </div>
       <div class="error-hint">
-        可将诊断信息反馈给开发者；也可尝试检查 Node.js 是否安装，或关闭后重新打开重试。
+        可将诊断信息反馈给开发者；也可尝试关闭后重新打开应用重试。若仍无法启动，可改用下方命令行版本。
+      </div>
+
+      <div class="fallback-block">
+        <div class="fallback-title">📎 反馈渠道</div>
+        <div class="fallback-row">
+          <span class="label">GitHub Issues：</span>
+          <span class="value">https://github.com/tangshuang/aicodeswitch/issues</span>
+          <button type="button" class="mini-btn" id="copyIssuesBtn">复制链接</button>
+        </div>
+      </div>
+
+      <div class="fallback-block">
+        <div class="fallback-title">💻 改用命令行（CLI）版本</div>
+        <div class="fallback-row">
+          <span class="label">提示：</span>
+          <span class="value">需先安装 Node.js 18 或以上（https://nodejs.org/）</span>
+        </div>
+        <code class="cli-code" id="cliCode">npm i -g aicodeswitch
+aicos ui
+# aicos ui 会自动启动服务并打开管理页（http://127.0.0.1:4567）
+# 其它：aicos status 查看状态 / aicos stop 停止服务</code>
+        <div class="error-actions">
+          <button id="copyCliBtn" type="button">复制命令</button>
+        </div>
       </div>
     </div>
   </div>
@@ -297,6 +388,12 @@
     }
 
     function guessCause(payload) {
+      if (/无法获取主窗口|界面未能初始化/.test(payload)) {
+        return '最可能原因：主窗口初始化失败，桌面端无法继续，建议改用 CLI 版本。';
+      }
+      if (/无法打开管理界面|导航失败|navigate/i.test(payload)) {
+        return '最可能原因：服务已就绪，但界面无法打开，建议改用 CLI 版本或重试。';
+      }
       if (/未检测到|不可运行|无法运行 Node|未正确安装/.test(payload)) {
         return '最可能原因：Node.js 未正确安装或不在系统 PATH。';
       }
@@ -327,8 +424,53 @@
       document.querySelector('.subtitle').style.color = '#e76f51';
     }
 
+    // 复制到剪贴板的小工具（复用诊断按钮的同款逻辑）
+    function copyText(text, btn, restoreText) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() {
+          btn.textContent = '已复制 ✓';
+          setTimeout(function() { btn.textContent = restoreText; }, 2000);
+        }, function() {
+          btn.textContent = '复制失败';
+          setTimeout(function() { btn.textContent = restoreText; }, 2000);
+        });
+      } else {
+        btn.textContent = '浏览器不支持复制';
+        setTimeout(function() { btn.textContent = restoreText; }, 2000);
+      }
+    }
+
     // 初始日志
     addLog('应用已启动');
+
+    // ── 看门狗：兜底静默卡死 ───────────────────────────────
+    // 原理：成功时 Rust 会 window.navigate() 跳转，页面卸载，本定时器天然失效；
+    //       若既没跳转、也没收到 startup-error，说明出现了静默卡死（如导航失败被吞、
+    //       async 任务 panic），到点后主动展示错误面板 + CLI 兜底，避免无限转圈。
+    var WATCHDOG_MS = 45000; // 覆盖默认 30s 健康检查超时 + 15s 宽限
+    var watchdogTimer = null;
+
+    function armWatchdog() {
+      disarmWatchdog();
+      watchdogTimer = setTimeout(function() {
+        var msg =
+          '启动超时：在 ' + (WATCHDOG_MS / 1000) + ' 秒内未收到服务就绪信号，' +
+          '桌面端可能已卡死（如界面导航失败、或后台任务异常退出）。\n\n' +
+          '建议改用命令行版本启动（见下方「改用命令行版本」）。\n\n' +
+          '【提示】如需排查，可查看日志文件：~/.aicodeswitch/app-launch-debug.log';
+        addLog('启动超时：长时间未收到就绪信号', 'error');
+        showError(msg);
+      }, WATCHDOG_MS);
+    }
+
+    function disarmWatchdog() {
+      if (watchdogTimer) {
+        clearTimeout(watchdogTimer);
+        watchdogTimer = null;
+      }
+    }
+
+    armWatchdog();
 
     // 监听 Tauri 启动日志事件
     if (window.__TAURI__) {
@@ -338,25 +480,27 @@
 
       window.__TAURI__.event.listen('startup-error', function(event) {
         const payload = String(event.payload || '');
+        // 已有明确错误，关闭看门狗避免重复弹
+        disarmWatchdog();
         addLog('启动失败: ' + payload.split('\n')[0], 'error');
         showError(payload);
       });
 
       // 复制诊断信息到剪贴板，方便用户一键反馈给开发者
       document.getElementById('copyDiagBtn').onclick = function() {
-        const text = document.getElementById('errorMsg').textContent || '';
-        const btn = this;
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(function() {
-            btn.textContent = '已复制 ✓';
-            setTimeout(function() { btn.textContent = '复制诊断信息'; }, 2000);
-          }, function() {
-            btn.textContent = '复制失败';
-            setTimeout(function() { btn.textContent = '复制诊断信息'; }, 2000);
-          });
-        } else {
-          btn.textContent = '浏览器不支持复制';
-        }
+        var text = document.getElementById('errorMsg').textContent || '';
+        copyText(text, this, '复制诊断信息');
+      };
+
+      // 复制 GitHub Issues 链接
+      document.getElementById('copyIssuesBtn').onclick = function() {
+        copyText('https://github.com/tangshuang/aicodeswitch/issues', this, '复制链接');
+      };
+
+      // 复制 CLI 命令
+      document.getElementById('copyCliBtn').onclick = function() {
+        var text = document.getElementById('cliCode').textContent || '';
+        copyText(text, this, '复制命令');
       };
     } else {
       addLog('等待启动...');
