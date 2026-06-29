@@ -178,6 +178,9 @@ export default function RoutesPage() {
   const [claudeDefaultModelDirty, setClaudeDefaultModelDirty] = useState(false);
   const [autocompactPctInput, setAutocompactPctInput] = useState<string>('');
   const [autocompactPctDirty, setAutocompactPctDirty] = useState(false);
+  const [claudeMaxRetriesInput, setClaudeMaxRetriesInput] = useState<string>('');
+  const [codexMaxRetriesInput, setCodexMaxRetriesInput] = useState<string>('');
+  const [opencodeMaxRetriesInput, setOpencodeMaxRetriesInput] = useState<string>('');
   const [codexDefaultModelInput, setCodexDefaultModelInput] = useState<string>('');
   const [codexDefaultModelDirty, setCodexDefaultModelDirty] = useState(false);
   const [opencodeDefaultModelInput, setOpencodeDefaultModelInput] = useState<string>('');
@@ -382,6 +385,9 @@ export default function RoutesPage() {
       setClaudeDefaultModelDirty(false);
       setAutocompactPctInput(data.autocompactPctOverride != null ? String(data.autocompactPctOverride) : '');
       setAutocompactPctDirty(false);
+      setClaudeMaxRetriesInput(data.claudeMaxRetries != null ? String(data.claudeMaxRetries) : '');
+      setCodexMaxRetriesInput(data.codexMaxRetries != null ? String(data.codexMaxRetries) : '');
+      setOpencodeMaxRetriesInput(data.opencodeMaxRetries != null ? String(data.opencodeMaxRetries) : '');
       setCodexDefaultModelInput(data.codexDefaultModel || '');
       setCodexDefaultModelDirty(false);
       setOpencodeDefaultModelInput(data.opencodeDefaultModel || '');
@@ -801,6 +807,39 @@ export default function RoutesPage() {
       });
       toast.success('自动压缩百分比已保存（重启 Claude Code 后生效）');
       setAutocompactPctDirty(false);
+      await loadAppConfig();
+    } catch (error: any) {
+      toast.error('保存失败: ' + error.message);
+    }
+  };
+
+  // 最大重试次数保存（Claude Code / Codex / OpenCode 共用，空=默认 5）
+  const handleSaveMaxRetries = async (
+    field: 'claudeMaxRetries' | 'codexMaxRetries' | 'opencodeMaxRetries',
+    value: string,
+    toolLabel: string
+  ) => {
+    const trimmed = value.trim();
+    if (trimmed === '') {
+      try {
+        const current = appConfig || {};
+        await api.updateConfig({ ...current, [field]: undefined });
+        toast.success(`最大重试次数已清除，恢复默认 5（重启 ${toolLabel} 后生效）`);
+        await loadAppConfig();
+      } catch (error: any) {
+        toast.error('保存失败: ' + error.message);
+      }
+      return;
+    }
+    const num = Number(trimmed);
+    if (!Number.isInteger(num) || num < 1 || num > 20) {
+      toast.error('最大重试次数必须为 1-20 的整数');
+      return;
+    }
+    try {
+      const current = appConfig || {};
+      await api.updateConfig({ ...current, [field]: num });
+      toast.success(`最大重试次数已保存（重启 ${toolLabel} 后生效）`);
       await loadAppConfig();
     } catch (error: any) {
       toast.error('保存失败: ' + error.message);
@@ -2000,6 +2039,39 @@ export default function RoutesPage() {
               设置自动压缩百分比阈值（1-100），写入 ~/.claude/settings.json 的 env 字段，重启 Claude Code 后生效。留空则不写入。
             </div>
           </div>
+          <div style={{ marginTop: '20px' }}>
+            <div
+              className="form-group"
+              style={{
+                marginBottom: '0',
+                maxWidth: '420px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}
+            >
+              <label
+                htmlFor="claude-max-retries"
+                style={{ marginBottom: 0, minWidth: '100px', whiteSpace: 'nowrap' }}
+              >
+                最大重试次数
+              </label>
+              <input
+                id="claude-max-retries"
+                type="number"
+                min="1"
+                max="20"
+                value={claudeMaxRetriesInput}
+                onChange={(e) => setClaudeMaxRetriesInput(e.target.value)}
+                onBlur={(e) => handleSaveMaxRetries('claudeMaxRetries', e.target.value, 'Claude Code')}
+                placeholder="默认 5"
+                style={{ flex: 1, minWidth: 0 }}
+              />
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+              设置 Claude Code 请求失败时的最大重试次数（1-20），写入 ~/.claude/settings.json 的 env.CLAUDE_CODE_MAX_RETRIES 字段，重启 Claude Code 后生效。留空则使用默认值 5。
+            </div>
+          </div>
         </div>
       </div>
 
@@ -2109,6 +2181,40 @@ export default function RoutesPage() {
             </div>
             <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
               设置后写入 ~/.codex/config.toml 的 model 字段，重启 Codex 后生效。留空则使用默认值 gpt-5.3-codex。
+            </div>
+          </div>
+
+          <div style={{ marginTop: '20px' }}>
+            <div
+              className="form-group"
+              style={{
+                marginBottom: '0',
+                maxWidth: '420px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}
+            >
+              <label
+                htmlFor="codex-max-retries"
+                style={{ marginBottom: 0, minWidth: '100px', whiteSpace: 'nowrap' }}
+              >
+                最大重试次数
+              </label>
+              <input
+                id="codex-max-retries"
+                type="number"
+                min="1"
+                max="20"
+                value={codexMaxRetriesInput}
+                onChange={(e) => setCodexMaxRetriesInput(e.target.value)}
+                onBlur={(e) => handleSaveMaxRetries('codexMaxRetries', e.target.value, 'Codex')}
+                placeholder="默认 5"
+                style={{ flex: 1, minWidth: 0 }}
+              />
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+              设置 Codex 流式请求的最大重试次数（1-20），写入 ~/.codex/config.toml 的 model_providers.aicodeswitch.stream_max_retries 字段，重启 Codex 后生效。留空则使用默认值 5。
             </div>
           </div>
 
@@ -2222,6 +2328,38 @@ export default function RoutesPage() {
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
             设置后写入 ~/.config/opencode/opencode.json 的 provider.aicodeswitch 模型映射，重启 OpenCode 后生效。留空则使用默认模型。
+          </div>
+          <div
+            className="form-group"
+            style={{
+              marginTop: '20px',
+              marginBottom: '0',
+              maxWidth: '420px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+            }}
+          >
+            <label
+              htmlFor="opencode-max-retries"
+              style={{ marginBottom: 0, minWidth: '100px', whiteSpace: 'nowrap' }}
+            >
+              最大重试次数
+            </label>
+            <input
+              id="opencode-max-retries"
+              type="number"
+              min="1"
+              max="20"
+              value={opencodeMaxRetriesInput}
+              onChange={(e) => setOpencodeMaxRetriesInput(e.target.value)}
+              onBlur={(e) => handleSaveMaxRetries('opencodeMaxRetries', e.target.value, 'OpenCode')}
+              placeholder="默认 5"
+              style={{ flex: 1, minWidth: 0 }}
+            />
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+            设置 OpenCode 请求失败时的最大重试次数（1-20），写入 ~/.config/opencode/opencode.json 的 provider.aicodeswitch.options.maxRetries 字段，重启 OpenCode 后生效。留空则使用默认值 5。
           </div>
         </div>
       </div>

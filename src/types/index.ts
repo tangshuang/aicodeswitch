@@ -270,10 +270,13 @@ export interface AppConfig {
   claudeEffortLevel?: ClaudeEffortLevel;  // Claude Code effort level（全局）
   autocompactPctOverride?: number;  // Claude Code 自动压缩百分比阈值（1-100，全局）
   claudeDefaultModel?: string;  // Claude Code 默认模型（全局）
+  claudeMaxRetries?: number;  // Claude Code 最大重试次数（正整数，全局，默认 5）
   codexModelReasoningEffort?: CodexReasoningEffort;  // Codex reasoning effort（全局）
   codexEnableMemories?: boolean;  // Codex 记忆功能（全局）
   codexDefaultModel?: string;  // Codex 默认模型（全局）
+  codexMaxRetries?: number;  // Codex 最大重试次数（正整数，全局，默认 5）
   opencodeDefaultModel?: string;  // OpenCode 默认模型（全局）
+  opencodeMaxRetries?: number;  // OpenCode 最大重试次数（正整数，全局，默认 5）
   // 代理配置
   proxyEnabled?: boolean;  // 是否启用代理
   proxyUrl?: string;  // 代理地址，例如: proxy.example.com:8080

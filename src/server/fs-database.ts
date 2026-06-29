@@ -57,6 +57,11 @@ const isValidAutocompactPct = (v: unknown): v is number => {
   return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 100;
 };
 
+// 最大重试次数校验：正整数（1-20），非法值返回 undefined（由 write 函数兜底默认 5）
+const isValidMaxRetries = (v: unknown): v is number => {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 20;
+};
+
 const normalizeFailoverRecoverySeconds = (value: unknown): number => {
   const parsed = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -747,6 +752,15 @@ export class FileSystemDatabaseManager {
     }
     if (typeof this.config.autocompactPctOverride !== 'undefined' && !isValidAutocompactPct(this.config.autocompactPctOverride)) {
       this.config.autocompactPctOverride = undefined;
+    }
+    if (typeof this.config.claudeMaxRetries !== 'undefined' && !isValidMaxRetries(this.config.claudeMaxRetries)) {
+      this.config.claudeMaxRetries = undefined;
+    }
+    if (typeof this.config.codexMaxRetries !== 'undefined' && !isValidMaxRetries(this.config.codexMaxRetries)) {
+      this.config.codexMaxRetries = undefined;
+    }
+    if (typeof this.config.opencodeMaxRetries !== 'undefined' && !isValidMaxRetries(this.config.opencodeMaxRetries)) {
+      this.config.opencodeMaxRetries = undefined;
     }
     this.config.failoverRecoverySeconds = normalizeFailoverRecoverySeconds(this.config.failoverRecoverySeconds);
     if (typeof this.config.ruleGlobalTimeout !== 'number' || this.config.ruleGlobalTimeout <= 0) {
@@ -1789,6 +1803,15 @@ export class FileSystemDatabaseManager {
     }
     if (typeof merged.autocompactPctOverride !== 'undefined' && !isValidAutocompactPct(merged.autocompactPctOverride)) {
       merged.autocompactPctOverride = undefined;
+    }
+    if (typeof merged.claudeMaxRetries !== 'undefined' && !isValidMaxRetries(merged.claudeMaxRetries)) {
+      merged.claudeMaxRetries = undefined;
+    }
+    if (typeof merged.codexMaxRetries !== 'undefined' && !isValidMaxRetries(merged.codexMaxRetries)) {
+      merged.codexMaxRetries = undefined;
+    }
+    if (typeof merged.opencodeMaxRetries !== 'undefined' && !isValidMaxRetries(merged.opencodeMaxRetries)) {
+      merged.opencodeMaxRetries = undefined;
     }
     merged.failoverRecoverySeconds = normalizeFailoverRecoverySeconds(merged.failoverRecoverySeconds);
     if (typeof merged.ruleGlobalTimeout !== 'number' || merged.ruleGlobalTimeout <= 0) {

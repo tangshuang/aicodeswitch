@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-06-29: 三个编程工具最大重试次数改为可配置（默认 5）
+
+### 新增
+- Claude Code / Codex / OpenCode 三个工具的「最大重试次数」从硬编码改为全局可配置，各自独立、默认 5 次。
+- `AppConfig` 新增 `claudeMaxRetries` / `codexMaxRetries` / `opencodeMaxRetries`（正整数 1-20，留空走默认 5）。
+- 写入字段：Claude Code → `~/.claude/settings.json` 的 `env.CLAUDE_CODE_MAX_RETRIES`；Codex → `~/.codex/config.toml` 的 `model_providers.aicodeswitch.stream_max_retries`；OpenCode → `~/.config/opencode/opencode.json` 的 `provider.aicodeswitch.options.maxRetries`。
+- 路由管理页三张工具配置卡片各新增「最大重试次数」输入框，onBlur 保存，复用通用 `PUT /api/config`，由 `syncConfigsOnGlobalConfigUpdate` 自动重写工具配置文件。
+
 ## 2026-06-26: 修复 GLM 等第三方 Claude 端点报 `Unsupported content type: server_tool_use`
 
 ### 修复

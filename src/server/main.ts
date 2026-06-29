@@ -318,6 +318,7 @@ const writeClaudeConfig = async (
   effortLevel?: ClaudeEffortLevel,
   defaultModel?: string,
   autocompactPctOverride?: number,
+  maxRetries?: number,
   options: ToolConfigWriteOptions = {}
 ): Promise<boolean> => {
   try {
@@ -379,7 +380,7 @@ const writeClaudeConfig = async (
       ANTHROPIC_BASE_URL: `http://${clientHost}:${port}/claude-code`,
       API_TIMEOUT_MS: "3000000",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
-      CLAUDE_CODE_MAX_RETRIES: 3
+      CLAUDE_CODE_MAX_RETRIES: maxRetries ?? 5
     };
 
     // 如果启用Agent Teams功能，添加对应的环境变量
@@ -507,6 +508,7 @@ const writeCodexConfig = async (
   modelReasoningEffort: CodexReasoningEffort = DEFAULT_CODEX_REASONING_EFFORT,
   codexDefaultModel?: string,
   enableMemories?: boolean,
+  maxRetries?: number,
   options: ToolConfigWriteOptions = {}
 ): Promise<boolean> => {
   try {
@@ -575,7 +577,7 @@ const writeCodexConfig = async (
           name: "aicodeswitch",
           base_url: `http://${clientHost}:${port}/codex`,
           wire_api: "responses",
-          stream_max_retries: 3,
+          stream_max_retries: maxRetries ?? 5,
           stream_retry_backoff: "fixed"
         }
       }
@@ -864,6 +866,7 @@ const DEFAULT_OPENCODE_MODEL = 'claude-sonnet-4-20250514';
 const writeOpencodeConfig = async (
   _dbManager: FileSystemDatabaseManager,
   defaultModel?: string,
+  maxRetries?: number,
   options: ToolConfigWriteOptions = {}
 ): Promise<boolean> => {
   try {
@@ -921,7 +924,8 @@ const writeOpencodeConfig = async (
           name: 'AICodeSwitch',
           options: {
             baseURL: `http://${clientHost}:${port}/opencode/v1`,
-            apiKey: 'api_key'
+            apiKey: 'api_key',
+            maxRetries: maxRetries ?? 5
           },
           models: {
             [model]: { name: model }
@@ -1060,7 +1064,8 @@ const syncConfigsOnServerStartup = async (dbManager: FileSystemDatabaseManager):
     config.claudePermissionsDefaultMode,
     claudeEffortLevel,
     config.claudeDefaultModel,
-    config.autocompactPctOverride
+    config.autocompactPctOverride,
+    config.claudeMaxRetries
   );
   console.log(`[Startup Config Sync] Claude Code config ${claudeWritten ? 'written' : 'skipped'}`);
 
@@ -1071,13 +1076,15 @@ const syncConfigsOnServerStartup = async (dbManager: FileSystemDatabaseManager):
     dbManager,
     modelReasoningEffort,
     config.codexDefaultModel,
-    config.codexEnableMemories
+    config.codexEnableMemories,
+    config.codexMaxRetries
   );
   console.log(`[Startup Config Sync] Codex config ${codexWritten ? 'written' : 'skipped'}`);
 
   const opencodeWritten = await writeOpencodeConfig(
     dbManager,
-    config.opencodeDefaultModel
+    config.opencodeDefaultModel,
+    config.opencodeMaxRetries
   );
   console.log(`[Startup Config Sync] OpenCode config ${opencodeWritten ? 'written' : 'skipped'}`);
 };
@@ -1096,6 +1103,7 @@ const syncConfigsOnGlobalConfigUpdate = async (dbManager: FileSystemDatabaseMana
     claudeEffortLevel,
     config.claudeDefaultModel,
     config.autocompactPctOverride,
+    config.claudeMaxRetries,
     { allowOverwriteRefresh: true }
   );
   console.log(`[Config Update Sync] Claude Code config ${claudeUpdated ? 'written' : 'skipped'}`);
@@ -1108,6 +1116,7 @@ const syncConfigsOnGlobalConfigUpdate = async (dbManager: FileSystemDatabaseMana
     modelReasoningEffort,
     config.codexDefaultModel,
     config.codexEnableMemories,
+    config.codexMaxRetries,
     { allowOverwriteRefresh: true }
   );
   console.log(`[Config Update Sync] Codex config ${codexUpdated ? 'written' : 'skipped'}`);
@@ -1115,6 +1124,7 @@ const syncConfigsOnGlobalConfigUpdate = async (dbManager: FileSystemDatabaseMana
   const opencodeUpdated = await writeOpencodeConfig(
     dbManager,
     config.opencodeDefaultModel,
+    config.opencodeMaxRetries,
     { allowOverwriteRefresh: true }
   );
   console.log(`[Config Update Sync] OpenCode config ${opencodeUpdated ? 'written' : 'skipped'}`);
@@ -2898,7 +2908,8 @@ ${instruction}
         permissionsDefaultMode,
         undefined,
         appConfig.claudeDefaultModel,
-        appConfig.autocompactPctOverride
+        appConfig.autocompactPctOverride,
+        appConfig.claudeMaxRetries
       );
       applyWriteLocalRecords(proxyServer);
       res.json(result);
@@ -2923,7 +2934,8 @@ ${instruction}
         dbManager,
         modelReasoningEffort,
         appConfig.codexDefaultModel,
-        enableMemories
+        enableMemories,
+        appConfig.codexMaxRetries
       );
       applyWriteLocalRecords(proxyServer);
       res.json(result);
@@ -2938,7 +2950,8 @@ ${instruction}
       const defaultModel = requestedModel || appConfig.opencodeDefaultModel;
       const result = await writeOpencodeConfig(
         dbManager,
-        defaultModel
+        defaultModel,
+        appConfig.opencodeMaxRetries
       );
       applyWriteLocalRecords(proxyServer);
       res.json(result);
