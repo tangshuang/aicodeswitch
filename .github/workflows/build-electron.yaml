@@ -67,7 +67,7 @@ jobs:
           - os: windows-latest
             platform: windows
             arch: x64
-            args: "--win nsis msi"
+            args: "--win nsis"
           - os: macos-14
             platform: macos
             arch: arm64
@@ -119,12 +119,11 @@ jobs:
           ARCH="${{ matrix.arch }}"
           mkdir -p normalized
           cd release || exit 0
-          for f in *.exe *.msi *.dmg *.zip *.AppImage *.deb; do
+          for f in *.exe *.dmg *.zip *.AppImage *.deb; do
             [ -e "$f" ] || continue
             ext="${f##*.}"
             case "$ext" in
               exe) base="AI-Code-Switch-${VERSION}-Windows-${ARCH}";;
-              msi) base="AI-Code-Switch-${VERSION}-Windows-${ARCH}";;
               dmg) base="AI-Code-Switch-${VERSION}-macOS-${ARCH}";;
               zip) base="AI-Code-Switch-${VERSION}-macOS-${ARCH}";;
               AppImage) base="AI-Code-Switch-${VERSION}-Linux-${ARCH}";;
@@ -168,7 +167,6 @@ jobs:
             ### Windows
 
             - 推荐下载 **`.exe`** 安装包（NSIS），支持选择安装目录、无需管理员权限。
-            - **`.msi`** 安装包需在管理员 CMD 中执行 `msiexec /i "安装包.msi"`，或右键「以管理员身份运行」。
 
             ### macOS
 

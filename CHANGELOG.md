@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-07-07: Windows 桌面端只构建 NSIS (.exe)，移除 MSI 目标
+
+### 修复
+- Windows 构建移除 `msi` 目标，仅保留 `nsis`（`.exe`），规避 electron-builder WiX 链接器报 `LGHT0094: The identifier 'Icon:AICodeSwitchIcon.exe' could not be found` 导致 CI 失败（已知 electron-builder #5744 / #7892，MSI/WiX 工具链对 PNG 自动转 ICO 的支持有缺陷）。
+- `package.json` 的 `build.win.target` 由 `["nsis","msi"]` 改为 `["nsis"]`；CI 矩阵 `args` 由 `--win nsis msi` 改为 `--win nsis`，并同步清理产物归一化脚本与 Release 说明中的 `.msi` 相关分支。
+
+## 2026-07-07: 修复 Linux .deb 构建缺少 maintainer email
+
+### 修复
+- `package.json` 的 `author` 字段补充 `email`（`mail@tangshuang.net`），解决 electron-builder 在 ubuntu 上打 `.deb` 包时报 `Please specify author 'email' in the application package.json` 导致 CI 失败。
+
 ## 2026-07-06: 桌面端从 Tauri 迁移到 Electron
 
 - 桌面端整体从 Tauri (Rust + 外部 Node.js 子进程) 迁移到 Electron，后端以进程内嵌（in-process）方式运行：`electron/main.js` 通过 `require('dist/server/main.js')` 调用其导出的 `start()` / `gracefulShutdown()`，设置 `AIC_IN_PROCESS=1`
