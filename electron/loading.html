@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
   <title>AI Code Switch</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -37,7 +37,6 @@
       max-width: 480px;
     }
 
-    /* Logo 动画 */
     .logo-rings {
       width: 80px;
       height: 80px;
@@ -85,7 +84,6 @@
       margin-bottom: 32px;
     }
 
-    /* 日志面板 */
     .log-panel {
       background: var(--bg-card);
       border: 1px solid var(--border-subtle);
@@ -132,22 +130,10 @@
       animation: blink 1s ease-in-out infinite;
     }
 
-    .log-entry.error {
-      color: #e76f51;
-    }
-
+    .log-entry.error { color: #e76f51; }
     .log-entry.error .dot {
       background: #e76f51;
       box-shadow: 0 0 6px rgba(231, 111, 81, 0.5);
-    }
-
-    .log-entry.done {
-      color: #52b788;
-    }
-
-    .log-entry.done .dot {
-      background: #52b788;
-      box-shadow: 0 0 6px rgba(82, 183, 136, 0.5);
     }
 
     @keyframes fadeIn {
@@ -160,7 +146,6 @@
       50% { opacity: 0.3; }
     }
 
-    /* 错误面板 */
     .error-panel {
       display: none;
       background: rgba(127, 29, 29, 0.3);
@@ -206,6 +191,7 @@
       margin-top: 10px;
       display: flex;
       gap: 8px;
+      flex-wrap: wrap;
     }
 
     .error-panel .error-actions button {
@@ -230,13 +216,69 @@
       line-height: 1.5;
     }
 
-    /* 版本号 */
-    .version {
-      position: fixed;
-      bottom: 16px;
-      right: 20px;
+    .fallback-block {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px dashed var(--border-subtle);
+    }
+
+    .fallback-block .fallback-title {
+      color: var(--text-secondary);
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .fallback-block .fallback-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 6px 0;
+    }
+
+    .fallback-block .fallback-row .label {
       color: var(--text-dim);
       font-size: 0.75rem;
+      flex-shrink: 0;
+    }
+
+    .fallback-block .fallback-row .value {
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+      font-family: 'SF Mono', 'Menlo', monospace;
+      word-break: break-all;
+    }
+
+    .fallback-block .cli-code {
+      display: block;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin: 6px 0;
+      color: #d8f3dc;
+      font-size: 0.76rem;
+      line-height: 1.6;
+      font-family: 'SF Mono', 'Menlo', monospace;
+      white-space: pre-wrap;
+      user-select: all;
+    }
+
+    .fallback-block .mini-btn {
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-dim);
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.2s;
+    }
+
+    .fallback-block .mini-btn:hover {
+      background: rgba(45, 106, 79, 0.4);
+      color: var(--text-secondary);
     }
   </style>
 </head>
@@ -262,12 +304,34 @@
         <button id="copyDiagBtn" type="button">复制诊断信息</button>
       </div>
       <div class="error-hint">
-        可将诊断信息反馈给开发者；也可尝试检查 Node.js 是否安装，或关闭后重新打开重试。
+        可将诊断信息反馈给开发者；也可尝试关闭后重新打开应用重试。若仍无法启动，可改用下方命令行版本。
+      </div>
+
+      <div class="fallback-block">
+        <div class="fallback-title">📎 反馈渠道</div>
+        <div class="fallback-row">
+          <span class="label">GitHub Issues：</span>
+          <span class="value">https://github.com/tangshuang/aicodeswitch/issues</span>
+          <button type="button" class="mini-btn" id="copyIssuesBtn">复制链接</button>
+        </div>
+      </div>
+
+      <div class="fallback-block">
+        <div class="fallback-title">💻 改用命令行（CLI）版本</div>
+        <div class="fallback-row">
+          <span class="label">提示：</span>
+          <span class="value">需先安装 Node.js 18 或以上（https://nodejs.org/）</span>
+        </div>
+        <code class="cli-code">npm i -g aicodeswitch
+aicos ui
+# aicos ui 会自动启动服务并打开管理页（http://127.0.0.1:4567）
+# 其它：aicos status 查看状态 / aicos stop 停止服务</code>
+        <div class="error-actions">
+          <button id="copyCliBtn" type="button">复制命令</button>
+        </div>
       </div>
     </div>
   </div>
-
-  <div class="version">v2.1.0</div>
 
   <script>
     function getTime() {
@@ -279,7 +343,6 @@
 
     function addLog(msg, type) {
       const panel = document.getElementById('logPanel');
-      // 上一条取消 active
       const prev = panel.querySelector('.log-entry.active');
       if (prev) prev.classList.remove('active');
 
@@ -297,29 +360,30 @@
     }
 
     function guessCause(payload) {
-      if (/未检测到|不可运行|无法运行 Node|未正确安装/.test(payload)) {
-        return '最可能原因：Node.js 未正确安装或不在系统 PATH。';
+      if (/未导出 start|导出/.test(payload)) {
+        return '最可能原因：服务入口构建异常，未导出 start()，建议重新 build。';
       }
-      if (/入口文件.*缺失|not found|Server entry file not found/i.test(payload)) {
-        return '最可能原因：程序文件不完整，建议重新安装。';
+      if (/not found|Server entry file not found|请先执行/.test(payload)) {
+        return '最可能原因：程序文件不完整（dist/server/main.js 缺失），建议重新安装或 build。';
       }
-      if (/EADDRINUSE|端口.*占用|已被占用/.test(payload)) {
+      if (/EADDRINUSE|端口.*占用|已被占用|端口冲突/.test(payload)) {
         return '最可能原因：端口被占用，请关闭其它占用该端口的服务后重试。';
       }
-      if (/已退出|code=|子进程.*退出/.test(payload)) {
-        return '最可能原因：Node 服务进程崩溃，详见下方日志尾部。';
+      if (/未就绪|卡死|超时/.test(payload)) {
+        return '最可能原因：后端启动超时或卡死，详见日志文件 ~/.aicodeswitch/app-launch-debug.log。';
+      }
+      if (/界面加载失败|无法打开管理界面|did-fail-load/.test(payload)) {
+        return '最可能原因：服务已就绪，但界面加载失败，建议重试。';
       }
       return '服务启动失败，请参考下方诊断信息。';
     }
 
     function showError(msg) {
-      // 最后一行标红
       const active = document.querySelector('.log-entry.active');
       if (active) {
         active.classList.remove('active');
         active.classList.add('error');
       }
-
       document.getElementById('errorCause').textContent = guessCause(msg);
       document.getElementById('errorMsg').textContent = msg;
       document.getElementById('errorPanel').classList.add('visible');
@@ -327,40 +391,47 @@
       document.querySelector('.subtitle').style.color = '#e76f51';
     }
 
-    // 初始日志
+    function copyText(text, btn, restoreText) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() {
+          btn.textContent = '已复制 ✓';
+          setTimeout(function() { btn.textContent = restoreText; }, 2000);
+        }, function() {
+          btn.textContent = '复制失败';
+          setTimeout(function() { btn.textContent = restoreText; }, 2000);
+        });
+      } else {
+        btn.textContent = '浏览器不支持复制';
+        setTimeout(function() { btn.textContent = restoreText; }, 2000);
+      }
+    }
+
     addLog('应用已启动');
 
-    // 监听 Tauri 启动日志事件
-    if (window.__TAURI__) {
-      window.__TAURI__.event.listen('startup-log', function(event) {
-        addLog(event.payload);
+    // 通过 preload 暴露的 IPC 接收主进程的启动日志/错误
+    const bridge = window.aicodeswitch;
+    if (bridge && typeof bridge.onStartupLog === 'function') {
+      bridge.onStartupLog(function(msg) { addLog(msg); });
+      bridge.onStartupError(function(payload) {
+        const text = String(payload || '');
+        addLog('启动失败: ' + text.split('\n')[0], 'error');
+        showError(text);
       });
-
-      window.__TAURI__.event.listen('startup-error', function(event) {
-        const payload = String(event.payload || '');
-        addLog('启动失败: ' + payload.split('\n')[0], 'error');
-        showError(payload);
-      });
-
-      // 复制诊断信息到剪贴板，方便用户一键反馈给开发者
-      document.getElementById('copyDiagBtn').onclick = function() {
-        const text = document.getElementById('errorMsg').textContent || '';
-        const btn = this;
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(function() {
-            btn.textContent = '已复制 ✓';
-            setTimeout(function() { btn.textContent = '复制诊断信息'; }, 2000);
-          }, function() {
-            btn.textContent = '复制失败';
-            setTimeout(function() { btn.textContent = '复制诊断信息'; }, 2000);
-          });
-        } else {
-          btn.textContent = '浏览器不支持复制';
-        }
-      };
     } else {
       addLog('等待启动...');
     }
+
+    document.getElementById('copyDiagBtn').onclick = function() {
+      var text = document.getElementById('errorMsg').textContent || '';
+      copyText(text, this, '复制诊断信息');
+    };
+    document.getElementById('copyIssuesBtn').onclick = function() {
+      copyText('https://github.com/tangshuang/aicodeswitch/issues', this, '复制链接');
+    };
+    document.getElementById('copyCliBtn').onclick = function() {
+      var text = document.querySelector('#errorPanel .cli-code').textContent || '';
+      copyText(text, this, '复制命令');
+    };
   </script>
 </body>
 </html>

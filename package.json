@@ -24,7 +24,8 @@
     "development",
     "typescript",
     "express",
-    "react"
+    "react",
+    "electron"
   ],
   "engines": {
     "node": ">=18.0.0"
@@ -45,11 +46,10 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "prepublishOnly": "npm run build",
     "release": "standard-version --no-changelog",
-    "tauri:dev": "tauri dev",
-    "tauri:start": "yarn build && node tauri/prepare-resources.js && cd tauri && cargo run",
-    "tauri:build": "tauri build && node tauri/move-bundle.js",
-    "tauri:icon": "tauri icon src/ui/assets/logo.png",
-    "version:sync": "node tauri/sync-version.js"
+    "electron:dev": "node scripts/electron-icon.js && node scripts/electron-dev.js",
+    "electron:start": "yarn electron:icon && yarn build && electron electron/main.js",
+    "electron:build": "yarn electron:icon && yarn build && electron-builder",
+    "electron:icon": "node scripts/electron-icon.js"
   },
   "standard-version": {
     "skip": {
@@ -72,7 +72,6 @@
     "ws": "^8.19.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.0.0",
     "@types/cors": "^2.8.17",
     "@types/crypto-js": "^4.2.2",
     "@types/express": "^4.17.21",
@@ -87,6 +86,8 @@
     "concurrently": "^8.2.2",
     "cross-env": "^10.1.0",
     "dayjs": "^1.11.19",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
     "eslint": "^8.55.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
@@ -101,5 +102,53 @@
     "tsx": "^4.7.0",
     "typescript": "^5.2.2",
     "vite": "^5.0.8"
+  },
+  "build": {
+    "appId": "net.tangshuang.aicodeswitch",
+    "productName": "AI Code Switch",
+    "copyright": "Copyright © 2026 tangshuang",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "electron/main.js"
+    },
+    "asar": false,
+    "icon": "build/icon.png",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "msi"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "linux": {
+      "category": "Development",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    }
   }
 }

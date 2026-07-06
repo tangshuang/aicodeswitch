@@ -29,17 +29,17 @@ npm run build:ui         # Build React UI to dist/ui
 npm run build:server     # Build TypeScript server to dist/server
 ```
 
-### Tauri Desktop Application
+### Electron Desktop Application
 ```bash
-npm run tauri:dev        # Run Tauri development mode (requires Rust toolchain)
-npm run tauri:build      # Build Tauri desktop application
-npm run tauri:icon       # Generate application icons from source image
+npm run electron:dev     # Run Electron development mode (vite + electron)
+npm run electron:start   # Build and launch Electron app from current dist
+npm run electron:build   # Build Electron desktop application (outputs to release/)
+npm run electron:icon    # Copy logo to build/icon.png
 ```
 
-**Prerequisites for Tauri build:**
-- Rust toolchain (rustc, cargo) - Install from https://rustup.rs/
-- Windows: Microsoft Visual Studio C++ Build Tools
-- macOS: Xcode Command Line Tools
+**Prerequisites for Electron build:**
+- Node.js ≥ 18 (for building only; end users do NOT need Node.js installed — the backend runs in-process inside Electron's bundled Node runtime)
+- electron-builder handles all native packaging toolchain automatically; no Rust toolchain required
 
 ### Linting
 ```bash
@@ -95,35 +95,38 @@ aicos version            # Show current version information
 └─────────────────────────────────────────────────────────────┘
 ```
 
-#### Tauri Desktop Application (Hybrid Architecture)
+#### Electron Desktop Application (In-Process Backend)
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│              Tauri Desktop Application                      │
+│              Electron Desktop Application                   │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │  Tauri Main Process (Rust)                           │  │
+│  │  Electron Main Process (`electron/main.js`)          │  │
 │  │  - Window Management                                 │  │
-│  │  - Node.js Installation Check                        │  │
-│  │  - Node.js Process Lifecycle Management              │  │
-│  │  - System Integration                                │  │
+│  │  - In-Process Express Server                         │  │
+│  │    (require()s dist/server/main.js, calls start())   │  │
+│  │  - Health Polling + navigate to http://127.0.0.1:PORT│  │
+│  │  - gracefulShutdown() on before-quit                 │  │
+│  │  - System Integration (tray, file dialogs)           │  │
 │  └──────────────────────────────────────────────────────┘  │
 │            │                           │                    │
 │            ▼                           ▼                    │
 │  ┌──────────────────┐      ┌──────────────────┐           │
-│  │  WebView (React) │      │  Node.js Backend │           │
-│  │  - UI Components │◄─────┤  - Express Server│           │
-│  │  - User Interface│ HTTP │  - Proxy Logic   │           │
-│  └──────────────────┘      │  - Database      │           │
+│  │  WebView (React) │      │  In-Process Node │           │
+│  │  - UI Components │ HTTP │    Backend       │           │
+│  │  - User Interface│◄─────┤  - Express Server│           │
+│  └──────────────────┘      │  - Proxy Logic   │           │
+│                             │  - Database      │           │
 │                             └──────────────────┘           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Tauri Hybrid Approach Benefits:**
-- **Preserves Existing Code**: Node.js backend remains unchanged
-- **Smaller App Size**: ~10-20MB (vs 150MB+ for Electron)
-- **Better Performance**: Native system integration via Rust
-- **Cross-Platform**: Windows, macOS, Linux support
-- **No Rewrite Required**: Gradual migration path available
+**Electron In-Process Approach Benefits:**
+- **No Node.js Prerequisite**: Backend runs inside Electron's bundled Node runtime; end users never need to install Node.js
+- **Single-Process Simplicity**: No child-process lifecycle, port-detection, or IPC-with-subprocess to manage
+- **No Backend Rewrite**: Existing Express server loaded via `require('dist/server/main.js').start()` works as-is
+- **Cross-Platform**: Windows, macOS, and Linux support via electron-builder
+- **Familiar Toolchain**: Pure JavaScript on the main process side, debuggable with standard Node tooling
 
 ### Core Components
 
@@ -306,21 +309,19 @@ aicos version            # Show current version information
 - **MCP**：写入 `opencode.json` 的 `mcp` 段，格式 `{ type: 'local'|'remote', command?: [...], url?, enabled, env?/headers? }`（见 `writeMCPConfig` 的 opencode 分支）。
 - **Skills**：OpenCode 没有 skills 目录/symlink 机制，故把每个启用到 opencode 的 Skill **转写为全局 command** 写入 `~/.config/opencode/commands/<skillId>.md`（frontmatter `description`+`agent: build`，正文取自 `SKILL.md` body）。复用 `createSkillSymlink`/`removeSkillSymlink`/`isSkillSymlinkExists` 的 opencode 分支（普通文件而非 symlink）；`getInstalledSkills` 与删 Skill 的 forEach、enable/disable 端点的 target 校验均含 opencode。语义差异：OpenCode command 是 `/skill-id` 显式触发的提示词模板，非 Claude Skill 的按需能力包。
 
-#### 9. Tauri Desktop Application - `tauri/`
-- **src/main.rs**: Tauri main process (Rust)
-  - Node.js process lifecycle management
-  - Server startup/shutdown commands
-  - Health check and status monitoring
-  - System integration (window management, tray icon)
-- **Cargo.toml**: Rust dependencies and build configuration
-- **tauri.conf.json**: Tauri application configuration
-  - Window settings (size, title, decorations)
-  - Bundle configuration (icons, resources)
-  - Security policies (CSP, asset protocol)
-  - Build commands and paths
-- **icons/**: Application icon resources
-  - Multiple formats for different platforms (PNG, ICO, ICNS)
-  - Generated via `npm run tauri:icon`
+#### 9. Electron Desktop Application - `electron/`
+- **electron/main.js**: Electron main process
+  - Window management (create, restore, close)
+  - In-process server lifecycle: sets `process.env.AIC_IN_PROCESS='1'`, `PORT`, `NODE_ENV='production'`, then `require()`s `dist/server/main.js` and calls the exported `start()`
+  - Health polling of `http://127.0.0.1:{PORT}/api/...`; once ready, navigates the window from `loading.html` to the served UI
+  - On `before-quit`, calls the server module's exported `gracefulShutdown()` (restores Claude/Codex/OpenCode configs, closes DB/logs, releases the port) — in-process mode does NOT call `process.exit`
+  - System integration (tray icon, file dialogs, app menu)
+- **electron/preload.js**: contextBridge IPC
+  - Exposes `aicodeswitch.onStartupLog(cb)` and `aicodeswitch.onStartupError(cb)` to the renderer so `loading.html` can show real-time startup logs and recover from errors
+- **electron/loading.html**: Startup / error screen
+  - Loaded before the server is ready; shows progress and a watchdog timer
+  - Receives startup logs/errors over the preload bridge; offers fallback guidance (e.g. use the CLI version) on failure
+- **Backend module contract**: `dist/server/main.js` must export `start()` and `gracefulShutdown()`. Electron sets `AIC_IN_PROCESS=1` so the server knows it is running in-process (e.g. skip `process.exit`, keep the event loop alive for the host). The `/api/shutdown` HTTP endpoint remains as a fallback.
 
 ## Key Features
 
@@ -462,7 +463,7 @@ aicos version            # Show current version information
 - 触发入口：
   - `aicos stop`（SIGTERM）
   - 开发态 `Ctrl+C`（SIGINT）
-  - Tauri 生产模式关闭窗口后的服务终止流程
+  - Electron 关闭窗口后通过 before-quit 触发 gracefulQuit()
 - 恢复流程（`restoreClaudeConfig` / `restoreCodexConfig`）：
   - 若 backup 存在：
     - 读取 backup（恢复基线）
@@ -676,59 +677,39 @@ aicos version            # Show current version information
 5. **Skills Search**: `SKILLSMP_API_KEY` is required for Skills discovery via SkillsMP
 6. **API Endpoints**: All routes are prefixed with `/api/` except proxy routes (`/claude-code/`, `/codex/`, `/opencode/`)
 
-### Tauri Development Tips
+### Electron Development Tips
 
 1. **First-Time Setup**:
-   - Install Rust toolchain before running Tauri commands
-   - Run `npm run tauri:dev` to verify setup is correct
-   - Check Rust compilation errors in the terminal
+   - No Rust toolchain needed; just run `yarn install` (Electron + electron-builder come from devDependencies)
+   - Run `npm run electron:dev` to verify the desktop setup (builds the server if missing, starts vite, launches Electron pointing at the vite dev server)
 
 2. **Development Workflow**:
-   - Use `npm run dev` for web development (faster iteration)
-   - Use `npm run tauri:dev` when testing desktop-specific features
-   - React UI directly communicates with Node.js backend via HTTP
+   - Use `npm run dev` for web development (faster iteration; vite + tsx watch)
+   - Use `npm run electron:dev` when testing desktop-specific features (`scripts/electron-dev.js` sets `AIC_ELECTRON_DEV_SERVER=http://localhost:17808` so Electron loads the live UI from vite)
+   - React UI communicates with the backend over plain HTTP to `http://127.0.0.1:{PORT}` — no special Electron API surface required in React code
 
 3. **Backend Process Management**:
-   - In Tauri mode, the Rust process automatically manages the Node.js backend
+   - In Electron mode, the backend runs **in-process**: `electron/main.js` `require()`s `dist/server/main.js` and calls the exported `start()`. There is no child process to spawn or monitor.
    - In web mode, you manually start the backend with `npm run dev:server`
-   - The backend always runs on localhost:4567 (configurable via `~/.aicodeswitch/aicodeswitch.conf`)
-   - React UI uses standard HTTP requests (fetch/axios) to communicate with backend
-   - **Service Detection & Restart**: On startup, Tauri app checks if the port is already in use
-     - If a Node.js server is already running (started via `aicos start` or leftover from a previous run), the app **shuts it down first** then starts a fresh server (`shutdown_existing_server`: POST `/api/shutdown` → old service restores config + exits; if unresponsive, kills the process on the port via `kill_process_on_port` — Unix `lsof`+`kill`, Windows `netstat`+`taskkill`)
-     - This ensures newly installed code actually runs — previously the app reused the stale service, so upgrades/reinstalls had no effect
-     - On exit (`stop_server`), the app POSTs `/api/shutdown`, which (like `aicos stop`'s SIGTERM) runs the same Node `shutdown()` that `restoreClaudeConfig` + `restoreCodexConfig` before exiting
+   - The backend always listens on `127.0.0.1` (PORT from `~/.aicodeswitch/aicodeswitch.conf`, default 4567)
+   - **Service Detection**: On startup, Electron checks whether the configured port is already in use. If a Node server is already running (started via `aicos start` or a leftover), it POSTs `/api/shutdown` to the old service so it restores configs and exits; if unresponsive, the port's PID is killed (Unix `lsof`+`kill`, Windows `netstat`+`taskkill`).
+   - On exit, Electron's `before-quit` calls the server module's exported `gracefulShutdown()` (same path as `aicos stop`'s SIGTERM), which runs `restoreClaudeConfig` / `restoreCodexConfig` / `restoreOpencodeConfig`, closes DB/log handles, and releases the port. In-process mode never calls `process.exit`. The `/api/shutdown` HTTP endpoint remains as a fallback.
 
 4. **Debugging**:
-   - **Frontend**: Use browser DevTools (F12 in Tauri window)
-   - **Backend**: Check Node.js console output
-   - **Rust**: Use `println!` or `eprintln!` for logging
-   - **Build Issues**: Check `tauri/target/` for detailed error logs
+   - **Renderer (React)**: Browser DevTools (F12 / Cmd+Opt+I) inside the Electron window
+   - **Main process & backend**: Launch with `--inspect` (or `ELECTRON_ENABLE_LOGGING=1`) and attach a Node inspector; backend logs are also written to `~/.aicodeswitch/app-launch-debug.log`
+   - **Build Issues**: electron-builder diagnostics appear in `release/` and stdout; the bundled app root (`app.getAppPath()`) contains `dist/`, `electron/`, and `package.json`
 
-5. **Icon Generation**:
-   - Prepare a 512x512 PNG source image
-   - Run `npm run tauri:icon path/to/icon.png`
-   - Icons are generated in `tauri/icons/`
+5. **Icon**:
+   - Source is `build/icon.png` (a 1024×1024 PNG, copied from `src/ui/assets/logo.png` by `npm run electron:icon`)
+   - electron-builder auto-generates `.ico` (Windows) and `.icns` (macOS) from it at build time; no manual per-platform icon generation
 
-6. **Node.js Detection**:
-   - Tauri app checks for Node.js installation on startup (production mode only)
-   - Checks by running `node --version` command
-   - If Node.js is not installed, a friendly error dialog is displayed:
-     - Title: "Node.js 未安装"
-     - Message includes error details and installation link (https://nodejs.org/)
-     - Application window closes after the dialog
-   - Most developers already have Node.js installed
-   - This check is skipped in development mode
+6. **No Node.js Detection Needed**:
+   - Because the backend runs inside Electron's bundled Node runtime, end users do NOT need Node.js installed. There is no runtime Node.js prerequisite check.
 
 7. **Auto-Deactivate Routes on Exit**:
-   - When the application is closed, it automatically deactivates all active routes
+   - When the application is closed, it automatically deactivates all active routes (via `before-quit` → `gracefulShutdown()` path) before restoring config files
    - This prevents configuration files from remaining in an overwritten state
-   - The close event is intercepted and the following steps are executed:
-     1. Fetch all routes via `GET /api/routes`
-     2. Filter for active routes
-     3. Send `POST /api/routes/:id/deactivate` for each active route
-     4. Stop the Node.js server
-     5. Destroy the window
-   - This feature only works in production mode
    - If deactivation fails, the app still proceeds with shutdown to avoid hanging
 
 ### Project Structure
@@ -758,13 +739,12 @@ aicodeswitch/
 │       │   ├── key-session-tracker.ts  # Per-key session tracking
 │       │   └── key-resolver.ts    # sk_ Key resolution
 │       └── transformers/
-├── tauri/                   # Tauri desktop application
-│   ├── src/
-│   │   └── main.rs              # Rust main process
-│   ├── icons/                   # Application icons
-│   ├── Cargo.toml               # Rust dependencies
-│   ├── tauri.conf.json          # Tauri configuration
-│   └── build.rs                 # Build script
+├── electron/                # Electron desktop application (in-process backend)
+│   ├── main.js                  # Main process: window mgmt + in-process server lifecycle
+│   ├── preload.js               # contextBridge IPC (startup logs/errors)
+│   └── loading.html             # Startup / error screen (watchdog via IPC)
+├── build/                   # electron-builder resources
+│   └── icon.png                 # 1024x1024 source icon (electron-builder derives .ico/.icns)
 ├── dist/                        # Build output
 │   ├── ui/                      # Frontend build
 │   └── server/                  # Backend build
@@ -775,9 +755,7 @@ aicodeswitch/
 │   ├── restart.js
 ├── types/                       # TypeScript types
 ├── documents/                   # Documentation
-│   ├── tauri-research.md        # Tauri migration research
-│   └── TAURI_BUILD_GUIDE.md    # Tauri build guide
-├── package.json
+├── package.json                 # Includes `build` field (electron-builder config)
 ├── vite.config.ts
 ├── tsconfig.json
 └── CLAUDE.md                    # This file
@@ -792,122 +770,102 @@ aicodeswitch/
 3. Server build outputs to `dist/server/` (JavaScript)
 4. Configuration files are created in user's home directory on first run
 
-### Tauri Desktop Application Build
+### Electron Desktop Application Build
 
 #### Prerequisites
 
-**Install Rust Toolchain:**
-```bash
-# Windows, macOS, Linux
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
 **Install Node.js:**
-- Node.js is **required** to run the application backend
-- Download from: https://nodejs.org/ (LTS version recommended)
-- The application will check for Node.js installation on startup and display a friendly error message if not found
+- Node.js ≥ 18 is required **to build** the application (LTS recommended)
+- Download from: https://nodejs.org/
+- End users do NOT need Node.js installed — the backend runs in-process inside Electron's bundled Node runtime
 
-**Platform-Specific Requirements:**
+**No Rust Toolchain Required:**
+- electron-builder handles all native packaging toolchain automatically; there is no `Cargo.toml`, `rustc`, or `tauri.conf.json` involved anymore.
 
-- **Windows**:
-  - Microsoft Visual Studio C++ Build Tools
-  - WebView2 (usually pre-installed on Windows 10/11)
+**Platform Notes:**
 
-- **macOS**:
-  - Xcode Command Line Tools: `xcode-select --install`
-
-- **Linux**:
-  ```bash
-  # Debian/Ubuntu
-  sudo apt install libwebkit2gtk-4.1-dev \
-    build-essential \
-    curl \
-    wget \
-    file \
-    libssl-dev \
-    libgtk-3-dev \
-    libayatana-appindicator3-dev \
-    librsvg2-dev
-  ```
+- **Windows**: WebView2 runtime (pre-installed on Windows 10/11)
+- **macOS**: No special requirements
+- **Linux**: `libgtk-3`, `libnotify`, `libnss3`, `libxss1`, `libxtst6`, `xdg-utils` (typical on modern desktop distros)
 
 #### Build Process
 
-1. **Generate Application Icons** (optional, if you have a custom icon):
+1. **Seed the icon** (already committed in this repo, only needed if you replace the logo):
    ```bash
-   npm run tauri:icon path/to/your/icon.png
+   npm run electron:icon    # copies src/ui/assets/logo.png -> build/icon.png
    ```
 
 2. **Development Mode**:
    ```bash
-   npm run tauri:dev
+   npm run electron:dev     # scripts/electron-dev.js
    ```
    This will:
-   - Start the Vite dev server for the UI
-   - Compile the Rust code
-   - Launch the Tauri window with hot-reload
+   - Build the server (`yarn build:server`) if `dist/server/main.js` is missing
+   - Start the Vite dev server for the UI on `http://localhost:17808`
+   - Launch Electron with `AIC_ELECTRON_DEV_SERVER=http://localhost:17808` so the window loads the live UI
 
 3. **Production Build**:
    ```bash
-   npm run tauri:build
+   npm run electron:build   # yarn build && electron-builder
    ```
    This will:
-   - Build the React UI (`npm run build:ui`)
-   - Build the Node.js server (`npm run build:server`)
-   - **Sync version** (`prepare-resources.js` → `sync-version.js`): sync `package.json` version to `tauri/tauri.conf.json` and `tauri/Cargo.toml` before Rust compile
-   - Compile the Rust code in release mode
-   - Bundle the application with all resources
-   - Create platform-specific installers
+   - Build the React UI (`yarn build:ui`) and the Node.js server (`yarn build:server`) into `dist/`
+   - Run **electron-builder**, which reads the `build` field of `package.json` (`appId: net.tangshuang.aicodeswitch`, `productName: AI Code Switch`, output dir `release/`, `asar: false`, `extraMetadata.main: electron/main.js`) and packages `dist/**`, `electron/**`, and `package.json` (node_modules pruned automatically)
+   - Create platform-specific installers in `release/`
 
-   > **Version Sync**: `package.json` is the single source of truth for the version. `tauri/sync-version.js` syncs it to `tauri.conf.json` (top-level `version`) and `Cargo.toml` (`[package] version`) via precise regex (only writes when the value differs; never touches dependency `{ version = "x" }`). It runs automatically inside `prepare-resources.js` (so `tauri:build` is always in sync before cargo compile), and can be triggered manually with `npm run version:sync`. This prevents installer version mismatches that cause Windows to reject overwrite upgrades.
+   > **Version**: Read directly from `package.json`. There is no separate version-sync step (the old `sync-version.js` / `prepare-resources.js` / `move-bundle.js` scripts have been removed with the Tauri migration).
 
-#### Build Output
+#### Build Output (electron-builder, in `release/`)
 
 **Windows:**
-- `tauri/target/release/aicodeswitch.exe` - Executable
-- `tauri/target/release/bundle/msi/` - MSI installer
-- `tauri/target/release/bundle/nsis/` - NSIS installer
+- `.exe` (NSIS installer)
+- `.msi`
 
 **macOS:**
-- `tauri/target/release/aicodeswitch` - Executable
-- `tauri/target/release/bundle/dmg/` - DMG installer
-- `tauri/target/release/bundle/macos/` - .app bundle
+- `.dmg`
+- `.zip` (contains the `.app` bundle)
 
-#### Application Size Comparison
+**Linux:**
+- `.AppImage`
+- `.deb`
+
+#### Application Size
 
 | Build Type | Size | Notes |
 |------------|------|-------|
-| Tauri (without Node.js) | ~10-20 MB | Requires Node.js pre-installed |
-| Tauri (with Node.js) | ~50-70 MB | Bundles Node.js runtime |
-| Traditional Electron | ~150-200 MB | Bundles Chromium + Node.js |
+| Electron (bundled) | ~80-120 MB | Bundles Chromium + Node runtime; backend runs in-process |
 
-### Tauri Hybrid Architecture Details
+Larger than the old Tauri shell, but the trade-off buys single-process simplicity and removes the end-user Node.js prerequisite.
 
-The Tauri build uses a **hybrid approach** that preserves the existing Node.js backend:
+### Electron In-Process Architecture Details
 
-1. **Tauri Main Process (Rust)**:
-   - Manages application lifecycle
-   - Creates and controls the WebView window
-   - Spawns and monitors the Node.js backend process
-   - Provides IPC commands for frontend-backend communication
+The Electron build loads the existing Node.js backend **in-process** — there is no child Node process to spawn:
 
-2. **Node.js Backend Process**:
-   - Runs the existing Express server unchanged
+1. **Electron Main Process (`electron/main.js`)**:
+   - Manages application lifecycle and creates the BrowserWindow
+   - Sets `process.env.AIC_IN_PROCESS='1'`, `process.env.PORT`, `process.env.NODE_ENV='production'`, then `require()`s `dist/server/main.js` and calls the exported `start()`
+   - Polls `http://127.0.0.1:{PORT}` for health; once ready, navigates the window from `loading.html` to the served UI
+   - On `before-quit`, calls the server module's exported `gracefulShutdown()` (restores Claude/Codex/OpenCode configs, closes DB/log handles, releases the port). In-process mode does NOT call `process.exit`.
+   - `electron/preload.js` exposes `aicodeswitch.onStartupLog(cb)` / `aicodeswitch.onStartupError(cb)` to the renderer via contextBridge
+
+2. **In-Process Node Backend**:
+   - Runs the existing Express server unchanged (loaded via `require`)
    - Handles all proxy logic, API transformations, and database operations
-   - Listens on localhost:4567 (configurable)
+   - Listens on `127.0.0.1:{PORT}` (default 4567, configurable via `~/.aicodeswitch/aicodeswitch.conf`)
 
-3. **React Frontend (WebView)**:
-   - Rendered in the system's native WebView
-   - Communicates with Node.js backend via HTTP (localhost)
-   - Uses standard fetch/axios for API requests
-   - No special Tauri integration required in React code
+3. **React Frontend (Renderer / WebView)**:
+   - Rendered in the system's native WebView (WebView2 on Windows, WebKit on macOS/Linux)
+   - Communicates with the in-process backend via plain HTTP to `http://127.0.0.1:{PORT}`
+   - Uses standard fetch/axios; no Electron-specific API surface required in React code
 
 **Key Benefits:**
-- ✅ No backend rewrite required
-- ✅ All existing Node.js code works as-is
-- ✅ Significantly smaller application size
-- ✅ Better system integration
-- ✅ Cross-platform support (Windows, macOS)
-- ✅ Future migration path to full Rust backend if desired
+- ✅ No backend rewrite required — existing Node.js code works as-is
+- ✅ No Node.js prerequisite for end users (bundled runtime)
+- ✅ Single process = no child-process lifecycle, port-detection, or IPC-with-subprocess complexity
+- ✅ Cross-platform support (Windows, macOS, Linux)
+
+**Trade-off:**
+- ⚠️ Larger bundle (~80-120 MB) than the old Tauri shell, because it bundles Chromium + the Node runtime
 
 ## Technology Stack
 
@@ -927,12 +885,12 @@ The Tauri build uses a **hybrid approach** that preserves the existing Node.js b
 - **Routing**: React Router
 - **UI Components**: Custom components
 
-### Desktop Application (Tauri)
-- **Core**: Tauri 2.0
-- **Language**: Rust (main process)
-- **WebView**: System native (WebView2 on Windows, WebKit on macOS)
-- **IPC**: Tauri command system
-- **Process Management**: Rust std::process
+### Desktop Application (Electron)
+- **Core**: Electron 33
+- **Language**: JavaScript (main process, reuses the existing Node backend in-process)
+- **WebView**: System native (WebView2 on Windows, WebKit on macOS/Linux)
+- **IPC**: Electron contextBridge (preload script)
+- **Packaging**: electron-builder (config in `package.json` `build` field)
 
 ### CLI
 - **Implementation**: Custom Yargs-like CLI
@@ -947,33 +905,44 @@ The Tauri build uses a **hybrid approach** that preserves the existing Node.js b
 3. 发布到 npm registry
 4. 推送 tag 到 GitHub
 
-### Tauri 应用构建流程
-npm 发布成功后，自动触发 Tauri 应用构建：
+### Electron 应用构建流程
+npm 发布成功后，自动触发 Electron 应用构建：
 1. **触发条件**:
    - "Publish To NPM" 工作流成功完成
    - 或手动触发（可指定版本号）
 
 2. **构建矩阵**:
+   - **Windows**: windows-latest (x86_64)
+     - 输出: `.exe` (NSIS), `.msi`
    - **macOS**: (两个架构分别构建)
-     - Intel (x86_64): `.dmg`, `.app`
-     - Apple Silicon (aarch64): `.dmg`, `.app`
-   - **Windows**: Windows Latest (x86_64)
-     - 输出: `.msi`, `.exe` (NSIS)
+     - macos-14 (Apple Silicon, arm64): `.dmg`, `.zip`
+     - macos-13 (Intel, x64): `.dmg`, `.zip`
+   - **Linux**: ubuntu-22.04 (x64)
+     - 输出: `.AppImage`, `.deb`
 
 3. **发布到 GitHub Release**:
    - 自动创建或更新 Release
-   - 上传所有平台的安装包
+   - 上传所有平台的安装包（产物命名：`AI-Code-Switch-{version}-{platform}-{arch}.{ext}`）
    - 包含下载说明和系统要求
 
 4. **手动触发构建**:
-   - 在 GitHub Actions 页面选择 "Build and Release Tauri App"
+   - 在 GitHub Actions 页面选择 "Build and Release Electron App"
    - 可选：指定版本号（不指定则使用 package.json 中的版本）
 
 ### 工作流文件
 - `.github/workflows/publish-to-npm.yaml` - NPM 发布
-- `.github/workflows/build-tauri.yaml` - Tauri 构建和发布
+- `.github/workflows/build-electron.yaml` - Electron 构建和发布
 
 ## 最近变更
+
+- 2026-07-06: 桌面端从 Tauri 迁移到 Electron
+  - 桌面端整体从 Tauri (Rust + 外部 Node.js 子进程) 迁移到 Electron，后端 Express 服务器以**进程内嵌（in-process）**方式运行：`electron/main.js` 通过 `require('dist/server/main.js')` 调用其导出的 `start()` / `gracefulShutdown()`，并设置 `process.env.AIC_IN_PROCESS='1'`
+  - 移除整个 `tauri/` 目录（含 `Cargo.toml`、`tauri.conf.json`、`main.rs`、`prepare-resources.js`、`sync-version.js`、`move-bundle.js`），不再需要 Rust 工具链
+  - 新增桌面入口：`electron/main.js`（主进程：窗口 + 进程内服务器生命周期 + 健康轮询 + 跳转 + `before-quit` 触发 `gracefulShutdown`）、`electron/preload.js`（contextBridge 暴露 `onStartupLog` / `onStartupError`）、`electron/loading.html`（启动屏 + 看门狗）
+  - 打包改用 `electron` + `electron-builder`（devDependencies），配置写在 `package.json` 的 `build` 字段（`appId: net.tangshuang.aicodeswitch`、`productName: AI Code Switch`、输出目录 `release/`、`asar: false`、`extraMetadata.main: electron/main.js`）；图标源文件 `build/icon.png`（1024×1024，由 `src/ui/assets/logo.png` 拷贝），electron-builder 自动生成 `.ico`/`.icns`
+  - 新增 npm 脚本：`electron:dev`（`scripts/electron-dev.js`，构建缺失的服务端后启动 vite 并以 `AIC_ELECTRON_DEV_SERVER=http://localhost:17808` 拉起 Electron）、`electron:start`（`yarn build && electron .`）、`electron:build`（`yarn build && electron-builder`，输出到 `release/`）、`electron:icon`（拷贝 logo 到 `build/icon.png`）
+  - CI 由 `.github/workflows/build-electron.yaml` 取代 `build-tauri.yaml`：在 "Publish To NPM" 成功后或手动触发；矩阵 windows-latest (nsis+msi) / macos-14 (arm64 dmg+zip) / macos-13 (x64 dmg+zip) / ubuntu-22.04 (AppImage+deb)；产物命名 `AI-Code-Switch-{version}-{platform}-{arch}.{ext}` 并上传到 GitHub Release
+  - 关键收益：终端用户**无需再安装 Node.js**（后端跑在 Electron 自带的 Node 运行时里）
 
 - 2026-06-22: 新增 Agent Map（任务可视化节点地图）
   - 游戏化节点地图：把每个 Claude Code / Codex Session 画成画布节点，状态（进行中/空闲/已完成/异常）由活跃度自动推断并经 SSE 实时刷新；点开节点查看活动路径子图（提问→工具调用链→响应）
@@ -1035,7 +1004,7 @@ npm 发布成功后，自动触发 Tauri 应用构建：
 * 每次有新的架构变化时，你需要更新 CLAUDE.md, AGENTS.md 来让文档保持最新。
 * 每次有**代码**变更（忽略文档变更），以非常简单的概述，将变化内容记录到 CHANGELOG.md 中。
 * 禁止在ui中使用依赖GPU的css样式。
-* 禁止运行 dev:ui, dev:server, tauri:dev 等命令来进行测试。
+* 禁止运行 dev:ui, dev:server, electron:dev 等命令来进行测试。
 * 如果你需要创建文档，必须将文档放在 documents 目录下
 * 如果你需要创建测试脚本，必须将脚本文件放在 scripts 目录下
 * currentDate: Today's date is 2026-02-20.

@@ -45,6 +45,10 @@ lerna-debug.log*
 out/
 main/
 backup/
+release/
+build/
+electron/
+scripts/
 
 # Documents
 /documents/
@@ -64,7 +68,6 @@ vite.config.ts
 .env
 .env.*
 /src/
-/tauri/
 /schemes/
 /public/
 .github/
