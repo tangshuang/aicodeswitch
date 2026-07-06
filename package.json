@@ -2,7 +2,10 @@
   "name": "aicodeswitch",
   "version": "6.0.0",
   "description": "A tool to help you manage AI programming tools to access large language models locally. It allows your Claude Code, Codex and other tools to no longer be limited to official models.",
-  "author": "tangshuang",
+  "author": {
+    "name": "tangshuang",
+    "email": "mail@tangshuang.net"
+  },
   "license": "GPL-3.0",
   "homepage": "https://github.com/tangshuang/aicodeswitch",
   "repository": {
@@ -132,8 +135,7 @@
     },
     "win": {
       "target": [
-        "nsis",
-        "msi"
+        "nsis"
       ]
     },
     "nsis": {
