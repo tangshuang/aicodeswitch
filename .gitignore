@@ -55,12 +55,7 @@ out/
 main/
 backup/
 
-# Tauri / Rust
-tauri/target/
-tauri/WixTools/
-tauri/icons/
-tauri/resources/
-
 # documents
 /documents/
 .tmp/
+/build/

@@ -1,0 +1,191 @@
+name: Build and Release Electron App
+
+on:
+  workflow_run:
+    workflows: ["Publish To NPM"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 6.0.0)'
+        required: false
+      force_build:
+        description: 'Force build even if tag exists'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  check-release:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+    if: (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check if should build
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            if [ -z "$VERSION" ]; then
+              VERSION=$(node -p "require('./package.json').version")
+            fi
+            TAG="v${VERSION}"
+            if [ "${{ github.event.inputs.force_build }}" = "true" ]; then
+              echo "should_build=true" >> $GITHUB_OUTPUT
+              echo "version=${VERSION}" >> $GITHUB_OUTPUT
+              echo "tag=${TAG}" >> $GITHUB_OUTPUT
+            elif git rev-parse "$TAG" >/dev/null 2>&1; then
+              echo "should_build=false" >> $GITHUB_OUTPUT
+            else
+              echo "should_build=true" >> $GITHUB_OUTPUT
+              echo "version=${VERSION}" >> $GITHUB_OUTPUT
+              echo "tag=${TAG}" >> $GITHUB_OUTPUT
+            fi
+          else
+            VERSION=$(node -p "require('./package.json').version")
+            TAG="v${VERSION}"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+            echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          fi
+
+  build-electron:
+    needs: check-release
+    if: needs.check-release.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            arch: x64
+            args: "--win nsis msi"
+          - os: macos-14
+            platform: macos
+            arch: arm64
+            args: "--mac dmg zip"
+          - os: macos-13
+            platform: macos
+            arch: x64
+            args: "--mac dmg zip"
+          - os: ubuntu-22.04
+            platform: linux
+            arch: x64
+            args: "--linux AppImage deb"
+    permissions:
+      contents: write
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 \
+            xdg-utils libatspi2.0-0 libdrm2 libgbm1 libasound2
+        shell: bash
+
+      - name: Install Node.js dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build UI and Server
+        run: yarn build
+
+      - name: Build Electron app
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: yarn electron-builder ${{ matrix.args }} --publish never
+        shell: bash
+
+      - name: Normalize artifact names
+        shell: bash
+        run: |
+          VERSION="${{ needs.check-release.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+          mkdir -p normalized
+          cd release || exit 0
+          for f in *.exe *.msi *.dmg *.zip *.AppImage *.deb; do
+            [ -e "$f" ] || continue
+            ext="${f##*.}"
+            case "$ext" in
+              exe) base="AI-Code-Switch-${VERSION}-Windows-${ARCH}";;
+              msi) base="AI-Code-Switch-${VERSION}-Windows-${ARCH}";;
+              dmg) base="AI-Code-Switch-${VERSION}-macOS-${ARCH}";;
+              zip) base="AI-Code-Switch-${VERSION}-macOS-${ARCH}";;
+              AppImage) base="AI-Code-Switch-${VERSION}-Linux-${ARCH}";;
+              deb) base="AI-Code-Switch-${VERSION}-Linux-${ARCH}";;
+            esac
+            cp "$f" "../normalized/${base}.${ext}"
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-${{ matrix.platform }}-${{ matrix.arch }}
+          path: normalized/*
+
+  create-release:
+    needs: [check-release, build-electron]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    if: needs.check-release.outputs.should_build == 'true'
+    steps:
+      - uses: actions/checkout@v5
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f -name "AI-Code-Switch-*" -exec cp {} release-assets/ \;
+      - name: Create or Update Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.check-release.outputs.tag }}
+          name: AI Code Switch v${{ needs.check-release.outputs.version }}
+          body: |
+            ## 下载说明
+
+            本版本为自动构建发布（Electron 桌面端）。
+
+            ### Windows
+
+            - 推荐下载 **`.exe`** 安装包（NSIS），支持选择安装目录、无需管理员权限。
+            - **`.msi`** 安装包需在管理员 CMD 中执行 `msiexec /i "安装包.msi"`，或右键「以管理员身份运行」。
+
+            ### macOS
+
+            - Apple Silicon（M1/M2/M3/M4）请下载文件名含 **`macOS-arm64`** 的 **`.dmg`**。
+            - Intel 芯片请下载文件名含 **`macOS-x64`** 的 **`.dmg`**。
+            - `.zip` 为应用包（`.app`），适合免安装使用或手动放置到「应用程序」。
+            - 若提示「无法验证开发者」或「已损坏」，请在「系统设置 → 隐私与安全性」中点击「仍要打开」，或在终端执行 `xattr -dr com.apple.quarantine /Applications/AI\ Code\ Switch.app`。
+
+            ### Linux
+
+            - **`.AppImage`**：可直接运行的便携版，赋予执行权限后双击即可（`chmod +x *.AppImage`）。
+            - **`.deb`**：适用于 Debian / Ubuntu 及其衍生发行版（`sudo dpkg -i *.deb`）。
+
+            ### 说明
+
+            - Electron 桌面端**无需预装 Node.js**：后端以进程内嵌方式运行在 Electron 主进程中。
+            - 若不想使用桌面端，也可改用命令行版本：`npm i -g aicodeswitch && aicos ui`。
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

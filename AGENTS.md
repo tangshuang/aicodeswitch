@@ -10,7 +10,7 @@ AI Code Switch 是一个本地代理服务器，管理 AI 编程工具（Claude 
 **核心技术栈:**
 - 后端: Node.js + TypeScript + Express
 - 前端: React + TypeScript + Vite
-- 桌面: Tauri 2.0 (Rust 主进程)
+- 桌面: Electron 33 (主进程以 in-process 方式加载 Node 后端)
 - 存储: JSON 文件系统数据库 (~/.aicodeswitch/data/)
 - 部署: CLI 工具 + Web UI + 桌面应用
 
@@ -21,12 +21,13 @@ aicodeswitch/
 ├── src/
 │   ├── server/          # Node.js 后端服务 (Express API + 代理服务器)
 │   └── ui/             # React 前端应用
-├── tauri/              # Tauri 桌面应用 (Rust + 嵌入式资源)
+├── electron/           # Electron 桌面应用 (主进程 + preload + loading 屏)
+├── build/              # electron-builder 资源 (icon.png)
 ├── bin/                # CLI 脚本 (aicos 命令)
 ├── dist/               # 构建产物 (server/, ui/)
-├── documents/          # 文档 (Tauri 研究、构建指南)
-├── scripts/           # 构建/发布脚本
-├── package.json       # npm 脚本、依赖声明
+├── documents/          # 文档
+├── scripts/           # 构建/发布脚本 (含 electron-dev.js)
+├── package.json       # npm 脚本、依赖声明、electron-builder build 字段
 ├── tsconfig.json      # TypeScript 配置
 ├── vite.config.ts     # Vite 构建配置
 └── .github/workflows/ # CI/CD 流水线
@@ -41,8 +42,8 @@ aicodeswitch/
 | 数据库层 | `src/server/fs-database.ts` | JSON 文件存储 CRUD |
 | UI 页面 | `src/ui/pages/` | 供应商管理、路由配置、日志等 |
 | CLI 命令 | `bin/*.js` | start/stop/ui/upgrade/restore 等 |
-| Tauri 主进程 | `tauri/src/main.rs` | Rust 窗口管理、Node 进程生命周期 |
-| 构建配置 | `package.json` scripts | dev/build/tauri:dev 等 |
+| Electron 主进程 | `electron/main.js` | 窗口管理 + 进程内服务器生命周期 (`require('dist/server/main.js').start()`) |
+| 构建配置 | `package.json` scripts / `build` 字段 | dev/build/electron:dev、electron-builder 配置 |
 
 ## 代码规范
 
@@ -50,7 +51,7 @@ aicodeswitch/
 - **包管理器:** yarn (使用 `yarn install`，前端依赖装在 devDependencies)
 - **服务端路径:** 使用 `__dirname` 获取目录，不要用 `process.cwd()`
 - **UI 样式:** 禁止使用依赖 GPU 的 CSS 样式
-- **测试命令:** 禁止运行 `dev:ui`、`dev:server`、`tauri:dev` 进行测试
+- **测试命令:** 禁止运行 `dev:ui`、`dev:server`、`electron:dev` 进行测试
 - **文档位置:** 新建文档放 `documents/` 目录
 - **测试脚本:** 新建测试放 `scripts/` 目录
 
@@ -81,11 +82,12 @@ aicodeswitch/
 - **敏感字段:** API 密钥等自动在 UI 层脱敏显示
 - **会话标题:** 从首条用户消息提取，自动截断 (最大 100 字符)
 
-### Tauri 桌面应用
-- **Node.js 检测:** 启动时检查是否安装，未安装显示友好错误
-- **退出处理:** 关闭时自动禁用所有激活的路由，防止配置文件残留
-- **资源打包:** 构建时将 `dist/server` 和 `dist/ui` 嵌入 Tauri
-- **原理:** 通过tauri来运行dist/server/main.js，并使用内置的webview来渲染ui页面
+### Electron 桌面应用
+- **进程内后端:** `electron/main.js` `require()`s `dist/server/main.js` 调用其 `start()` / `gracefulShutdown()`，设置 `AIC_IN_PROCESS=1`；不再 spawn 子进程，终端用户无需安装 Node.js
+- **退出处理:** `before-quit` 触发 `gracefulShutdown()`（恢复 Claude/Codex/OpenCode 配置、关闭 DB/日志、释放端口），随后停用所有激活路由，防止配置文件残留
+- **资源打包:** electron-builder 打包 `dist/**`、`electron/**`、`package.json`（node_modules 自动裁剪），`asar: false`，输出到 `release/`
+- **启动屏:** `electron/loading.html`（经 preload.js 暴露的 `onStartupLog` / `onStartupError`）在服务器就绪前展示启动进度，就绪后窗口跳转到 `http://127.0.0.1:{PORT}`
+- **原理:** Electron 主进程内嵌运行 `dist/server/main.js`，并使用内置 WebView 渲染 UI 页面
 
 ## 构建与发布
 
@@ -100,10 +102,11 @@ yarn build            # 构建 UI + Server
 yarn build:ui         # 构建 React UI
 yarn build:server     # 构建 TypeScript Server
 
-# Tauri
-yarn tauri:dev        # 开发模式 (需要 Rust 工具链)
-yarn tauri:build      # 构建桌面应用
-yarn tauri:icon       # 生成图标
+# Electron
+yarn electron:dev     # 开发模式 (vite + electron，AIC_ELECTRON_DEV_SERVER)
+yarn electron:start   # 构建并启动当前 dist 的桌面应用
+yarn electron:build   # 构建桌面应用安装包 (输出到 release/)
+yarn electron:icon    # 拷贝 logo 到 build/icon.png
 
 # CLI
 yarn link             # 本地链接 CLI 进行测试
@@ -116,7 +119,6 @@ aicos stop            # 停止服务
 
 - `src/server/AGENTS.md` - 后端服务详细约定
 - `src/ui/AGENTS.md` - 前端 React 应用约定
-- `tauri/AGENTS.md` - Tauri 桌面应用约定
 
 ## 最近变更
 

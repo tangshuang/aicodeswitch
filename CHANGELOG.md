@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-07-06: 桌面端从 Tauri 迁移到 Electron
+
+- 桌面端整体从 Tauri (Rust + 外部 Node.js 子进程) 迁移到 Electron，后端以进程内嵌（in-process）方式运行：`electron/main.js` 通过 `require('dist/server/main.js')` 调用其导出的 `start()` / `gracefulShutdown()`，设置 `AIC_IN_PROCESS=1`
+- 移除整个 `tauri/` 目录（含 `Cargo.toml`、`tauri.conf.json`、`main.rs` 及版本同步脚本），不再需要 Rust 工具链；新增 `electron/main.js`、`electron/preload.js`、`electron/loading.html`
+- 打包改用 electron-builder（配置写在 `package.json` 的 `build` 字段，输出到 `release/`，`asar: false`）；新增脚本 `electron:dev` / `electron:start` / `electron:build` / `electron:icon`；CI 工作流 `build-tauri.yaml` → `build-electron.yaml`
+
 ## 2026-06-29: 三个编程工具最大重试次数改为可配置（默认 5）
 
 ### 新增

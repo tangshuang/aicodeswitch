@@ -1631,7 +1631,7 @@ const registerRoutes = async (dbManager: FileSystemDatabaseManager, proxyServer:
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
-  // 数据就绪验证端点（供 Tauri 启动阶段确认后端完全可用）
+  // 数据就绪验证端点（供桌面端 Electron 启动阶段确认后端完全可用）
   app.get('/api/ready', (_req, res) => {
     const vendors = dbManager.getVendors();
     const routes = dbManager.getRoutes();
@@ -4683,7 +4683,28 @@ ${instruction}
 // listen 就绪标志：区分"启动阶段"与"运行阶段"，启动期致命异常应让进程退出
 let listenReady = false;
 
-const start = async () => {
+/**
+ * 是否以「内嵌进程」模式运行（例如被 Electron 主进程直接 require 并调用 start）。
+ * 该模式下：
+ *   - shutdown 流程结束后不调用 process.exit，把退出时机交还给宿主（Electron）
+ *   - 模块被 require 时不自动执行 start()，由宿主显式调用导出的 start
+ */
+const IN_PROCESS = process.env.AIC_IN_PROCESS === '1';
+
+// 保存当前服务实例的优雅关闭函数，供宿主（Electron 主进程）在退出前显式调用。
+let _gracefulShutdown: ((signal: string) => Promise<void>) | null = null;
+
+/**
+ * 供宿主进程调用的优雅关闭入口。
+ * 仅在 start() 成功注册 shutdown 后可用；调用后会恢复工具配置、关闭 DB / 日志、释放端口，
+ * 内嵌模式下不会触发 process.exit。
+ */
+export const gracefulShutdown = (signal = 'HOST_QUIT'): Promise<void> => {
+  if (_gracefulShutdown) return _gracefulShutdown(signal);
+  return Promise.resolve();
+};
+
+export const start = async () => {
   fs.mkdirSync(dataDir, { recursive: true });
 
   // 自动检测数据库类型并执行迁移（如果需要）
@@ -4924,16 +4945,22 @@ const start = async () => {
       ]);
 
       console.log('Server stopped.');
-      process.exit(0);
+      // 内嵌进程模式下不主动退出，交由宿主（Electron）控制进程生命周期
+      if (!IN_PROCESS) {
+        process.exit(0);
+      }
     })();
 
     return shutdownPromise;
   };
 
+  // 注册到模块级句柄，供宿主在退出前显式触发完整关闭流程
+  _gracefulShutdown = shutdown;
+
   process.on('SIGINT', () => { void shutdown('SIGINT'); });
   process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
 
-  // 优雅关闭端点（供 Tauri 等外部调用者触发服务端完整清理流程）
+  // 优雅关闭端点（供 Electron 等外部调用者触发服务端完整清理流程）
   // 放在 shutdown 定义之后注册，确保闭包可引用
   app.post('/api/shutdown', asyncHandler(async (_req, res) => {
     res.json({ success: true });
@@ -4946,7 +4973,7 @@ process.on('uncaughtException', (error: Error) => {
   console.error('[Uncaught Exception] 服务遇到未捕获的异常:', error);
   console.error('[Uncaught Exception] 堆栈信息:', error.stack);
   // 启动阶段（listen 之前）的异常通常是致命的（依赖加载失败、初始化崩溃等），
-  // 静默吞掉会导致"进程在但不 listen"，Tauri 只能干等超时；此时退出让上层重新探测/诊断。
+  // 静默吞掉会导致"进程在但不 listen"，桌面端只能干等超时；此时退出让上层重新探测/诊断。
   if (!listenReady) {
     console.error('[Uncaught Exception] 发生在服务监听之前，退出进程');
     process.exit(1);
@@ -4961,7 +4988,11 @@ process.on('unhandledRejection', (reason: unknown) => {
   }
 });
 
-start().catch((error) => {
-  console.error('Failed to start server:', error);
-  process.exit(1);
-});
+// 仅在被直接运行时（如 aicos start → node dist/server/main.js）自动启动；
+// 被 Electron 主进程 require 时（require.main !== module 或 IN_PROCESS）由宿主显式调用 start()。
+if (!IN_PROCESS && require.main === module) {
+  start().catch((error) => {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  });
+}

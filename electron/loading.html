@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
   <title>AI Code Switch</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -37,7 +37,6 @@
       max-width: 480px;
     }
 
-    /* Logo 动画 */
     .logo-rings {
       width: 80px;
       height: 80px;
@@ -85,7 +84,6 @@
       margin-bottom: 32px;
     }
 
-    /* 日志面板 */
     .log-panel {
       background: var(--bg-card);
       border: 1px solid var(--border-subtle);
@@ -132,22 +130,10 @@
       animation: blink 1s ease-in-out infinite;
     }
 
-    .log-entry.error {
-      color: #e76f51;
-    }
-
+    .log-entry.error { color: #e76f51; }
     .log-entry.error .dot {
       background: #e76f51;
       box-shadow: 0 0 6px rgba(231, 111, 81, 0.5);
-    }
-
-    .log-entry.done {
-      color: #52b788;
-    }
-
-    .log-entry.done .dot {
-      background: #52b788;
-      box-shadow: 0 0 6px rgba(82, 183, 136, 0.5);
     }
 
     @keyframes fadeIn {
@@ -160,7 +146,6 @@
       50% { opacity: 0.3; }
     }
 
-    /* 错误面板 */
     .error-panel {
       display: none;
       background: rgba(127, 29, 29, 0.3);
@@ -231,7 +216,6 @@
       line-height: 1.5;
     }
 
-    /* 兜底信息区块（反馈渠道 + CLI 降级） */
     .fallback-block {
       margin-top: 14px;
       padding-top: 12px;
@@ -296,15 +280,6 @@
       background: rgba(45, 106, 79, 0.4);
       color: var(--text-secondary);
     }
-
-    /* 版本号 */
-    .version {
-      position: fixed;
-      bottom: 16px;
-      right: 20px;
-      color: var(--text-dim);
-      font-size: 0.75rem;
-    }
   </style>
 </head>
 <body>
@@ -347,7 +322,7 @@
           <span class="label">提示：</span>
           <span class="value">需先安装 Node.js 18 或以上（https://nodejs.org/）</span>
         </div>
-        <code class="cli-code" id="cliCode">npm i -g aicodeswitch
+        <code class="cli-code">npm i -g aicodeswitch
 aicos ui
 # aicos ui 会自动启动服务并打开管理页（http://127.0.0.1:4567）
 # 其它：aicos status 查看状态 / aicos stop 停止服务</code>
@@ -357,8 +332,6 @@ aicos ui
       </div>
     </div>
   </div>
-
-  <div class="version">v2.1.0</div>
 
   <script>
     function getTime() {
@@ -370,7 +343,6 @@ aicos ui
 
     function addLog(msg, type) {
       const panel = document.getElementById('logPanel');
-      // 上一条取消 active
       const prev = panel.querySelector('.log-entry.active');
       if (prev) prev.classList.remove('active');
 
@@ -388,35 +360,30 @@ aicos ui
     }
 
     function guessCause(payload) {
-      if (/无法获取主窗口|界面未能初始化/.test(payload)) {
-        return '最可能原因：主窗口初始化失败，桌面端无法继续，建议改用 CLI 版本。';
+      if (/未导出 start|导出/.test(payload)) {
+        return '最可能原因：服务入口构建异常，未导出 start()，建议重新 build。';
       }
-      if (/无法打开管理界面|导航失败|navigate/i.test(payload)) {
-        return '最可能原因：服务已就绪，但界面无法打开，建议改用 CLI 版本或重试。';
+      if (/not found|Server entry file not found|请先执行/.test(payload)) {
+        return '最可能原因：程序文件不完整（dist/server/main.js 缺失），建议重新安装或 build。';
       }
-      if (/未检测到|不可运行|无法运行 Node|未正确安装/.test(payload)) {
-        return '最可能原因：Node.js 未正确安装或不在系统 PATH。';
-      }
-      if (/入口文件.*缺失|not found|Server entry file not found/i.test(payload)) {
-        return '最可能原因：程序文件不完整，建议重新安装。';
-      }
-      if (/EADDRINUSE|端口.*占用|已被占用/.test(payload)) {
+      if (/EADDRINUSE|端口.*占用|已被占用|端口冲突/.test(payload)) {
         return '最可能原因：端口被占用，请关闭其它占用该端口的服务后重试。';
       }
-      if (/已退出|code=|子进程.*退出/.test(payload)) {
-        return '最可能原因：Node 服务进程崩溃，详见下方日志尾部。';
+      if (/未就绪|卡死|超时/.test(payload)) {
+        return '最可能原因：后端启动超时或卡死，详见日志文件 ~/.aicodeswitch/app-launch-debug.log。';
+      }
+      if (/界面加载失败|无法打开管理界面|did-fail-load/.test(payload)) {
+        return '最可能原因：服务已就绪，但界面加载失败，建议重试。';
       }
       return '服务启动失败，请参考下方诊断信息。';
     }
 
     function showError(msg) {
-      // 最后一行标红
       const active = document.querySelector('.log-entry.active');
       if (active) {
         active.classList.remove('active');
         active.classList.add('error');
       }
-
       document.getElementById('errorCause').textContent = guessCause(msg);
       document.getElementById('errorMsg').textContent = msg;
       document.getElementById('errorPanel').classList.add('visible');
@@ -424,7 +391,6 @@ aicos ui
       document.querySelector('.subtitle').style.color = '#e76f51';
     }
 
-    // 复制到剪贴板的小工具（复用诊断按钮的同款逻辑）
     function copyText(text, btn, restoreText) {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(function() {
@@ -440,71 +406,32 @@ aicos ui
       }
     }
 
-    // 初始日志
     addLog('应用已启动');
 
-    // ── 看门狗：兜底静默卡死 ───────────────────────────────
-    // 原理：成功时 Rust 会 window.navigate() 跳转，页面卸载，本定时器天然失效；
-    //       若既没跳转、也没收到 startup-error，说明出现了静默卡死（如导航失败被吞、
-    //       async 任务 panic），到点后主动展示错误面板 + CLI 兜底，避免无限转圈。
-    var WATCHDOG_MS = 45000; // 覆盖默认 30s 健康检查超时 + 15s 宽限
-    var watchdogTimer = null;
-
-    function armWatchdog() {
-      disarmWatchdog();
-      watchdogTimer = setTimeout(function() {
-        var msg =
-          '启动超时：在 ' + (WATCHDOG_MS / 1000) + ' 秒内未收到服务就绪信号，' +
-          '桌面端可能已卡死（如界面导航失败、或后台任务异常退出）。\n\n' +
-          '建议改用命令行版本启动（见下方「改用命令行版本」）。\n\n' +
-          '【提示】如需排查，可查看日志文件：~/.aicodeswitch/app-launch-debug.log';
-        addLog('启动超时：长时间未收到就绪信号', 'error');
-        showError(msg);
-      }, WATCHDOG_MS);
-    }
-
-    function disarmWatchdog() {
-      if (watchdogTimer) {
-        clearTimeout(watchdogTimer);
-        watchdogTimer = null;
-      }
-    }
-
-    armWatchdog();
-
-    // 监听 Tauri 启动日志事件
-    if (window.__TAURI__) {
-      window.__TAURI__.event.listen('startup-log', function(event) {
-        addLog(event.payload);
+    // 通过 preload 暴露的 IPC 接收主进程的启动日志/错误
+    const bridge = window.aicodeswitch;
+    if (bridge && typeof bridge.onStartupLog === 'function') {
+      bridge.onStartupLog(function(msg) { addLog(msg); });
+      bridge.onStartupError(function(payload) {
+        const text = String(payload || '');
+        addLog('启动失败: ' + text.split('\n')[0], 'error');
+        showError(text);
       });
-
-      window.__TAURI__.event.listen('startup-error', function(event) {
-        const payload = String(event.payload || '');
-        // 已有明确错误，关闭看门狗避免重复弹
-        disarmWatchdog();
-        addLog('启动失败: ' + payload.split('\n')[0], 'error');
-        showError(payload);
-      });
-
-      // 复制诊断信息到剪贴板，方便用户一键反馈给开发者
-      document.getElementById('copyDiagBtn').onclick = function() {
-        var text = document.getElementById('errorMsg').textContent || '';
-        copyText(text, this, '复制诊断信息');
-      };
-
-      // 复制 GitHub Issues 链接
-      document.getElementById('copyIssuesBtn').onclick = function() {
-        copyText('https://github.com/tangshuang/aicodeswitch/issues', this, '复制链接');
-      };
-
-      // 复制 CLI 命令
-      document.getElementById('copyCliBtn').onclick = function() {
-        var text = document.getElementById('cliCode').textContent || '';
-        copyText(text, this, '复制命令');
-      };
     } else {
       addLog('等待启动...');
     }
+
+    document.getElementById('copyDiagBtn').onclick = function() {
+      var text = document.getElementById('errorMsg').textContent || '';
+      copyText(text, this, '复制诊断信息');
+    };
+    document.getElementById('copyIssuesBtn').onclick = function() {
+      copyText('https://github.com/tangshuang/aicodeswitch/issues', this, '复制链接');
+    };
+    document.getElementById('copyCliBtn').onclick = function() {
+      var text = document.querySelector('#errorPanel .cli-code').textContent || '';
+      copyText(text, this, '复制命令');
+    };
   </script>
 </body>
 </html>
