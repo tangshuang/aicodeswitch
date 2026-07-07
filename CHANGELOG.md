@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-07-07: CI 修复 macOS 卡构建 + 新增 Windows ia32
+
+### 修复
+- `build-electron.yaml` 中 `macos-13`（Intel x64）矩阵项永远卡在 "Waiting for a runner to pick up this job"：GitHub 已于 2025-12 正式退役 `macos-13` runner 镜像，标签不再匹配任何 runner。改为在 `macos-14`（arm64）上用 `--x64` 交叉编译生成 Intel 包。
+
+### 新增
+- Windows 补充 ia32（32位）构建矩阵项：`windows-latest` + `--win nsis --ia32`，产物 `AI-Code-Switch-{version}-Windows-ia32.exe`，覆盖老旧 32 位 Windows 系统。
+- Linux 补充 `.rpm` 包：CI 矩阵 `args` 由 `--linux AppImage deb` 改为 `--linux AppImage deb rpm`，归一化脚本与 Release 说明同步新增 `.rpm` 分支（适用于 Fedora / RHEL / openSUSE 等 RPM 系发行版）。
+
 ## 2026-07-07: Windows 桌面端只构建 NSIS (.exe)，移除 MSI 目标
 
 ### 修复

@@ -911,13 +911,15 @@ npm 发布成功后，自动触发 Electron 应用构建：
    - 或手动触发（可指定版本号）
 
 2. **构建矩阵**:
-   - **Windows**: windows-latest (x86_64)
-     - 输出: `.exe` (NSIS)
+   - **Windows**: windows-latest
+     - x86_64 (x64): `.exe` (NSIS)
+     - ia32 (32位): `.exe` (NSIS)
    - **macOS**: (两个架构分别构建)
      - macos-14 (Apple Silicon, arm64): `.dmg`, `.zip`
-     - macos-13 (Intel, x64): `.dmg`, `.zip`
+     - macos-14 (Intel, x64，交叉编译): `.dmg`, `.zip`
+     - 注：`macos-13` runner 已于 2025-12 被 GitHub 退役（不再有 Intel 实机），x64 包改在 macos-14 上通过 `--x64` 交叉编译生成
    - **Linux**: ubuntu-22.04 (x64)
-     - 输出: `.AppImage`, `.deb`
+     - 输出: `.AppImage`, `.deb`, `.rpm`
 
 3. **发布到 GitHub Release**:
    - 自动创建或更新 Release
@@ -940,7 +942,7 @@ npm 发布成功后，自动触发 Electron 应用构建：
   - 新增桌面入口：`electron/main.js`（主进程：窗口 + 进程内服务器生命周期 + 健康轮询 + 跳转 + `before-quit` 触发 `gracefulShutdown`）、`electron/preload.js`（contextBridge 暴露 `onStartupLog` / `onStartupError`）、`electron/loading.html`（启动屏 + 看门狗）
   - 打包改用 `electron` + `electron-builder`（devDependencies），配置写在 `package.json` 的 `build` 字段（`appId: net.tangshuang.aicodeswitch`、`productName: AI Code Switch`、输出目录 `release/`、`asar: false`、`extraMetadata.main: electron/main.js`）；图标源文件 `build/icon.png`（1024×1024，由 `src/ui/assets/logo.png` 拷贝），electron-builder 自动生成 `.ico`/`.icns`
   - 新增 npm 脚本：`electron:dev`（`scripts/electron-dev.js`，构建缺失的服务端后启动 vite 并以 `AIC_ELECTRON_DEV_SERVER=http://localhost:17808` 拉起 Electron）、`electron:start`（`yarn build && electron .`）、`electron:build`（`yarn build && electron-builder`，输出到 `release/`）、`electron:icon`（拷贝 logo 到 `build/icon.png`）
-  - CI 由 `.github/workflows/build-electron.yaml` 取代 `build-tauri.yaml`：在 "Publish To NPM" 成功后或手动触发；矩阵 windows-latest (nsis) / macos-14 (arm64 dmg+zip) / macos-13 (x64 dmg+zip) / ubuntu-22.04 (AppImage+deb)；产物命名 `AI-Code-Switch-{version}-{platform}-{arch}.{ext}` 并上传到 GitHub Release
+  - CI `.github/workflows/build-electron.yaml`：在 "Publish To NPM" 成功后或手动触发；矩阵 windows-latest (nsis) / macos-14 (arm64 dmg+zip) / macos-14 (x64 dmg+zip，交叉编译) / ubuntu-22.04 (AppImage+deb)；产物命名 `AI-Code-Switch-{version}-{platform}-{arch}.{ext}` 并上传到 GitHub Release
   - 关键收益：终端用户**无需再安装 Node.js**（后端跑在 Electron 自带的 Node 运行时里）
 
 - 2026-06-22: 新增 Agent Map（任务可视化节点地图）
