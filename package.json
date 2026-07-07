@@ -147,6 +147,7 @@
     },
     "linux": {
       "category": "Development",
+      "maintainer": "tangshuang <mail@tangshuang.net>",
       "target": [
         "AppImage",
         "deb"

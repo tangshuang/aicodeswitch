@@ -110,6 +110,11 @@ jobs:
       - name: Build UI and Server
         run: yarn build
 
+      - name: Generate app icon
+        # build/ 被 .gitignore 忽略，CI 检出后无图标；此处从 src/ui/assets/logo.png 生成
+        # build/icon.png，electron-builder 会据此自动生成各平台 .ico/.icns，否则回退默认 Electron 图标
+        run: node scripts/electron-icon.js
+
       - name: Build Electron app
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
