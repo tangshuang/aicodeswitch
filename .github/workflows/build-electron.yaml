@@ -68,18 +68,22 @@ jobs:
             platform: windows
             arch: x64
             args: "--win nsis"
+          - os: windows-latest
+            platform: windows
+            arch: ia32
+            args: "--win nsis --ia32"
           - os: macos-14
             platform: macos
             arch: arm64
             args: "--mac dmg zip"
-          - os: macos-13
+          - os: macos-14
             platform: macos
             arch: x64
-            args: "--mac dmg zip"
+            args: "--mac dmg zip --x64"
           - os: ubuntu-22.04
             platform: linux
             arch: x64
-            args: "--linux AppImage deb"
+            args: "--linux AppImage deb rpm"
     permissions:
       contents: write
     runs-on: ${{ matrix.os }}
@@ -119,7 +123,7 @@ jobs:
           ARCH="${{ matrix.arch }}"
           mkdir -p normalized
           cd release || exit 0
-          for f in *.exe *.dmg *.zip *.AppImage *.deb; do
+          for f in *.exe *.dmg *.zip *.AppImage *.deb *.rpm; do
             [ -e "$f" ] || continue
             ext="${f##*.}"
             case "$ext" in
@@ -128,6 +132,7 @@ jobs:
               zip) base="AI-Code-Switch-${VERSION}-macOS-${ARCH}";;
               AppImage) base="AI-Code-Switch-${VERSION}-Linux-${ARCH}";;
               deb) base="AI-Code-Switch-${VERSION}-Linux-${ARCH}";;
+              rpm) base="AI-Code-Switch-${VERSION}-Linux-${ARCH}";;
             esac
             cp "$f" "../normalized/${base}.${ext}"
           done
@@ -179,6 +184,7 @@ jobs:
 
             - **`.AppImage`**：可直接运行的便携版，赋予执行权限后双击即可（`chmod +x *.AppImage`）。
             - **`.deb`**：适用于 Debian / Ubuntu 及其衍生发行版（`sudo dpkg -i *.deb`）。
+            - **`.rpm`**：适用于 Fedora / RHEL / CentOS / openSUSE 等 RPM 系发行版（`sudo rpm -i *.rpm`）。
 
             ### 说明
 
