@@ -854,7 +854,7 @@ const restoreCodexConfig = async (): Promise<boolean> => {
 /**
  * 默认 OpenCode 模型（当用户未配置 opencodeDefaultModel 时使用）
  */
-const DEFAULT_OPENCODE_MODEL = 'claude-sonnet-4-20250514';
+const DEFAULT_OPENCODE_MODEL = 'glm-5.2';
 
 /**
  * 写入 OpenCode 配置（~/.config/opencode/opencode.json）
