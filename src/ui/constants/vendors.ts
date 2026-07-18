@@ -105,22 +105,30 @@ export default {
     kimi: {
         name: 'Kimi',
         description: '国内优秀大模型',
-        link: 'https://www.kimi.ai/',
+        link: 'https://www.kimi.com/code',
         authType: AuthType.AUTH_TOKEN,
         services: [
             {
                 name: 'Claude 标准接口 | Coding Plan',
                 sourceType: 'claude',
                 apiUrl: 'https://api.kimi.com/coding',
+                models: 'k3, kimi-for-coding, kimi-for-coding-highspeed',
+                modelLimits: {
+                    'kimi-for-coding-highspeed': 32768,
+                    'kimi-for-coding': 32768,
+                    k3: 1024*1024,
+                },
             },
             {
                 name: 'Chat Completions 标准接口 | Coding Plan',
                 sourceType: 'openai-chat',
                 apiUrl: 'https://api.kimi.com/coding/v1/chat/completions',
-                models: 'kimi-for-coding',
+                models: 'k3, kimi-for-coding, kimi-for-coding-highspeed',
                 modelLimits: {
-                    'kimi-for-coding': 32768
-                }
+                    'kimi-for-coding-highspeed': 32768,
+                    'kimi-for-coding': 32768,
+                    k3: 1024*1024,
+                },
             },
         ]
     },
