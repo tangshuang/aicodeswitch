@@ -1,5 +1,5 @@
 /**
- * AICodingBus Unified Format Conversion System
+ * AITokenBus Unified Format Conversion System
  *
  * Provides conversion between 4 API formats:
  * 1. Claude Messages API

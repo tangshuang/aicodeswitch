@@ -9,8 +9,6 @@
 import type { AccessKeyRequestLog, RequestLog } from '../../types';
 import type { LogStore, Namespace } from '../log-store';
 
-const LOG_RETENTION_DAYS = 30;
-
 export class KeyLogger {
   private logStore: LogStore;
 
@@ -95,17 +93,5 @@ export class KeyLogger {
   /** 获取 Key 的日志总数 */
   async getLogsCount(keyId: string): Promise<number> {
     return this.logStore.count(this.ns(keyId));
-  }
-
-  /** 清理所有 AccessKey 的过期日志（30 天，整文件删除） */
-  async cleanupOldLogs(): Promise<void> {
-    for (const nsName of this.logStore.listNamespaces()) {
-      if (!nsName.startsWith('key:')) continue;
-      try {
-        await this.logStore.retain(nsName, LOG_RETENTION_DAYS);
-      } catch {
-        // 忽略单个 key 失败
-      }
-    }
   }
 }

@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import crypto from 'crypto';
 import CryptoJS from 'crypto-js';
 import { LogStore } from './log-store';
-import type { LogQueryOpts, LogQueryResult } from './log-store/types';
+import type { LogQueryOpts, LogQueryResult, LogStoreStats, CleanupBeforeDateResult } from './log-store/types';
 import type {
   Vendor,
   APIService,
@@ -104,9 +104,7 @@ export class FileSystemDatabaseManager {
   private errorLogsCountCache: { count: number; timestamp: number } | null = null;
   private readonly CACHE_TTL = 1000;
 
-  // 日志保留期（委托 LogStore.retain）
   private readonly MAX_ERROR_LOG_FIELD_SIZE = 256 * 1024; // 256KB 单个字段最大长度
-  private readonly LOG_RETENTION_DAYS = 30;
 
   // 文件路径
   private get vendorsFile() { return path.join(this.dataPath, 'vendors.json'); }
@@ -186,20 +184,6 @@ export class FileSystemDatabaseManager {
 
     // 确保默认配置
     await this.ensureDefaultConfig();
-  }
-
-  /**
-   * 执行延迟的维护任务（启动后异步执行，不阻塞服务启动）。
-   * 旧数据迁移已在 main.ts 中 pre-listen 完成；这里只做保留期清理。
-   */
-  async deferredMaintenance(): Promise<void> {
-    if (!this.logStore) return;
-    try {
-      await this.logStore.retain('global', this.LOG_RETENTION_DAYS);
-      console.log('[Database] LogStore deferred maintenance completed');
-    } catch (err) {
-      console.error('[Database] LogStore deferred maintenance failed:', err);
-    }
   }
 
   private async loadAllData() {
@@ -1500,6 +1484,18 @@ export class FileSystemDatabaseManager {
   async clearLogs(): Promise<void> {
     await this.requireLogStore().clear('global');
     this.logsCountCache = null;
+  }
+
+  /** 日志体积统计（全 namespace 合并、按日聚合），委托 LogStore.getStats() */
+  async getLogStoreStats(): Promise<LogStoreStats> {
+    return this.requireLogStore().getStats();
+  }
+
+  /** 按日期清理所有 namespace 中 shard.date <= beforeDate 的分片（含当天） */
+  async cleanupLogsBeforeDate(beforeDate: string): Promise<CleanupBeforeDateResult> {
+    const result = await this.requireLogStore().cleanupBeforeDate(beforeDate);
+    this.logsCountCache = null;
+    return result;
   }
 
   async getLogsCount(): Promise<number> {

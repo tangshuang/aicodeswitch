@@ -25,6 +25,8 @@ import type {
   LogQueryResult,
   LogStoreQueryOpts,
   AppendResult,
+  LogStoreStats,
+  CleanupBeforeDateResult,
 } from './types';
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB 滚动新文件
@@ -755,6 +757,73 @@ export class LogStore {
     }
     await this.flushNow(st);
     return toDelete.length;
+  }
+
+  /**
+   * 全 store 体积统计：遍历所有已加载 namespace，聚合每个 NsState.shards（已含
+   * size/count/date），按 date 合并所有 namespace 同一天的 size/count。
+   * 纯内存计算，零 IO、零扫盘。供「日志占用空间」展示与按日图表使用。
+   */
+  async getStats(): Promise<LogStoreStats> {
+    const byDate = new Map<string, { bytes: number; count: number }>();
+    let totalBytes = 0;
+    let totalCount = 0;
+    for (const st of this.namespaces.values()) {
+      for (const s of st.shards) {
+        totalBytes += s.size;
+        totalCount += s.count;
+        let entry = byDate.get(s.date);
+        if (!entry) {
+          entry = { bytes: 0, count: 0 };
+          byDate.set(s.date, entry);
+        }
+        entry.bytes += s.size;
+        entry.count += s.count;
+      }
+    }
+    const daily = Array.from(byDate.entries())
+      .map(([date, v]) => ({ date, bytes: v.bytes, count: v.count }))
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    return { totalBytes, totalCount, daily, namespaces: this.namespaces.size };
+  }
+
+  /**
+   * 按日期清理：删除所有 namespace 中 shard.date <= beforeDate（YYYY-MM-DD，含当天，
+   * 字符串比较）的分片文件，并同步清理 sessionRefs / timeline，逐 namespace flushNow
+   * 重写 sidecar。累计返回删除文件数/字节数/日志条数。与 retain() 同属整文件删除模式。
+   */
+  async cleanupBeforeDate(beforeDate: string): Promise<CleanupBeforeDateResult> {
+    let deletedFiles = 0;
+    let deletedBytes = 0;
+    let deletedCount = 0;
+    for (const st of this.namespaces.values()) {
+      const toDelete = st.shards.filter(s => s.date <= beforeDate);
+      if (toDelete.length === 0) continue;
+      const deleted = new Set(toDelete.map(s => s.filename));
+      for (const s of toDelete) {
+        try {
+          await fs.unlink(path.join(st.dir, s.filename));
+        } catch {
+          // 忽略：文件可能已不存在
+        }
+        deletedFiles += 1;
+        deletedBytes += s.size;
+        deletedCount += s.count;
+      }
+      st.shards = st.shards.filter(s => !deleted.has(s.filename));
+      // 清理指向已删文件的 sessionRefs
+      for (const [sid, refs] of st.sessionRefs) {
+        const remaining = refs.filter(r => !deleted.has(r.file));
+        if (remaining.length === 0) st.sessionRefs.delete(sid);
+        else if (remaining.length < refs.length) st.sessionRefs.set(sid, remaining);
+      }
+      // 清理时间线索引中指向已删文件的描述符
+      if (st.timeline.length > 0) {
+        st.timeline = st.timeline.filter(r => !deleted.has(r.file));
+      }
+      await this.flushNow(st);
+    }
+    return { deletedFiles, deletedBytes, deletedCount };
   }
 
   /**
