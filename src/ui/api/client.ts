@@ -1,5 +1,20 @@
 import type { Vendor, APIService, Route, Rule, RequestLog, ErrorLog, AppConfig, AuthStatus, LoginResponse, Statistics, ServiceBlacklistEntry, Session, InstalledSkill, SkillCatalogItem, SkillInstallResponse, TargetType, SkillDetail, ImportPreview, ImportResult, MCPServer, MCPInstallRequest, CodexReasoningEffort, ClaudePermissionDefaultMode, ApiPathBinding, ToolName, ToolBindings, MigrationOptions, MigrationPreview, MigrationResult, LaunchResult, AccessKey, Policy, KeyUsage, AccessKeyRequestLog, AccessKeySession, KeyUsageDailyRecord, QuotaAlert, LanDiscoverResponse, LanSyncRequest, LanSyncResult, PerfVendorOverview, PerfVendorDetail, PerfServiceDetail, PerfModelDetail, PerfServiceOverview } from '../../types';
 
+/** 日志体积统计（按日聚合，合并所有 namespace） */
+export interface LogsDiskUsage {
+  totalBytes: number;
+  totalCount: number;
+  daily: Array<{ date: string; bytes: number; count: number }>;
+  namespaces: number;
+}
+
+/** 按日期清理日志的结果 */
+export interface LogsCleanupResult {
+  deletedFiles: number;
+  deletedBytes: number;
+  deletedCount: number;
+}
+
 interface BackendAPI {
   // 鉴权相关
   getAuthStatus: () => Promise<AuthStatus>;
@@ -53,6 +68,8 @@ interface BackendAPI {
   getLogs: (limit: number, offset: number) => Promise<RequestLog[]>;
   clearLogs: () => Promise<boolean>;
   getLogsCount: () => Promise<{ count: number }>;
+  getLogsDiskUsage: () => Promise<LogsDiskUsage>;
+  cleanupLogsBeforeDate: (beforeDate: string) => Promise<LogsCleanupResult>;
   searchLogs: (query: string, limit: number, offset: number) => Promise<RequestLog[]>;
   searchLogsCount: (query: string) => Promise<{ count: number }>;
   queryLogs: (params: {
@@ -355,6 +372,11 @@ export const api: BackendAPI = {
   clearErrorLogs: () => requestJson(buildUrl('/api/error-logs'), { method: 'DELETE' }),
 
   getLogsCount: () => requestJson<{ count: number }>(buildUrl('/api/logs/count')),
+  getLogsDiskUsage: () => requestJson<LogsDiskUsage>(buildUrl('/api/logs/disk-usage')),
+  cleanupLogsBeforeDate: (beforeDate) => requestJson<LogsCleanupResult>(buildUrl('/api/logs/cleanup-before'), {
+    method: 'POST',
+    body: JSON.stringify({ beforeDate })
+  }),
   getErrorLogsCount: () => requestJson<{ count: number }>(buildUrl('/api/error-logs/count')),
 
   searchLogs: (query, limit, offset) => requestJson(buildUrl('/api/logs/search', { query, limit, offset })),

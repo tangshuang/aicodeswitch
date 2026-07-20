@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import crypto from 'crypto';
 import CryptoJS from 'crypto-js';
 import { LogStore } from './log-store';
-import type { LogQueryOpts, LogQueryResult } from './log-store/types';
+import type { LogQueryOpts, LogQueryResult, LogStoreStats, CleanupBeforeDateResult } from './log-store/types';
 import type {
   Vendor,
   APIService,
@@ -1500,6 +1500,18 @@ export class FileSystemDatabaseManager {
   async clearLogs(): Promise<void> {
     await this.requireLogStore().clear('global');
     this.logsCountCache = null;
+  }
+
+  /** 日志体积统计（全 namespace 合并、按日聚合），委托 LogStore.getStats() */
+  async getLogStoreStats(): Promise<LogStoreStats> {
+    return this.requireLogStore().getStats();
+  }
+
+  /** 按日期清理所有 namespace 中 shard.date <= beforeDate 的分片（含当天） */
+  async cleanupLogsBeforeDate(beforeDate: string): Promise<CleanupBeforeDateResult> {
+    const result = await this.requireLogStore().cleanupBeforeDate(beforeDate);
+    this.logsCountCache = null;
+    return result;
   }
 
   async getLogsCount(): Promise<number> {

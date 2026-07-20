@@ -2114,6 +2114,29 @@ const registerRoutes = async (dbManager: FileSystemDatabaseManager, proxyServer:
     })
   );
 
+  // 日志体积统计（全 namespace 合并、按日聚合，零扫盘）
+  app.get(
+    '/api/logs/disk-usage',
+    asyncHandler(async (_req, res) => {
+      const stats = await dbManager.getLogStoreStats();
+      res.json(stats);
+    })
+  );
+
+  // 按日期清理：删除所有 namespace 中 shard.date <= beforeDate 的分片（含当天）
+  app.post(
+    '/api/logs/cleanup-before',
+    asyncHandler(async (req, res) => {
+      const beforeDate = typeof req.body?.beforeDate === 'string' ? req.body.beforeDate.trim() : '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(beforeDate)) {
+        res.status(400).json({ error: '无效的日期格式，要求 YYYY-MM-DD' });
+        return;
+      }
+      const result = await dbManager.cleanupLogsBeforeDate(beforeDate);
+      res.json(result);
+    })
+  );
+
   app.get(
     '/api/logs/search',
     asyncHandler(async (req, res) => {

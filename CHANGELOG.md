@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-07-20: 新增日志体积统计与按日期清理功能
+
+### 新增
+- 「日志」页右上角显示日志占用空间并提供「清理」按钮：点击后弹出 `CleanupLogsModal`，用 recharts 柱状图按日/按周展示占用分布，选截止日后图表联动高亮（红色 = 将被清理），二次确认后清理选中日期（含当天）及之前的所有日志分片，释放磁盘。
+- 清理范围覆盖所有 namespace：`global` 主日志 + 全部 AccessKey `key:*` 日志。
+- 后端 `LogStore` 新增 `getStats()`（零扫盘，直接读内存 `ShardMeta.size/count/date` 聚合）与 `cleanupBeforeDate(beforeDate)`（参照 `retain()` 整文件删除模式，遍历所有 namespace 删 `shard.date <= beforeDate` 的分片并同步 sessionRefs/timeline + flushNow）。
+- 新增 API：`GET /api/logs/disk-usage`（返回 `{ totalBytes, totalCount, daily, namespaces }`）、`POST /api/logs/cleanup-before`（body `{ beforeDate }`，校验 `YYYY-MM-DD`，返回 `{ deletedFiles, deletedBytes, deletedCount }`）。
+- 新增前端工具 `src/ui/utils/format.ts` 的 `formatBytes`。
+
 ## 2026-07-07: CI 修复 macOS 卡构建 + 新增 Windows ia32
 
 ### 修复

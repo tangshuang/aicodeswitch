@@ -117,4 +117,36 @@ export interface DeleteByIdsResult {
   deleted: number;
 }
 
+/** 单日聚合（合并所有 namespace 同一天的分片） */
+export interface LogStoreDailyEntry {
+  /** 日期 YYYY-MM-DD（UTC） */
+  date: string;
+  /** 当天全部 namespace 的分片字节数合计 */
+  bytes: number;
+  /** 当天全部 namespace 的日志条数合计 */
+  count: number;
+}
+
+/** 全 store 体积统计（零 IO，直接读内存 shards） */
+export interface LogStoreStats {
+  /** 全部 namespace 的分片字节总数 */
+  totalBytes: number;
+  /** 全部 namespace 的日志条数总数 */
+  totalCount: number;
+  /** 按日聚合（date 升序），合并所有 namespace 同一天 */
+  daily: LogStoreDailyEntry[];
+  /** 已加载的 namespace 数量 */
+  namespaces: number;
+}
+
+/** cleanupBeforeDate 的返回：累计删除情况 */
+export interface CleanupBeforeDateResult {
+  /** 删除的分片文件数 */
+  deletedFiles: number;
+  /** 释放的字节数 */
+  deletedBytes: number;
+  /** 删除的日志条数 */
+  deletedCount: number;
+}
+
 export type { RequestLog };

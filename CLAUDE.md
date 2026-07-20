@@ -1,9 +1,3 @@
-```
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-```
-
 ## Project Overview
 
 This project named AICodeSwitch is a local proxy server that manages AI programming tool connections to large language models, allowing tools like Claude Code and Codex to use custom model APIs instead of official ones.
@@ -618,6 +612,7 @@ aicos version            # Show current version information
   - **存储与查询**：请求日志用 NDJSON 分片存储（`log-store/{namespace}/*.ndjson`，namespace 为 `global` 或 `key:{keyId}`），sidecar 索引包括 `shards-index.json` / `session-index.json` / `tombstones.json` / **`timeline-index.json`**（时间线索引）
     - **时间线索引**（`TimelineEntry[]`）：常驻内存的轻量描述符（`{file, offset, length, ts, id, targetType, vendorId, targetServiceId, targetModel}`），append 顺序维护、防抖落盘。`getRecent` / `query` 无关键词时走索引切片（零扫描、仅 hydrate 当前页），深翻页常量化；sidecar 缺失/过期时 `loadNsState` 触发后台一次性 `rebuildTimeline`，期间回退扫描。
     - **统一查询** `LogStore.query(ns, {filters, keyword, since, until, limit, offset})` → `{data, total}`：字段筛选无关键词走索引、有关键词回退全量扫描。`GET /api/logs` 接收 `targetType/vendorId/serviceId/model/keyword` 并返回 `{logs, total}`。
+    - **体积统计与按日期清理**：`LogStore.getStats()` 零扫盘读内存 `ShardMeta.size/count/date`，聚合所有 namespace（global + `key:*`）按日体积（`GET /api/logs/disk-usage` → `{totalBytes, totalCount, daily:[{date,bytes,count}], namespaces}`）；`LogStore.cleanupBeforeDate(date)` 参照 `retain()` 整文件删除模式，遍历所有 namespace 删 `shard.date <= date`（含当天）的分片并同步 sessionRefs/timeline + 逐 namespace `flushNow`（`POST /api/logs/cleanup-before`，body `{beforeDate}`，校验 `YYYY-MM-DD`，返回 `{deletedFiles, deletedBytes, deletedCount}`）。UI：日志页右上角「日志占用 + 清理」按钮 → `CleanupLogsModal`（recharts 按日/按周占用柱状图 + 选截止日联动高亮红色 + 二次确认；前端工具 `src/ui/utils/format.ts` 的 `formatBytes`）。
 - Access logs: System access records
 - Error logs: Error and exception records with comprehensive context
   - **Error Log Details**:
@@ -1002,7 +997,8 @@ npm 发布成功后，自动触发 Electron 应用构建：
 * 前端依赖库安装在devDependencies中，请使用yarn install --dev安装。
 * 所有对话请使用中文。生成代码中的文案及相关注释根据代码原本的语言生成。
 * 在服务端，直接使用 __dirname 来获取当前目录，不要使用 process.cwd()
-* 每次有新的架构变化时，你需要更新 CLAUDE.md, AGENTS.md 来让文档保持最新。
+* 每次有新的架构变化时，更新 CLAUDE.md 来让文档保持最新。
+* **AGENTS.md 是 CLAUDE.md 的符号链接**（`AGENTS.md -> CLAUDE.md`，相对路径），两者内容恒等——只需更新 CLAUDE.md，AGENTS.md 自动反映。**不要单独编辑 AGENTS.md**（直接编辑符号链接会破坏其指向）。
 * 每次有**代码**变更（忽略文档变更），以非常简单的概述，将变化内容记录到 CHANGELOG.md 中。
 * 禁止在ui中使用依赖GPU的css样式。
 * 禁止运行 dev:ui, dev:server, electron:dev 等命令来进行测试。

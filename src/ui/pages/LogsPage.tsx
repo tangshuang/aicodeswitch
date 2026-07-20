@@ -9,6 +9,9 @@ import { useConfirm } from '../components/Confirm';
 import { toast } from '../components/Toast';
 import LogDetailModal from '../components/LogDetailModal';
 import { IS_CLEAR_LOGS_VISIBLE } from '../config';
+import CleanupLogsModal from '../components/CleanupLogsModal';
+import { formatBytes } from '../utils/format';
+import type { LogsDiskUsage } from '../api/client';
 
 dayjs.extend(relativeTime);
 
@@ -33,6 +36,10 @@ function LogsPage() {
   // tab 角标总数（未过滤，独立于分页 total，保证两个角标始终有值）
   const [requestBadge, setRequestBadge] = useState(0);
   const [errorBadge, setErrorBadge] = useState(0);
+
+  // 日志占用空间 + 清理弹窗
+  const [diskUsage, setDiskUsage] = useState<LogsDiskUsage | null>(null);
+  const [showCleanupModal, setShowCleanupModal] = useState(false);
 
   const [loading, setLoading] = useState(false);
 
@@ -78,6 +85,7 @@ function LogsPage() {
   useEffect(() => {
     loadFilterOptions();
     loadBadgeCounts();
+    loadDiskUsage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -125,6 +133,15 @@ function LogsPage() {
       setErrorBadge(err.count);
     } catch (error) {
       console.error('Failed to load badge counts:', error);
+    }
+  };
+
+  const loadDiskUsage = async () => {
+    try {
+      const data = await api.getLogsDiskUsage();
+      setDiskUsage(data);
+    } catch (error) {
+      console.error('Failed to load disk usage:', error);
     }
   };
 
@@ -357,9 +374,21 @@ function LogsPage() {
             <h1>日志</h1>
             <p>查看所有API请求日志</p>
           </div>
-          {IS_CLEAR_LOGS_VISIBLE && (
-            <button className="btn btn-danger" onClick={handleClearAllLogs}>清空全部日志</button>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {diskUsage && (
+              <span style={{
+                fontSize: '13px', color: 'var(--text-secondary)',
+                background: 'var(--bg-secondary)', padding: '6px 12px',
+                borderRadius: '8px', border: '1px solid var(--border-primary)', whiteSpace: 'nowrap',
+              }}>
+                日志占用：<strong style={{ color: 'var(--text-primary)' }}>{formatBytes(diskUsage.totalBytes)}</strong>
+              </span>
+            )}
+            <button className="btn btn-secondary" onClick={() => setShowCleanupModal(true)}>清理</button>
+            {IS_CLEAR_LOGS_VISIBLE && (
+              <button className="btn btn-danger" onClick={handleClearAllLogs}>清空全部日志</button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -487,6 +516,16 @@ function LogsPage() {
       )}
       {selectedErrorLog && (
         <LogDetailModal log={selectedErrorLog} onClose={() => setSelectedErrorLog(null)} />
+      )}
+      {showCleanupModal && (
+        <CleanupLogsModal
+          onClose={() => setShowCleanupModal(false)}
+          onCleared={() => {
+            loadDiskUsage();
+            loadLogs();
+            loadBadgeCounts();
+          }}
+        />
       )}
     </div>
   );
