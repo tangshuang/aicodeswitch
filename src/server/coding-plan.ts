@@ -1,7 +1,7 @@
 /**
  * 编程套餐限制检测工具
  *
- * 从 AICodingBus 的 isCodingToolRequest 逻辑移植而来。
+ * 从 AITokenBus 的 isCodingToolRequest 逻辑移植而来。
  * 用于判断当前请求是否来自编程工具（Claude Code / Codex / Cursor 等），
  * 配合 APIService.enableCodingPlan 实现编程套餐限制。
  */

@@ -21,30 +21,30 @@ type VendorConfig = {
 };
 
 export default {
-    aicodingbus: {
-        name: 'AICodingBus',
-        description: 'AICodingBus 是一个Token共享平台，用户可以在平台上分享和交换Token。',
+    aitokenbus: {
+        name: 'AITokenBus',
+        description: 'AITokenBus 是一个Token共享平台，用户可以在平台上分享和交换Token。',
         tags: ['官方推荐'],
-        link: 'https://aicodingbus.24x7.to/',
-        apiBaseUrl: 'https://aicodingbus.24x7.to',
+        link: 'https://aitokenbus.24x7.to/',
+        apiBaseUrl: 'https://aitokenbus.24x7.to',
         authType: AuthType.AUTH_TOKEN,
         services: [
             {
                 name: 'Claude 标准接口',
                 sourceType: 'claude',
-                apiUrl: 'https://aicodingbus.24x7.to',
+                apiUrl: 'https://aitokenbus.24x7.to',
                 models: '',
             },
             {
                 name: 'Chat Completions 标准接口',
                 sourceType: 'openai-chat',
-                apiUrl: 'https://aicodingbus.24x7.to/v1/chat/completions',
+                apiUrl: 'https://aitokenbus.24x7.to/v1/chat/completions',
                 models: '',
             },
             {
                 name: 'Responses 标准接口',
                 sourceType: 'openai',
-                apiUrl: 'https://aicodingbus.24x7.to',
+                apiUrl: 'https://aitokenbus.24x7.to',
                 models: '',
             },
         ],

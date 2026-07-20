@@ -240,7 +240,7 @@ PORT=4567
 ## 关联资源
 
 * [Claude Code 深度教程](https://claudecode.tangshuang.net): 100%免费的Claude Code入门到精通教程
-* [AICodingBus](https://aicodingbus.24x7.to): AI Tokens 交换平台
+* [AITokenBus](https://aitokenbus.24x7.to): AI Tokens 交换平台
 
 ## 支持我
 
