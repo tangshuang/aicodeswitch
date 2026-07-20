@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-07-20: 修复新版 body-parser 启动崩溃
+
+### 修复
+- `main.ts` 中 `express.json` / `express.urlencoded` 的 `limit` 由字符串 `'Infinity'` 改为数值 `Infinity`。新版 body-parser 内部仅在 `limit` 非 number 时调用 `bytes.parse()`，而 `bytes.parse('Infinity')` 返回 `null` 会抛出 `TypeError: option limit "Infinity" is invalid`，导致服务启动即崩溃。改用数值 `Infinity` 可跳过 `bytes.parse` 直接生效。
+
 ## 2026-07-20: 新增日志体积统计与按日期清理功能
 
 ### 新增
