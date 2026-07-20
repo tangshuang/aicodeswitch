@@ -248,8 +248,12 @@ function applyWriteLocalRecords(proxyServer: ProxyServer): void {
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: 'Infinity' }));
-app.use(express.urlencoded({ extended: true, limit: 'Infinity' }));
+// 注意：limit 必须使用数值 Infinity，不能用字符串 'Infinity'
+// body-parser 内部仅当 limit 不是 number 时才会调用 bytes.parse()，
+// 而 bytes.parse('Infinity') 返回 null，新版 body-parser 会抛出
+// "option limit \"Infinity\" is invalid"。数值 Infinity 可跳过解析直接生效。
+app.use(express.json({ limit: Infinity }));
+app.use(express.urlencoded({ extended: true, limit: Infinity }));
 
 // 类型转换中间件：自动将旧的数据源类型转换为新类型
 app.use((req: Request, _res: Response, next: NextFunction) => {

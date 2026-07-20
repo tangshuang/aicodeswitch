@@ -71,7 +71,8 @@ const start = async (options = {}) => {
   }
 
   // 启动服务器进程 - 完全分离
-  const logFd = fs.openSync(LOG_FILE, 'a');
+  // 使用 'w' 模式截断日志文件，确保仅记录当次运行期间的日志
+  const logFd = fs.openSync(LOG_FILE, 'w');
 
   const serverProcess = spawn('node', [serverPath], {
     detached: true,
