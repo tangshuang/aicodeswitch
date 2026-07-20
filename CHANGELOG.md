@@ -9,6 +9,9 @@
 - 新增 API：`GET /api/logs/disk-usage`（返回 `{ totalBytes, totalCount, daily, namespaces }`）、`POST /api/logs/cleanup-before`（body `{ beforeDate }`，校验 `YYYY-MM-DD`，返回 `{ deletedFiles, deletedBytes, deletedCount }`）。
 - 新增前端工具 `src/ui/utils/format.ts` 的 `formatBytes`。
 
+### 变更
+- 移除日志自动清理：删除 6 小时定时 `logStore.retain('global', 30)` + `KeyLogger.cleanupOldLogs()`、启动期 `dbManager.deferredMaintenance()`、常量 `LOG_RETENTION_DAYS`（`fs-database.ts` 与 `key-logger.ts`）。日志不再自动删除，可保留任意时长，由用户在「日志」页手动按日期清理。`LogStore.retain()` 方法保留为底层工具，仅不再被自动调用。
+
 ## 2026-07-07: CI 修复 macOS 卡构建 + 新增 Windows ia32
 
 ### 修复

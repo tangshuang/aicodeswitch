@@ -4775,14 +4775,7 @@ export const start = async () => {
     console.error('[Server] AccessKey module initialization failed:', error);
   }
 
-  // 日志保留期定时清理（主库 global + 所有 AccessKey key:*），每 6h 一次
-  const logRetentionTimer = setInterval(() => {
-    Promise.all([
-      logStore.retain('global', 30).catch(() => {}),
-      accessKeyModule.keyLogger.cleanupOldLogs().catch(() => {}),
-    ]).catch(() => {});
-  }, 6 * 60 * 60 * 1000);
-  if (typeof logRetentionTimer.unref === 'function') logRetentionTimer.unref();
+  // 注意：日志不再自动清理（可保留任意时长），由用户在「日志」页手动按日期清理（POST /api/logs/cleanup-before）。
 
   // Initialize Service Performance Tracker (全局统计，与 AUTH 无关)
   const performanceTracker = new ServicePerformanceTracker(dataDir);
@@ -4855,12 +4848,6 @@ export const start = async () => {
     // 点击 OS 通知时打开任务地图页（仅 terminal-notifier 路径生效；osascript 无法控制点击）
     setNotifierAppUrl(`http://${clientHost}:${port}/#/agent-map`);
     console.timeEnd('[Server] step "listen"');
-
-    // 启动后异步执行延迟维护任务（分片校验/修复、日志清理、会话索引构建）
-    // 不阻塞服务启动，后台静默执行
-    dbManager.deferredMaintenance().catch(err => {
-      console.error('[Server] Deferred maintenance error:', err);
-    });
   });
 
   // 显式处理 listen 错误（EADDRINUSE/权限不足等），打印明确日志并退出，
