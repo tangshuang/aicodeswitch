@@ -173,7 +173,7 @@ export default {
     qwen: {
         name: '阿里云百炼（千问）',
         description: '国内优秀大模型',
-        link: 'https://help.aliyun.com/zh/model-studio/coding-plan',
+        link: 'https://www.aliyun.com/benefit/ai/aistar?clubBiz=subTask..12727054..10274..',
         authType: AuthType.AUTH_TOKEN,
         services: [
             {
