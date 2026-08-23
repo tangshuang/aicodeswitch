@@ -4,6 +4,7 @@ import type { Route, Rule, APIService, ContentType, Vendor, ServiceBlacklistEntr
 import { useConfirm } from '../components/Confirm';
 import { toast } from '../components/Toast';
 import Select from '../components/Select';
+import { Switch } from '../components/Switch';
 import SyncConfigModal from '../components/SyncConfigModal';
 import { useRulesStatus } from '../hooks/useRulesStatus';
 import QuickSetupModal from '../components/QuickSetupModal';
@@ -145,6 +146,8 @@ export default function RoutesPage() {
   const [selectedTokenResetBaseTime, setSelectedTokenResetBaseTime] = useState<Date | undefined>(undefined);
   const [selectedTimeout, setSelectedTimeout] = useState<number | undefined>(undefined);
   const [ruleGlobalTimeout, setRuleGlobalTimeout] = useState<string>('');
+  const [failoverEnabled, setFailoverEnabled] = useState(true);
+  const [failoverRecoverySeconds, setFailoverRecoverySeconds] = useState('10');
   const [selectedRequestCountLimit, setSelectedRequestCountLimit] = useState<number | undefined>(undefined);
   const [selectedRequestResetInterval, setSelectedRequestResetInterval] = useState<number | undefined>(undefined);
   const [selectedRequestResetBaseTime, setSelectedRequestResetBaseTime] = useState<Date | undefined>(undefined);
@@ -396,6 +399,12 @@ export default function RoutesPage() {
         typeof data.ruleGlobalTimeout === 'number' && data.ruleGlobalTimeout > 0
           ? String(data.ruleGlobalTimeout)
           : ''
+      );
+      setFailoverEnabled(data.enableFailover !== false);
+      setFailoverRecoverySeconds(
+        typeof data.failoverRecoverySeconds === 'number' && data.failoverRecoverySeconds > 0
+          ? String(Math.floor(data.failoverRecoverySeconds))
+          : '10'
       );
     } catch (error) {
       console.error('Failed to load app config:', error);
@@ -894,6 +903,38 @@ export default function RoutesPage() {
     }
   };
 
+  const handleToggleFailover = async (checked: boolean) => {
+    try {
+      const current = appConfig || {};
+      await api.updateConfig({
+        ...current,
+        enableFailover: checked,
+      });
+      setFailoverEnabled(checked);
+      toast.success(checked ? '已开启智能故障切换' : '已关闭智能故障切换');
+      await loadAppConfig();
+    } catch (error: any) {
+      toast.error('更新失败: ' + error.message);
+    }
+  };
+
+  const handleUpdateFailoverRecoverySeconds = async () => {
+    try {
+      const current = appConfig || {};
+      const parsed = Number(failoverRecoverySeconds);
+      const value = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 10;
+      await api.updateConfig({
+        ...current,
+        failoverRecoverySeconds: value,
+      });
+      setFailoverRecoverySeconds(String(value));
+      toast.success(`故障自动恢复时间已设置为 ${value} 秒`);
+      await loadAppConfig();
+    } catch (error: any) {
+      toast.error('更新失败: ' + error.message);
+    }
+  };
+
   const getAvailableContentTypes = () => {
     // 取消对象请求类型的互斥限制，允许添加多个相同类型的规则
     // 通过 sort_order 字段区分优先级
@@ -1336,7 +1377,7 @@ export default function RoutesPage() {
           </div>
 
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-            <div className="card" style={{ flex: 1 }}>
+            <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
               <div className="toolbar">
                 <h3>规则列表</h3>
                 {selectedRoute && (
@@ -1344,9 +1385,9 @@ export default function RoutesPage() {
                 )}
               </div>
               {!selectedRoute ? (
-                <div className="empty-state"><p>请先选择一个路由</p></div>
+                <div className="empty-state" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><p>请先选择一个路由</p></div>
               ) : rules.length === 0 ? (
-                <div className="empty-state"><p>暂无路由规则</p></div>
+                <div className="empty-state" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><p>暂无路由规则</p></div>
               ) : (
                 <table className="rules-table">
                   <thead>
@@ -1673,52 +1714,27 @@ export default function RoutesPage() {
                   </tbody>
                 </table>
               )}
-              {selectedRoute && rules.length > 0 && (
-                <div style={{
-                  fontSize: '12px',
-                  color: 'var(--text-info-box)',
-                  marginTop: '16px',
-                  padding: '12px',
-                  backgroundColor: 'var(--bg-info-box)',
-                  borderRadius: '6px',
-                  border: '1px solid var(--border-info-box)',
-                  lineHeight: '1.6'
-                }}>
-                  <strong>📌 如何配置规则（推荐）</strong>
-                  <div style={{ marginTop: '6px' }}>
-                    • 先创建一条 <strong>默认</strong> 规则作为兜底，避免请求无规则可走<br />
-                    • 再按你的实际场景增加规则：如图像理解、长上下文、思考、高智商等<br />
-                    • 按类型匹配顺序：<strong>压缩对话 → 图像理解 → 高智商 → 长上下文 → 思考 → 后台 → 模型顶替 → 默认</strong><br />
-                    • 如果要“指定模型走指定服务”，再加 <strong>模型顶替</strong> 规则<br />
-                    • 同一类型可配多条：<strong>把主力服务放上面（优先级更大），备用服务放下面</strong><br />
-                    • 开启智能故障切换后，系统会在主力不可用时自动切到下一个可用规则<br />
-                    • 你只需要记住：<strong>先分类型，再排顺序，上主下备</strong>
-                  </div>
+              <div style={{
+                fontSize: '12px',
+                color: 'var(--text-info-box)',
+                marginTop: '16px',
+                padding: '12px',
+                backgroundColor: 'var(--bg-info-box)',
+                borderRadius: '6px',
+                border: '1px solid var(--border-info-box)',
+                lineHeight: '1.6'
+              }}>
+                <strong>📌 如何配置规则（推荐）</strong>
+                <div style={{ marginTop: '6px' }}>
+                  • 先创建一条 <strong>默认</strong> 规则作为兜底，避免请求无规则可走<br />
+                  • 再按你的实际场景增加规则：如图像理解、长上下文、思考、高智商等<br />
+                  • 按类型匹配顺序：<strong>压缩对话 → 图像理解 → 高智商 → 长上下文 → 思考 → 后台 → 模型顶替 → 默认</strong><br />
+                  • 如果要“指定模型走指定服务”，再加 <strong>模型顶替</strong> 规则<br />
+                  • 同一类型可配多条：<strong>把主力服务放上面（优先级更大），备用服务放下面</strong><br />
+                  • 开启智能故障切换后，系统会在主力不可用时自动切到下一个可用规则<br />
+                  • 你只需要记住：<strong>先分类型，再排顺序，上主下备</strong>
                 </div>
-              )}
-              {selectedRoute && rules.length > 0 && (
-                <div style={{
-                  fontSize: '12px',
-                  color: 'var(--text-info-box)',
-                  marginTop: '12px',
-                  padding: '12px',
-                  backgroundColor: 'var(--bg-info-box)',
-                  borderRadius: '6px',
-                  border: '1px solid var(--border-info-box)',
-                  lineHeight: '1.6'
-                }}>
-                  <strong>💡 智能故障切换机制</strong>
-                  <div style={{ marginTop: '6px' }}>
-                    • 当同一请求类型配置多个规则时,系统会按排序优先使用第一个<br />
-                    • 如果某个服务报错(4xx/5xx)或请求超时,将自动切换到下一个可用服务<br />
-                    • 报错或超时的服务会被标记为不可用（默认10秒），可在设置页面修改“故障自动恢复时间”<br />
-                    • 到达恢复时间后自动解除标记,如果再次报错或超时则重新标记<br />
-                    • 确保您的请求始终路由到稳定可用的服务<br />
-                    • 规则状态列会实时显示每个规则的可用性状态<br />
-                    • 如不需要此功能,可在<strong>设置</strong>页面关闭"启用智能故障切换"选项
-                  </div>
-                </div>
-              )}
+              </div>
             </div>
           </div>
         </div>
@@ -1762,6 +1778,92 @@ export default function RoutesPage() {
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
             设置规则的全局超时时间。当单个规则未配置超时时间时，将使用此值作为超时上限。
             不设置则默认为300秒（5分钟）。超时后会自动触发故障切换到下一个可用规则。
+          </div>
+
+          <div
+            className="form-group"
+            style={{
+              marginTop: '20px',
+              marginBottom: '0',
+              maxWidth: '420px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+            }}
+          >
+            <label
+              style={{ marginBottom: 0, minWidth: '140px', whiteSpace: 'nowrap' }}
+            >
+              启用智能故障切换
+            </label>
+            <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Switch
+                checked={failoverEnabled}
+                onChange={handleToggleFailover}
+              />
+              <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
+                {failoverEnabled ? '已开启' : '未开启'}
+              </span>
+            </div>
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+            启用后，当某个服务报错或请求超时会自动切换到下一个可用规则，并按下方「故障自动恢复时间」自动恢复。修改后即时保存。
+          </div>
+
+          <div
+            className="form-group"
+            style={{
+              marginTop: '20px',
+              marginBottom: '0',
+              maxWidth: '420px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+            }}
+          >
+            <label
+              htmlFor="failover-recovery-seconds"
+              style={{ marginBottom: 0, minWidth: '140px', whiteSpace: 'nowrap' }}
+            >
+              故障自动恢复时间（秒）
+            </label>
+            <input
+              id="failover-recovery-seconds"
+              type="number"
+              value={failoverRecoverySeconds}
+              onChange={(e) => setFailoverRecoverySeconds(e.target.value)}
+              onBlur={handleUpdateFailoverRecoverySeconds}
+              min="1"
+              step="1"
+              placeholder="默认10秒"
+              disabled={!failoverEnabled}
+              style={{ flex: 1, minWidth: 0 }}
+            />
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+            服务被标记为不可用后，经过该时间会自动解除标记并重新参与路由，默认 10 秒。仅在开启智能故障切换后可修改，失焦后自动保存。
+          </div>
+
+          <div style={{
+            fontSize: '12px',
+            color: 'var(--text-info-box)',
+            marginTop: '16px',
+            padding: '12px',
+            backgroundColor: 'var(--bg-info-box)',
+            borderRadius: '6px',
+            border: '1px solid var(--border-info-box)',
+            lineHeight: '1.6'
+          }}>
+            <strong>💡 智能故障切换机制</strong>
+            <div style={{ marginTop: '6px' }}>
+              • 当同一请求类型配置多个规则时,系统会按排序优先使用第一个<br />
+              • 如果某个服务报错(4xx/5xx)或请求超时,将自动切换到下一个可用服务<br />
+              • 报错或超时的服务会被标记为不可用（默认10秒），可通过上方“故障自动恢复时间”修改<br />
+              • 到达恢复时间后自动解除标记,如果再次报错或超时则重新标记<br />
+              • 确保您的请求始终路由到稳定可用的服务<br />
+              • 规则状态列会实时显示每个规则的可用性状态<br />
+              • 如不需要此功能,可关闭上方"启用智能故障切换"选项
+            </div>
           </div>
         </div>
       </div>
