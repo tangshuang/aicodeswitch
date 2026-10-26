@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-03: 修复 GPT-5.6 等新模型拒绝 role:'system' 导致上游 400
+
+### 修复
+- 背景：GPT-5+/o系列模型（GPT-5.6、o1/o3/o4、codex* 等）不再接受 `role:'system'` 系统消息，必须使用 `role:'developer'`，否则上游报 `Invalid value: 'system'. Value must be 'developer'`。
+- 根因（两条触发路径，均经真实转换管线复现）：① Claude Code→openai-chat 上游——claude-completions 转换把顶层 `system` 字段产出为 messages 头部 `role:'system'` 消息；② Codex→第三方 Responses 上游——降级兼容 `downgradeResponsesRequest`（为火山方舟等老 Lite 提供商设计）把 Codex 原生 `developer` 角色改写成 `system`，新模型随即拒绝。
+- 修复：`proxy-server.ts` 新增 `applyDeveloperRoleCompat`，在两条转发路径（`proxyRequest` 标准 `/v1` 路径 + `proxyRequestForApiPath` API path 路径）的最终请求体上：按目标模型名（`rule.targetModel || body.model`，正则命中 `gpt-5*` / id 起始或 `/` 分段的独立 o 系列 / `codex*`）把 `messages`（completions 载体）与 `input`（responses 载体）中的 system 角色消息改写为 developer。门控保证不影响其他场景：gpt-4o/deepseek 等旧模型与国产模型保持 system 不动（这些上游只认 system），`kimi-o3`、`hunyuan-o1` 等带前缀命名不误伤，claude（system 为顶层字段）/gemini（systemInstruction）格式天然无此角色。
+- 客户端移植副本 `client/src/switch/server/proxy-server.ts` 同步本修复（无新增定制点）。
+
+### 新增
+- `scripts/verify-developer-role-compat.ts`：用真实转换管线（`aitoken-conversions` `transformRequest`）复现两条根因路径并断言修复与门控边界（模型名正反例、非对象请求体、claude 格式顶层 system 不动等），`npx tsx scripts/verify-developer-role-compat.ts` 运行，12 项断言全过。
+
 ## 2026-08-23: 智能故障切换配置迁移至路由页「规则配置」并改为即时保存
 
 ### 变更

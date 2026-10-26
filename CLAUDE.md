@@ -398,6 +398,7 @@ aicos version            # Show current version information
   - Claude Chat
   - Claude Code
 - Model override helper now keeps original payload when no override model is provided (prevents fallback request-body null regression)
+- GPT-5+/o-series models (gpt-5*, o1/o3/o4, codex*) reject `role:'system'`; `applyDeveloperRoleCompat` rewrites system-role messages to `developer` in the final upstream body (both completions `messages` and responses `input` carriers) when the target model matches — covers Claude Code→openai-chat conversion output and the responses downgrade path that turns Codex's native `developer` into `system`
 - Claude Code -> Gemini/Gemini Chat/OpenAI Chat/OpenAI defaults to streaming (SSE) when `stream` is not explicitly set to `false`
 - `/v1/messages/count_tokens` is handled locally in server for Claude Code bridge sources, and returns `{ "input_tokens": number }` directly
 
