@@ -3253,6 +3253,51 @@ export class ProxyServer {
     return requestBody;
   }
 
+  /**
+   * GPT-5+/o系列等新模型不再接受 role:'system'（上游报
+   * "Invalid value: 'system'. Value must be 'developer'"），系统消息必须改用 role:'developer'。
+   * 按目标模型名判定（gpt-5*、独立 o 系列 o1/o3/o4 等、codex*），命中时把最终请求体中的
+   * system 角色消息改写为 developer——completions 载体（messages）与 responses 载体（input）
+   * 都处理；claude（system 为顶层字段）/gemini（systemInstruction）格式消息内无此角色，天然不受影响。
+   * 覆盖场景：Claude Code→openai-chat 上游（claude-completions 转换产出 system 头消息）、
+   * Codex→第三方 Responses 上游（降级兼容把 developer 改写成 system 后还原）等。
+   */
+  private modelRequiresDeveloperRole(model?: string): boolean {
+    const m = String(model || '').toLowerCase();
+    if (!m) return false;
+    if (/(^|[^a-z0-9])gpt-5/.test(m)) return true;        // gpt-5 / gpt-5.6-sol / gpt-5-codex / openai/gpt-5.x
+    if (/(^|\/)o[1-9]($|[^a-z0-9])/.test(m)) return true; // o1 / o3-mini / o4-mini（限 id 起始或 / 分段，避免 xx-o1 误伤）
+    if (/(^|[^a-z0-9])codex/.test(m)) return true;        // codex-mini 等
+    return false;
+  }
+
+  private applyDeveloperRoleCompat(requestBody: any, effectiveModel?: string): any {
+    if (!requestBody || typeof requestBody !== 'object' || Array.isArray(requestBody)) {
+      return requestBody;
+    }
+    if (!this.modelRequiresDeveloperRole(effectiveModel || requestBody?.model)) {
+      return requestBody;
+    }
+    let patched = false;
+    const rewrite = (item: any) => {
+      if (item && typeof item === 'object' && item.role === 'system') {
+        patched = true;
+        return { ...item, role: 'developer' };
+      }
+      return item;
+    };
+    if (Array.isArray(requestBody.messages)) {
+      requestBody.messages = requestBody.messages.map(rewrite);
+    }
+    if (Array.isArray(requestBody.input)) {
+      requestBody.input = requestBody.input.map(rewrite);
+    }
+    if (patched) {
+      console.log('[DeveloperRoleCompat] system → developer, model:', effectiveModel || requestBody?.model);
+    }
+    return requestBody;
+  }
+
   private isStreamRequested(req: Request, body: any, targetType?: ToolType, sourceType?: SourceType) {
     const accept = typeof req.headers.accept === 'string' ? req.headers.accept : '';
     if (body?.stream === true || accept.includes('text/event-stream')) {
@@ -4552,6 +4597,8 @@ export class ProxyServer {
       requestBody = transformedRequestBody ?? this.cloneRequestBody(originalToolRequestBody) ?? {};
       // Responses Lite 协议兼容：头部原样转发时补回被降级清理剥离的 parallel_tool_calls=false
       requestBody = this.applyResponsesLiteCompat(req, requestBody, sourceTypeToFormat(sourceType) === 'responses');
+      // GPT-5+/o系列模型不再接受 role:'system'，按目标模型把 system 消息改写为 developer
+      requestBody = this.applyDeveloperRoleCompat(requestBody, effectiveModel);
 
       // 对最终即将发送到上游的 Claude compact 请求再做一次兜底清理，
       // 避免中间转换/覆盖步骤重新引入未配对的 tool_use。
@@ -5533,6 +5580,8 @@ export class ProxyServer {
     requestBody = transformedRequestBody ?? this.cloneRequestBody(requestBody) ?? {};
     // Responses Lite 协议兼容：头部原样转发时补回被降级清理剥离的 parallel_tool_calls=false
     requestBody = this.applyResponsesLiteCompat(req, requestBody, sourceTypeToFormat(sourceType) === 'responses');
+    // GPT-5+/o系列模型不再接受 role:'system'，按目标模型把 system 消息改写为 developer
+    requestBody = this.applyDeveloperRoleCompat(requestBody, effectiveModel);
 
     // Compact final sanitize
     if (rule.contentType === 'compact' && clientFormat === 'claude' && Array.isArray(requestBody?.messages)) {
